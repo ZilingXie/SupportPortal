@@ -242,12 +242,13 @@
 
 **n8n description**
 
-> 接收 Zendesk SOLVED 事件，先在 PostgreSQL 去重，再整理评论并由 AI 判断是否适合入库；生成英文 Zendesk KB 草稿、写入 Google Sheets，并提交到 SupportPortal 知识库接口。
+> 接收 Zendesk SOLVED 事件，经 PostgreSQL 去重、评论脱敏和 AI 筛选生成英文 KB 草稿；同步至 Tencent Memory，创建 Wiki、写入 Markdown 并触发 ingest，再写入 Google Sheets 和 SupportPortal 知识库。
 
 - **入口与主路径**：Zendesk 关闭事件 POST Webhook → 仅 SOLVED → PostgreSQL `ticket(solved_ticket)` 去重 → 评论/作者查询、脱敏与对话组装 → AI 技术问题筛选 → KB 标题、正文和 HTML。
-- **输出与项目关系**：Zendesk 草稿（`draft=true`、`notify_subscribers=false`）→ Google Sheets → `support.stellarix.space` 的 `/api/engineer/knowledge/articles`。
+- **输出与项目关系**：Zendesk 草稿（`draft=true`、`notify_subscribers=false`）→ Tencent Memory 中创建 Wiki、写入 `article.md` 并触发 ingest → Google Sheets → `support.stellarix.space` 的 `/api/engineer/knowledge/articles`。Memory 使用与 `[kb]Build|CSD` 相同的 team 和认证头，不存储明文于 Git 快照。
 - **人工门控现状**：Slack 审批节点禁用或未连入主链；当前实际链路依赖 AI 筛选，不能描述为经过人工批准后入库。
-- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Google Sheets、SupportPortal，错误交给 `[ops]Error Alert`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建草稿。先核对三个输出位置。
+- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Tencent Memory、Google Sheets、SupportPortal，错误交给 `[ops]Error Alert`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建 Zendesk 草稿和 Memory Wiki。失败时先核对四个输出位置，再决定从哪一步恢复。
+- **发布记录**：2026-09-16 发布版 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`（原版 `d5944711-2d8a-461c-b2b6-1f6f9e9be0bb`）；四个新增节点与完整节点图通过静态校验，发布后回读一致，未重放历史 execution。等待自然进入 AI 批准分支的 SOLVED 工单验证实际写入。
 
 <a id="configuration-findings"></a>
 
