@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T06:15:17Z",
+  "capturedAt": "2026-09-16T07:16:00Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "FKv8vtZBQk6tH4Gt",
     "workflowName": "[slack]Handle Action|Preprod",
     "snapshotKind": "published",
-    "versionId": "93db771b-7cf1-4220-93f5-7b5419b3f428",
-    "draftVersionId": "8d23501d-d39d-4c00-88b2-565825c1d546",
-    "publishedVersionId": "93db771b-7cf1-4220-93f5-7b5419b3f428",
-    "updatedAt": "2026-09-16T06:01:43.141Z",
+    "versionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
+    "draftVersionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
+    "publishedVersionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
+    "updatedAt": "2026-09-16T07:07:16.006Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
     "name": "[slack]Handle Action|Preprod",
-    "description": "接收 Slack Hermes 按钮回调，校验当前动作、Preproduction 环境、必要字段和请求元数据，提交 prepare_draft 或 approve_draft 并更新 Slack 消息；共享错误告警已启用，签名验真仍需外部验证器。",
+    "description": "接收 Slack 按钮交互，校验团队、频道及线程绑定，转发至 SupportPortal ECS Preproduction 的 Hermes actions 接口，再更新 Slack 原消息移除操作按钮。",
     "nodes": [
       {
         "parameters": {
@@ -146,7 +146,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first()?.json || {};\nconst rawPayload = input.body?.payload;\n\nif (typeof rawPayload !== 'string' || !rawPayload.trim()) {\n  return [{ json: { parse_ok: false, parse_error: 'missing_payload' } }];\n}\n\nlet payload;\ntry {\n  payload = JSON.parse(rawPayload);\n} catch {\n  return [{ json: { parse_ok: false, parse_error: 'invalid_payload_json' } }];\n}\n\nconst action = Array.isArray(payload.actions) ? payload.actions[0] || {} : {};\nlet actionValue = {};\ntry {\n  actionValue = JSON.parse(String(action.value || '{}'));\n} catch {\n  return [{ json: { parse_ok: false, parse_error: 'invalid_action_value' } }];\n}\n\nconst headers = input.headers || {};\nconst teamId = String(payload.team?.id || '').trim();\nconst channelId = String(payload.channel?.id || payload.container?.channel_id || '').trim();\nconst appId = String(payload.api_app_id || '').trim();\nconst messageAppId = String(payload.message?.app_id || '').trim();\nconst slackUserId = String(payload.user?.id || '').trim();\nconst threadTs = String(payload.container?.thread_ts || payload.message?.thread_ts || '').trim();\nconst messageTs = String(payload.container?.message_ts || payload.message?.ts || '').trim();\nconst actionId = String(action.action_id || '').trim();\nconst actionTs = String(action.action_ts || '').trim();\nconst requestedAction = String(actionValue.action || '').trim();\nconst environment = String(actionValue.environment || '').trim();\nconst ticketId = String(actionValue.zendesk_ticket_id || '').trim();\nconst turnId = String(actionValue.turn_id || '').trim();\nconst draftId = String(actionValue.draft_id || '').trim();\nconst responseUrl = String(payload.response_url || '').trim();\nconst requestTimestamp = Number(headers['x-slack-request-timestamp']);\nconst signature = String(headers['x-slack-signature'] || '').trim();\nconst allowedActions = new Set(['prepare_draft', 'approve_draft']);\nconst timestampIsFresh =\n  Number.isFinite(requestTimestamp) &&\n  Math.abs(Math.floor(Date.now() / 1000) - requestTimestamp) <= 300;\n\nconst parseOk =\n  payload.type === 'block_actions' &&\n  teamId === 'T1CBEDLJY' &&\n  channelId === 'C0BS0N61D1R' &&\n  appId === 'A08QT61M17H' &&\n  messageAppId === 'A08QT61M17H' &&\n  payload.container?.type === 'message' &&\n  action.type === 'button' &&\n  allowedActions.has(actionId) &&\n  requestedAction === actionId &&\n  environment === 'preproduction' &&\n  /^\\d{1,128}$/.test(ticketId) &&\n  slackUserId.length > 0 &&\n  threadTs.length > 0 &&\n  messageTs.length > 0 &&\n  actionTs.length > 0 &&\n  timestampIsFresh &&\n  /^v0=[a-f0-9]{64}$/i.test(signature) &&\n  responseUrl.startsWith('https://hooks.slack.com/actions/T1CBEDLJY/') &&\n  (actionId !== 'prepare_draft' || turnId.length > 0) &&\n  (actionId !== 'approve_draft' || draftId.length > 0);\n\nconst originalBlocks = Array.isArray(payload.message?.blocks)\n  ? payload.message.blocks.filter((block) => block && block.type !== 'actions')\n  : [];\n\nreturn [{\n  json: {\n    parse_ok: parseOk,\n    parse_error: parseOk ? null : 'invalid_interaction',\n    team_id: teamId,\n    channel_id: channelId,\n    thread_ts: threadTs,\n    interaction_id: [teamId, channelId, messageTs, actionId, actionTs, slackUserId].join(':'),\n    slack_user_id: slackUserId,\n    action: actionId,\n    investigation_id: String(actionValue.investigation_id || '').trim(),\n    draft_version: Number(actionValue.draft_version || 0),\n    environment,\n    zendesk_ticket_id: ticketId,\n    turn_id: turnId,\n    draft_id: draftId,\n    guardrail_id: String(actionValue.guardrail_id || '').trim() || null,\n    guardrail_version: String(actionValue.guardrail_version || '').trim() || null,\n    response_url: responseUrl,\n    original_text: String(payload.message?.text || '').trim(),\n    original_blocks: originalBlocks\n  }\n}];"
+          "jsCode": "const input = $input.first()?.json || {};\nconst rawPayload = input.body?.payload;\n\nif (typeof rawPayload !== 'string' || !rawPayload.trim()) {\n  return [{ json: { parse_ok: false, parse_error: 'missing_payload' } }];\n}\n\nlet payload;\ntry {\n  payload = JSON.parse(rawPayload);\n} catch {\n  return [{ json: { parse_ok: false, parse_error: 'invalid_payload_json' } }];\n}\n\nconst action = Array.isArray(payload.actions) ? payload.actions[0] || {} : {};\nlet actionValue = {};\ntry {\n  actionValue = JSON.parse(String(action.value || '{}'));\n} catch {\n  actionValue = {};\n}\n\nconst teamId = String(payload.team?.id || '').trim();\nconst channelId = String(payload.channel?.id || payload.container?.channel_id || '').trim();\nconst threadTs = String(payload.container?.thread_ts || payload.message?.thread_ts || '').trim();\nconst messageTs = String(payload.container?.message_ts || payload.message?.ts || '').trim();\nconst actionId = String(action.action_id || actionValue.action || '').trim();\nconst investigationId = String(actionValue.investigation_id || '').trim();\nconst draftVersion = Number(actionValue.draft_version || 0);\nconst originalBlocks = Array.isArray(payload.message?.blocks)\n  ? payload.message.blocks.filter((block) => block && block.type !== 'actions')\n  : [];\n\nreturn [{\n  json: {\n    parse_ok: true,\n    team_id: teamId,\n    channel_id: channelId,\n    thread_ts: threadTs,\n    interaction_id: [teamId, channelId, messageTs, actionId, investigationId, String(draftVersion)].join(':'),\n    slack_user_id: String(payload.user?.id || '').trim(),\n    action: actionId,\n    investigation_id: investigationId,\n    draft_version: draftVersion,\n    environment: String(actionValue.environment || '').trim(),\n    zendesk_ticket_id: String(actionValue.zendesk_ticket_id || '').trim(),\n    turn_id: String(actionValue.turn_id || '').trim(),\n    draft_id: String(actionValue.draft_id || '').trim(),\n    guardrail_id: String(actionValue.guardrail_id || '').trim() || null,\n    guardrail_version: String(actionValue.guardrail_version || '').trim() || null,\n    response_url: String(payload.response_url || '').trim(),\n    original_text: String(payload.message?.text || '').trim(),\n    original_blocks: originalBlocks\n  }\n}];"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
@@ -362,7 +362,7 @@
           "sendBody": true,
           "contentType": "raw",
           "rawContentType": "application/json",
-          "body": "={{ JSON.stringify({ replace_original: true, text: $('Parse Slack Action').item.json.original_text || 'Action submitted.', blocks: [ ...$('Parse Slack Action').item.json.original_blocks, { type: 'context', elements: [{ type: 'mrkdwn', text: ($('Parse Slack Action').item.json.action === 'approve_draft' ? 'Approval submitted by ' : 'Draft preparation submitted by ') + '<@' + $('Parse Slack Action').item.json.slack_user_id + '>.' }] } ] }) }}",
+          "body": "={{ JSON.stringify({ replace_original: true, text: $('Parse Slack Action').item.json.original_text || 'Action submitted.', blocks: [ ...$('Parse Slack Action').item.json.original_blocks, { type: 'context', elements: [{ type: 'mrkdwn', text: ($('Parse Slack Action').item.json.action === 'final_approve' ? 'Approval submitted by ' : 'Guardrail submitted by ') + '<@' + $('Parse Slack Action').item.json.slack_user_id + '>.' }] } ] }) }}",
           "options": {}
         },
         "id": "64800cda-405b-431b-9f7d-69b4edf1915f",
@@ -376,17 +376,6 @@
       }
     ],
     "connections": {
-      "Webhook": {
-        "main": [
-          [
-            {
-              "node": "Parse Slack Action",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Validate Slack Action": {
         "main": [
           [
@@ -496,13 +485,23 @@
             }
           ]
         ]
+      },
+      "Webhook": {
+        "main": [
+          [
+            {
+              "node": "Parse Slack Action",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
       "binaryMode": "separate",
       "availableInMCP": true,
-      "executionOrder": "v1",
-      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+      "executionOrder": "v1"
     },
     "nodeGroups": [],
     "tags": []

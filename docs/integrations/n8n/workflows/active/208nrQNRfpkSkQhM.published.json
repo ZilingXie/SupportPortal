@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T06:15:17Z",
+  "capturedAt": "2026-09-16T07:16:00Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "208nrQNRfpkSkQhM",
@@ -9,7 +9,7 @@
     "versionId": "63b4ba06-93f4-46ef-89fe-037fcbdfa5e0",
     "draftVersionId": "63b4ba06-93f4-46ef-89fe-037fcbdfa5e0",
     "publishedVersionId": "63b4ba06-93f4-46ef-89fe-037fcbdfa5e0",
-    "updatedAt": "2026-09-16T05:48:04.476Z",
+    "updatedAt": "2026-09-16T07:07:27.369Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
@@ -264,8 +264,7 @@
     "settings": {
       "binaryMode": "separate",
       "availableInMCP": true,
-      "executionOrder": "v1",
-      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+      "executionOrder": "v1"
     },
     "nodeGroups": [],
     "tags": []

@@ -1,6 +1,6 @@
 # 启用 n8n 工作流说明
 
-范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名和第一批修复，本页各节标题保留旧名。15 段 **n8n description** 与当日修复后的远端回读一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。本页各节标题保留旧名。16 段 **n8n description** 与回退后的远端回读一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
 
 说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
 
@@ -120,12 +120,27 @@
 
 **n8n description**
 
-> 接收 Zendesk 新工单，补齐请求人与组织信息后按 Company ID 分流到 ECS Preproduction 或 Production；缺少组织时默认 Production，创建事件固定为 new，并使用共享错误告警。
+> 接收 Zendesk 新工单，补全评论、请求人和组织资料，按公司 ID 名单将 ticket.created 事件分流至 SupportPortal ECS Preproduction 或 Production，并记录执行关联信息。
 
-- **入口与主路径**：Zendesk 新工单触发 → 工单、评论、请求人 → 请求人缺字段且存在组织 ID 时补组织资料 → 标准化事件 → 公司 ID 名单分流；没有组织 ID 时跳过组织请求并直接走 Production。
-- **实际目标**：匹配名单发送至 ECS Preproduction，其余发送至 ECS Production；使用 `https://supportcenter.stellarix.space/automation/{environment}/v1/intake`，事件为 `ticket.created`，状态固定为创建语义的 `new`。
+- **入口与主路径**：Zendesk 新工单触发 → 工单、评论、请求人 → 必要时补组织资料 → 标准化事件 → 公司 ID 名单分流。
+- **实际目标**：匹配名单发送至 ECS Preproduction，其余发送至 ECS Production；使用 `https://supportcenter.stellarix.space/automation/{environment}/v1/intake`，事件为 `ticket.created`。
 - **与项目的关系**：当前 ECS 工单自动化接入；按输入与实际请求 URL 判断环境，不能仅看流程名称。
-- **凭据与排错**：工单、评论和组织读取已统一复用 n8n Zendesk Credential，原内联 Authorization/Cookie 已删除。旧 `/production/account` 节点未接入主链。发布版本为 `8e2098da-cfb8-48c5-b53e-a9cabc1e8e19`；本次未用真实工单触发验证，重放前仍需检查接收方是否已有同一创建事件。
+- **凭据与排错**：回退恢复了原有组织查询、请求人字段和状态映射，但保留 n8n Zendesk Credential 引用，没有恢复旧内联 Authorization/Cookie。旧 `/production/account` 节点未接入主链。发布版本为 `35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed`；本次未用真实工单触发验证，重放前仍需检查接收方是否已有同一创建事件。
+
+<a id="w-qFSNOmYXr97N2UGX"></a>
+
+## [case]Intake|EC2 Staging（旧名 new_case_2_supporportal_staging）
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) · 直接接入 / 历史 Staging
+
+**n8n description**
+
+> 接收 Zendesk 新工单并补全评论、请求人和组织资料，提交到旧 EC2 的 /automation/staging/v1/cases；属于历史接入配置，需核对该入口当前可用性。
+
+- **入口与主路径**：Zendesk 新工单触发 → 评论、工单、请求人和组织补全 → 标准化 → POST `https://support.stellarix.space/automation/staging/v1/cases`。
+- **与项目的关系**：历史 EC2 接入配置，不是当前 ECS Preproduction 域名。
+- **画布与实际门控**：优先级/公司判断旁支没有下游投递节点，不拦截主 POST。
+- **已知风险**：该流程已按回退要求重新启用并移回 `01 - Cases`。仓库 Nginx 配置仍让旧 `/automation/staging` 返回 410，且它与 ECS Route 同时监听新工单，存在重复接入和持续失败风险；本次没有触发业务 execution。
 
 <a id="w-r1HIW8UNuCabiOPn"></a>
 
@@ -165,13 +180,13 @@
 
 **n8n description**
 
-> 接收 Slack Hermes 按钮回调，校验当前动作、Preproduction 环境、必要字段和请求元数据，提交 prepare_draft 或 approve_draft 并更新 Slack 消息；共享错误告警已启用，签名验真仍需外部验证器。
+> 接收 Slack 按钮交互，校验团队、频道及线程绑定，转发至 SupportPortal ECS Preproduction 的 Hermes actions 接口，再更新 Slack 原消息移除操作按钮。
 
-- **入口与主路径**：Slack 交互 POST Webhook → 仅允许 `prepare_draft` / `approve_draft`，检查 Preproduction、团队、频道、App、请求时间和必要字段 → 解析线程绑定 → POST Hermes action → 在有效 `response_url` 下替换 Slack 原消息、移除按钮并追加已提交说明。
+- **入口与主路径**：Slack 交互 POST Webhook → 解析 action → 团队、频道和线程过滤 → 解析绑定 → POST Hermes action → 在有效 `response_url` 下替换 Slack 原消息、移除按钮并追加已提交说明。
 - **实际目标**：固定 ECS Preproduction；接口为 `/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve` 和同前缀的 `/actions`。
-- **与项目的关系**：把人工按钮操作传给 Hermes。目标固定为 Preproduction；生产执行失败已关联 `[ops]Error Alert`。
-- **安全边界**：当前已发布图中的字段、时间戳和签名格式检查不能证明请求来自 Slack。草稿 `8d23501d-d39d-4c00-88b2-565825c1d546` 已启用 Webhook raw body，并在解析前使用现有 n8n 请求凭据调用 SupportPortal `/automation/preproduction/api/integrations/slack/verify-request`；该草稿要等 API 和托管 signing secret 在 Preproduction 就绪后才可发布。禁止把 signing secret 明文写入节点。
-- **画布与重试**：旧 Production Engineer Case 分支未连入主链。已发布版本 `93db771b-7cf1-4220-93f5-7b5419b3f428` 修正了当前动作白名单和 `approve_draft` 回执文案。恢复前分别检查 action 是否已接收、Slack 消息是否已更新；重跑可能再次提交动作和改写消息。
+- **与项目的关系**：把人工按钮操作传给 Hermes。payload 的环境字段不能证明目标会动态切换。
+- **安全边界**：已发布图没有执行 Slack v0 HMAC 验签。免费版 n8n 当前不能向 Code 节点提供环境变量，SupportPortal 外部 verifier 也已回退；格式检查、Team/Channel 过滤和时间戳检查不能证明请求来自 Slack。禁止把 signing secret 明文写入节点、execution 或 data table；解决验签承载方式前不能把该入口视为安全上线。
+- **画布与重试**：旧 Production Engineer Case 分支未连入主链。当前回退版本为 `0192f828-0ee5-414e-87ef-ca67c0225ddb`，没有独立 verifier 草稿。恢复前分别检查 action 是否已接收、Slack 消息是否已更新；重跑可能再次提交动作和改写消息。
 
 <a id="w-kyiA0QuiVx6JJ03i"></a>
 
@@ -186,7 +201,7 @@
 - **入口与主路径**：Slack 事件 → AI 首轮过滤及支持请求判断 → PostgreSQL `slack_team` 资料 → 必要时 Slack `sendAndWait` 补资料 → 生成标题 → 创建 Zendesk 工单和评论/关联 → Slack 回传链接。
 - **另一条已连接路径**：首轮过滤的 false 分支中，符合配置的内部频道消息调用 `[slack]Forward Thread|Prod`，进入 ECS Production。
 - **与项目的关系**：Zendesk 上游来源，并提供内部 Slack 线程向 SupportPortal 的消息通道；依赖 Slack、AI、PostgreSQL、Zendesk、消息转交子流程及 `[ops]Error Alert`。
-- **版本边界**：本页按已发布版本描述；该流程的既有草稿仅修改 `Call 'NonAutomate_to_slack'`，尚未发布。Slack Action 也有一份独立的外部验签草稿，不能把两者的草稿状态混为一谈。
+- **版本边界**：本页按已发布版本描述；该流程的既有草稿仅修改 `Call 'NonAutomate_to_slack'`，尚未发布。当前没有其他启用流程的 divergent draft。
 - **预期行为**：创建 Zendesk 记录型工单后立即设为 `solved` 是已确认的产品行为，后续优化不得把它当作故障移除。
 - **排错与重试**：优先沿现有人工等待继续；建单后故障需先找已有 Zendesk 工单，避免重复建单。两个 PostgreSQL 节点仍存在字符串插值风险；因当前草稿另有一项未发布修改，本次没有把 SQL 修复混入并发布该草稿。
 
@@ -213,11 +228,11 @@
 
 **n8n description**
 
-> 私有运维测试流程：收到内部 Chat 输入后触发可控错误，用于验证共享错误告警；不访问真实 Zendesk 工单。
+> 通过聊天入口接收工单号，记录执行信息并查询 Zendesk 工单，用于联调错误处理链路；执行失败时由 [ops]Error Alert 接收，属于运维测试流程。
 
-- **入口与主路径**：非公开 Chat Trigger → `Generate Controlled Failure` 抛出固定错误 → `[ops]Error Alert`。
+- **入口与主路径**：公开 Chat Trigger → 使用 `chatInput` 查询 Zendesk 工单 → 记录执行数据。
 - **与项目的关系**：错误链路联调工具，失败交给 `[ops]Error Alert`。
-- **行为边界**：已删除带 Zendesk Credential 的真实工单查询节点。发布版本为 `ecafca03-3502-4dab-929d-89ce95ec4aa9`；本次没有实际触发测试，因此错误告警的端到端投递仍需一次受控验证。
+- **行为边界**：查询节点复用现有 n8n Zendesk Credential，没有恢复旧内联 Authorization/Cookie。输入有效工单号时可能成功，并非无条件制造错误。发布版本为 `39f40c69-53a6-43ff-9e92-85d017bcb8ba`；本次没有实际触发测试。
 
 <a id="w-MM3Z3T469Eru3Q1I"></a>
 
@@ -242,9 +257,9 @@
 
 | 顺序 | 工作流 | 已核实配置 | 下一步 |
 | --- | --- | --- | --- |
-| 1 | [case]Intake\|EC2 Staging | 已处理：过去七天 82/82 次执行因旧入口 410 失败，且与 ECS Route 重复处理同一工单 | 已停用并移至 `99 - Inactive`；保留历史 execution，仅供追溯 |
-| 2 | [[case]Intake\|ECS Route](#w-1am2EuuDMV3RUwsJ) | 已处理：缺少组织 ID 时的 404、创建事件状态变化导致的 409，以及节点内联 Zendesk 认证头 | 已发布 `8e2098da` 并回读；仍需轮换曾经内联的旧凭据，并用后续自然事件验证 |
-| 3 | [[slack]Handle Action\|Preprod](#w-FKv8vtZBQk6tH4Gt) | 部分处理：动作/环境/字段校验和文案已修；SupportPortal 外部验签接口与 n8n 草稿已实现，当前已发布图尚未调用验签接口 | 配置 Preproduction SSM signing secret、部署 API、验证接口后发布草稿 `8d23501d-d39d-4c00-88b2-565825c1d546`；不要在 n8n 节点中硬编码 secret |
+| 1 | [case]Intake\|EC2 Staging | 第一批停用已回退；此前七天 82/82 次执行因旧入口 410 失败，且与 ECS Route 重复处理同一工单 | 当前已启用并移回 `01 - Cases`；重新评估重复接入和 410 风险，任何再次停用都需单独授权 |
+| 2 | [[case]Intake\|ECS Route](#w-1am2EuuDMV3RUwsJ) | 第一批缺组织 ID、创建状态和请求人 fallback 修复已回退；安全 credential 引用保留，旧内联认证头未恢复 | 用后续自然事件观察缺组织和非 new 状态输入；不要重放历史建单 execution |
+| 3 | [[slack]Handle Action\|Preprod](#w-FKv8vtZBQk6tH4Gt) | 第一批动作校验、回执文案和 SupportPortal 外部验签草稿均已回退；当前 active 图没有 HMAC 验签 | 在不向 workflow 写入 secret 的前提下选择可用验签承载方式；完成前不要把该自定义 Interaction 入口视为安全上线 |
 | 4 | [[review]Case\|Subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确各评审类型允许的状态集合，再调整条件并验证边界 |
 | 5 | [[slack]Route Support](#w-kyiA0QuiVx6JJ03i) | 两个 SQL 节点仍有字符串插值风险；当前草稿另有一项未发布修改 | 先确认现有草稿的发布归属，再将 SQL 参数化并发布，避免顺带发布用户草稿 |
 
