@@ -42,7 +42,7 @@ class EnablementRelayPostgresTests(unittest.TestCase):
             with connection.cursor() as cursor:
                 cursor.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
 
-    def _seed(self, repository: PostgresTicketRepository) -> str:
+    def _seed(self, repository: PostgresTicketRepository, dsn: str) -> str:
         repository.initialize()
         repository.save_ticket(
             {
@@ -99,7 +99,16 @@ class EnablementRelayPostgresTests(unittest.TestCase):
             relay_task_expires_at="2026-09-30T00:00:00+00:00",
             now="2026-09-16T00:00:00+00:00",
         )
-        # Promote to dispatched (release covered separately below).
+        # Promote to dispatched through the real transition pair; the gated ->
+        # dispatch_pending hop needs no readback here, so drive it with a
+        # direct status update first (the release path has its own test).
+        with psycopg.connect(dsn, autocommit=True) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    f'UPDATE "{repository._schema}".support_enablement_relay_requests '
+                    "SET status = 'dispatch_pending' WHERE request_id = %s",
+                    (request_id,),
+                )
         repository.claim_enablement_relay_dispatch(
             request_id=request_id,
             lease_token="lease-1",
@@ -118,7 +127,7 @@ class EnablementRelayPostgresTests(unittest.TestCase):
         schema, repository = self._temporary_repository()
         dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
         try:
-            request_id = self._seed(repository)
+            request_id = self._seed(repository, dsn)
             first = repository.record_enablement_relay_result(
                 request_id=request_id,
                 outcome="enabled",
@@ -161,16 +170,24 @@ class EnablementRelayPostgresTests(unittest.TestCase):
                     "status": "open",
                     "created_at": "2026-09-16T00:00:00+00:00",
                     "updated_at": "2026-09-16T00:00:00+00:00",
-                    "messages": [
-                        {
-                            "role": "assistant",
-                            "content": "confirmed",
-                            "id": "assistant-msg-2",
-                            "meta": {"account_reply_job_id": "job-2"},
-                        }
-                    ],
                 },
                 new_messages=[],
+            )
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-RELAY-2",
+                    "status": "open",
+                    "created_at": "2026-09-16T00:00:00+00:00",
+                    "updated_at": "2026-09-16T00:00:30+00:00",
+                },
+                new_messages=[
+                    {
+                        "role": "assistant",
+                        "content": "confirmed",
+                        "created_at": "2026-09-16T00:00:31+00:00",
+                        "meta": {"account_reply_job_id": "job-2"},
+                    }
+                ],
             )
             repository.save_account_case(
                 {
@@ -208,9 +225,20 @@ class EnablementRelayPostgresTests(unittest.TestCase):
                 relay_task_expires_at="2026-09-30T00:00:00+00:00",
                 now="2026-09-16T00:00:00+00:00",
             )
+            with psycopg.connect(dsn) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(
+                        f'SELECT id FROM "{schema}".support_ticket_messages '
+                        "WHERE ticket_id=%s AND meta->>'account_reply_job_id'=%s "
+                        "ORDER BY id DESC LIMIT 1",
+                        ("T-RELAY-2", "job-2"),
+                    )
+                    row = cursor.fetchone()
+            self.assertIsNotNone(row)
+            confirmation_db_id = str(row[0])
             repository.create_account_zendesk_comment_delivery(
                 account_case_id="AC-RELAY-PG2",
-                message_id="assistant-msg-2",
+                message_id=confirmation_db_id,
                 zendesk_ticket_id="T-RELAY-2",
                 idempotency_key="zd:pg-2",
                 created_at="2026-09-16T00:00:10Z",
@@ -225,7 +253,7 @@ class EnablementRelayPostgresTests(unittest.TestCase):
             repository.record_account_zendesk_internal_comment_result(
                 account_case_id="AC-RELAY-PG2",
                 ticket_id="T-RELAY-2",
-                message_id="assistant-msg-2",
+                message_id=confirmation_db_id,
                 idempotency_key="zd:pg-2",
                 result_payload={"status": "added"},
                 recorded_at="2026-09-16T00:00:12Z",

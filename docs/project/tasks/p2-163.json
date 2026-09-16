@@ -25,7 +25,7 @@
       "type": "test",
       "label": "Auto relay + failure targeted suites (20 suites)",
       "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_enablement_automation.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_comment_sync.py backend/tests/test_enablement_rag_resume.py backend/tests/test_account_rerun_fail_fast_resume.py backend/tests/test_account_human_review_escalation.py backend/tests/test_account_failure_alerts.py backend/tests/test_automation_persona.py backend/tests/test_automation_ecs_worker.py backend/tests/test_worker.py backend/tests/test_automation_provider_probe.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_images.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_single_host_compose.py backend/tests/test_automation_ecs_terraform.py",
-      "details": "545 passed / 152 subtests / 2 skipped（PG 门控）。新增：auto 门禁+请求创建+版本取代（intake）、release+dispatch+幂等重放+拒绝入失败链+模式切换缓解、inbox 成功单次完成 job+重复证据化+request_id 绑定校验+config_mismatch 失败零 manual 邮件+到期 fail-closed（auto_relay 9 用例）、失败链真实四件套+同请求不重警+跨请求独立 incident+零 manual 邮件（auto_failure 4 用例）。既有失败 2 个均为 main 上同组合可复现的顺序依赖旧账（rag_resume 告警分类、worker legacy rag executor），非本任务引入；根 main 同组合 3 失败（含已删除的旧 Archer 类）。"
+      "details": "545 passed / 152 subtests / 2 skipped（PG 门控）。新增：auto 门禁+请求创建+版本取代（intake）、release+dispatch+幂等重放+拒绝入失败链+模式切换缓解、inbox 成功单次完成 job+重复证据化+request_id 绑定校验+config_mismatch 失败零 manual 邮件+到期 fail-closed（auto_relay 9 用例）、失败链真实四件套+同请求不重警+跨请求独立 incident+零 manual 邮件（auto_failure 4 用例）。既有失败 2 个均为 main 上同组合可复现的顺序依赖旧账（rag_resume 告警分类、worker legacy rag executor），非本任务引入；根 main 同组合 3 失败（含已删除的旧 Archer 类）。 PG 真库隔离 DSN：2 passed（result/失败单胜者 + 4 线程并发释放恰一次）。"
     },
     {
       "type": "document",
@@ -74,6 +74,11 @@
       "at": "2026-09-16",
       "event": "implementation_complete",
       "summary": "运行时：relay 请求/结果双表（DDL 双源+版本 bump v10）+ 仓储 mixin（InMemory/PG 双实现：release-after-readback、dispatch claim/lease（过期重领）、result 单胜者、finish/applied）；agentrelay_client（Bearer+双头、幂等键、retryable/outcome_unknown 分类、headless listener 注册/readiness/恢复拉取/ack/complete）；auto intake 回复先行门禁+business-day 文案+appid 取代升版本；worker 三循环（派发/收取/到期）+成功=确定性完成 job+失败统一链（incident 按 request_id 区分）；ECS 直连全删（executor/DirectArcherClient/vendored skill/双向凭据门禁/probe 探针/Dockerfile worker 剪除）；部署合同注入 relay 四 SSM+前置存在性检查。本地 skill（四步+两次审批+不降配+独立回读+恢复不重执行）。"
+    },
+    {
+      "at": "2026-09-16",
+      "event": "pg_contracts_passed",
+      "summary": "PostgreSQL 隔离 DSN 契约通过：结果与重复投递单胜者（首投 winner、重复证据化、request 停在 result_received）；4 线程 Barrier 并发释放恰一次（FOR UPDATE SKIP LOCKED + 谓词）。修复 PG claim 的 lease_expires_at 绑定（Python 侧计算，避免 interval 类型错配）。"
     }
   ]
 }

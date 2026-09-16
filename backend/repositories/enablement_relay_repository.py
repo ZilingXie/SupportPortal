@@ -845,10 +845,15 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                 cur.execute(
                     sql.SQL(
                         "UPDATE {} SET status = 'dispatching', dispatch_status = 'creating', "
-                        "lease_token = %s, lease_expires_at = %s + interval '%s seconds', "
+                        "lease_token = %s, lease_expires_at = %s, "
                         "updated_at = %s WHERE request_id = %s RETURNING *"
                     ).format(self._table("support_enablement_relay_requests")),
-                    (lease_token, now, int(lease_seconds), now, normalized),
+                    (
+                        lease_token,
+                        _lease_expiry(now, int(lease_seconds)),
+                        now,
+                        normalized,
+                    ),
                 )
                 updated = cur.fetchone()
                 return _normalize_relay_request(_row_to_request(updated)) if updated else None
