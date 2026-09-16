@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -79,9 +80,59 @@ def _comment_event() -> AutomationIntakeEvent:
     )
 
 
-def test_comment_processing_passes_route_pinned_persona_verbatim() -> None:
-    import asyncio
+def _status_event() -> AutomationIntakeEvent:
+    return AutomationIntakeEvent.model_validate(
+        {
+            "schema_version": INTAKE_CONTRACT_VERSION,
+            "event_id": "zendesk:ticket:123:updated:1788516240000",
+            "event_type": "ticket.updated",
+            "occurred_at": "2026-09-04T10:05:00Z",
+            "ticket": {
+                "id": "123",
+                "status": "solved",
+                "subject": "Enable Media Relay",
+                "description": "Please enable Media Relay.",
+                "requester": {"email": "cx@example.com", "name": "Customer"},
+                "updated_at": "2026-09-04T10:04:00Z",
+            },
+        }
+    )
 
+
+def test_ticket_updated_uses_zendesk_status_and_real_updated_at() -> None:
+    repository = Mock()
+    processor = AccountBusinessProcessor(repository, environment="production")
+    before_external = Mock()
+    payload = ProcessingJobPayload(
+        execution_id="exec-status-1",
+        event=_status_event(),
+        route={
+            "route_family": "system",
+            "execution_action": "ticket_status_sync",
+            "reason": "ticket_updated",
+        },
+        persona=None,
+        prompt_snapshots={},
+    )
+
+    with patch(
+        "backend.automation_ecs_worker.sync_account_case_ticket_status",
+        new_callable=AsyncMock,
+        return_value={"status": "updated"},
+    ) as sync_status:
+        result = asyncio.run(processor.process(payload, before_external=before_external))
+
+    before_external.assert_called_once_with()
+    sync_status.assert_awaited_once_with(
+        repository=repository,
+        normalized_ticket_id="123",
+        zendesk_status="solved",
+        source_updated_at="2026-09-04T10:04:00+00:00",
+    )
+    assert result == {"status": "updated"}
+
+
+def test_comment_processing_passes_route_pinned_persona_verbatim() -> None:
     repository = Mock()
     repository.get_account_case_by_ticket_id.return_value = {
         "account_case_id": "AC-1",

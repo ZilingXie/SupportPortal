@@ -79,18 +79,33 @@ def test_route_worker_defers_ticket_created_persona_and_queues_processing() -> N
     assert store.list_heartbeats()[0]["role"] == "route"
 
 
-def test_route_worker_preserves_persona_resolution_for_ticket_updated() -> None:
+def test_ticket_updated_uses_system_route_without_engine_llm_or_persona() -> None:
     event = _event("zendesk:ticket:123:updated").model_copy(
         update={"event_type": IntakeEventType.TICKET_UPDATED}
     )
-    worker, store, receipt, persona = _worker(event=event)
+    decider = Mock(side_effect=AssertionError("route LLM must not run"))
+    worker, store, receipt, persona = _worker(decider, event=event)
+    worker.resolve_case_engine = Mock(side_effect=AssertionError("engine resolution must not run"))
 
     assert worker.process_once() is True
 
-    persona.assert_called_once_with("123")
+    decider.assert_not_called()
+    persona.assert_not_called()
+    worker.resolve_case_engine.assert_not_called()
     execution = store.get_execution(receipt.execution_id)
     assert execution is not None
-    assert execution["persona"]["version"] == 3
+    assert execution["status"] == "processing_pending"
+    assert execution["route"] == {
+        "route_family": "system",
+        "execution_action": "ticket_status_sync",
+        "reason": "ticket_updated",
+    }
+    assert execution["persona"] is None
+    processing = store.claim_job(JobKind.PROCESSING, worker_id="worker-1", lease_seconds=30)
+    assert processing is not None
+    assert processing.payload["route"] == execution["route"]
+    assert processing.payload["persona"] is None
+    assert processing.payload["prompt_snapshots"] == {}
 
 
 def test_route_failure_is_terminal_human_review_without_processing_job() -> None:

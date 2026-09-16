@@ -136,6 +136,20 @@ class RouteWorker:
         try:
             payload = RouteJobPayload.model_validate(job.payload)
             event = payload.event
+            if event.event_type == IntakeEventType.TICKET_UPDATED:
+                lease.stop()
+                self.store.complete_route(
+                    job,
+                    route={
+                        "route_family": "system",
+                        "execution_action": "ticket_status_sync",
+                        "reason": "ticket_updated",
+                    },
+                    persona=None,
+                    prompt_snapshots={},
+                    provenance=self.settings.provenance(),
+                )
+                return True
             if self.resolve_case_engine(event.ticket.id) == "hermes":
                 # The case is bound to a Hermes native session: hand off before
                 # the legacy route LLM runs and never enter the old harness.
