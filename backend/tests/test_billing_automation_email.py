@@ -496,19 +496,43 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
 
     def test_poll_resume_link_expiry_resets_cursor_without_failing_poll(self) -> None:
+        # The fresh window must still be truncated so the stale cursor is
+        # retained (not cleared by the fresh-exhausted branch) and actually
+        # requested; the 400 then resets it and the next poll rebuilds the
+        # cursor from the fresh window's nextLink.
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
                 json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
                 encoding="utf-8",
             )
+            stale_requests: list[str] = []
+            resume_requests: list[str] = []
 
             def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
                 url = request.full_url
                 if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
-                    if "skiptoken" in url:
+                    if "skiptoken=stale" in url:
+                        stale_requests.append(url)
                         raise urllib.error.HTTPError(url, 400, "skiptoken expired", hdrs=None, fp=None)
-                    return _FakeHttpResponse({"value": []}, status=200)
+                    if "skiptoken=fresh-next" in url:
+                        resume_requests.append(url)
+                        return _FakeHttpResponse({"value": []}, status=200)
+                    return _FakeHttpResponse(
+                        {
+                            "value": [
+                                {
+                                    "id": f"msg-fresh-{index}",
+                                    "subject": "Re: unrelated thread",
+                                    "from": {"emailAddress": {"address": "noise@example.com"}},
+                                    "receivedDateTime": "2026-07-02T06:00:00Z",
+                                }
+                                for index in range(4)
+                            ],
+                            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=fresh-next",
+                        },
+                        status=200,
+                    )
                 raise AssertionError(f"unexpected URL {url}")
 
             env = dict(GRAPH_ENV)
@@ -520,11 +544,25 @@ class BillingAutomationEmailTests(unittest.TestCase):
                         "exhausted": False,
                     }
                 )
-                replies = poll_automation_request_replies(handler=lambda _reply: None)
+                replies = poll_automation_request_replies(
+                    handler=lambda _reply: None, max_messages=4, max_pages=1
+                )
+                # The expired link was requested exactly once, the poll survived
+                # with its fresh window intact, and the cursor was reset.
+                self.assertEqual(replies, [])
+                self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+                self.assertEqual(billing_automation._INBOX_SCAN_CURSOR["next_link"], "")
+                # Next poll: the fresh window is still truncated, so the cursor
+                # is rebuilt from the fresh nextLink (that link gets requested)
+                # and then drains to exhausted — recovery confirmed.
+                poll_automation_request_replies(
+                    handler=lambda _reply: None, max_messages=4, max_pages=1
+                )
+                self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+                self.assertEqual(billing_automation._INBOX_SCAN_CURSOR["next_link"], "")
 
-        self.assertEqual(replies, [])
-        self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
-        self.assertEqual(billing_automation._INBOX_SCAN_CURSOR["next_link"], "")
+        self.assertEqual(len(stale_requests), 1)
+        self.assertEqual(len(resume_requests), 1)
 
     def test_poll_billing_request_replies_ignores_unmatched_subjects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T02:18:18Z",
-  "source_base_commit": "d9113861be75ba158d391c5a86fa8e06be251651",
-  "registry_digest": "4fa6c35c632057450dbe7dda2d2256c74ab7000a5d54d499f91b35c58c4cbd16",
+  "generated_at": "2026-09-16T02:41:34Z",
+  "source_base_commit": "cce4cdf3f703b8fa99e50ec2ab18ab024a1be7bf",
+  "registry_digest": "1cad9de0a3d41f70b2a5dbc4f52d4eb6c9e9205107bf9c7adac163b73e0a3bed",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3411,6 +3411,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "复审 r3 修复回归",
           "command": "pytest 定向套件 + node --check app.js",
           "result": "90 passed；含新增：同时间戳 101 封跨轮 nextLink 推进、resume link 过期 400 重置游标不炸轮询（2026-09-16）"
+        },
+        {
+          "type": "test",
+          "label": "复审 r4 修复回归",
+          "command": "pytest 定向套件 + node 精确比较冒烟（Ab./BA. 碰撞场景）",
+          "result": "碰撞场景输出 new-id（不再吞请求）；过期链接测试：stale 链接被请求 1 次并抛 400、游标重置、下一轮从 fresh nextLink 重建并取干（2026-09-16）"
         },
         {
           "type": "test",
@@ -12833,7 +12839,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "邮件发送安全加固：修复外部 review 确认的 8 项发信/回信缺口",
       "summary": "外部安全 review（基于 main 4fff5ef9）确认 8 项问题全部属实并修复，分三批 PR：(1) 发信权限边界——Billing/Quota 回信消费补发件人身份门（泛化既有 enablement gate，非授权发件人终态拒绝，fail-closed）；support_router 内联发信增加 send_internal_email 显式开关（生产默认不变），离线评测与测试全链禁发；自动化测试场景的通知识别修正恒真 AND 逻辑并加 From/Reply-To Zendesk 域白名单。(2) 重复发送与状态机——SMTP/Graph 发送结果三分类（rejected/unknown/成功），QUIT 异常不再误报失败；测试工单接口先落台账后发送并支持 request_id 幂等；Account 失败告警在结果未知（超时/连接中断）时进 outcome_unknown 终态不重发。(3) 可靠性——回信轮询消费 @odata.nextLink 分页（默认 4 页，不加 isRead 过滤保持共享邮箱契约）；测试场景 one_active 部分唯一索引原子约束；Graph token 缓存 tempfile+os.replace 原子写并统一 billing 侧重复实现。不部署，ECS 发布另行授权。",
       "status": "active",
-      "next_action": "复审 r3 修复已合入（前端生命周期+指纹、nextLink 游标、白名单勘误）。剩部署侧（需授权）：①migration 双库执行（未执行时测试工单创建接口缺列失败）；②ECS Preproduction 发布；本地栈 remote 库同样待迁移。",
+      "next_action": "复审 r4 修复已合入（精确内容比较替代哈希指纹；过期链接测试真正触发 400 并验证下一轮恢复）。剩部署侧（需授权）：migration 双库执行 + ECS Preproduction 发布。",
       "owner": "codex",
       "acceptance_criteria": [
         "非授权发件人的 Billing/Quota/Enablement 回信均被身份门终态拒绝（事件留痕、不重放），授权发件人流程不变。",
@@ -12881,6 +12887,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "复审 r3 修复回归",
           "command": "pytest 定向套件 + node --check app.js",
           "result": "90 passed；含新增：同时间戳 101 封跨轮 nextLink 推进、resume link 过期 400 重置游标不炸轮询（2026-09-16）"
+        },
+        {
+          "type": "test",
+          "label": "复审 r4 修复回归",
+          "command": "pytest 定向套件 + node 精确比较冒烟（Ab./BA. 碰撞场景）",
+          "result": "碰撞场景输出 new-id（不再吞请求）；过期链接测试：stale 链接被请求 1 次并抛 400、游标重置、下一轮从 fresh nextLink 重建并取干（2026-09-16）"
         }
       ],
       "source_refs": [
@@ -12919,6 +12931,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-16",
           "event": "rework_r3",
           "summary": "二轮复审驳回 3 项+勘误：①前端 request_id 生命周期改为未决保留（500/duplicate+pending/outcome_unknown 均保留 ID，仅 sent/rejected/422/内容变更终止），指纹绑定 category+subject+body 防止改表单后旧 ID 吞新请求；②游标改存 Graph @odata.nextLink（服务端分页位置，同时间戳可推进），失效 400 丢弃游标下轮重建，去掉时间戳 le 边界；③勘误：suspension 内邮前缀=[Account Suspension Review]（billing_automation.py:1324）且不在 poller 监听集合，白名单修正为 {空, billing}；空值依据=共享库实证（152 个空 handler case 全为 human_review/rag 路由且无内邮 payload，身份门 recipients_unknown 兜底）。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "rework_r4",
+          "summary": "三轮复审驳回 2 项：①前端指纹改精确字段比较（pendingRequest 直接存 category/subject/body 全等比较，弃用 djb2——review 实证 Please review Ab. 与 BA. 碰撞导致修改后被旧请求吞）；②过期链接测试重写——fresh 满窗保留 stale 游标使其真正被请求并收到 400，断言重置+下一轮恢复推进（原测试 fresh 空列表走追平分支，400 路径未被触发）。"
         }
       ]
     },

@@ -41,8 +41,8 @@ const state = {
   selectedCategory: "",
   form: { subject: "", body: "" },
   sending: false,
-  // One unresolved send attempt: { id, fingerprint }. The fingerprint binds
-  // the request id to the exact category/subject/body it was issued for, so
+  // One unresolved send attempt: { id, category, subject, body }. The exact
+  // original content is stored and compared field-by-field (never hashed), so
   // editing the form starts a genuinely new request instead of silently
   // retrying the old one (which the backend would treat as a duplicate).
   pendingRequest: null,
@@ -351,15 +351,6 @@ function selectCategory(categoryId) {
   if (formCard) formCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
-function requestFingerprint(category, subject, body) {
-  const raw = `${category}\u0000${subject}\u0000${body}`;
-  let hash = 5381;
-  for (let i = 0; i < raw.length; i += 1) {
-    hash = ((hash << 5) + hash + raw.charCodeAt(i)) >>> 0;
-  }
-  return `${raw.length.toString(36)}-${hash.toString(36)}`;
-}
-
 async function createTicket() {
   if (state.sending || !state.selectedCategory) return;
   const recipient = String(state.mail?.recipient || "");
@@ -372,11 +363,17 @@ async function createTicket() {
   // send, confirmed rejection, edited form, changed category) starts a new
   // request. Unknown outcomes and network errors keep the id so a retry is
   // idempotent and can never send a duplicate email.
-  const fingerprint = requestFingerprint(state.selectedCategory, state.form.subject, state.form.body);
-  if (!state.pendingRequest || state.pendingRequest.fingerprint !== fingerprint) {
+  const sameRequest =
+    state.pendingRequest !== null &&
+    state.pendingRequest.category === state.selectedCategory &&
+    state.pendingRequest.subject === state.form.subject &&
+    state.pendingRequest.body === state.form.body;
+  if (!sameRequest) {
     state.pendingRequest = {
       id: `atx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
-      fingerprint,
+      category: state.selectedCategory,
+      subject: state.form.subject,
+      body: state.form.body,
     };
   }
   state.sending = true;
