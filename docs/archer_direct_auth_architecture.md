@@ -2,14 +2,13 @@
 
 - 首次实现：PR #1023（2026-09-02，任务 p2-134）；redirect host 白名单加固：2026-09-02
 - 生产状态：r20260902-46370fa 起上线（ECS worker:17），Mac 与 ECS Fargate 双侧端到端探针通过
-- **休眠可切换（2026-09-11 起，p2-152）**：SSO 根凭证为约 7 天绝对过期 JWT，2026-09-09 运行中失效
-  导致工单 13386 失败后，Enablement 默认回退人工开通流程（p2-149）；p2-152 把 Archer 编排恢复为
-  `ENABLEMENT_WORKFLOW_MODE=archer` 可切换模式（默认 `manual`，两个 ECS 环境均可启用）——编排、
-  回复合同、失败告警与部署门禁全部保留在树上。切换步骤：① 创建 SSM SecureString
-  `/supportportal/{env}/archer-oauth-cookie`（根凭证，注意周级绝对过期风险，见 §6）；
-  ② 以 `--enablement-workflow-mode archer` 发布（发布前门禁校验 SSM 参数存在；
-  manual 渲染含该凭据一律 fail-closed；archer 渲染必须注入且 provider probe 强制
-  `archer_read_get_ok=true`）；③ 受控工单验收。历史事件 `enablement_archer_result` 仍可读取。
+- **直连实现已删除（2026-09-16 起，p2-163）**：auto 开通改为 ECS 派发 AgentRelay Task、
+  Mac 经 `pilot` CLI 执行（归属/预检/执行/独立回读四步 + 两次审批），ECS 树上的
+  `archer_direct_client.py`/`enablement_archer_executor.py`/vendored skill 与
+  `ARCHER_OAUTH_COOKIE` 注入门禁全部移除；本文保留为该认证模式的历史参考（Mac 侧 pilot 仍走
+  同一 SSO 链，根凭证仍为约 7 天绝对过期 JWT，见 §6）。切换/运行 runbook 见
+  `docs/deploy_automation_ecs_release.md`「Enablement 工作流模式」与
+  `.codex/skills/supportportal-media-relay-enablement/SKILL.md`。
 - 代码锚点：`backend/services/archer_direct_client.py`（凭证与传输）、`backend/services/enablement_archer_executor.py`（结果归一与脱敏）、`backend/services/automation_account_intake.py` `_run_enablement_archer_workflow`（编排，经 `_run_enablement_workflow` 按模式分发）
 - 部署/轮换 runbook：见 `docs/deploy_automation_ecs_release.md`「Enablement 工作流模式」章节
 

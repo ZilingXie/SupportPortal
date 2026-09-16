@@ -14,7 +14,6 @@ from __future__ import annotations
 import unittest
 from unittest.mock import Mock, patch
 
-import backend.services.automation_account_intake as intake_module
 import backend.tests.test_enablement_auto_relay as relay_helpers
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.account_failure_alerts import notify_account_failure
@@ -55,21 +54,29 @@ class RelayFailureChainTests(unittest.TestCase):
         )
 
     def _patches(self):
+        # The worker module (loaded under a fake backend.main) may bind second
+        # execs of the intake/escalation modules, so patch the failure chain
+        # through the actual function globals instead of separately imported
+        # module instances.
+        chain_globals = WORKER._record_execution_failure.__globals__
+        escalate_globals = chain_globals["escalate_account_case_to_human_review"].__globals__
         return [
             patch.dict("os.environ", RELAY_ENV, clear=False),
             patch.object(WORKER, "ticket_repository", self.repository),
-            patch.object(
-                intake_module,
-                "notify_account_failure",
-                lambda **kw: notify_account_failure(**kw, mail_sender=self.mail),
+            patch.dict(
+                chain_globals,
+                {
+                    "notify_account_failure": lambda **kw: notify_account_failure(
+                        **kw, mail_sender=self.mail
+                    )
+                },
             ),
-            patch(
-                "backend.services.account_human_review_escalation._deliver_internal_note",
-                self.note,
-            ),
-            patch(
-                "backend.services.account_human_review_escalation.route_ticket_back_to_queue",
-                self.queue,
+            patch.dict(
+                escalate_globals,
+                {
+                    "_deliver_internal_note": self.note,
+                    "route_ticket_back_to_queue": self.queue,
+                },
             ),
             patch(
                 "backend.services.account_automation_delivery.prepare_account_internal_email",
