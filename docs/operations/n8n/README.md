@@ -12,12 +12,12 @@
 
 | 文件夹 | 数量 | 内容 |
 | --- | ---: | --- |
-| `01 - Cases` | 4 | Zendesk 工单/评论/状态对 SupportPortal 各环境的接入与同步 |
+| `01 - Cases` | 3 | Zendesk 工单/评论/状态对 SupportPortal 各环境的接入与同步 |
 | `02 - Slack` | 4 | Slack 侧入口：建单路由、线程转交、按钮操作、交接通知 |
 | `03 - KB` | 2 | CSD 与已解决工单的知识入库 |
 | `04 - Review` | 4 | 工单质检（随机/长龄/满意度）及共享评审子流程 |
 | `05 - Ops` | 2 | 错误上报与错误链路测试 |
-| `99 - Inactive` | 12 | 未启用的历史/原型流程，集中收纳 |
+| `99 - Inactive` | 13 | 未启用的历史/原型流程，集中收纳 |
 
 ### 旧名对照
 
@@ -56,16 +56,18 @@
 
 2026-09-16 完成配置核对：28 个工作流，**16 个启用、12 个未启用，28 个均已开启 MCP**。同日第一批修复随后按用户要求全部回退；旧 EC2 Staging 恢复启用并移回 `01 - Cases`，ECS Route、Error Test、Slack Action 和共享 errorWorkflow 均恢复至修复前行为。文件夹计数为 4/4/2/4/2/12。以下是该日回退后的快照，后续操作前须刷新。
 
+2026-09-16 后续根据用户确认，旧 `[case]Intake|EC2 Staging` 已取消发布，移入 `99 - Inactive`；当前为 **15 个启用、13 个未启用**，文件夹计数为 3/4/2/4/2/13。上述回退记录仅描述停用前的历史状态。
+
 | 标记 | 含义 | 不能据此推断 |
 | --- | --- | --- |
 | 启用 / active | n8n 中的启用状态 | 最近执行成功、所有画布节点都可达 |
 | MCP 已开启 | 流程可通过 MCP 读取/使用；本次 28 个详情均读取成功 | 已经执行过，或支持任意一步的暂停、恢复与重跑 |
-| description 已同步 | 16 个启用流程的本地描述与 n8n 回读一致 | 最近执行成功或所有已知问题均已修复 |
+| description 已同步 | 当前 15 个启用流程的本地描述与 n8n 回读一致 | 最近执行成功或所有已知问题均已修复 |
 | 未启用 | 保留的草稿/历史配置 | 手动执行没有外部写入 |
 
 统一改名时只修改 workflow 名称、文件夹归属和 5 处 description 引用。第一批修复及本次回退均未触发或重放业务 execution；回退保留了 ECS Route 对现有 n8n credential 的安全引用，没有恢复旧内联 Authorization/Cookie。
 
-## 启用工作流（16）
+## 启用工作流（15）
 
 用途以**已发布节点图及可达路径**为准。详细入口、依赖、实际环境与恢复注意事项见 [启用流程说明](./active-workflows.md)。
 
@@ -79,7 +81,6 @@
 | [[review]Aged](https://n8n.stellarix.space/workflow/G7snyHhdBCnIpbJV) | 配套 / 长龄工单质检 | 工作日 06:00 抽取一条创建超过 30 天的未解决工单评审。 | [运维说明](./active-workflows.md#w-G7snyHhdBCnIpbJV) |
 | [[review]Rating](https://n8n.stellarix.space/workflow/WT43uQ1i8SPsYRJi) | 配套 / 满意度质检 | 跳过 GOOD 满意度事件，其余进入 Negative 人工评审。 | [运维说明](./active-workflows.md#w-WT43uQ1i8SPsYRJi) |
 | [[case]Intake\|ECS Route](https://n8n.stellarix.space/workflow/1am2EuuDMV3RUwsJ) | 直接接入 / ECS 新工单 | 补全新工单资料，按公司名单分流到 ECS Preproduction/Production。 | [运维说明](./active-workflows.md#w-1am2EuuDMV3RUwsJ) |
-| [[case]Intake\|EC2 Staging](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) | 直接接入 / 历史 Staging | 已恢复启用的旧 EC2 Staging 工单入口；目标可用性与重复接入风险仍待处理。 | [运维说明](./active-workflows.md#w-qFSNOmYXr97N2UGX) |
 | [[slack]Forward Thread\|Prod](https://n8n.stellarix.space/workflow/r1HIW8UNuCabiOPn) | 直接接入 / Slack 消息 | 把内部 Slack 线程中的人工 @提及转交 ECS Production Engineer Case。 | [运维说明](./active-workflows.md#w-r1HIW8UNuCabiOPn) |
 | [[review]Random](https://n8n.stellarix.space/workflow/vvyPwdWXvJENN1zm) | 配套 / 随机质检 | 工作日 06:00 按每位已配置负责人抽一条未评审工单。 | [运维说明](./active-workflows.md#w-vvyPwdWXvJENN1zm) |
 | [[slack]Handle Action\|Preprod](https://n8n.stellarix.space/workflow/FKv8vtZBQk6tH4Gt) | 直接接入 / Slack 操作 | 消费 Slack 按钮操作并交给 ECS Preproduction；当前缺少可用的 HMAC 验签路径。 | [运维说明](./active-workflows.md#w-FKv8vtZBQk6tH4Gt) |
@@ -88,12 +89,13 @@
 | [[ops]Error Test\|Zendesk](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) | 配套 / 运维测试 | 聊天输入工单号后查询 Zendesk，失败时验证共享错误处理。 | [运维说明](./active-workflows.md#w-3zJvu5KQFZIoOoqu) |
 | [[kb]Build\|Solved Cases](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) | 知识入库 / Zendesk | SOLVED 工单经去重和 AI 筛选后生成 KB 草稿，同步 Tencent Memory 并提交原有知识库。 | [运维说明](./active-workflows.md#w-MM3Z3T469Eru3Q1I) |
 
-## 未启用工作流（12）
+## 未启用工作流（13）
 
 以下说明来自草稿配置，代表设计用途，不代表当前在自动运行；均保留未启用状态，集中收纳于 `99 - Inactive`。
 
 | 工作流（n8n 链接） | 用途与边界 |
 | --- | --- |
+| [[case]Intake\|EC2 Staging](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) | 旧 EC2 Staging 新工单入口，目标 `/automation/staging/v1/cases` 已返回 410；经确认退役并取消发布，保留草稿及停用前 Git 发布版快照，不再自动接收 Zendesk 事件。手动执行仍可能产生外部请求。 |
 | [[kb]Build\|RAG Prototype](https://n8n.stellarix.space/workflow/bKpMsD2NpSQ5o7eZ) | 手动固定工单的知识库/RAG 原型：Zendesk 评论与作者 → AI KB → PGVector 相似度查询；无相似内容时写入全文和分节向量。重复分支向 Slack 请求批准，但批准后的后续链路未接通；错误处理引用旧归档流程。 |
 | [[content]Post News\|X](https://n8n.stellarix.space/workflow/IK9w81CtoBo85iRa) | 手动检索新闻并由模型生成 X/Twitter 帖子的发布流程；部分图片节点禁用，另一条检索/上传链与触发器断开。手动运行仍可能对外发布，与 SupportPortal 无直接接口关系。 |
 | [[ops]Zendesk Trigger\|Stub](https://n8n.stellarix.space/workflow/lctKEGZv1N3rXptP) | 仅含两个互不连接的 Zendesk 触发节点，是配置占位；没有数据备份链路。 |
@@ -109,7 +111,7 @@
 
 ## 主要调用关系
 
-- Zendesk 新工单 → `[case]Intake|ECS Route` → ECS Preproduction / Production；旧 `[case]Intake|EC2 Staging` 也已恢复启用并提交旧 EC2 Staging，存在重复接入风险。
+- Zendesk 新工单 → `[case]Intake|ECS Route` → ECS Preproduction / Production；旧 `[case]Intake|EC2 Staging` 已取消发布。
 - Zendesk 评论 → `[case]Sync Comments` → 旧 Production 与 ECS 两个环境；状态变化 → `[case]Sync Status` → 旧主栈与旧 Production（ECS 不经此流程，2026-09-16 移除了持续 404 的 ECS 分支）。
 - Slack → `[slack]Route Support` → Zendesk 建单，或 `[slack]Forward Thread|Prod` → ECS Production；按钮交互另由 `[slack]Handle Action|Preprod` 发往 ECS Preproduction。
 - SupportPortal 交接确认 → `[slack]Notify Handoff` → Slack。

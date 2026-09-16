@@ -1,6 +1,6 @@
 # 启用 n8n 工作流说明
 
-范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。本页各节标题保留旧名。16 段 **n8n description** 与回退后的远端回读一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。旧 EC2 Staging 后续已取消发布。本页各节标题保留旧名。15 段 **n8n description** 与远端回读一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
 
 说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
 
@@ -127,21 +127,6 @@
 - **与项目的关系**：当前 ECS 工单自动化接入；按输入与实际请求 URL 判断环境，不能仅看流程名称。
 - **凭据与排错**：回退恢复了原有组织查询、请求人字段和状态映射，但保留 n8n Zendesk Credential 引用，没有恢复旧内联 Authorization/Cookie。旧 `/production/account` 节点未接入主链。发布版本为 `35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed`；本次未用真实工单触发验证，重放前仍需检查接收方是否已有同一创建事件。
 
-<a id="w-qFSNOmYXr97N2UGX"></a>
-
-## [case]Intake|EC2 Staging（旧名 new_case_2_supporportal_staging）
-
-[n8n 工作流](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) · 直接接入 / 历史 Staging
-
-**n8n description**
-
-> 接收 Zendesk 新工单并补全评论、请求人和组织资料，提交到旧 EC2 的 /automation/staging/v1/cases；属于历史接入配置，需核对该入口当前可用性。
-
-- **入口与主路径**：Zendesk 新工单触发 → 评论、工单、请求人和组织补全 → 标准化 → POST `https://support.stellarix.space/automation/staging/v1/cases`。
-- **与项目的关系**：历史 EC2 接入配置，不是当前 ECS Preproduction 域名。
-- **画布与实际门控**：优先级/公司判断旁支没有下游投递节点，不拦截主 POST。
-- **已知风险**：该流程已按回退要求重新启用并移回 `01 - Cases`。仓库 Nginx 配置仍让旧 `/automation/staging` 返回 410，且它与 ECS Route 同时监听新工单，存在重复接入和持续失败风险；本次没有触发业务 execution。
-
 <a id="w-r1HIW8UNuCabiOPn"></a>
 
 ## [slack]Forward Thread|Prod（旧名 NonAutomate_to_slack_fixed）
@@ -258,11 +243,10 @@
 
 | 顺序 | 工作流 | 已核实配置 | 下一步 |
 | --- | --- | --- | --- |
-| 1 | [case]Intake\|EC2 Staging | 第一批停用已回退；此前七天 82/82 次执行因旧入口 410 失败，且与 ECS Route 重复处理同一工单 | 当前已启用并移回 `01 - Cases`；重新评估重复接入和 410 风险，任何再次停用都需单独授权 |
-| 2 | [[case]Intake\|ECS Route](#w-1am2EuuDMV3RUwsJ) | 第一批缺组织 ID、创建状态和请求人 fallback 修复已回退；安全 credential 引用保留，旧内联认证头未恢复 | 用后续自然事件观察缺组织和非 new 状态输入；不要重放历史建单 execution |
-| 3 | [[slack]Handle Action\|Preprod](#w-FKv8vtZBQk6tH4Gt) | 第一批动作校验、回执文案和 SupportPortal 外部验签草稿均已回退；当前 active 图没有 HMAC 验签 | 在不向 workflow 写入 secret 的前提下选择可用验签承载方式；完成前不要把该自定义 Interaction 入口视为安全上线 |
-| 4 | [[review]Case\|Subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确各评审类型允许的状态集合，再调整条件并验证边界 |
-| 5 | [[slack]Route Support](#w-kyiA0QuiVx6JJ03i) | 两个 SQL 节点仍有字符串插值风险；当前草稿另有一项未发布修改 | 先确认现有草稿的发布归属，再将 SQL 参数化并发布，避免顺带发布用户草稿 |
+| 1 | [[case]Intake\|ECS Route](#w-1am2EuuDMV3RUwsJ) | 第一批缺组织 ID、创建状态和请求人 fallback 修复已回退；安全 credential 引用保留，旧内联认证头未恢复 | 用后续自然事件观察缺组织和非 new 状态输入；不要重放历史建单 execution |
+| 2 | [[slack]Handle Action\|Preprod](#w-FKv8vtZBQk6tH4Gt) | 第一批动作校验、回执文案和 SupportPortal 外部验签草稿均已回退；当前 active 图没有 HMAC 验签 | 在不向 workflow 写入 secret 的前提下选择可用验签承载方式；完成前不要把该自定义 Interaction 入口视为安全上线 |
+| 3 | [[review]Case\|Subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确各评审类型允许的状态集合，再调整条件并验证边界 |
+| 4 | [[slack]Route Support](#w-kyiA0QuiVx6JJ03i) | 两个 SQL 节点仍有字符串插值风险；当前草稿另有一项未发布修改 | 先确认现有草稿的发布归属，再将 SQL 参数化并发布，避免顺带发布用户草稿 |
 
 ## 共用恢复注意事项
 
