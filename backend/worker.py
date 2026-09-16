@@ -4194,12 +4194,29 @@ def _close_enablement_relay_task(
     client: AgentRelayClient,
     *,
     request_id: str,
-    task_detail: dict[str, Any],
+    task_id: str,
 ) -> None:
-    task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-    task_id = str(task.get("task_id") or "")
+    """Complete the relay task as its requester.
+
+    Fencing values are re-read from a fresh ``GET /tasks/{id}`` right before
+    the mutation: the preceding ACK advances the task version, and the server
+    requires the reply to be delivered+acked on this side with
+    ``completed_against_message_id`` matching the current message.
+    """
+    if not task_id:
+        return
+    try:
+        fresh = client.get_task(task_id)
+    except AgentRelayError as exc:
+        LOGGER.warning(
+            "enablement relay task detail fetch before close failed for %s: %s",
+            request_id,
+            exc,
+        )
+        return
+    task = fresh.get("task") if isinstance(fresh.get("task"), dict) else {}
     message_id = str(task.get("current_message_id") or "")
-    if not task_id or not message_id:
+    if not message_id:
         return
     try:
         client.complete_task(
@@ -4384,10 +4401,7 @@ def _apply_enablement_relay_result(
             reason_code=f"relay_{outcome}",
             detail=f"{detail} Result detail: {str(result.get('detail') or '')[:300]}",
         )
-    if task_id:
-        _close_enablement_relay_task(
-            client, request_id=request_id, task_detail=task_detail
-        )
+    _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
 
 
 def _consume_enablement_relay_event(
@@ -4398,6 +4412,19 @@ def _consume_enablement_relay_event(
     readiness_epoch: int,
 ) -> None:
     task_id = str(event.get("task_id") or "")
+    message_id = str(event.get("message_id") or "")
+    if not message_id:
+        # Notification-class event (delivery/status notices): never touches
+        # application state; ACK with the light event form and move on.
+        try:
+            client.ack_event(
+                event,
+                listener_instance_id=listener_instance_id,
+                readiness_epoch=readiness_epoch,
+            )
+        except AgentRelayError as exc:
+            LOGGER.warning("enablement relay notification ack failed: %s", exc)
+        return
     request = (
         ticket_repository.find_enablement_relay_request_by_task(task_id)
         if task_id
@@ -4453,12 +4480,19 @@ def _consume_enablement_relay_event(
                 LOGGER.exception(
                     "enablement relay rejection event failed for %s", request_id
                 )
-    # Durable-persist happened above (or the event is informational): ACK now.
+    # Durable-persist happened above: ACK now with fencing values from the
+    # freshly fetched task detail (the server rejects stale task versions and
+    # the ACK itself advances the version).
+    fence_task = (
+        task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+    )
     try:
         client.ack_event(
             event,
             listener_instance_id=listener_instance_id,
             readiness_epoch=readiness_epoch,
+            turn_sequence=int(fence_task.get("turn_sequence") or 1),
+            expected_task_version=int(fence_task.get("task_version") or 1),
         )
     except AgentRelayError as exc:
         LOGGER.warning("enablement relay ack failed for task %s: %s", task_id, exc)
@@ -4480,7 +4514,7 @@ def _consume_enablement_relay_event(
         _close_enablement_relay_task(
             client,
             request_id=str(request.get("request_id") or ""),
-            task_detail=task_detail,
+            task_id=task_id,
         )
 
 
