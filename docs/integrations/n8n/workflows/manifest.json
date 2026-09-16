@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-16T08:25:32.417Z",
+  "generatedAt": "2026-09-16T08:41:39.864Z",
   "projectId": "sbTCwK2d5D7GOKQb",
   "workflowCount": 16,
   "source": "n8n MCP get_workflow_details sanitized payload",
@@ -90,15 +90,15 @@
       "name": "[kb]Build|Solved Cases",
       "description": "接收 Zendesk SOLVED 事件，先在 PostgreSQL 去重，再整理评论并由 AI 判断是否适合入库；生成英文 Zendesk KB 草稿、写入 Google Sheets，并提交到 SupportPortal 知识库接口。",
       "parentFolderId": "SLMnELm0z3huA2Cr",
-      "updatedAt": "2026-09-16T04:11:43.890Z",
+      "updatedAt": "2026-09-16T08:27:00.293Z",
       "publishedVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
-      "draftVersionId": "d5944711-2d8a-461c-b2b6-1f6f9e9be0bb",
-      "draftMatchesPublished": true,
+      "draftVersionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
+      "draftMatchesPublished": false,
       "nodeCount": 32,
       "publishedFile": "active/MM3Z3T469Eru3Q1I.published.json",
-      "draftFile": null,
+      "draftFile": "drafts/MM3Z3T469Eru3Q1I.draft.json",
       "publishedRedactionCount": 9,
-      "draftRedactionCount": 0
+      "draftRedactionCount": 10
     },
     {
       "workflowId": "dV5vNA6l1MbDMHZt",
