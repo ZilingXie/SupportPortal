@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-16T07:16:00Z",
+  "generatedAt": "2026-09-16T08:25:32.417Z",
   "projectId": "sbTCwK2d5D7GOKQb",
   "workflowCount": 16,
   "source": "n8n MCP get_workflow_details sanitized payload",
