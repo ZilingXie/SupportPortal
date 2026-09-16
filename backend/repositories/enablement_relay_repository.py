@@ -915,12 +915,14 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
 
         def _operation(conn: Any) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
+                # psycopg adapts a tuple as a record literal, not an array;
+                # ANY(%s) requires a list.
                 cur.execute(
                     sql.SQL(
                         "SELECT * FROM {} WHERE status = ANY(%s) "
                         "ORDER BY created_at, request_id LIMIT %s"
                     ).format(self._table("support_enablement_relay_requests")),
-                    (wanted, max(1, int(limit))),
+                    (list(wanted), max(1, int(limit))),
                 )
                 return [
                     _normalize_relay_request(_row_to_request(row)) for row in cur.fetchall()

@@ -116,6 +116,10 @@ class AgentRelayClient:
                 "X-AgentRelay-Agent-Id": self._config.agent_id,
                 "X-AgentRelay-Username": self._config.username,
                 "X-AgentRelay-Envelope": "v0.3",
+                # The relay origin sits behind a CDN browser-integrity check
+                # that rejects the default python-urllib agent (HTTP 403
+                # error 1010); announce a stable service identity instead.
+                "User-Agent": "supportportal-automation/1.0",
                 **({"Content-Type": "application/json"} if body else {}),
             },
         )
