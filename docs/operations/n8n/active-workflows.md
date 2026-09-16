@@ -1,0 +1,274 @@
+# 启用 n8n 工作流说明
+
+范围、分类和核对时间见[工作流目录](./README.md)。本页的 16 段 **n8n description** 与 2026-09-16 的远端回读逐字一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+
+说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
+
+<a id="w-208nrQNRfpkSkQhM"></a>
+
+## 2_slack - SupportPortal Account Handoff -> Slack
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/208nrQNRfpkSkQhM) · 直接接入 / Slack 通知
+
+**n8n description**
+
+> 接收 SupportPortal 的 account_automation_handoff_confirmed 事件，校验字段并按 event_id 在 PostgreSQL 认领去重，将交接通知发送到 Slack，再记录投递结果。
+
+- **入口与主路径**：带鉴权的 POST Webhook → `Validate Event1` → `Claim Event1` → 仅新认领事件发送 Slack → `Mark Delivered1`。
+- **契约与依赖**：事件类型 `account_automation_handoff_confirmed`、`schema_version=1`；PostgreSQL 表 `n8n_supportportal_slack_events` 按唯一 `event_id` 执行 `ON CONFLICT DO NOTHING`，记录 pending/delivered 及 Slack 投递关联。
+- **与项目的关系**：SupportPortal 向 Slack 发出账户自动化交接通知。
+- **排错与重试**：先核对事件认领记录与 Slack 实际消息；重复事件返回已有状态，不能据此假定 pending 事件会自动补发。发送已成功但记账失败时，重跑发送节点可能重复通知。
+
+<a id="w-b1Unpl6miABzcTmZ"></a>
+
+## case_review_subflow
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/b1Unpl6miABzcTmZ) · 配套 / 支持质检
+
+**n8n description**
+
+> 接收父流程的工单 ID 和审查类型，获取 Zendesk 工单与评论，由 AI 提炼问题和摘要，在 Slack 等待人工评审，再添加 reviewed 标签并写入 Google Sheets；属于支持质检配套流程。
+
+- **入口与主路径**：父流程输入 `caseId`、`tag` → Zendesk 工单、负责人及评论 → AI 问题概括和摘要 → Slack `sendAndWait` 表单 → 添加 `reviewed` 标签 → Google Sheets。
+- **调用与依赖**：由 random、longage、negative 三个评审流程调用；使用 Zendesk、AI、Slack、Google Sheets，错误交给 `error_handle`。
+- **与项目的关系**：支持质检配套流程，当前没有直接调用 SupportPortal API。
+- **人工检查**：表单记录审查类别、建议和通过/失败。已经等待人工输入的 execution 应沿原等待入口继续，重新执行会创建另一轮评审。
+- **已知配置问题**：状态条件为 `status != solved OR status != closed`，无法排除这两种状态；详见[待核对配置](#configuration-findings)。
+
+<a id="w-zc2ndUDqDAS0uX1Y"></a>
+
+## commen_sync_ecs_production
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/zc2ndUDqDAS0uX1Y) · 直接接入 / 评论同步
+
+**n8n description**
+
+> 接收 Zendesk 新评论事件，按已有 Case 归属向旧 Production 同步评论快照，并向 ECS Production、Preproduction 发送 comment.created 事件；连接 Zendesk 与 SupportPortal 的评论处理链路。
+
+- **入口与主路径**：Zendesk 新评论 POST Webhook → 并行查询 Case/执行归属 → 获取 Zendesk 评论 → 向所属目标提交。
+- **实际目标**：旧 `support.stellarix.space/production/api/...` 分支 PUT 评论快照；ECS Production 和 Preproduction 分支在查询到关联执行后 POST `comment.created` 到各自 `/automation/{environment}/v1/intake`。
+- **与项目的关系**：Zendesk 到 SupportPortal 的评论入口。名称中的 production 不能代表全部目标环境。
+- **画布与执行区别**：旧根路径 `/api/...` 分支没有接入主链。评论查询含 `include=users&per_page=100` 及相关快照/分页配置；本次未以真实多页评论验证运行结果。
+- **排错与重试**：分别核对三个目标分支的归属查询、输入、返回值和接收方事件记录；一个分支成功不代表其他分支成功，重放前确认已落库的事件。
+
+<a id="w-GgDxPEWtW7ltT5BW"></a>
+
+## CSD_2_KB
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/GgDxPEWtW7ltT5BW) · 知识入库 / CSD
+
+**n8n description**
+
+> 定时扫描近期已解决的 CSD Bug，经 PostgreSQL 去重和 AI 筛选后生成英文 Zendesk KB 草稿，并在 SupportPortal Memory 创建 Wiki、上传正文、触发 ingest。
+
+- **入口与主路径**：Schedule Trigger → OAuth → Jira → 顺序处理 → PostgreSQL 去重 → AI 筛选/生成英文 KB → Zendesk 草稿 → SupportPortal Memory。
+- **筛选与输出**：查询 CSD 项目中 RESOLVED 的 Bug，更新时间在过去 24 小时、创建时间在过去 60 天，排除 Won't Do、Duplicate、Reject。AI 判断是否具备清晰原因和解决方案。
+- **与项目的关系**：调用 `/dashboard/memory/api/v1/knowledge/wiki/create`、`/wiki/raw/write`、`/wiki/ingest`；契约来源见 [Memory 接入说明](../../deploy_hermes_investigator_ecs.md)。Zendesk 设置 `draft=true`、`notify_subscribers=false`。
+- **画布与依赖**：手动触发节点没有连接主链；旧 `2_rag` 节点禁用。依赖 Jira/OAuth、PostgreSQL、AI、Zendesk、Memory；错误交给 `error_handle`。
+- **排错与重试**：`csd` 去重记录在 AI 和外部写入之前产生。整轮重跑可能跳过未完成条目；直接删去重记录又可能重复创建草稿/Wiki。先定位已完成的外部写入和失败步骤，再决定恢复方式。本次未重放历史失败执行。
+
+<a id="w-dV5vNA6l1MbDMHZt"></a>
+
+## error_handle
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/dV5vNA6l1MbDMHZt) · 配套 / 故障上报
+
+**n8n description**
+
+> 接收关联工作流的执行错误，由 AI 生成简短故障摘要，再上报 n8n 状态页的 failure 接口；属于支持自动化的告警配套流程，不负责自动重试。
+
+- **入口与主路径**：Error Trigger → AI 生成约十词的故障摘要 → POST `https://n8n.stellarix.space/status/api/v1/ingest/failure`。
+- **与项目的关系**：支持自动化的故障可见性；被质检、知识、Slack Bot 和测试流程引用。
+- **排错边界**：上报失败不等于原始执行没有错误；需同时查看源 execution 和本流程的上报节点。
+- **验证与恢复**：该流程不负责自动重试。生产错误触发链需要对应触发条件；手动测试单个节点不能证明生产错误通知链完整。本次未触发错误测试。
+
+<a id="w-G7snyHhdBCnIpbJV"></a>
+
+## longage_case_review
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/G7snyHhdBCnIpbJV) · 配套 / 长龄工单质检
+
+**n8n description**
+
+> 每个工作日北京时间 06:00 查询创建超过 30 天且未解决的 Tier1 工单，随机抽取 1 条调用 case_review_subflow，进入 Slack 人工评审与质检记录流程。
+
+- **入口**：工作流时区 `Asia/Shanghai`，cron `0 6 * * 1-5`。
+- **主路径**：查询创建超过 30 天、未解决的 Tier1 工单并应用排除条件 → 从返回结果随机取 1 条 → 以 `tag=Longaged` 调用 `case_review_subflow`。
+- **与项目的关系**：支持质量检查；实际写入和人工等待由评审子流程承担。
+- **实现与排错**：抽样代码是 `Math.min(1, totalCases)`，不能按旧代码注释理解为抽取 5 条。重新抽样可能选到不同工单；优先检查原有子流程执行。
+
+<a id="w-WT43uQ1i8SPsYRJi"></a>
+
+## negative_case_review
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/WT43uQ1i8SPsYRJi) · 配套 / 满意度质检
+
+**n8n description**
+
+> 接收 Zendesk 满意度 Webhook，跳过评分为 GOOD 的事件，将其余工单标记为 Negative 并调用 case_review_subflow，进入 Slack 人工评审与质检记录流程。
+
+- **入口与主路径**：Zendesk 满意度 POST Webhook → 判断评分 → GOOD 停止，其余输入生成 `tag=Negative`、`caseId` → `case_review_subflow`。
+- **与项目的关系**：支持质量检查，依赖评审子流程和其中的 Zendesk、Slack、Google Sheets。
+- **排错边界**：当前配置并非仅接受经过严格校验的 BAD；非 GOOD 的其他值也进入评审分支。排查时先看实际评分输入。
+- **重试**：先检查是否已创建等待中的评审，避免重复发出表单。
+
+<a id="w-1am2EuuDMV3RUwsJ"></a>
+
+## new_case_2_supporportal_prod
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/1am2EuuDMV3RUwsJ) · 直接接入 / ECS 新工单
+
+**n8n description**
+
+> 接收 Zendesk 新工单，补全评论、请求人和组织资料，按公司 ID 名单将 ticket.created 事件分流至 SupportPortal ECS Preproduction 或 Production，并记录执行关联信息。
+
+- **入口与主路径**：Zendesk 新工单触发 → 工单、评论、请求人 → 必要时补组织资料 → 标准化事件 → 公司 ID 名单分流。
+- **实际目标**：匹配名单发送至 ECS Preproduction，其余发送至 ECS Production；使用 `https://supportcenter.stellarix.space/automation/{environment}/v1/intake`，事件为 `ticket.created`。
+- **与项目的关系**：当前 ECS 工单自动化接入；按输入与实际请求 URL 判断环境，不能仅看流程名称。
+- **画布与排错**：旧 `/production/account` HTTP 节点未接入主链，额外 Webhook 禁用。核对补全后的公司字段、分支结果、接收方 execution/Case 关联，再决定是否重放。
+
+<a id="w-qFSNOmYXr97N2UGX"></a>
+
+## new_case_2_supporportal_staging
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/qFSNOmYXr97N2UGX) · 直接接入 / 历史 Staging
+
+**n8n description**
+
+> 接收 Zendesk 新工单并补全评论、请求人和组织资料，提交到旧 EC2 的 /automation/staging/v1/cases；属于历史接入配置，需核对该入口当前可用性。
+
+- **入口与主路径**：Zendesk 新工单触发 → 评论、工单、请求人和组织补全 → 标准化 → POST `https://support.stellarix.space/automation/staging/v1/cases`。
+- **与项目的关系**：历史 EC2 接入配置，不是当前 ECS Preproduction 域名。
+- **画布与实际门控**：优先级/公司判断旁支没有下游投递节点，不拦截主 POST。
+- **已知差异**：[仓库 Nginx 配置](../../../deployment/nginx/supportportal.conf) 对旧 `/automation/staging` 路由返回 410；[环境矩阵](../environments.md) 也将其标为旧入口。本次未请求线上端点，不能据此断言实际部署状态或最近执行结果。
+- **恢复前置**：先确定应承接的环境和当前端点，再修改路由或重放；本次保留启用状态和原配置。
+
+<a id="w-r1HIW8UNuCabiOPn"></a>
+
+## NonAutomate_to_slack_fixed
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/r1HIW8UNuCabiOPn) · 直接接入 / Slack 消息
+
+**n8n description**
+
+> 供 Slack_zen_Bot 调用：校验指定内部频道内由人发送的线程 @提及消息，解析 ECS Production 的 Engineer Case 线程绑定，再将消息转发给 SupportPortal。
+
+- **入口与主路径**：由 `Slack_zen_Bot` 调用 → 校验人类消息、非 bot、无 subtype、指定内部团队/频道、非空线程文本及 @提及 → 查询线程绑定 → 已绑定时提交消息。
+- **实际目标**：ECS Production 的 `/automation/production/api/integrations/slack/engineer-cases/thread-bindings/resolve` 和同前缀的 `/messages`。
+- **与项目的关系**：数据方向是 Slack → SupportPortal，不能按名称理解为向 Slack 发消息。
+- **排错与重试**：先看各过滤条件、线程绑定返回和消息接收记录；不要为了通过过滤而改写真实身份或线程字段。
+
+<a id="w-vvyPwdWXvJENN1zm"></a>
+
+## random_case_review
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/vvyPwdWXvJENN1zm) · 配套 / 随机质检
+
+**n8n description**
+
+> 每个工作日北京时间 06:00 查询未解决且未 reviewed 的 Tier1 工单，为配置的每位负责人随机抽取 1 条，调用 case_review_subflow 完成人工评审，并更新 reviewed 标签。
+
+- **入口**：工作流时区 `Asia/Shanghai`，cron `0 6 * * 1-5`。
+- **主路径**：查询未解决且没有 `reviewed` 标签的 Tier1 工单 → 对六位已配置负责人分别从返回结果随机抽 1 条 → 以 `tag=Random` 调用 `case_review_subflow` → 更新 `reviewed` 标签。
+- **与项目的关系**：支持质检配套；人工评审和记录由子流程承担。
+- **画布与重试**：`get_random_case` 节点未连入主路径。检查父子 execution 和标签更新时间；整轮重跑会重新抽样，不能替代恢复原评审。
+
+<a id="w-FKv8vtZBQk6tH4Gt"></a>
+
+## Slack Interaction to SupportPortal - Consume Button V3
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/FKv8vtZBQk6tH4Gt) · 直接接入 / Slack 操作
+
+**n8n description**
+
+> 接收 Slack 按钮交互，校验团队、频道及线程绑定，转发至 SupportPortal ECS Preproduction 的 Hermes actions 接口，再更新 Slack 原消息移除操作按钮。
+
+- **入口与主路径**：Slack 交互 POST Webhook → 解析 action → 团队、频道和线程过滤 → 解析绑定 → POST Hermes action → 在有效 `response_url` 下替换 Slack 原消息、移除按钮并追加已提交说明。
+- **实际目标**：固定 ECS Preproduction；接口为 `/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve` 和同前缀的 `/actions`。
+- **与项目的关系**：把人工按钮操作传给 Hermes。payload 的环境字段不能证明目标会动态切换。
+- **画布与重试**：旧 Production Engineer Case 分支未连入主链。恢复前分别检查 action 是否已接收、Slack 消息是否已更新；重跑可能再次提交动作和改写消息。
+
+<a id="w-kyiA0QuiVx6JJ03i"></a>
+
+## Slack_zen_Bot
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/kyiA0QuiVx6JJ03i) · 上游接入 / Slack 建单
+
+**n8n description**
+
+> 监听 Slack 消息，经 AI 筛选和支持请求判定后创建 Zendesk 工单并回传链接；缺少团队资料时等待人工补全。指定内部频道的线程消息通过子流程转交 SupportPortal ECS Production。
+
+- **入口与主路径**：Slack 事件 → AI 首轮过滤及支持请求判断 → PostgreSQL `slack_team` 资料 → 必要时 Slack `sendAndWait` 补资料 → 生成标题 → 创建 Zendesk 工单和评论/关联 → Slack 回传链接。
+- **另一条已连接路径**：首轮过滤的 false 分支中，符合配置的内部频道消息调用 `NonAutomate_to_slack_fixed`，进入 ECS Production。
+- **与项目的关系**：Zendesk 上游来源，并提供内部 Slack 线程向 SupportPortal 的消息通道；依赖 Slack、AI、PostgreSQL、Zendesk、消息转交子流程及 `error_handle`。
+- **版本边界**：这是唯一存在未发布草稿的启用流程。本页按已发布版本描述；草稿与线上节点图不同，部分旧过滤节点未连入主链。描述同步没有发布草稿。
+- **排错与重试**：优先沿现有人工等待继续；建单后故障需先找已有 Zendesk 工单，避免重复建单。检查 SQL 节点时注意已有字符串插值配置，本次未修改。
+
+<a id="w-03B6AvcrOgRkWlUc"></a>
+
+## status_sync_automation_production
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) · 直接接入 / 状态联动
+
+**n8n description**
+
+> 监听 Zendesk 状态变化，获取工单并按 Case 归属同步到旧主栈和旧 Production。ECS 分支目前配置为评论同步且引用不存在的节点，需另行修复；属于 SupportPortal 状态联动流程。
+
+- **入口与主路径**：Zendesk 状态变化触发 → 读取工单 → 查询 Case 归属 → 旧根 API 与旧 `/production/api` 分支分别 PUT 状态。
+- **ECS 分支现状**：配置内容是评论同步，非状态同步。`Get_Case_Comment3`、`Sync comments to automation production` 引用了本流程不存在的 `Zen_New_Comment_Webhook`。
+- **与项目的关系**：SupportPortal 状态联动中的历史与 ECS 混合配置。
+- **排错边界**：上述为节点图/表达式静态核对结果；本次未读取最新失败执行来证明具体运行故障。修复前需确定 ECS 所需事件契约及正确触发数据来源。
+
+<a id="w-3zJvu5KQFZIoOoqu"></a>
+
+## test_error
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) · 配套 / 运维测试
+
+**n8n description**
+
+> 通过聊天入口接收工单号，记录执行信息并查询 Zendesk 工单，用于联调错误处理链路；执行失败时由 error_handle 接收，属于运维测试流程。
+
+- **入口与主路径**：Chat Trigger → 记录执行数据 → 将 `chatInput` 作为 Zendesk 工单查询输入。
+- **与项目的关系**：错误链路联调工具，失败交给 `error_handle`。
+- **行为边界**：输入有效工单号时可能成功，并非无条件制造错误。失败联调可能触发状态页上报；本次没有执行测试。
+
+<a id="w-MM3Z3T469Eru3Q1I"></a>
+
+## ticket_2_KB
+
+[n8n 工作流](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) · 知识入库 / Zendesk
+
+**n8n description**
+
+> 接收 Zendesk SOLVED 事件，先在 PostgreSQL 去重，再整理评论并由 AI 判断是否适合入库；生成英文 Zendesk KB 草稿、写入 Google Sheets，并提交到 SupportPortal 知识库接口。
+
+- **入口与主路径**：Zendesk 关闭事件 POST Webhook → 仅 SOLVED → PostgreSQL `ticket(solved_ticket)` 去重 → 评论/作者查询、脱敏与对话组装 → AI 技术问题筛选 → KB 标题、正文和 HTML。
+- **输出与项目关系**：Zendesk 草稿（`draft=true`、`notify_subscribers=false`）→ Google Sheets → `support.stellarix.space` 的 `/api/engineer/knowledge/articles`。
+- **人工门控现状**：Slack 审批节点禁用或未连入主链；当前实际链路依赖 AI 筛选，不能描述为经过人工批准后入库。
+- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Google Sheets、SupportPortal，错误交给 `error_handle`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建草稿。先核对三个输出位置。
+
+<a id="configuration-findings"></a>
+
+## 待核对配置
+
+下列问题来自本次节点图、表达式和仓库配置核对，**均未在本任务修复或通过业务重跑验证**。优先级体现后续核对顺序，不代表已经测得的故障严重程度。
+
+| 顺序 | 工作流 | 已核实配置 | 下一步 |
+| --- | --- | --- | --- |
+| 1 | [status_sync_automation_production](#w-03B6AvcrOgRkWlUc) | 两个 ECS 评论节点引用不存在的 `Zen_New_Comment_Webhook`；该分支也不是状态事件 | 读取受影响执行，确认期望的状态/评论契约及正确数据源后修复 |
+| 2 | [new_case_2_supporportal_staging](#w-qFSNOmYXr97N2UGX) | 仍投递旧 EC2 Staging 路径，而仓库 Nginx 对该路由配置 410 | 核对线上端点与实际部署，决定目标环境和迁移/停用方案 |
+| 3 | [case_review_subflow](#w-b1Unpl6miABzcTmZ) | `status != solved OR status != closed` 不能排除 solved/closed | 明确允许评审的状态集合，再调整条件并验证边界 |
+| 4 | [Slack_zen_Bot](#w-kyiA0QuiVx6JJ03i) | 已发布图与草稿不同；本次保留未发布修改 | 后续编辑前对比两版，避免描述更新或无关修复顺带发布草稿 |
+
+## 共用恢复注意事项
+
+| 场景 | 已有行为 | 恢复前必须查清 |
+| --- | --- | --- |
+| CSD_2_KB / ticket_2_KB | 去重写入早于 KB 草稿、Wiki/知识入库 | 哪些输出已创建，哪些步骤未完成；是否能复用已有资源继续 |
+| 交接通知 | 先认领事件，再发 Slack、记录 delivered | pending 是否已实际投递；不要把相同事件重发当作可靠补偿 |
+| 质检 / Slack 团队资料表单 | Slack sendAndWait 等待人工输入 | 原 execution 是否仍等待；使用原等待入口，避免创建新表单 |
+| Slack 建单 / 按钮动作 | 会创建工单或提交业务动作并更新消息 | 接收方是否已处理，重跑是否重复写入 |
+| 多环境或多分支同步 | 每个分支有自己的查询和投递 | 各环境独立结果及实际 URL；不能用一个分支的成功替代整轮验收 |
+
+以上用于选择排错路径，不承诺所有失败都能从任意节点无副作用恢复。具体修改、执行和发布仍按当前任务授权及 [项目规则](../../../AGENTS.md) 操作。
