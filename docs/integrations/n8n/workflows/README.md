@@ -8,7 +8,7 @@
 - `active/<workflow-id>.published.json`：每条启用工作流的已发布恢复基线。
 - `drafts/<workflow-id>.draft.json`：仅当草稿与已发布版本不同时保存，不能当作线上恢复基线直接发布。
 
-2026-09-16 第一批修复后的初始快照保留在 Git 历史中；当前基线包含 16 条启用工作流和 1 份未发布草稿。快照来自 n8n MCP `get_workflow_details` 的安全化结果，不包含 execution、pin data 或客户输入。n8n 返回的 credential ID/name 会保留，明文 Authorization、Cookie、token、secret、API key、私钥和邮箱会替换为 `__REDACTED__` 类占位符，并记录在每个文件的 `restoreNotes.redactedValues` 中。
+2026-09-16 第一批修复后的初始快照及已停用的 `[case]Intake|EC2 Staging` 发布版保留在 Git 历史中；当前基线包含 15 条启用工作流和 1 份未发布草稿。快照来自 n8n MCP `get_workflow_details` 的安全化结果，不包含 execution、pin data 或客户输入。n8n 返回的 credential ID/name 会保留，明文 Authorization、Cookie、token、secret、API key、私钥和邮箱会替换为 `__REDACTED__` 类占位符，并记录在每个文件的 `restoreNotes.redactedValues` 中。
 
 ## 修改流程
 

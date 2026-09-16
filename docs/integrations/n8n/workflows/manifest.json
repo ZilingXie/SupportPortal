@@ -1,8 +1,8 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-16T08:41:39.864Z",
+  "generatedAt": "2026-09-16T08:54:45Z",
   "projectId": "sbTCwK2d5D7GOKQb",
-  "workflowCount": 16,
+  "workflowCount": 15,
   "source": "n8n MCP get_workflow_details sanitized payload",
   "policy": {
     "baseline": "Published versions are the recovery baseline for every active workflow.",
@@ -10,21 +10,6 @@
     "secrets": "Literal secret-like values are redacted; credential references are retained."
   },
   "workflows": [
-    {
-      "workflowId": "qFSNOmYXr97N2UGX",
-      "name": "[case]Intake|EC2 Staging",
-      "description": "接收 Zendesk 新工单并补全评论、请求人和组织资料，提交到旧 EC2 的 /automation/staging/v1/cases；属于历史接入配置，需核对该入口当前可用性。",
-      "parentFolderId": "m6g0McsPdron3eH9",
-      "updatedAt": "2026-09-16T07:07:29.895Z",
-      "publishedVersionId": "50004672-1a18-4b54-800d-dc11b86bd67e",
-      "draftVersionId": "50004672-1a18-4b54-800d-dc11b86bd67e",
-      "draftMatchesPublished": true,
-      "nodeCount": 13,
-      "publishedFile": "active/qFSNOmYXr97N2UGX.published.json",
-      "draftFile": null,
-      "publishedRedactionCount": 0,
-      "draftRedactionCount": 0
-    },
     {
       "workflowId": "1am2EuuDMV3RUwsJ",
       "name": "[case]Intake|ECS Route",
