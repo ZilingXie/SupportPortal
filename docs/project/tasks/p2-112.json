@@ -5,14 +5,17 @@
   "status": "active",
   "owner": "zac",
   "summary": "ECS 已有 sync_account_case_ticket_status 状态投影及 solved/closed、重开、重复与乱序处理，但 ticket.updated intake 在 Route Worker 中仍经过 Hermes/legacy 引擎选择、Route LLM 与 Persona，且 [case]Sync Status 尚未投递 ECS。本任务新增 ticket.updated 确定性 system route（execution_action=ticket_status_sync、reason=ticket_updated），直接排入 Processing Job 并复用现有状态实现；后续 n8n 将保留旧 EC2 双分支，查询 ECS Production/Preproduction Case membership 后仅向唯一命中的环境投递稳定幂等事件。",
-  "next_action": "完成代码 PR、官方本地栈验证并部署 ECS Preproduction；使用明确授权的 Preproduction 测试 Case 验证 ticket.updated 全链路且无 Route LLM/Persona 阶段。验证通过后等待单独的 Production 部署授权；Production 部署完成后再发布 [case]Sync Status 的 ECS 唯一环境投递分支，并等待首个未来自然事件验收。不补偿或重放 13531。",
+  "next_action": "Preproduction 已随 r20260916-f5c5c96 上线并完成 release/heartbeat provenance 回读。下一步需要用户明确指定一张可改状态的 Preproduction 测试 Case 和目标状态，验证 ticket.updated → completed → 状态投影且无 Route LLM/Persona 调用；通过后再请求单独的 Production 部署授权。Production 部署完成前不发布 [case]Sync Status 的 ECS 分支；不补偿或重放 13531。",
   "acceptance_criteria": [
     "ticket.updated 在 Route Worker 中优先进入固定 system/ticket_status_sync 路径，不调用 Route LLM、Persona resolver 或 Hermes handoff，并创建 Processing Job。",
     "Processing Worker 使用 Zendesk status 与真实 ticket.updated_at 调用现有 sync_account_case_ticket_status；solved/closed、重开、重复与 stale event 保持既有语义。",
     "[case]Sync Status 保留旧 EC2 分支；ECS membership 零命中跳过、唯一命中投递、双命中以 ambiguous_ecs_case_environment 失败关闭，且相同 Zendesk 更新产生完全一致的 intake payload。",
     "ECS 依次完成 Preproduction 验证与单独授权的 Production 部署后才发布 n8n；13531 不补偿、不重跑，凭据不新增、不修改、不复制。"
   ],
-  "blockers": [],
+  "blockers": [
+    "Preproduction 业务验收缺少一张由用户明确授权修改状态的测试 Case；未自行选择历史 Case 或制造失败 execution。",
+    "本地官方栈 post-merge 验证受共享 supportportal schema v9→v10 bootstrap 锁竞争阻塞：默认双 worker 和临时单 worker 均与远端 supportportal-worker-aux 查询发生 PostgreSQL deadlock，健康门禁正确拒绝 ticket_storage=memory；未停止远端服务、未伪改 schema 版本。"
+  ],
   "evidence": [
     {
       "type": "test",
@@ -25,6 +28,12 @@
       "label": "Deterministic ticket.updated route and status semantics regression",
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_case_workflow.py backend/tests/test_hermes_case_contracts.py backend/tests/test_hermes_case_ledger.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_runtime.py backend/tests/test_account_zendesk_status_sync.py",
       "details": "125 项通过：ticket.updated 走固定 system route 并创建 Processing Job，未解析引擎、未调用 Route LLM 或 Persona；Worker 传递真实 ticket.updated_at；Store、Contracts、Hermes 及 solved/closed、重开、重复、stale 语义回归通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction release r20260916-f5c5c96",
+      "command": "GET /automation/preproduction/health/live, /health/release, /health/ready",
+      "details": "2026-09-16 实时回读：公网 live/release/ready 均 status=ok；API provenance 为 release r20260916-f5c5c96、git f5c5c96e6c3c0116b0f328e974ef15240fab7c44、schema automation-ecs-008、Prompt pr-434d9524e18d；最新 Route 与 Worker heartbeat 的 release/commit/schema/prompt 均匹配且 provenance_mismatches 为空。该 commit 含 PR #1211 的确定性 ticket.updated route。未发送业务事件，Preproduction Case 行为验收仍待明确授权测试 Case。"
     }
   ],
   "source_refs": [
@@ -48,6 +57,11 @@
       "at": "2026-09-16",
       "event": "implementation_started",
       "summary": "修复 [case]Sync Status 未覆盖 ECS 的链路缺口：先增加 ticket.updated 确定性 ECS route 并验证现有状态投影语义；按 Preproduction、Production、n8n 的顺序发布，且不补偿 13531。"
+    },
+    {
+      "at": "2026-09-16",
+      "event": "preproduction_deployed",
+      "summary": "PR #1211 随 r20260916-f5c5c96 部署到 ECS Preproduction，API/Route/Worker provenance 实时回读匹配；未自行选择测试 Case，业务状态事件验收待用户明确授权。Production 与 n8n 均未修改。"
     }
   ],
   "legacy_refs": [
