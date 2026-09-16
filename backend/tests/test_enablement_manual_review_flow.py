@@ -122,19 +122,25 @@ class ManualReviewWorkflowTests(unittest.TestCase):
             trigger_message_created_at="2026-09-10T01:00:00Z",
         )
 
-    def test_valid_request_makes_zero_archer_calls(self):
+    def test_valid_request_creates_zero_relay_requests(self):
         repository = InMemoryTicketRepository()
         repository.save_account_case(_base_case())
-        with patch(
-            "backend.services.enablement_archer_executor.execute_enablement_archer",
-            side_effect=AssertionError("archer executor must not be called"),
-        ), patch(
-            "backend.services.archer_direct_client.DirectArcherClient.call",
-            side_effect=AssertionError("archer client must not be called"),
-        ):
-            case, reply_job, outcome = self._run(
-                repository, _base_case(), _email_payload()
-            )
+        case, reply_job, outcome = self._run(
+            repository, _base_case(), _email_payload()
+        )
+        # p2-163: the manual flow never persists a relay request — the ECS
+        # runtime holds no Archer path at all.
+        self.assertEqual(
+            repository.list_enablement_relay_requests(
+                statuses=(
+                    "gated",
+                    "dispatch_pending",
+                    "dispatching",
+                    "dispatched",
+                )
+            ),
+            [],
+        )
         self.assertEqual(outcome, "review_requested")
         self.assertIsNotNone(reply_job)
         self.assertEqual(case["internal_email_send_status"], DELIVERY_AWAITING_PUBLIC_REPLY)

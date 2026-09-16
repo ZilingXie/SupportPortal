@@ -56,22 +56,20 @@ def test_ecs_worker_retains_vendored_ragflow_skill() -> None:
     assert "COPY backend /tmp/backend-src/backend" in dockerfile
 
 
-def test_only_ecs_worker_contains_archer_skill_and_no_pilot() -> None:
+def test_no_role_contains_archer_skill_or_pilot() -> None:
     dockerfile = (ROOT / "backend/Dockerfile.automation").read_text(encoding="utf-8")
     api = _role_block("ecs-api", "ecs-route")
     route = _role_block("ecs-route", "ecs-worker")
     worker = _role_block("ecs-worker", "production")
-    skill_root = ROOT / "backend/skills/archer-cross-channel-hosting"
-    assert (skill_root / "SKILL.md").is_file()
-    assert (skill_root / "scripts/enable_cross_channel_hosting.py").is_file()
-    # p2-139: the unsigned, rotating Pilot download is gone from every image.
-    assert not (ROOT / "backend/scripts/install_pilot.py").exists()
+    # p2-163: the auto enablement workflow dispatches AgentRelay tasks and
+    # only the Mac-side skill touches Archer; no ECS image bundles the vendored
+    # archer skill (which no longer exists in the tree at all).
+    assert not (ROOT / "backend/skills/archer-cross-channel-hosting").exists()
     assert "install_pilot" not in dockerfile
     assert "/app/backend/skills/archer-cross-channel-hosting" in api
     assert "/app/backend/skills/archer-cross-channel-hosting" in route
-    assert "/app/backend/skills/archer-cross-channel-hosting" not in worker
+    assert "/app/backend/skills/archer-cross-channel-hosting" in worker
     assert "/app/bin/pilot" not in dockerfile
-
 
 def test_ecs_entrypoint_exposes_only_three_long_running_roles() -> None:
     entrypoint = (ROOT / "deployment/automation_ecs_entrypoint.sh").read_text(encoding="utf-8")

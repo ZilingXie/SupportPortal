@@ -1087,14 +1087,14 @@ async def _process_account_customer_reply_impl(
             billing_ticket["internal_email_send_status"] = automation_attempt["internal_email_send_status"]
             billing_ticket["internal_email_send_reason"] = automation_attempt["internal_email_send_reason"]
             if active_handler == "enablement" and automation_attempt.get("internal_email_to_send"):
+                # Both enablement modes are reply-first gated (p2-163): the
+                # first durable write is the unclaimable gate — the workflow
+                # below only re-affirms it, so an interruption between the two
+                # saves can never leave a claimable pending email behind.
+                billing_ticket["internal_email_send_status"] = "awaiting_public_reply"
                 if enablement_workflow_mode() == "archer":
-                    billing_ticket["internal_email_send_status"] = "archer_pending"
+                    billing_ticket["internal_email_send_reason"] = "enablement_auto_review"
                 else:
-                    # The first durable write for a manual enablement application
-                    # is already the unclaimable gate — the workflow below only
-                    # re-affirms it, so an interruption between the two saves can
-                    # never leave a claimable pending email behind.
-                    billing_ticket["internal_email_send_status"] = "awaiting_public_reply"
                     billing_ticket["internal_email_send_reason"] = "enablement_manual_review"
     billing_ticket["updated_at"] = timestamp
     new_messages = canonical_ticket.get("messages", [])[initial_message_count:]
@@ -1108,12 +1108,13 @@ async def _process_account_customer_reply_impl(
         and str(billing_ticket.get("automation_handler") or "").strip() == "enablement"
     ):
         try:
-            billing_ticket, reply_job, _workflow_outcome, _archer_result = (
+            billing_ticket, reply_job, _workflow_outcome = (
                 await _run_enablement_workflow(
                     repository=repository,
                     account_case=billing_ticket,
                     ticket_id=client_ticket_id,
                     email_payload=dict(automation_attempt["internal_email_to_send"]),
+                    customer_email=str(canonical_ticket.get("customer_id") or "") or None,
                     persona_assignment=persona_assignment,
                     processing_profile=processing_profile,
                     trigger_message_created_at=timestamp,

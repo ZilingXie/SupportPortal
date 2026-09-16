@@ -6040,18 +6040,19 @@ async def _create_account_intake_impl(
                     )
                     await async_to_thread(ticket_repository.save_account_case, billing_ticket)
     if enablement_email_attempt and enablement_email_attempt.get("internal_email_to_send"):
-        # Unified enablement dispatch (p2-152): manual review flow by default,
-        # Archer auto-enablement when ENABLEMENT_WORKFLOW_MODE=archer.  In the
-        # manual mode the customer confirmation reply job is created first and
-        # the internal email is persisted behind the public-readback gate, so
-        # no email leaves before the reply is confirmed delivered on Zendesk.
+        # Unified enablement dispatch: manual review flow by default; archer
+        # (auto) mode gates the customer confirmation behind the public
+        # readback before any relay dispatch (p2-163).  In both modes no
+        # follow-up leaves before the confirmation reply is confirmed
+        # delivered on Zendesk.
         try:
-            billing_ticket, reply_job, _workflow_outcome, _archer_result = (
+            billing_ticket, reply_job, _workflow_outcome = (
                 await _run_enablement_workflow(
                     repository=ticket_repository,
                     account_case=billing_ticket,
                     ticket_id=ticket_id,
                     email_payload=dict(enablement_email_attempt["internal_email_to_send"]),
+                    customer_email=_billing_customer_email(billing_ticket) or None,
                     persona_assignment=persona_assignment,
                     processing_profile=str(billing_ticket.get("processing_profile") or "staging"),
                     trigger_message_created_at=timestamp,
@@ -10891,14 +10892,15 @@ async def _process_account_customer_reply_impl(
     if should_send_internal_email and automation_attempt and automation_attempt.get("internal_email_to_send"):
         active_handler = str(billing_ticket.get("automation_handler") or "").strip()
         if active_handler == "enablement":
-            # Unified enablement dispatch (p2-152) for the comment path too.
+            # Unified enablement dispatch for the comment path too.
             try:
-                billing_ticket, reply_job, _workflow_outcome, _archer_result = (
+                billing_ticket, reply_job, _workflow_outcome = (
                     await _run_enablement_workflow(
                         repository=ticket_repository,
                         account_case=billing_ticket,
                         ticket_id=client_ticket_id,
                         email_payload=dict(automation_attempt["internal_email_to_send"]),
+                        customer_email=_billing_customer_email(billing_ticket) or None,
                         persona_assignment=persona_assignment,
                         processing_profile=str(billing_ticket.get("processing_profile") or "staging"),
                         trigger_message_created_at=timestamp,

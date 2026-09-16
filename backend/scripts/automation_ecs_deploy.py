@@ -57,8 +57,6 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
 # Enablement execution mode switch (p2-152): "manual" keeps the p2-149 human
 # review flow; "archer" restores the Archer auto-enablement workflow.
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
-ARCHER_SECRET_NAME = "ARCHER_OAUTH_COOKIE"
-ARCHER_SECRET_SUFFIX = "archer-oauth-cookie"
 # Preproduction-only LLM policy (p2-160): engineer investigation runs
 # gpt-6-astra at medium effort inside the Hermes stack (configured on the
 # Hermes task itself); every other SupportPortal scenario is pinned to
@@ -118,14 +116,23 @@ PREPRODUCTION_LLM_ENV_OVERRIDES = {
     "ENGINEER_INVESTIGATION_REPLY_MODEL": "gpt-6-astra",
     "ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT": "medium",
 }
-# Retired Enablement runtime dependency gate (p2-149, conditioned by p2-152):
-# Worker task definitions must not carry the Archer credential unless the
-# rendered enablement workflow mode is "archer".  Formal upgrades strip it from
-# an observed Worker task definition in manual mode instead of carrying it into
-# the new revision, and the register-time contract fails closed in both
-# directions (credential without archer mode, or archer mode without the
-# credential).
-RETIRED_WORKER_SECRET_NAMES = {ARCHER_SECRET_NAME}
+# AgentRelay transport for the enablement auto workflow (p2-163): the worker
+# always carries the relay identity in both modes so late results stay
+# receivable after a manual-mode switch; values live under the environment SSM
+# prefix and are provisioned via docs/operations/agentrelay-server-provisioning-prompt.md.
+AGENTRELAY_SECRET_SUFFIXES = {
+    "AGENTRELAY_BASE_URL": "agentrelay-base-url",
+    "AGENTRELAY_AGENT_ID": "agentrelay-agent-id",
+    "AGENTRELAY_USERNAME": "agentrelay-username",
+    "AGENTRELAY_TOKEN": "agentrelay-token",
+}
+# Retired Enablement runtime dependency gate (p2-149/p2-163): Worker task
+# definitions must not carry the Archer credential in either mode — since
+# p2-163 the auto workflow dispatches AgentRelay tasks executed on the Mac via
+# the pilot CLI, so the ECS runtime holds no personal Archer credentials.
+# Formal upgrades strip the secret from observed definitions and the
+# register-time contract fails closed on it.
+RETIRED_WORKER_SECRET_NAMES = {"ARCHER_OAUTH_COOKIE"}
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -572,8 +579,8 @@ def render_initial_task_definition(
                 "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
             }
         )
-    if enablement_workflow_mode == "archer" and role == "worker":
-        secret_names[role][ARCHER_SECRET_NAME] = ARCHER_SECRET_SUFFIX
+    if role == "worker":
+        secret_names[role].update(AGENTRELAY_SECRET_SUFFIXES)
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -690,17 +697,12 @@ def validate_worker_contract(task_definition: dict[str, Any]) -> None:
         raise ValueError("Worker task definition contains a pilot-creds volume")
     if "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON" not in _secret_names(container):
         raise ValueError("Worker task definition is missing the Suspension recipients secret")
-    enablement_mode = _enablement_mode_from_environment(environment)
-    carries_archer_secret = bool(RETIRED_WORKER_SECRET_NAMES & _secret_names(container))
-    if enablement_mode != "archer" and carries_archer_secret:
+    _enablement_mode_from_environment(environment)
+    if RETIRED_WORKER_SECRET_NAMES & _secret_names(container):
         raise ValueError(
             "Worker task definition contains retired Archer secrets "
-            "(manual enablement flow must not carry Archer credentials)"
-        )
-    if enablement_mode == "archer" and not carries_archer_secret:
-        raise ValueError(
-            "Worker task definition is missing the Archer credential secret "
-            "(archer enablement mode requires ARCHER_OAUTH_COOKIE)"
+            "(the ECS enablement runtime holds no Archer credentials; the auto "
+            "workflow dispatches AgentRelay tasks instead)"
         )
 
 
@@ -754,27 +756,17 @@ def render_task_definition(
         raise ValueError("taskDefinition object is required")
     if role == "worker":
         worker_container = _container(task_definition, "worker")
-        observed_enablement_mode = _enablement_mode_from_environment(
+        effective_enablement_mode = enablement_workflow_mode or _enablement_mode_from_environment(
             _environment_map(worker_container)
         )
-        effective_enablement_mode = enablement_workflow_mode or observed_enablement_mode
-        # Normalize the mode before the register-time contract so the archer
-        # credential requirement and the manual-mode strip rule both see the
-        # target mode, not whatever the observed revision carried.
+        # Normalize the mode on every rendered revision; the ECS runtime holds
+        # no Archer credentials in either mode (p2-163).
         _set_environment_value(
             worker_container,
             "ENABLEMENT_WORKFLOW_MODE",
             effective_enablement_mode,
         )
-        if effective_enablement_mode != "archer":
-            _strip_retired_worker_secrets(task_definition)
-        else:
-            prefix_arn = _parameter_prefix_arn(worker_container, environment=environment)
-            _set_secret_reference(
-                worker_container,
-                ARCHER_SECRET_NAME,
-                _parameter_arn(prefix_arn, ARCHER_SECRET_SUFFIX),
-            )
+        _strip_retired_worker_secrets(task_definition)
         validate_worker_contract(task_definition)
     if (
         hermes_case_workflow_mode is not None
@@ -887,6 +879,20 @@ def render_task_definition(
         if prefix_arn:
             for name, suffix in sorted(API_ZENDESK_READBACK_SECRET_SUFFIXES.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
+    if role == "worker":
+        # Ensure the AgentRelay transport identity is present on every rendered
+        # worker revision (p2-163), in both enablement modes so late relay
+        # results stay receivable after a manual-mode switch. Skip when the
+        # SSM prefix cannot be derived so the source validation surfaces.
+        try:
+            relay_prefix_arn = _parameter_prefix_arn(container, environment=environment)
+        except ValueError:
+            relay_prefix_arn = None
+        if relay_prefix_arn:
+            for name, suffix in sorted(AGENTRELAY_SECRET_SUFFIXES.items()):
+                _set_secret_reference(
+                    container, name, _parameter_arn(relay_prefix_arn, suffix)
+                )
     if role in {"api", "worker"}:
         # Ensure the outbound Slack kill switch reflects the target environment
         # on every rendered revision (p2-150): off in Production, on in
@@ -942,11 +948,8 @@ def render_production_hermes_disabled_task_definition(
     _remove_environment_values(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_SECRET_NAMES)
     _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
-    if (
-        _enablement_mode_from_environment(_environment_map(container)) != "archer"
-    ):
-        _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
-        _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
+    _remove_secret_references(container, RETIRED_WORKER_SECRET_NAMES)
+    _remove_environment_values(container, RETIRED_WORKER_SECRET_NAMES)
     _set_environment_value(container, "HERMES_CASE_WORKFLOW_MODE", "disabled")
     if role == "worker":
         validate_worker_contract(rendered)

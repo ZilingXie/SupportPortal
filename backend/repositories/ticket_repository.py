@@ -52,6 +52,10 @@ from backend.services.production_automation_classification_email import (
     build_production_automation_classification_email,
 )
 from backend.services.token_usage import aggregate_usage_ledger, build_usage_ledger_entry
+from backend.repositories.enablement_relay_repository import (
+    InMemoryEnablementRelayRepositoryMixin,
+    PostgresEnablementRelayRepositoryMixin,
+)
 from backend.repositories.hermes_case_repository import (
     InMemoryHermesCaseRepositoryMixin,
     PostgresHermesCaseRepositoryMixin,
@@ -1268,9 +1272,10 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v9-product-selection-state"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v10-enablement-relay"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v2",
+    "2026-single-ai-managed-v9-product-selection-state",
     "2026-single-ai-managed-v3",
     "2026-single-ai-managed-v4",
     "2026-single-ai-managed-v5",
@@ -2341,6 +2346,30 @@ class TicketRepository(Protocol):
         cancel_pending_reply_jobs: bool = True,
     ) -> bool:
         ...
+    def create_enablement_relay_request(self, **kwargs: Any) -> dict[str, Any] | None: ...
+    def release_enablement_relay_requests_after_public_reply(
+        self, *, limit: int, now: str, processing_profile: str | None = None
+    ) -> list[dict[str, Any]]: ...
+    def claim_enablement_relay_dispatch(
+        self, *, request_id: str, lease_token: str, lease_seconds: int, now: str
+    ) -> dict[str, Any] | None: ...
+    def complete_enablement_relay_dispatch(
+        self, *, request_id: str, relay_task_id: str, relay_task_expires_at: str, now: str
+    ) -> bool: ...
+    def fail_enablement_relay_dispatch(self, *, request_id: str, reason: str, now: str) -> bool: ...
+    def list_enablement_relay_requests(
+        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25
+    ) -> list[dict[str, Any]]: ...
+    def find_enablement_relay_request_by_task(self, relay_task_id: str) -> dict[str, Any] | None: ...
+    def get_enablement_relay_request(self, request_id: str) -> dict[str, Any] | None: ...
+    def record_enablement_relay_result(self, **kwargs: Any) -> dict[str, Any] | None: ...
+    def mark_enablement_relay_result_applied(
+        self, *, request_id: str, applied_status: str, now: str
+    ) -> bool: ...
+    def finish_enablement_relay_request(
+        self, *, request_id: str, status: str, now: str, reason: str = ""
+    ) -> dict[str, Any] | None: ...
+    def get_enablement_relay_result(self, request_id: str) -> dict[str, Any] | None: ...
     def update_claimed_account_reply_job(
         self,
         job: dict[str, Any],
@@ -3044,7 +3073,10 @@ class TicketRepository(Protocol):
         ...
 
 
-class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
+class InMemoryTicketRepository(
+    InMemoryHermesCaseRepositoryMixin,
+    InMemoryEnablementRelayRepositoryMixin,
+):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
 
@@ -4165,6 +4197,7 @@ class InMemoryTicketRepository(InMemoryHermesCaseRepositoryMixin):
         self._prompt_releases: dict[str, dict[str, Any]] = {}
         self._account_case_llm_usage: list[dict[str, Any]] = []
         self._initialize_hermes_state()
+        self._initialize_enablement_relay_state()
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -8163,7 +8196,10 @@ def _build_trace_ticket_snapshot_payload(
     }
 
 
-class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
+class PostgresTicketRepository(
+    PostgresHermesCaseRepositoryMixin,
+    PostgresEnablementRelayRepositoryMixin,
+):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
 
@@ -12508,6 +12544,7 @@ class PostgresTicketRepository(PostgresHermesCaseRepositoryMixin):
                     )
                 )
                 self._initialize_hermes_schema(cur)
+                self._initialize_enablement_relay_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:

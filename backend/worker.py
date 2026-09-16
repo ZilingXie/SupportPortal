@@ -189,8 +189,19 @@ from backend.services.account_suspension_automation import (
 from backend.services.automation_account_intake import _zendesk_ticket_url
 from backend.services.enablement_automation import (
     ENABLEMENT_INTERNAL_EMAIL_SUBJECT_PREFIX,
+    enablement_workflow_mode,
     send_enablement_internal_email,
 )
+from backend.services.agentrelay_client import (
+    AgentRelayClient,
+    AgentRelayError,
+    agentrelay_config,
+    new_listener_instance_id,
+)
+from backend.repositories.enablement_relay_repository import (
+    ENABLEMENT_RELAY_TARGET_PARAMS,
+)
+from backend.services.automation_account_intake import _record_execution_failure
 from backend.services.internal_email_payload import (
     InternalEmailPayloadUpgradeError,
     upgrade_internal_email_payload,
@@ -3079,6 +3090,9 @@ def process_account_automation_once() -> None:
         )
     _drain_production_zendesk_comment_deliveries(limit=20)
     _drain_enablement_manual_review_emails(limit=25, processing_profile=processing_profile)
+    _drain_enablement_relay_dispatches(limit=10)
+    _cycle_enablement_relay_inbox(max_events=10)
+    _sweep_enablement_relay_expiry(limit=10)
     _drain_account_slack_deliveries(limit=20)
     _drain_engineer_slack_events(limit=20)
     if _drain_mock_hermes_turns(limit=20):
@@ -3859,6 +3873,701 @@ def handle_billing_request_reply(reply: Any) -> str:
     except Exception as exc:
         _fail_automation_reply(reply_key, owner_token, exc)
         raise
+
+
+# ---------------------------------------------------------------------------
+# Enablement auto (relay) cycles (p2-163)
+#
+# Dispatch: release gated applications after the delivered public readback and
+# create exactly one AgentRelay Task per application (idempotency key =
+# request id; a lost create response replays with the same key next cycle).
+# Inbox: headless listener recovery pull -> persist result -> ACK -> close the
+# relay task as completion owner -> apply (success: one completion reply job;
+# anything else: the unified automation failure chain).
+# Expiry: dispatched applications whose relay deadline passed without a
+# trusted result fail closed with an explicit "local may have executed" note.
+
+_ENABLEMENT_RELAY_LISTENER: dict[str, Any] = {
+    "instance_id": "",
+    "epoch": 0,
+    "published_at": 0.0,
+}
+
+
+def _enablement_relay_failure_stage() -> str:
+    return "enablement_relay"
+
+
+def _record_enablement_relay_failure(
+    request: dict[str, Any],
+    *,
+    reason_code: str,
+    detail: str,
+    terminal_status: str = "failed",
+) -> None:
+    """Route one relay application into the unified automation failure chain.
+
+    The incident reason embeds the request id so distinct applications never
+    merge into one long-lived incident.  Terminal requests are skipped, and
+    the case keeps ``enablement_auto_workflow.state=failed`` for observability.
+    """
+    import asyncio
+
+    request_id = str(request.get("request_id") or "").strip()
+    account_case_id = str(request.get("account_case_id") or "").strip()
+    ticket_id = str(request.get("ticket_id") or "").strip()
+    if not request_id or not account_case_id:
+        return
+    timestamp = now_iso()
+    incident_reason = f"{request_id}:{reason_code}"[:160]
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if account_case is not None:
+        try:
+            asyncio.run(
+                _record_execution_failure(
+                    repository=ticket_repository,
+                    account_case=account_case,
+                    ticket_id=ticket_id,
+                    handler="enablement",
+                    stage=_enablement_relay_failure_stage(),
+                    reason_code=incident_reason,
+                    detail=str(detail or reason_code),
+                )
+            )
+        except Exception:
+            LOGGER.exception(
+                "enablement relay failure chain failed for %s", request_id
+            )
+    ticket_repository.finish_enablement_relay_request(
+        request_id=request_id,
+        status=terminal_status,
+        now=timestamp,
+        reason=reason_code,
+    )
+    _mirror_enablement_auto_workflow_state(
+        account_case_id, state="failed", now=timestamp
+    )
+    try:
+        ticket_repository.record_event(
+            ticket_id or None,
+            "enablement_relay_failure",
+            {
+                "request_id": request_id,
+                "reason_code": incident_reason,
+                "write_attempted": bool(
+                    (ticket_repository.get_enablement_relay_result(request_id) or {}).get(
+                        "write_attempted"
+                    )
+                ),
+                "detail": str(detail or reason_code)[:500],
+                "attempted_at": timestamp,
+            },
+        )
+    except Exception:
+        LOGGER.exception("enablement relay failure event failed for %s", request_id)
+
+
+def _mirror_enablement_auto_workflow_state(
+    account_case_id: str, *, state: str, now: str
+) -> None:
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if account_case is None:
+        return
+    context = dict(account_case.get("automation_context") or {})
+    workflow = dict(context.get("enablement_auto_workflow") or {})
+    if not workflow:
+        return
+    workflow["state"] = state
+    workflow["updated_at"] = now
+    context["enablement_auto_workflow"] = workflow
+    account_case["automation_context"] = context
+    account_case["updated_at"] = now
+    ticket_repository.save_account_case(account_case)
+
+
+def _enablement_relay_request_message(request: dict[str, Any]) -> str:
+    import json as _json
+
+    return _json.dumps(
+        {
+            "schema_version": "enablement-relay-request-v1",
+            "request_id": str(request.get("request_id") or ""),
+            "request_version": int(request.get("request_version") or 1),
+            "ticket_id": str(request.get("ticket_id") or ""),
+            "zendesk_ticket_id": str(request.get("zendesk_ticket_id") or ""),
+            "customer_email": str(request.get("customer_email") or ""),
+            "app_id": str(request.get("app_id") or ""),
+            "target_params": dict(request.get("target_params") or ENABLEMENT_RELAY_TARGET_PARAMS),
+            "created_at": str(request.get("created_at") or ""),
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _dispatch_enablement_relay_request(
+    request: dict[str, Any], config: Any
+) -> None:
+    import json as _json
+    from datetime import datetime as _datetime
+
+    request_id = str(request.get("request_id") or "")
+    expires_at = str(request.get("relay_task_expires_at") or "")
+    try:
+        expires_epoch = int(
+            _datetime.fromisoformat(expires_at.replace("Z", "+00:00")).timestamp()
+        )
+    except ValueError:
+        expires_epoch = int(time.time()) + 14 * 24 * 3600
+    client = AgentRelayClient(config)
+    response = client.create_task(
+        idempotency_key=str(request.get("idempotency_key") or ""),
+        done_criteria=(
+            f"SupportPortal enablement request {request_id}: verify ownership, precheck "
+            "and dry-run, execute after explicit approval, and return one "
+            "enablement-relay-result-v1 JSON message with the independent read-back."
+        ),
+        subject=f"[SupportPortal Enablement] {request_id}",
+        text=_enablement_relay_request_message(request),
+        task_expires_at_epoch=expires_epoch,
+    )
+    task_id = str((response.get("task") or {}).get("task_id") or "")
+    timestamp = now_iso()
+    completed = ticket_repository.complete_enablement_relay_dispatch(
+        request_id=request_id,
+        relay_task_id=task_id,
+        relay_task_expires_at=expires_at,
+        now=timestamp,
+    )
+    if not completed:
+        return
+    _mirror_enablement_auto_workflow_state(
+        str(request.get("account_case_id") or ""), state="dispatched", now=timestamp
+    )
+    ticket_repository.record_event(
+        str(request.get("ticket_id") or "") or None,
+        "enablement_relay_dispatched",
+        {
+            "request_id": request_id,
+            "relay_task_id": task_id,
+            "expires_at": expires_at,
+            "attempted_at": timestamp,
+        },
+    )
+    LOGGER.info(
+        "enablement relay task dispatched: request=%s task=%s",
+        request_id,
+        task_id,
+    )
+
+
+def _drain_enablement_relay_dispatches(*, limit: int = 10) -> None:
+    """Release gated applications and dispatch their relay tasks."""
+    if ticket_repository is None:
+        return
+    now = now_iso()
+    try:
+        ticket_repository.release_enablement_relay_requests_after_public_reply(
+            limit=limit, now=now
+        )
+    except Exception:
+        LOGGER.exception("enablement relay release scan failed")
+        return
+    try:
+        pending = ticket_repository.list_enablement_relay_requests(
+            statuses=("dispatch_pending", "dispatching"), limit=limit
+        )
+        if not isinstance(pending, list):
+            return
+    except Exception:
+        LOGGER.exception("enablement relay dispatch scan failed")
+        return
+    mode = enablement_workflow_mode()
+    config = agentrelay_config()
+    for request in pending:
+        request_id = str(request.get("request_id") or "")
+        if mode != "archer":
+            # Mode switched to manual before dispatch: stop auto processing and
+            # hand the application back per the mitigation contract; no relay
+            # task was created.
+            _record_enablement_relay_failure(
+                request,
+                reason_code="relay_mode_switched",
+                detail=(
+                    "Enablement was switched to manual before dispatch; the relay "
+                    "task was never created. Continue with the manual flow for new "
+                    "applications."
+                ),
+            )
+            continue
+        if config is None:
+            _record_enablement_relay_failure(
+                request,
+                reason_code="agentrelay_not_configured",
+                detail="AgentRelay transport is not configured on the worker.",
+            )
+            continue
+        claimed = ticket_repository.claim_enablement_relay_dispatch(
+            request_id=request_id,
+            lease_token=uuid4().hex,
+            lease_seconds=120,
+            now=now_iso(),
+        )
+        if claimed is None:
+            continue
+        try:
+            _dispatch_enablement_relay_request(claimed, config)
+        except AgentRelayError as exc:
+            if exc.retryable:
+                # The create may have succeeded; replaying the same idempotency
+                # key next cycle reconciles instead of double-creating.
+                LOGGER.warning(
+                    "enablement relay create outcome unknown for %s: %s",
+                    request_id,
+                    exc,
+                )
+                continue
+            _record_enablement_relay_failure(
+                claimed,
+                reason_code="agentrelay_rejected",
+                detail=str(exc),
+            )
+        except Exception:
+            # Unknown dispatch outcome: leave the lease to expire and replay.
+            LOGGER.exception("enablement relay dispatch failed for %s", request_id)
+
+
+def _ensure_enablement_relay_listener(client: AgentRelayClient) -> tuple[str, int] | None:
+    import time as _time
+
+    state = _ENABLEMENT_RELAY_LISTENER
+    if not state["instance_id"]:
+        state["instance_id"] = new_listener_instance_id()
+    if not state["epoch"]:
+        try:
+            state["epoch"] = client.register_listener(state["instance_id"])
+        except AgentRelayError as exc:
+            LOGGER.warning("enablement relay listener registration failed: %s", exc)
+            state["epoch"] = 0
+            return None
+    now = _time.monotonic()
+    if now - float(state["published_at"] or 0.0) >= 45.0:
+        try:
+            client.publish_readiness(state["instance_id"], int(state["epoch"]), ready=True)
+            state["published_at"] = now
+        except AgentRelayError as exc:
+            message = str(exc)
+            LOGGER.warning("enablement relay readiness publish failed: %s", message)
+            if "stale_readiness_epoch" in message or "recovery_not_allowed" in message:
+                state["epoch"] = 0
+            return None
+    return str(state["instance_id"]), int(state["epoch"])
+
+
+def _parse_enablement_relay_result(task_detail: dict[str, Any]) -> dict[str, Any] | None:
+    """Extract the latest enablement-relay-result-v1 JSON message of a task."""
+    import json as _json
+
+    for message in reversed(task_detail.get("messages") or []):
+        if not isinstance(message, dict):
+            continue
+        for part in message.get("parts") or []:
+            if not isinstance(part, dict) or part.get("kind") != "text":
+                continue
+            text_value = str(part.get("text") or "").strip()
+            if not text_value.startswith("{"):
+                continue
+            try:
+                payload = _json.loads(text_value)
+            except ValueError:
+                continue
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("schema_version") or "") != "enablement-relay-result-v1":
+                continue
+            payload["message_id"] = str(message.get("message_id") or "")
+            return payload
+    return None
+
+
+def _close_enablement_relay_task(
+    client: AgentRelayClient,
+    *,
+    request_id: str,
+    task_detail: dict[str, Any],
+) -> None:
+    task = task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+    task_id = str(task.get("task_id") or "")
+    message_id = str(task.get("current_message_id") or "")
+    if not task_id or not message_id:
+        return
+    try:
+        client.complete_task(
+            task_id,
+            message_id=message_id,
+            turn_sequence=int(task.get("turn_sequence") or 1),
+            expected_task_version=int(task.get("task_version") or 1),
+            idempotency_key=f"complete:{request_id}",
+        )
+    except AgentRelayError as exc:
+        LOGGER.warning(
+            "enablement relay task close failed for %s: %s", request_id, exc
+        )
+
+
+def _apply_enablement_relay_success(
+    request: dict[str, Any], result: dict[str, Any]
+) -> bool:
+    """Apply a winning successful relay result as the single completion reply.
+
+    The completion job uses a deterministic job id and trigger timestamp, so a
+    crash between job creation and the applied marker can never produce two
+    completion replies.
+    """
+    request_id = str(request.get("request_id") or "")
+    ticket_id = str(request.get("ticket_id") or "")
+    account_case_id = str(request.get("account_case_id") or "")
+    timestamp = str(result.get("created_at") or now_iso())
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if account_case is None:
+        return False
+    if str(account_case.get("automation_status") or "") == "human_review_required":
+        # Taken over by a human: the result stays as evidence only.
+        return False
+    if enablement_workflow_mode() != "archer":
+        # Mode switched after dispatch: keep the result as evidence.
+        return False
+    canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
+    known_information = {
+        "requested_feature": "media_relay",
+        "app_id_last4": str(request.get("app_id") or "")[-4:],
+    }
+    readback = result.get("readback") if isinstance(result.get("readback"), dict) else {}
+    note = str(result.get("detail") or "Enablement completed via relay.")
+    sanitized_note = sanitize_enablement_completion_note(
+        note, {**known_information, "ticket_id": ticket_id, "account_case_id": account_case_id}
+    )
+    reply_facts = build_automation_reply_facts(
+        behavior="enablement",
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        known_information=known_information,
+        source_facts=[sanitized_note],
+        resolution_status="completed",
+        customer_name=_account_greeting_customer_name(
+            account_case, ticket_id, canonical_ticket=canonical_ticket
+        ),
+    )
+    reply_facts["completion_acknowledgement"] = "patience"
+    if readback:
+        reply_facts["readback_region"] = readback.get("region")
+        reply_facts["readback_max_subscribe_load"] = readback.get("maxSubscribeLoad")
+    try:
+        normalized_facts, _intent, _close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+            close_after_publish=True,
+        )
+    except AccountReplyContractError as exc:
+        LOGGER.warning(
+            "enablement relay completion contract failed for %s: %s", request_id, exc
+        )
+        return False
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    completion_job = {
+        "job_id": f"enablement-relay-complete-{request_id}",
+        "ticket_id": ticket_id,
+        "trigger_message_created_at": timestamp,
+        "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        "scheduled_for": (
+            datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+            + timedelta(seconds=delay_seconds)
+        ).isoformat(),
+        "payload": {
+            "draft_content": "",
+            "reply_facts": normalized_facts,
+            "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+            "asked_field_keys": [],
+            "visibility": "account_only",
+            "internal_resolution": True,
+            "close_after_publish": True,
+            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+            "automation_delivery_key": f"enablement-relay:{request_id}",
+        },
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    ticket_repository.cancel_pending_account_reply_jobs(
+        ticket_id, updated_at=timestamp
+    )
+    ticket_repository.save_account_reply_job(completion_job)
+    ticket_repository.finish_enablement_relay_request(
+        request_id=request_id, status="completed", now=now_iso()
+    )
+    _mirror_enablement_auto_workflow_state(
+        account_case_id, state="completed", now=now_iso()
+    )
+    ticket_repository.record_event(
+        ticket_id or None,
+        "enablement_relay_completion_reply_job_queued",
+        {
+            "request_id": request_id,
+            "reply_job_id": completion_job["job_id"],
+            "outcome": str(result.get("outcome") or ""),
+            "attempted_at": now_iso(),
+        },
+    )
+    return True
+
+
+def _apply_enablement_relay_result(
+    *,
+    request: dict[str, Any],
+    result: dict[str, Any],
+    client: AgentRelayClient,
+    task_detail: dict[str, Any],
+) -> None:
+    request_id = str(request.get("request_id") or "")
+    outcome = str(result.get("outcome") or "")
+    task_id = str((task_detail.get("task") or {}).get("task_id") or "")
+    if outcome in {"enabled", "already_satisfied"}:
+        applied = False
+        try:
+            applied = _apply_enablement_relay_success(request, result)
+        except Exception:
+            LOGGER.exception(
+                "enablement relay success apply failed for %s", request_id
+            )
+        if applied:
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="applied", now=now_iso()
+            )
+        else:
+            # Evidence only (human takeover or mode switch): keep the result,
+            # do not send a customer completion automatically.
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="superseded", now=now_iso()
+            )
+            _record_enablement_relay_failure(
+                request,
+                reason_code=f"relay_result_{outcome}_not_applied",
+                detail=(
+                    "A successful relay result arrived after human takeover or a "
+                    "manual-mode switch; it is preserved as evidence and no customer "
+                    "completion was sent automatically."
+                ),
+            )
+    else:
+        ticket_repository.mark_enablement_relay_result_applied(
+            request_id=request_id, applied_status="applied", now=now_iso()
+        )
+        write_attempted = bool(result.get("write_attempted"))
+        if outcome == "outcome_unknown":
+            detail = (
+                "Relay execution reported an unknown outcome; the local skill may "
+                "already have written to Archer. Verify the current configuration "
+                "before any manual retry; no automatic rewrite was performed."
+            )
+        elif write_attempted:
+            detail = (
+                "Relay execution attempted the enablement write and failed. The "
+                "independent read-back did not confirm the target configuration."
+            )
+        else:
+            detail = "Relay execution stopped before any Archer write."
+        _record_enablement_relay_failure(
+            request,
+            reason_code=f"relay_{outcome}",
+            detail=f"{detail} Result detail: {str(result.get('detail') or '')[:300]}",
+        )
+    if task_id:
+        _close_enablement_relay_task(
+            client, request_id=request_id, task_detail=task_detail
+        )
+
+
+def _consume_enablement_relay_event(
+    client: AgentRelayClient,
+    event: dict[str, Any],
+    *,
+    listener_instance_id: str,
+    readiness_epoch: int,
+) -> None:
+    task_id = str(event.get("task_id") or "")
+    request = (
+        ticket_repository.find_enablement_relay_request_by_task(task_id)
+        if task_id
+        else None
+    )
+    recorded: dict[str, Any] | None = None
+    task_detail: dict[str, Any] = {}
+    if request is not None:
+        try:
+            task_detail = client.get_task(task_id)
+        except AgentRelayError as exc:
+            LOGGER.warning(
+                "enablement relay task detail fetch failed for %s: %s", task_id, exc
+            )
+            # Do not ACK: the event redelivers after the ack lease.
+            return
+        payload = _parse_enablement_relay_result(task_detail)
+        request_id = str(request.get("request_id") or "")
+        if (
+            payload is not None
+            and str(payload.get("request_id") or "") == request_id
+            and payload.get("outcome")
+        ):
+            recorded = ticket_repository.record_enablement_relay_result(
+                request_id=request_id,
+                outcome=str(payload.get("outcome") or ""),
+                write_attempted=bool(payload.get("write_attempted")),
+                detail=str(payload.get("detail") or ""),
+                readback=payload.get("readback")
+                if isinstance(payload.get("readback"), dict)
+                else None,
+                approval_ref=payload.get("approval_ref")
+                if isinstance(payload.get("approval_ref"), dict)
+                else None,
+                relay_message_id=str(payload.get("message_id") or ""),
+                now=now_iso(),
+            )
+        else:
+            # Unparsable or wrongly-bound message: consumed as noise, never
+            # allowed to change application state.
+            try:
+                ticket_repository.record_event(
+                    str(request.get("ticket_id") or "") or None,
+                    "enablement_relay_result_rejected",
+                    {
+                        "request_id": request_id,
+                        "relay_task_id": task_id,
+                        "reason": "result_payload_invalid_or_mismatched",
+                        "attempted_at": now_iso(),
+                    },
+                )
+            except Exception:
+                LOGGER.exception(
+                    "enablement relay rejection event failed for %s", request_id
+                )
+    # Durable-persist happened above (or the event is informational): ACK now.
+    try:
+        client.ack_event(
+            event,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+        )
+    except AgentRelayError as exc:
+        LOGGER.warning("enablement relay ack failed for task %s: %s", task_id, exc)
+        return
+    if recorded is not None and recorded.get("winner"):
+        try:
+            _apply_enablement_relay_result(
+                request=recorded["request"],
+                result=recorded["result"],
+                client=client,
+                task_detail=task_detail,
+            )
+        except Exception:
+            LOGGER.exception(
+                "enablement relay result apply failed for %s", task_id
+            )
+    elif request is not None and task_detail:
+        # Duplicate or late result: close the relay task, keep evidence only.
+        _close_enablement_relay_task(
+            client,
+            request_id=str(request.get("request_id") or ""),
+            task_detail=task_detail,
+        )
+
+
+def _cycle_enablement_relay_inbox(*, max_events: int = 10) -> None:
+    """Pull relay events for the service identity and consume them."""
+    if ticket_repository is None:
+        return
+    config = agentrelay_config()
+    if config is None:
+        return
+    client = AgentRelayClient(config)
+    listener = _ensure_enablement_relay_listener(client)
+    if listener is None:
+        return
+    listener_instance_id, readiness_epoch = listener
+    for _ in range(max(1, int(max_events))):
+        try:
+            event = client.pull_event(listener_instance_id, readiness_epoch)
+        except AgentRelayError as exc:
+            message = str(exc)
+            LOGGER.warning("enablement relay pull failed: %s", message)
+            if "stale_readiness_epoch" in message or "recovery_not_allowed" in message:
+                _ENABLEMENT_RELAY_LISTENER["epoch"] = 0
+            return
+        if event is None:
+            return
+        try:
+            _consume_enablement_relay_event(
+                client,
+                event,
+                listener_instance_id=listener_instance_id,
+                readiness_epoch=readiness_epoch,
+            )
+        except Exception:
+            LOGGER.exception(
+                "enablement relay event consumption failed for task %s",
+                event.get("task_id"),
+            )
+
+
+def _sweep_enablement_relay_expiry(*, limit: int = 10) -> None:
+    """Expire dispatched applications whose relay deadline passed."""
+    if ticket_repository is None:
+        return
+    from datetime import datetime as _datetime
+
+    now = now_iso()
+    try:
+        now_epoch = _datetime.fromisoformat(now.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return
+    try:
+        dispatched = ticket_repository.list_enablement_relay_requests(
+            statuses=("dispatched",), limit=max(1, limit)
+        )
+        if not isinstance(dispatched, list):
+            return
+    except Exception:
+        LOGGER.exception("enablement relay expiry scan failed")
+        return
+    for request in dispatched:
+        expires_at = str(request.get("relay_task_expires_at") or "")
+        if not expires_at:
+            continue
+        try:
+            expires_epoch = _datetime.fromisoformat(
+                expires_at.replace("Z", "+00:00")
+            ).timestamp()
+        except ValueError:
+            continue
+        if expires_epoch > now_epoch:
+            continue
+        if ticket_repository.get_enablement_relay_result(
+            str(request.get("request_id") or "")
+        ):
+            continue
+        _record_enablement_relay_failure(
+            request,
+            reason_code="relay_task_expired",
+            detail=(
+                "The relay task reached its end-to-end deadline without a trusted "
+                "result; the local skill may already have executed the write. Query "
+                "the current Archer configuration before any manual retry; no "
+                "automatic rewrite was performed."
+            ),
+            terminal_status="expired",
+        )
 
 
 def _queue_enablement_completion_reply_job(

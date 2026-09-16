@@ -66,9 +66,12 @@ class EnablementRagResumeTest(TestCase):
                                              notify_account_failure(**kw, mail_sender=self.mail)))
         self.stack.enter_context(patch.object(reply, "_apply_ownership_gate", return_value=True))
         self.extract = self.stack.enter_context(patch.object(intake, "extract_enablement_fields", side_effect=self.extract_fields))
-        self.archer = self.stack.enter_context(patch(
-            "backend.services.enablement_archer_executor.execute_enablement_archer",
-            side_effect=AssertionError("manual enablement must not call Archer")))
+        # p2-163: the manual flow must never persist a relay request (the ECS
+        # runtime holds no Archer path at all).
+        self.repo.create_enablement_relay_request.side_effect = AssertionError(
+            "manual enablement must not dispatch relay requests"
+        )
+        self.relay_dispatches = 0
         self.rag = self.stack.enter_context(patch.object(reply, "try_rag_fallback_answer",
             return_value=NS(kind="answer", answer="Read the project settings.", references=("https://docs.agora.io",))))
         self.create = self.stack.enter_context(patch.object(reply, "_create_reply_job", side_effect=self.create_job))
@@ -129,7 +132,7 @@ class EnablementRagResumeTest(TestCase):
             self.assertEqual(self.case["route_classification"]["handler_binding_status"], "active")
             self.assertEqual(self.case["automation_context"]["zendesk_ownership"]["source_group_id"], "original-group")
         self.turn("try: " + "b" * 32, comment_id="corrected")
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         context = self.extract.call_args.kwargs["automation_context"]
         self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
         self.assertEqual(len(context["conversation"]), 7)
@@ -141,7 +144,7 @@ class EnablementRagResumeTest(TestCase):
         job_count = len(self.jobs)
         self.turn("try: " + "b" * 32, comment_id="corrected")
         self.assertEqual(len(self.jobs), job_count)
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.mail.assert_not_called()
         self.assertEqual(self.jobs[0]["reply_intent"], "rag_fallback_answer")
         diagnostic = self.case["route_classification"]["field_extraction"]
@@ -187,7 +190,7 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(result["automation_status"], "human_review_required")
         self.assertEqual(result["alert_status"], "sent")
         self.rag.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.assertEqual(self.jobs, [])
         self.assertNotIn("secret diagnostic", str(self.repo.record_event.call_args_list))
         self.mail.assert_called_once()
@@ -202,7 +205,7 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(result["route_classification"]["field_extraction"]["failure_type"], "account_ai_invocation_exhausted")
         self.assertNotIn("private response", str(result))
         self.rag.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
 
     def test_rag_escalation_alert_and_original_queue(self):
         self.rag.return_value = NS(kind="escalate", reason="insufficient_evidence")
@@ -227,7 +230,7 @@ class EnablementRagResumeTest(TestCase):
         self.ticket["status"] = "solved"
         self.turn("try: " + "b" * 32)
         self.extract.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.rag.assert_not_called()
         self.mail.assert_not_called()
 
@@ -240,12 +243,12 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(result["execution_reason_code"], "enablement_field_extraction_uncertain")
         self.assertEqual(result["route_classification"]["field_extraction"]["grounding_reason_code"], "quote_mismatch")
         self.rag.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.assertEqual(self.jobs, [])
 
     def test_valid_app_id_waits_for_review_without_project_lookup(self):
         self.turn("try: " + "a" * 32)
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         context = self.extract.call_args.kwargs["automation_context"]
         self.assertEqual(context["evidence_message_ids"], [context["current_message_id"]])
         self.assertEqual(len(context["conversation"]), 3)
@@ -261,7 +264,7 @@ class EnablementRagResumeTest(TestCase):
         self.turn("try: " + "b" * 33)
         self.assertEqual(self.case["internal_email_send_reason"], "appid_invalid_format")
         self.assertEqual(self.case["missing_fields"], ["app_id"])
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.mail.assert_not_called()
 
     def test_legacy_rejected_app_id_resumes_into_manual_review(self):
@@ -276,20 +279,20 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(self.case["collected_fields"]["app_id"], "b" * 32)
         self.assertEqual(self.case["internal_email_send_status"], "awaiting_public_reply")
         self.assertEqual(self.jobs[-1]["reply_intent"], "submission_confirmation")
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
 
     def test_completed_enablement_is_not_retained_by_rag(self):
         self.case["route_classification"]["handler_binding_status"] = "completed"
         self.turn("Where is it?", "rag")
         self.assertEqual(self.case["execution_action"], "rag")
         self.extract.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
 
     def test_lost_ownership_does_not_resume_enablement(self):
         with patch.object(reply, "_apply_ownership_gate", return_value=False):
             self.turn("try: " + "b" * 32)
         self.extract.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.assertEqual(self.jobs, [])
 
     def test_same_failure_incident_does_not_send_twice(self):
@@ -308,7 +311,7 @@ class EnablementRagResumeTest(TestCase):
         self.turn("Where is it?", "rag")
         self.turn("try: " + "b" * 32)
         self.queue.assert_called_once()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.mail.assert_called_once()
 
     def test_comment_entry_gates_internal_email_until_public_confirmation(self):
@@ -320,7 +323,7 @@ class EnablementRagResumeTest(TestCase):
         outcome = self.turn("try: " + "c" * 32, comment_id="manual-review")
 
         self.mail.assert_not_called()
-        self.archer.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
         self.assertEqual(internal_emails, [])
         self.assertEqual(outcome["automation_status"], "automation")
         self.assertEqual(outcome["internal_email_send_status"], "awaiting_public_reply")
