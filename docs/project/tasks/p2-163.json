@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-  "next_action": "Preproduction 已上线 r20260916-f5c5c96（manual 模式+新部署合同，live 验证全绿）。剩：受控验收——①用户在 Mac 配置 skill 日汇总触发后切 archer 模式跑一条 auto 成功（AppID fcd0dab1...36fc）+一条 auto 失败 +一次 manual 切换演练；②Production 推广另行授权。全部通过后转 done。",
+  "next_action": "验收四项修复已实现待合码/重发 preprod（manual）。剩：受控验收——①Mac 侧配 10:00 汇总触发；②archer 模式重发 preprod；③auto 成功单+失败单+manual 切换演练后评估转 done；④Production 推广另行授权。",
   "acceptance_criteria": [
     "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
     "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -90,6 +90,11 @@
       "at": "2026-09-16",
       "event": "preproduction_deployed_manual_mode",
       "summary": "r20260916-f5c5c96 发布成功（此前 v3-v6 四次失败：两轮代码级根因各修复合入 #1207/#1210、一次瞬态 ECR 拉取、两次源门禁拦截并发前进）。ECS 侧合同=两模式禁 Archer 凭据、worker 恒注入 relay 身份、manual 默认；表/扫描/UA 三处运行时问题全部实证消除。auto 受控验收待 Mac 侧就绪。"
+    },
+    {
+      "at": "2026-09-16",
+      "event": "acceptance_fixes_implemented",
+      "summary": "验收结论=部署通过但四项实现问题（3×P1+1×P2）不签完成。修复：①第一次审批绑定申请与报告版本（action/request_id/request_version/report_digest，执行前现场重算 precheck 比对 digest，非 JSON 拒绝）；②dry-run 计划参数门禁（exit 0 但参数不匹配/不可核实即 blocked，永不写入；连带修复写成功+回读确认仍报 enable_failed 的结果归并 bug）；③worker 服务端强制——enabled/already_satisfied 必须携带满足申请 target_params 快照的独立回读+审批绑定才建完成回复，否则 relay_result_target_mismatch/approval_unbound 进统一失败链；④_pilot 捕获 TimeoutExpired/OSError，open 超时=write_attempted true+outcome_unknown（回读确认可升 enabled），_matches_target 健壮化（safe int、修 or-0 假值）。新增 test_enablement_local_pilot 12 用例+relay 负向×3。"
     }
   ]
 }

@@ -4232,6 +4232,77 @@ def _close_enablement_relay_task(
         )
 
 
+def _enablement_relay_target_params(request: dict[str, Any]) -> dict[str, Any]:
+    params = request.get("target_params")
+    return dict(params) if isinstance(params, dict) and params else dict(ENABLEMENT_RELAY_TARGET_PARAMS)
+
+
+def _enablement_relay_readback_satisfied(
+    result: dict[str, Any], target_params: dict[str, Any]
+) -> bool:
+    """Server-side gate: an enabled result must carry an independent
+    read-back that actually satisfies the target parameters."""
+    readback = result.get("readback")
+    if not isinstance(readback, dict):
+        return False
+    state = str(readback.get("state") or readback.get("status") or "").strip().lower()
+    if state != "enabled":
+        return False
+
+    def _as_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and value.is_integer():
+            return int(value)
+        text_value = str(value or "").strip()
+        if not text_value:
+            return None
+        try:
+            return int(text_value)
+        except ValueError:
+            return None
+
+    region_raw = readback.get("region")
+    load_raw = (
+        readback.get("maxSubscribeLoad")
+        if readback.get("maxSubscribeLoad") is not None
+        else readback.get("max_subscribe_load")
+    )
+    region = _as_int(region_raw)
+    load = _as_int(load_raw)
+    return (
+        region is not None
+        and region == int(target_params.get("region") or 2)
+        and load is not None
+        and load == int(target_params.get("maxSubscribeLoad") or 10)
+    )
+
+
+def _enablement_relay_approval_bound(
+    result: dict[str, Any], request: dict[str, Any]
+) -> bool:
+    """Server-side gate: the result's approval reference must be bound to
+    THIS application and an explicit approve-execution action."""
+    approval = result.get("approval_ref")
+    if not isinstance(approval, dict):
+        return False
+    if str(approval.get("action") or "") != "approve_execution":
+        return False
+    if str(approval.get("request_id") or "") != str(request.get("request_id") or ""):
+        return False
+    request_version = request.get("request_version")
+    approval_version = approval.get("request_version")
+    if request_version is not None and approval_version is not None:
+        try:
+            if int(approval_version) != int(request_version):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 def _apply_enablement_relay_success(
     request: dict[str, Any], result: dict[str, Any]
 ) -> bool:
@@ -4352,6 +4423,43 @@ def _apply_enablement_relay_result(
     outcome = str(result.get("outcome") or "")
     task_id = str((task_detail.get("task") or {}).get("task_id") or "")
     if outcome in {"enabled", "already_satisfied"}:
+        target_params = _enablement_relay_target_params(request)
+        if not _enablement_relay_readback_satisfied(result, target_params):
+            # An enabled result without a target-satisfying independent
+            # read-back is never a completion: route to the unified failure
+            # chain (the write may have happened; demand manual verification).
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="applied", now=now_iso()
+            )
+            _record_enablement_relay_failure(
+                request,
+                reason_code="relay_result_target_mismatch",
+                detail=(
+                    "An enabled relay result did not carry an independent read-back "
+                    "satisfying the target parameters (state=enabled, region and "
+                    "maxSubscribeLoad as requested). The write may have happened; query "
+                    "the current Archer configuration before any manual retry. No "
+                    "customer completion was sent."
+                ),
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+        if not _enablement_relay_approval_bound(result, request):
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="applied", now=now_iso()
+            )
+            _record_enablement_relay_failure(
+                request,
+                reason_code="relay_result_approval_unbound",
+                detail=(
+                    "An enabled relay result lacked an approval reference bound to this "
+                    "application (action=approve_execution, matching request_id/version). "
+                    "The write may have happened; query the current Archer configuration "
+                    "before any manual retry. No customer completion was sent."
+                ),
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
         applied = False
         try:
             applied = _apply_enablement_relay_success(request, result)
