@@ -41,7 +41,11 @@ const state = {
   selectedCategory: "",
   form: { subject: "", body: "" },
   sending: false,
-  pendingRequestId: null,
+  // One unresolved send attempt: { id, fingerprint }. The fingerprint binds
+  // the request id to the exact category/subject/body it was issued for, so
+  // editing the form starts a genuinely new request instead of silently
+  // retrying the old one (which the backend would treat as a duplicate).
+  pendingRequest: null,
   scenarios: [],
   runs: [],
   runsLoading: false,
@@ -347,6 +351,15 @@ function selectCategory(categoryId) {
   if (formCard) formCard.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
+function requestFingerprint(category, subject, body) {
+  const raw = `${category}\u0000${subject}\u0000${body}`;
+  let hash = 5381;
+  for (let i = 0; i < raw.length; i += 1) {
+    hash = ((hash << 5) + hash + raw.charCodeAt(i)) >>> 0;
+  }
+  return `${raw.length.toString(36)}-${hash.toString(36)}`;
+}
+
 async function createTicket() {
   if (state.sending || !state.selectedCategory) return;
   const recipient = String(state.mail?.recipient || "");
@@ -354,12 +367,17 @@ async function createTicket() {
     `This sends a real email to ${recipient || "the Zendesk support address"} and creates a real Zendesk ticket with real automation side effects (public reply, internal handoff email, Slack). Continue?`
   );
   if (!confirmed) return;
-  // One stable request id per send attempt: retries after an unknown outcome
-  // reuse it so the backend returns the recorded ticket instead of sending a
-  // second email. A confirmed rejection clears it so the next attempt is a
-  // genuinely new send.
-  if (!state.pendingRequestId) {
-    state.pendingRequestId = `atx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  // A request id is only reused while it is unresolved AND the form content
+  // is byte-identical to what it was issued for. Anything else (confirmed
+  // send, confirmed rejection, edited form, changed category) starts a new
+  // request. Unknown outcomes and network errors keep the id so a retry is
+  // idempotent and can never send a duplicate email.
+  const fingerprint = requestFingerprint(state.selectedCategory, state.form.subject, state.form.body);
+  if (!state.pendingRequest || state.pendingRequest.fingerprint !== fingerprint) {
+    state.pendingRequest = {
+      id: `atx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`,
+      fingerprint,
+    };
   }
   state.sending = true;
   render();
@@ -371,30 +389,51 @@ async function createTicket() {
         category: state.selectedCategory,
         subject: state.form.subject,
         body: state.form.body,
-        request_id: state.pendingRequestId,
+        request_id: state.pendingRequest.id,
       }),
     });
     if (!response.ok) {
-      if (payload?.send_outcome === "unknown") {
+      if (payload?.send_outcome === "rejected" || response.status === 422) {
+        // Provably not sent: the next attempt is a genuinely new request.
+        state.pendingRequest = null;
+        throw new Error(responseErrorMessage(payload, "Failed to create the test ticket."));
+      }
+      // Unknown outcome (send_outcome=unknown, or an opaque 5xx that may be
+      // a post-send database failure): keep the id so the retry is idempotent.
+      toast(
+        "Send result unknown: the email may already be out. Retrying is safe — the same request id is reused and no duplicate email is sent. Check Zendesk before a fresh send.",
+        "error"
+      );
+    } else if (payload?.duplicate) {
+      const recordedStatus = String(payload?.ticket?.send_status || "");
+      if (recordedStatus === "pending" || recordedStatus === "outcome_unknown") {
         toast(
-          "Send result unknown: the email may already be out. Retrying is safe — the same request id is reused and no duplicate email is sent. Check Zendesk before a fresh send.",
+          "This request is still unresolved (recorded status: " +
+            recordedStatus +
+            "). Retrying again is safe — the same request id is reused and no duplicate email is sent.",
           "error"
         );
       } else {
-        state.pendingRequestId = null;
-        throw new Error(responseErrorMessage(payload, "Failed to create the test ticket."));
+        state.pendingRequest = null;
+        toast("This request was already recorded (idempotent retry); no second email was sent.", "success");
       }
-    } else if (payload?.duplicate) {
-      state.pendingRequestId = null;
-      toast("This request was already recorded (idempotent retry); no second email was sent.", "success");
     } else {
-      state.pendingRequestId = null;
-      toast(
-        payload?.ticket?.send_status === "sent"
-          ? `Test email sent for ${CATEGORY_LABELS[state.selectedCategory] || state.selectedCategory}. Use Refresh to link the Zendesk ticket.`
-          : `Test email failed: ${payload?.ticket?.send_error || "unknown error"}`,
-        payload?.ticket?.send_status === "sent" ? "success" : "error"
-      );
+      const status = String(payload?.ticket?.send_status || "");
+      if (status === "sent") {
+        state.pendingRequest = null;
+        toast(
+          `Test email sent for ${CATEGORY_LABELS[state.selectedCategory] || state.selectedCategory}. Use Refresh to link the Zendesk ticket.`,
+          "success"
+        );
+      } else if (status === "failed") {
+        state.pendingRequest = null;
+        toast(`Test email failed: ${payload?.ticket?.send_error || "unknown error"}`, "error");
+      } else {
+        toast(
+          "Send result unclear (recorded status: " + (status || "none") + "). The request id is kept; retrying reuses it and will not duplicate the email.",
+          "error"
+        );
+      }
     }
     await loadTickets();
   } catch (error) {

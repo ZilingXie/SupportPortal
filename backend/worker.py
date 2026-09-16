@@ -3742,9 +3742,14 @@ def handle_billing_request_reply(reply: Any) -> str:
                 reply_key, owner_token, client_ticket_id, "billing_ticket_not_found"
             )
         if str(billing_ticket.get("automation_handler") or "").strip() not in {
-            "",  # legacy billing cases created before the handler column existed
+            # Legacy billing cases predate the handler column; verified in the
+            # shared DB that empty-handler cases are human-review/RAG routes
+            # with no internal email payload (the identity gate then rejects
+            # them as recipients_unknown anyway). Suspension uses its own
+            # "[Account Suspension Review]" prefix which this poller never
+            # matches, so it is not admitted here.
+            "",
             "billing",
-            "account_suspension",  # suspension handoff emails reuse the Billing prefix
         }:
             return _dismiss_cross_environment_reply(
                 reply_key, owner_token, client_ticket_id, "automation_handler_mismatch"

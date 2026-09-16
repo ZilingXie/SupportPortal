@@ -71,7 +71,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
         # The cross-poll inbox cursor is module state; reset it so each test
         # exercises a known scan position.
         billing_automation._INBOX_SCAN_CURSOR.clear()
-        billing_automation._INBOX_SCAN_CURSOR.update({"oldest_scanned": "", "exhausted": True})
+        billing_automation._INBOX_SCAN_CURSOR.update({"next_link": "", "exhausted": True})
         self._env_patcher = patch.dict(
             os.environ,
             {
@@ -327,9 +327,9 @@ class BillingAutomationEmailTests(unittest.TestCase):
         self.assertEqual(query["$orderby"], ["receivedDateTime desc"])
 
     def test_poll_billing_request_replies_cursor_advances_beyond_fresh_window(self) -> None:
-        # Fresh window (2x2=4) fills with unrelated mail and is truncated;
-        # the resume segment must fetch the older target reply in the same
-        # poll instead of starving it behind the fresh window forever.
+        # Fresh window fills with unrelated mail and leaves an unconsumed
+        # nextLink; the resume segment must fetch the older target reply in
+        # the same poll instead of starving it behind the fresh window.
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
@@ -340,12 +340,9 @@ class BillingAutomationEmailTests(unittest.TestCase):
 
             def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
                 url = request.full_url
-                query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
                 if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
-                    list_urls.append(url)
-                    graph_filter = (query.get("$filter") or [""])[0]
-                    if "le " in graph_filter:
-                        # Resume segment: the older target reply, window runs dry.
+                    if "skiptoken" in url:
+                        list_urls.append(url)
                         return _FakeHttpResponse(
                             {
                                 "value": [
@@ -359,17 +356,19 @@ class BillingAutomationEmailTests(unittest.TestCase):
                             },
                             status=200,
                         )
+                    list_urls.append(url)
                     return _FakeHttpResponse(
                         {
                             "value": [
                                 {
-                                    "id": "msg-fresh",
+                                    "id": f"msg-fresh-{index}",
                                     "subject": "Re: unrelated thread",
                                     "from": {"emailAddress": {"address": "noise@example.com"}},
                                     "receivedDateTime": "2026-07-02T06:00:00Z",
                                 }
+                                for index in range(4)
                             ],
-                            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=more",
+                            "@odata.nextLink": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=resume-1",
                         },
                         status=200,
                     )
@@ -396,28 +395,27 @@ class BillingAutomationEmailTests(unittest.TestCase):
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
                 replies = poll_automation_request_replies(
                     handler=lambda _reply: None,
-                    max_messages=2,
-                    max_pages=2,
+                    max_messages=4,
+                    max_pages=1,
                 )
 
         self.assertEqual([reply.message_id for reply in replies], ["msg-deep"])
         self.assertIn("Approved deep in the backlog.", replies[0].body_text)
-        # Fresh window paging (4 pages at limit) plus one resume request.
-        self.assertEqual(len(list_urls), 5)
-        for url in list_urls[:4]:
-            self.assertNotIn("receivedDateTime+le+", url)
-        self.assertIn("receivedDateTime+le+", list_urls[4])
-        # The resume window ran dry: cursor caught up for future polls.
+        self.assertEqual(len(list_urls), 2)
+        self.assertNotIn("skiptoken", list_urls[0])
+        self.assertIn("skiptoken=resume-1", list_urls[1])
         self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
 
-    def test_poll_billing_request_replies_follows_next_link_pages(self) -> None:
+    def test_poll_cursor_advances_when_messages_share_one_timestamp(self) -> None:
+        # 101 messages sharing one receivedDateTime: a timestamp cursor would
+        # never move, but the nextLink cursor keeps advancing across polls.
         with tempfile.TemporaryDirectory() as temp_dir:
             cache_path = Path(temp_dir) / "billing-graph-token.json"
             cache_path.write_text(
                 json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
                 encoding="utf-8",
             )
-            list_requests = []
+            resume_calls = []
 
             def _page(values, next_link=None):
                 payload = {"value": values}
@@ -425,49 +423,53 @@ class BillingAutomationEmailTests(unittest.TestCase):
                     payload["@odata.nextLink"] = next_link
                 return _FakeHttpResponse(payload, status=200)
 
+            def _noise(message_id):
+                return {
+                    "id": message_id,
+                    "subject": "Re: unrelated thread",
+                    "from": {"emailAddress": {"address": "noise@example.com"}},
+                    "receivedDateTime": "2026-07-02T06:00:00Z",
+                }
+
             def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
                 url = request.full_url
-                parsed = urllib.parse.urlparse(url)
                 if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
-                    if "skiptoken" in parsed.query:
-                        list_requests.append(url)
+                    if "skiptoken=resume-1" in url:
+                        resume_calls.append(url)
+                        return _page(
+                            [_noise(f"same-ts-{index}") for index in range(4)],
+                            next_link="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=resume-2",
+                        )
+                    if "skiptoken=resume-2" in url:
+                        resume_calls.append(url)
                         return _page(
                             [
+                                _noise("same-ts-4"),
                                 {
-                                    "id": "msg-page2",
-                                    "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-2",
+                                    "id": "msg-ts-target",
+                                    "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-TS",
                                     "from": {"emailAddress": {"address": "billing@example.com"}},
-                                    "receivedDateTime": "2026-07-02T05:00:00Z",
-                                    "isRead": False,
-                                }
+                                    "receivedDateTime": "2026-07-02T06:00:00Z",
+                                },
                             ]
                         )
-                    list_requests.append(url)
                     return _page(
-                        [
-                            {
-                                "id": f"msg-noise-{index}",
-                                "subject": "Re: unrelated thread",
-                                "from": {"emailAddress": {"address": "noise@example.com"}},
-                                "receivedDateTime": "2026-07-02T06:00:00Z",
-                            }
-                            for index in range(2)
-                        ],
-                        next_link="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=page2",
+                        [_noise(f"same-ts-{index}") for index in range(4)],
+                        next_link="https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=resume-1",
                     )
-                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-page2?"):
+                if url.startswith("https://graph.microsoft.com/v1.0/me/messages/msg-ts-target?"):
                     return _FakeHttpResponse(
                         {
-                            "id": "msg-page2",
-                            "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-2",
+                            "id": "msg-ts-target",
+                            "subject": "Re: [Billing Request] Detailed invoice request - Ticket TK-TS",
                             "from": {"emailAddress": {"address": "billing@example.com"}},
-                            "body": {"contentType": "text", "content": "Approved on page two."},
-                            "receivedDateTime": "2026-07-02T05:00:00Z",
+                            "body": {"contentType": "text", "content": "Approved among identical timestamps."},
+                            "receivedDateTime": "2026-07-02T06:00:00Z",
                         },
                         status=200,
                     )
                 if (
-                    url == "https://graph.microsoft.com/v1.0/me/messages/msg-page2"
+                    url == "https://graph.microsoft.com/v1.0/me/messages/msg-ts-target"
                     and request.get_method() == "PATCH"
                 ):
                     return _FakeHttpResponse(status=200)
@@ -476,13 +478,53 @@ class BillingAutomationEmailTests(unittest.TestCase):
             env = dict(GRAPH_ENV)
             env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
             with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
-                replies = poll_billing_request_replies(handler=lambda _reply: None)
+                first = poll_automation_request_replies(
+                    handler=lambda _reply: None, max_messages=4, max_pages=1
+                )
+                self.assertEqual(first, [])
+                # The resume window stayed truncated: cursor kept the link.
+                self.assertFalse(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+                self.assertIn("resume-2", str(billing_automation._INBOX_SCAN_CURSOR["next_link"]))
+                second = poll_automation_request_replies(
+                    handler=lambda _reply: None, max_messages=4, max_pages=1
+                )
 
-        self.assertEqual(len(replies), 1)
-        self.assertEqual(replies[0].message_id, "msg-page2")
-        self.assertIn("Approved on page two.", replies[0].body_text)
-        self.assertEqual(len(list_requests), 2)
-        self.assertIn("skiptoken=page2", list_requests[1])
+        self.assertEqual([reply.message_id for reply in second], ["msg-ts-target"])
+        self.assertIn("Approved among identical timestamps.", second[0].body_text)
+        # Second poll resumed from the saved resume-2 link, not resume-1.
+        self.assertTrue(any("resume-2" in url for url in resume_calls))
+        self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+
+    def test_poll_resume_link_expiry_resets_cursor_without_failing_poll(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cache_path = Path(temp_dir) / "billing-graph-token.json"
+            cache_path.write_text(
+                json.dumps({"access_token": "cached-access-token", "expires_at": 4102444800}),
+                encoding="utf-8",
+            )
+
+            def fake_urlopen(request, timeout=0):  # type: ignore[no-untyped-def]
+                url = request.full_url
+                if url.startswith("https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?"):
+                    if "skiptoken" in url:
+                        raise urllib.error.HTTPError(url, 400, "skiptoken expired", hdrs=None, fp=None)
+                    return _FakeHttpResponse({"value": []}, status=200)
+                raise AssertionError(f"unexpected URL {url}")
+
+            env = dict(GRAPH_ENV)
+            env["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"] = str(cache_path)
+            with patch.dict(os.environ, env), patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                billing_automation._INBOX_SCAN_CURSOR.update(
+                    {
+                        "next_link": "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages?$skiptoken=stale",
+                        "exhausted": False,
+                    }
+                )
+                replies = poll_automation_request_replies(handler=lambda _reply: None)
+
+        self.assertEqual(replies, [])
+        self.assertTrue(billing_automation._INBOX_SCAN_CURSOR["exhausted"])
+        self.assertEqual(billing_automation._INBOX_SCAN_CURSOR["next_link"], "")
 
     def test_poll_billing_request_replies_ignores_unmatched_subjects(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -535,7 +577,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
             return_value="access-token",
         ), patch(
             "backend.services.billing_automation._collect_inbox_messages",
-            return_value=([summary], False),
+            return_value=([summary], None),
         ), patch(
             "backend.services.billing_automation._get_graph_message",
             return_value=message,
@@ -571,7 +613,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
             return_value="access-token",
         ), patch(
             "backend.services.billing_automation._collect_inbox_messages",
-            return_value=([summary], False),
+            return_value=([summary], None),
         ), patch(
             "backend.services.billing_automation._get_graph_message",
             return_value=message,
@@ -593,7 +635,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
             "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
         ), patch(
             "backend.services.billing_automation._collect_inbox_messages",
-            return_value=([summary], False),
+            return_value=([summary], None),
         ), patch(
             "backend.services.billing_automation._get_graph_message", return_value=message
         ), patch(
@@ -612,7 +654,7 @@ class BillingAutomationEmailTests(unittest.TestCase):
             "backend.services.billing_automation._acquire_graph_access_token", return_value="access-token"
         ), patch(
             "backend.services.billing_automation._collect_inbox_messages",
-            return_value=([summary], False),
+            return_value=([summary], None),
         ), patch(
             "backend.services.billing_automation._get_graph_message", return_value=message
         ), patch(
