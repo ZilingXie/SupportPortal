@@ -1,24 +1,24 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T06:15:17Z",
+  "capturedAt": "2026-09-16T07:16:00Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "3zJvu5KQFZIoOoqu",
     "workflowName": "[ops]Error Test|Zendesk",
     "snapshotKind": "published",
-    "versionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
-    "draftVersionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
-    "publishedVersionId": "ecafca03-3502-4dab-929d-89ce95ec4aa9",
-    "updatedAt": "2026-09-16T05:51:57.638Z",
+    "versionId": "39f40c69-53a6-43ff-9e92-85d017bcb8ba",
+    "draftVersionId": "39f40c69-53a6-43ff-9e92-85d017bcb8ba",
+    "publishedVersionId": "39f40c69-53a6-43ff-9e92-85d017bcb8ba",
+    "updatedAt": "2026-09-16T07:07:14.397Z",
     "parentFolderId": "38jn9lYBMhDSyrzo"
   },
   "workflow": {
     "name": "[ops]Error Test|Zendesk",
-    "description": "私有运维测试流程：收到内部 Chat 输入后触发可控错误，用于验证共享错误告警；不访问真实 Zendesk 工单。",
+    "description": "通过聊天入口接收工单号，记录执行信息并查询 Zendesk 工单，用于联调错误处理链路；执行失败时由 [ops]Error Alert 接收，属于运维测试流程。",
     "nodes": [
       {
         "parameters": {
-          "public": false,
+          "public": true,
           "options": {}
         },
         "type": "@n8n/n8n-nodes-langchain.chatTrigger",
@@ -52,17 +52,29 @@
         "name": "Execution Data"
       },
       {
-        "id": "898069bf-4158-4f55-97df-c1d8e62ebabe",
-        "name": "Generate Controlled Failure",
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
+        "id": "aa3954f6-e314-4bf8-a02e-e05b7acddf11",
+        "name": "Get_Case_info",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
         "position": [
           464,
           0
         ],
         "parameters": {
-          "mode": "runOnceForEachItem",
-          "jsCode": "throw new Error('Controlled n8n error-handler test');"
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $json.chatInput }}.json",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
         }
       }
     ],
@@ -76,14 +88,14 @@
               "index": 0
             },
             {
-              "node": "Generate Controlled Failure",
+              "node": "Get_Case_info",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Generate Controlled Failure": {
+      "Get_Case_info": {
         "main": [
           [
             {

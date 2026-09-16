@@ -2,11 +2,9 @@
 
 This integration is independent of the Account automation handoff workflows.
 SupportPortal owns durable Case events, thread bindings, direct Slack delivery,
-AI/approval state, and the Slack signing secret used by the custom interaction
-Webhook. n8n owns the visual ingress flow, fixed Team/Channel filtering,
-mention enforcement, and inbound idempotency; free n8n forwards the exact
-interaction request body and signature headers to SupportPortal for
-cryptographic verification before any business action.
+and AI/approval state. n8n owns the visual ingress flow, fixed Team/Channel
+filtering, mention enforcement, and inbound idempotency. The custom Slack
+Interaction ingress currently lacks cryptographic request verification.
 
 ## Required configuration
 
@@ -34,15 +32,13 @@ Configure these only in n8n or its deployment environment:
   answers in-thread; every later mention of the thread resolves `bound` and
   takes the regular feedback path.
 
-Configure these in the indicated SupportPortal environment:
+Configure these in the SupportPortal production environment:
 
 - `PRODUCTION_ENGINEER_SLACK_ACCESS_TOKEN`
 - `PRODUCTION_ENGINEER_SLACK_TEAM_ID`
 - `PRODUCTION_ENGINEER_SLACK_CHANNEL_ID`
 - `PRODUCTION_ENGINEER_SLACK_TIMEOUT_SECONDS`
 - the existing `n8n_request_token`
-- `ENGINEER_SLACK_SIGNING_SECRET`, injected only into the Preproduction API
-  role from `/supportportal/preproduction/engineer-slack-signing-secret`
 
 The Slack access token is a deployment secret and must never enter a tracked
 file or SupportPortal payload. Team and Channel are fixed deployment settings;
@@ -54,21 +50,18 @@ inbound payloads cannot override them.
 2. Import and configure `Slack_App_Mention_To_SupportPortal_Engineer.json` and
    `Slack_Interaction_To_SupportPortal_Engineer.json`.
 3. Replace all non-secret placeholders and bind credentials in the n8n UI.
-4. Enable raw request bodies on the Slack interaction Webhook. Before parsing
-   or routing the action, POST `raw_body`, `request_timestamp`, and `signature`
-   to
-   `/automation/{environment}/api/integrations/slack/verify-request` using the
-   existing `X-N8n-Request-Token` credential. Continue only after a 200
-   `{"ok": true}` response. The SupportPortal API verifies Slack's v0 HMAC and
-   five-minute timestamp window using its managed signing secret. Never paste
-   the signing secret into a workflow, execution, export, n8n variable, or data
-   table. Set the Slack Event Subscription and Interactivity request URLs to
-   the verified ingress workflows.
-5. Activate the interaction workflow only after the verifier call succeeds in
-   the target environment. The checked-in App Mention export still contains
-   the legacy Code-node environment-variable verifier; keep that template
-   inactive on free n8n. The current live Slack message route uses n8n's native
-   Slack Trigger instead of that custom Webhook template.
+4. Do not activate or expose a custom Slack Interaction Webhook until it can
+   verify the exact raw request body with Slack's v0 HMAC and five-minute replay
+   window. This free n8n deployment cannot provide environment variables to
+   Code nodes, and the reverted SupportPortal API no longer provides an external
+   verifier. Team/Channel checks, timestamps, or a signature-shaped string are
+   not cryptographic verification. Never paste the signing secret into a
+   workflow, execution, export, or data table.
+5. The live `[slack]Handle Action|Preprod` workflow has been restored to its
+   pre-remediation graph and remains active, but it does not satisfy step 4.
+   Treat real button acceptance as blocked until a supported verifier path is
+   implemented. The App Mention path uses n8n's native Slack Trigger and is a
+   separate ingress path.
 
 ## Required behavior
 
@@ -78,11 +71,12 @@ inbound payloads cannot override them.
 - The outbound event claim is atomic and only `queued` events are eligible.
   `pending` and `outcome_unknown` are visible reconciliation states and are
   never automatically replayed.
-- Slack ingress verifies the Slack signature and timestamp, then requires the
-  exact Team and Channel. It resolves the thread through SupportPortal before
-  writing the inbound ledger. Mentions additionally require `app_mention`, a
-  non-bot unedited event, non-empty text after removing the bot mention, and a
-  unique Slack `event_id`.
+- A custom Slack Interaction ingress must verify the Slack signature and
+  timestamp before applying the exact Team and Channel filters. The current
+  reverted workflow only performs non-cryptographic field checks and therefore
+  does not meet this contract. Mentions use the native Slack Trigger and still
+  require `app_mention`, a non-bot unedited event, non-empty text after removing
+  the bot mention, and a unique Slack `event_id`.
 - Interactions require the same Team/Channel/active binding and a unique
   interaction ID. Button values carry only investigation/version data.
 - A valid mention is persisted as human guidance. SupportPortal lazily assigns
@@ -111,17 +105,16 @@ inbound payloads cannot override them.
 1. Create an approved production `not_automated` Zendesk test ticket. Confirm
    one root Slack message in the configured Channel.
 2. Mention the bot in another Channel and in a non-Case thread. Confirm both
-   are ACKed with no SupportPortal call and no bot reply. Before this check,
-   replay a Slack-signed request against each ingress URL and confirm the Code
-   node receives the exact raw request body; a parsed or reconstructed body is
-   not valid signature-verification evidence.
+   are ACKed with no SupportPortal call and no bot reply. Do not use the custom
+   Interaction Webhook for acceptance while HMAC verification remains blocked.
 3. Post text without a bot mention in the Case thread. Confirm no AI call.
 4. Mention the bot in the bound Case thread with the exact customer guidance.
    Confirm one Persona-polished draft with `Run guardrail` returns to that thread,
    the Case has one pinned Persona assignment, and the inbound ledger contains
    one row. Replay the same event ID and confirm no second model call or draft.
-5. Run guardrail and final approval. Confirm one public Zendesk comment, no
-   Zendesk status change, and a delivery confirmation in the same thread.
+5. After a supported HMAC verifier is implemented, run guardrail and final
+   approval. Confirm one public Zendesk comment, no Zendesk status change, and a
+   delivery confirmation in the same thread.
 6. Add a new public customer comment. Confirm exactly one
    `Cx has added a new comment` notification reaches the same thread, no Draft
    or action button is posted automatically, and old buttons fail as stale.

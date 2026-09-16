@@ -3,18 +3,18 @@
   "capturedAt": "2026-09-16T07:16:00Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
-    "workflowId": "1am2EuuDMV3RUwsJ",
-    "workflowName": "[case]Intake|ECS Route",
+    "workflowId": "qFSNOmYXr97N2UGX",
+    "workflowName": "[case]Intake|EC2 Staging",
     "snapshotKind": "published",
-    "versionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "draftVersionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "publishedVersionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "updatedAt": "2026-09-16T07:15:49.618Z",
+    "versionId": "50004672-1a18-4b54-800d-dc11b86bd67e",
+    "draftVersionId": "50004672-1a18-4b54-800d-dc11b86bd67e",
+    "publishedVersionId": "50004672-1a18-4b54-800d-dc11b86bd67e",
+    "updatedAt": "2026-09-16T07:07:29.895Z",
     "parentFolderId": "m6g0McsPdron3eH9"
   },
   "workflow": {
-    "name": "[case]Intake|ECS Route",
-    "description": "接收 Zendesk 新工单，补全评论、请求人和组织资料，按公司 ID 名单将 ticket.created 事件分流至 SupportPortal ECS Preproduction 或 Production，并记录执行关联信息。",
+    "name": "[case]Intake|EC2 Staging",
+    "description": "接收 Zendesk 新工单并补全评论、请求人和组织资料，提交到旧 EC2 的 /automation/staging/v1/cases；属于历史接入配置，需核对该入口当前可用性。",
     "nodes": [
       {
         "parameters": {
@@ -30,12 +30,12 @@
         "type": "n8n-nodes-base.zendeskTrigger",
         "typeVersion": 1,
         "position": [
-          -1248,
-          -96
+          -2064,
+          128
         ],
-        "id": "cd5aab71-26ef-4170-90fb-ac6d85762141",
-        "name": "Zendesk Trigger",
-        "webhookId": "990c0766-ef9c-46a7-9194-3c81d9f61467",
+        "id": "0c8676f2-f4ca-48b2-bcf9-c040caa6ab7a",
+        "name": "Zendesk Trigger 2",
+        "webhookId": "5cc1d024-027e-4cda-ba72-5992191e41e3",
         "credentials": {
           "zendeskApi": {
             "id": "f85Z4a0savbF0l5r",
@@ -45,22 +45,66 @@
       },
       {
         "parameters": {
-          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zendesk Trigger').item.json['ticket.id'] }}/comments.json",
+          "method": "POST",
+          "url": "https://support.stellarix.space/automation/staging/v1/cases",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "title",
+                "value": "={{ $json.ticket.subject }}"
+              },
+              {
+                "name": "question",
+                "value": "={{ $json.ticket.description }}"
+              },
+              {
+                "name": "customer_email",
+                "value": "={{ $json.customer_email }}"
+              },
+              {
+                "name": "source",
+                "value": "={{ $json.ticket.url }}"
+              },
+              {
+                "name": "customer_name",
+                "value": "={{ $json.customer_name }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -496,
+          32
+        ],
+        "id": "9b10aabd-2e43-40ed-865d-385b7eda0f52",
+        "name": "HTTP Request",
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $json['ticket.id'] }}/comments.json",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "zendeskApi",
-          "options": {
-            "redirect": {
-              "redirect": {}
-            }
-          }
+          "options": {}
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          -800,
-          -96
+          -1840,
+          128
         ],
-        "id": "f039bf54-e6a6-4c9d-ab0c-bce97c8b16a3",
+        "id": "56f3a120-7e7b-414c-bc41-3f0bb0343e8f",
         "name": "Get_Case_Comment1",
         "credentials": {
           "zendeskApi": {
@@ -71,22 +115,18 @@
       },
       {
         "parameters": {
-          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zendesk Trigger').item.json['ticket.id'] }}.json",
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Zendesk Trigger 2').item.json['ticket.id'] }}.json",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "zendeskApi",
-          "options": {
-            "redirect": {
-              "redirect": {}
-            }
-          }
+          "options": {}
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          -1024,
-          -96
+          -1616,
+          128
         ],
-        "id": "4b00a964-d03c-42af-995f-95f32293f6cd",
+        "id": "ee975df1-47d1-4e22-ab94-dc9d01e613dd",
         "name": "Get_Case_Info",
         "credentials": {
           "zendeskApi": {
@@ -105,10 +145,10 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
         "position": [
-          -576,
-          -96
+          -1392,
+          32
         ],
-        "id": "83fe0297-0877-4d3c-84cd-f5534723eae5",
+        "id": "d8cad1a9-e666-4593-a3ce-6a46754d4a14",
         "name": "Get_Requester_Info",
         "onError": "continueRegularOutput",
         "credentials": {
@@ -146,10 +186,10 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.3,
         "position": [
-          -352,
-          -96
+          -1168,
+          32
         ],
-        "id": "71145e23-fb87-4193-ac31-e891849f1d63",
+        "id": "b1e7862a-0a97-498c-aba9-5f5659bb9c18",
         "name": "IF_Requester_Info_Missing"
       },
       {
@@ -162,10 +202,10 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.4,
         "position": [
-          -128,
-          -168
+          -944,
+          -48
         ],
-        "id": "0c413c01-0439-4333-bdc3-20b99e5173ce",
+        "id": "2c6ae6f7-7a33-437c-b83d-4d88c1df8a5a",
         "name": "Get_Organization_Info",
         "onError": "continueRegularOutput",
         "credentials": {
@@ -183,10 +223,10 @@
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          96,
-          -96
+          -720,
+          32
         ],
-        "id": "1b10f474-f66b-4420-b213-426b8b1df1ef",
+        "id": "7bf00214-a1fe-401b-a521-fd2d76cad2ae",
         "name": "Prepare_Account_Data"
       },
       {
@@ -195,7 +235,7 @@
             "values": [
               {
                 "key": "ticket",
-                "value": "={{ $json.ticket_id }}"
+                "value": "={{ $json.execution?.request?.zendesk_ticket_id || '' }}"
               }
             ]
           }
@@ -203,24 +243,57 @@
         "type": "n8n-nodes-base.executionData",
         "typeVersion": 1.1,
         "position": [
-          1216,
-          0
+          -272,
+          32
         ],
-        "id": "c4635575-872c-4095-94d4-6e658c74bf67",
+        "id": "cc937222-dfe2-45d4-916e-9fe079ac80be",
         "name": "Execution Data"
       },
       {
         "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "22b749e5-5e2d-4bd7-a9ef-a9ce6832cff8",
+                "leftValue": "={{ ($json.ticket.custom_fields ?? []).find(field => String(field.id) === '31444636241300')?.value ?? '' }}",
+                "rightValue": "p1_-_urgent_external",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -1392,
+          272
+        ],
+        "id": "c5e56692-d07f-4265-bacc-29083efec890",
+        "name": "IF_Customer_Priority_P1_Urgent"
+      },
+      {
+        "parameters": {
           "mode": "runOnceForEachItem",
-          "jsCode": "const TARGET_COMPANY_IDS = [\n  '1201099',\n  '200062458',\n  '1392055',\n  '1138100',\n  '1228534'\n  // Add more CompanyIDs here as strings.\n];\n\nconst companyId = String(\n  $json.organization?.organization_fields?.companyid ?? '',\n).trim();\n\nreturn {\n  json: {\n    ...$json,\n    routing: {\n      companyId,\n      companyIdResult: TARGET_COMPANY_IDS.includes(companyId) ? 'match' : 'no_match',\n    },\n  },\n};"
+          "jsCode": "const TARGET_COMPANY_IDS = [\n  '1201099',\n  // Add more CompanyIDs here as strings.\n];\n\nconst companyId = String(\n  $json.organization?.organization_fields?.companyid ?? '',\n).trim();\n\nreturn {\n  json: {\n    ...$json,\n    routing: {\n      companyId,\n      companyIdResult: TARGET_COMPANY_IDS.includes(companyId) ? 'match' : 'no_match',\n    },\n  },\n};"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
         "position": [
-          544,
-          -96
+          -944,
+          272
         ],
-        "id": "46661fe4-5914-49a1-b1c1-a5baf980e6d3",
+        "id": "f33be3b7-9f93-4210-b75f-4c4d61b414c3",
         "name": "Check_Company_ID1"
       },
       {
@@ -250,10 +323,10 @@
         "type": "n8n-nodes-base.if",
         "typeVersion": 2.3,
         "position": [
-          768,
-          -96
+          -720,
+          272
         ],
-        "id": "73b5fc26-be8e-4193-8649-d314b5cf1715",
+        "id": "5858ea09-ed05-462c-8c62-2d6120644904",
         "name": "IF_Company_ID_In_List1"
       },
       {
@@ -266,146 +339,25 @@
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
         "position": [
-          320,
-          -96
+          -1168,
+          272
         ],
-        "id": "381a1af9-ee32-4eaf-9312-791a64feb230",
+        "id": "c512976e-5bd9-4cac-8a66-797fbe337e43",
         "name": "get_cid",
-        "retryOnFail": true,
         "credentials": {
           "zendeskApi": {
             "id": "f85Z4a0savbF0l5r",
             "name": "Zendesk account 3"
           }
         }
-      },
-      {
-        "parameters": {
-          "httpMethod": "POST",
-          "path": "3b75c538-533b-4be4-a422-df76effeac24",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.webhook",
-        "typeVersion": 2,
-        "position": [
-          -1248,
-          416
-        ],
-        "id": "acac48be-1477-4213-992d-f4b1ae74d14d",
-        "name": "Zen_New_Comment_Webhoo222",
-        "webhookId": "3b75c538-533b-4be4-a422-df76effeac24",
-        "disabled": true
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://supportcenter.stellarix.space/automation/production/v1/intake",
-          "authentication": "genericCredentialType",
-          "genericAuthType": "httpBearerAuth",
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{\n  {\n    schema_version: 'automation-intake-v1',\n    event_id: `zendesk:ticket:${$('Zendesk Trigger').item.json['ticket.id']}:created`,\n    event_type: 'ticket.created',\n    occurred_at: $('Get_Case_Info').item.json.ticket.created_at,\n    ticket: {\n      id: String($('Zendesk Trigger').item.json['ticket.id']),\n      status: $('Get_Case_Info').item.json.ticket.status || 'new',\n      subject: $('Get_Case_Info').item.json.ticket.subject || '',\n      description: $('Get_Case_Info').item.json.ticket.description || '',\n      requester: {\n        name: $('Get_Requester_Info').item.json.user.name || '',\n        email: $('Get_Requester_Info').item.json.user.email || ''\n      }\n    }\n  }\n}}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          992,
-          -192
-        ],
-        "id": "10f29f78-6dbd-4bf1-aed0-a1650e32ea6c",
-        "name": "/automation/production",
-        "retryOnFail": true,
-        "credentials": {
-          "httpBearerAuth": {
-            "id": "toE81efBqb60KXsy",
-            "name": "automation_production"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://support.stellarix.space/production/account",
-          "authentication": "genericCredentialType",
-          "genericAuthType": "httpHeaderAuth",
-          "sendBody": true,
-          "bodyParameters": {
-            "parameters": [
-              {
-                "name": "title",
-                "value": "={{ $('Get_Case_Info').item.json.ticket.subject }}"
-              },
-              {
-                "name": "question",
-                "value": "={{ $('Get_Case_Info').item.json.ticket.description }}"
-              },
-              {
-                "name": "customer_email",
-                "value": "={{ $('Get_Requester_Info').item.json.user.email }}"
-              },
-              {
-                "name": "source",
-                "value": "={{ $('Get_Case_Info').item.json.ticket.url }}"
-              },
-              {
-                "name": "customer_name",
-                "value": "={{ $('Get_Requester_Info').item.json.user.name }}"
-              }
-            ]
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          992,
-          192
-        ],
-        "id": "61ed27b9-e8b9-410f-949b-20c13457fbdd",
-        "name": "/production",
-        "retryOnFail": true,
-        "credentials": {
-          "httpHeaderAuth": {
-            "id": "QpzesdEzLCm98H1C",
-            "name": "2_SupportPortal"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/intake",
-          "authentication": "genericCredentialType",
-          "genericAuthType": "httpBearerAuth",
-          "sendBody": true,
-          "specifyBody": "json",
-          "jsonBody": "={{\n  {\n    schema_version: 'automation-intake-v1',\n    event_id: `zendesk:ticket:${$('Zendesk Trigger').item.json['ticket.id']}:created`,\n    event_type: 'ticket.created',\n    occurred_at: $('Get_Case_Info').item.json.ticket.created_at,\n    ticket: {\n      id: String($('Zendesk Trigger').item.json['ticket.id']),\n      status: $('Get_Case_Info').item.json.ticket.status || 'new',\n      subject: $('Get_Case_Info').item.json.ticket.subject || '',\n      description: $('Get_Case_Info').item.json.ticket.description || '',\n      requester: {\n        name: $('Get_Requester_Info').item.json.user.name || '',\n        email: $('Get_Requester_Info').item.json.user.email || ''\n      }\n    }\n  }\n}}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          992,
-          0
-        ],
-        "id": "c1fb6bee-04ba-451c-9c7b-4454e9e2ad40",
-        "name": "/automation/preproduction",
-        "retryOnFail": true,
-        "credentials": {
-          "httpBearerAuth": {
-            "id": "toE81efBqb60KXsy",
-            "name": "automation_production"
-          }
-        }
       }
     ],
     "connections": {
-      "Zendesk Trigger": {
+      "Zendesk Trigger 2": {
         "main": [
           [
             {
-              "node": "Get_Case_Info",
+              "node": "Get_Case_Comment1",
               "type": "main",
               "index": 0
             }
@@ -416,7 +368,7 @@
         "main": [
           [
             {
-              "node": "Get_Requester_Info",
+              "node": "Get_Case_Info",
               "type": "main",
               "index": 0
             }
@@ -427,7 +379,23 @@
         "main": [
           [
             {
-              "node": "Get_Case_Comment1",
+              "node": "Get_Requester_Info",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "IF_Customer_Priority_P1_Urgent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "HTTP Request": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
               "type": "main",
               "index": 0
             }
@@ -474,6 +442,28 @@
           ]
         ]
       },
+      "Prepare_Account_Data": {
+        "main": [
+          [
+            {
+              "node": "HTTP Request",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF_Customer_Priority_P1_Urgent": {
+        "main": [
+          [
+            {
+              "node": "get_cid",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "Check_Company_ID1": {
         "main": [
           [
@@ -490,69 +480,6 @@
           [
             {
               "node": "Check_Company_ID1",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "IF_Company_ID_In_List1": {
-        "main": [
-          [
-            {
-              "node": "/automation/preproduction",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "/automation/production",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "/automation/production": {
-        "main": [
-          [
-            {
-              "node": "Execution Data",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "/production": {
-        "main": [
-          [
-            {
-              "node": "Execution Data",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          []
-        ]
-      },
-      "/automation/preproduction": {
-        "main": [
-          [
-            {
-              "node": "Execution Data",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Prepare_Account_Data": {
-        "main": [
-          [
-            {
-              "node": "get_cid",
               "type": "main",
               "index": 0
             }

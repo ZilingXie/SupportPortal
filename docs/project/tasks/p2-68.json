@@ -4,17 +4,19 @@
   "title": "通过 Slack 向工程师送达 Round Robin 派单",
   "status": "active",
   "owner": "unassigned",
-  "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 负责固定 Team/Channel/thread 的可视化入站控制；免费版 n8n 的 Slack Interaction 原始请求由 SupportPortal 使用托管 signing secret 验签。",
-  "next_action": "在 Preproduction SSM 配置 engineer-slack-signing-secret，部署包含 /api/integrations/slack/verify-request 的 API release，验证有效/伪造/过期签名后发布 n8n Slack Action 草稿 8d23501d-d39d-4c00-88b2-565825c1d546，并在固定测试 Channel 真实点击一次按钮；Production 保持未授权。另以新测试工单完成 Slack mention neutralization 与错误 Channel ACK 验收，并由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
+  "summary": "SupportPortal 将 Production Non automated Engineer Case 直接发送到固定 Slack Channel；有效 @bot 指导会懒分配并固定 Persona，仅按人类指导润色无应用签名的客户回复，再经 Guardrail、Final Approve 和既有 Zendesk delivery 发布。客户新评论只更新调查上下文、使旧 Draft/审批失效并发送无正文 Slack 通知，下一次 @bot 才生成新 Draft。Zendesk status sync 对绑定 Case thread 发送状态变化通知，不触发 AI 或客户交付。n8n 负责固定 Team/Channel/thread 的可视化入站控制；当前回退后的自定义 Slack Interaction Webhook 尚无可用 HMAC 验签路径。",
+  "next_action": "先为免费版 n8n 选择不在 workflow 中保存 signing secret 的 Slack HMAC 验签承载方式；完成有效、伪造和过期签名验证前，不执行真实 Interaction 按钮验收。另以新测试工单完成 Slack mention neutralization 与错误 Channel ACK 验收，并由 p2-69 核对 ticket 13023 assignment_status=pending 的 round-robin 派单结果。",
   "acceptance_criteria": [
     "Production Non automated Case 只在 SupportPortal Production 环境配置的固定 Slack Channel 创建一个 thread。",
     "Production Non automated Case 的客户标题和问题即使包含 Slack user/channel/broadcast token，也只作为普通文本显示且不触发 mention 通知。",
     "Production Non automated Engineer Case 的真实 Zendesk status transition 只队列一条 `Ticket's Status has been changed from XXX to XXX.` Slack thread 通知；重复或 stale status 不新增事件，solved/closed 仍关闭 Engineer Case。",
     "其他频道、无绑定 thread、无 app mention、bot/edit/delete 事件只 ACK，不调用 SupportPortal 或 AI。",
     "Slack 指导、AI 草稿、guardrail、批准、Zendesk 客户评论和发布结果在同一 Case thread 幂等闭环。",
-    "Slack Interaction 在解析和调用业务接口前通过 SupportPortal 校验原始请求的 v0 HMAC 与五分钟时间窗；无效、过期或未配置的验签请求失败关闭且不产生业务动作。"
+    "Slack Interaction 在解析和调用业务接口前校验原始请求的 v0 HMAC 与五分钟时间窗；无效、过期或未配置的验签请求失败关闭且不产生业务动作。"
   ],
-  "blockers": [],
+  "blockers": [
+    "免费版 n8n 不能向 Code 节点提供环境变量；第一批 SupportPortal 外部 verifier 已按要求回退，当前自定义 Slack Interaction Webhook 不满足 HMAC 验签验收。"
+  ],
   "evidence": [
     {
       "type": "test",
@@ -72,9 +74,9 @@
       "ref": "backend/tests/test_engineer_slack.py, backend/tests/test_account_intake.py"
     },
     {
-      "type": "test",
-      "summary": "Free-n8n Slack request verification is implemented in the Preproduction SupportPortal API with n8n-token authentication, managed signing-secret injection, Slack v0 HMAC verification, and a five-minute replay window; the route and secret remain absent from Production. API/deployment/bootstrap/workflow coverage passed 111 tests; the n8n verifier draft remains unpublished until Preproduction deployment and secret configuration.",
-      "ref": "backend/automation_ecs_api.py, backend/services/automation_hermes_slack_actions.py, backend/tests/test_automation_ecs_api.py, backend/tests/test_automation_ecs_deploy.py, backend/tests/test_bootstrap_automation_preproduction.py"
+      "type": "deployment",
+      "summary": "按用户要求回退 2026-09-16 第一批 n8n 修复：Slack Action 恢复 13 节点且删除 verifier 草稿，发布版本 0192f828；SupportPortal verifier API 与 Preproduction signing-secret 注入一并撤销。未触发或重放业务 execution。",
+      "ref": "docs/integrations/n8n/workflows/active/FKv8vtZBQk6tH4Gt.published.json, docs/integrations/n8n/engineer_case_slack_runbook.md"
     }
   ],
   "source_refs": [
@@ -150,8 +152,8 @@
     },
     {
       "at": "2026-09-16",
-      "event": "slack_signature_verifier_implemented",
-      "summary": "为不支持 Code 节点环境变量的免费 n8n 增加 SupportPortal 外部验签接口和 API 角色托管 signing secret；n8n Interaction 草稿在解析前调用验签接口，待 Preproduction 配置、部署和验证后发布。"
+      "event": "n8n_first_batch_reverted",
+      "summary": "按用户要求撤销第一批 n8n workflow 修复和 SupportPortal 外部 Slack verifier；保留 Git workflow 快照能力和现有 credential 引用，不恢复明文认证头，不重放业务 execution。"
     }
   ],
   "legacy_refs": [
