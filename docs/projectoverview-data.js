@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T12:27:49Z",
-  "source_base_commit": "14f3b4cf766ec6cf0083b4c89abed099d2eea7f4",
-  "registry_digest": "070d6720ca144e1ed570f0f7b55ac9f151bac7e1810a95aab7bcd5a17fefe4da",
+  "generated_at": "2026-09-16T14:23:39Z",
+  "source_base_commit": "799f53bc82c165dafa0b2945ad81d30b0ad26dc2",
+  "registry_digest": "7a3f3a158edf4a994f3b0b2d12568f0c274bd5d6d1f7a92fd3cda082bfbbb91a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1189,6 +1189,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Acceptance fixes PR #1214 + Preproduction r20260916-14f3b4c",
           "command": "release_automation_ecs_pipeline.sh --release-commit 14f3b4cf766ec6cf0083b4c89abed099d2eea7f4 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode manual",
           "details": "验收四项修复（3×P1+1×P2）：审批绑定（action/request_id/request_version/report_digest+执行前现场重算比对，非 JSON 拒绝）；dry-run 计划参数门禁（mismatch/unverified 双阻断，连带修 write-verified 误报 enable_failed 的归并 bug）；worker 服务端强制（enabled 须回读满足申请 target_params 快照+审批绑定才建完成回复，否则 relay_result_target_mismatch/approval_unbound 进统一失败链）；pilot 超时捕获（open 超时=attempted+unknown，回读可升 enabled）+_matches_target 健壮化。新增 test_enablement_local_pilot 12 用例+relay 负向×3；定向九套件 258 passed/79 subtests。发布全阶段 passed；live：provenance=14f3b4cf、worker td :39 manual+APP_BUILD_REF 匹配、部署窗口后 20 分钟零 ERROR。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction archer-mode release r20260916-799f53b",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 799f53bc82c165dafa0b2945ad81d30b0ad26dc2 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "details": "全阶段 passed。live：provenance=799f53bc、worker td :40 ENABLEMENT_WORKFLOW_MODE=archer、四 AGENTRELAY secret、无 ARCHER_OAUTH_COOKIE。部署窗口出现 16 条 stale_readiness_epoch 409 WARNING（滚动期新旧 worker 任务交替注册 listener、epoch 互踩），任务收敛为 1 后 6 分钟零 WARNING/ERROR——epoch 重置重注册自愈机制按设计工作（非缺陷，但值得在 Mac 侧启用前观察）。"
         },
         {
           "type": "test",
@@ -13069,7 +13075,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "验收四项修复已合码（PR#1214）并重发 preprod r20260916-14f3b4c（manual，live 验证绿）。剩：受控功能验收——①Mac 侧配 10:00 汇总触发；②--enablement-workflow-mode archer 重发 preprod；③auto 成功单（AppID fcd0dab1...36fc）+auto 失败单+manual 切换演练；④Production 另行授权。",
+      "next_action": "archer 模式已上线 preprod（r20260916-799f53b，worker td :40，四 relay secret 注入、无 Archer 凭据；部署窗口中滚动期双任务竞争 listener epoch 出现 16 条 stale_readiness_epoch WARNING，收敛单任务后 6 分钟零 WARNING/ERROR，恢复拉取自愈机制按设计工作）。剩：用户 Mac 侧配 10:00 汇总触发→auto 成功单（AppID fcd0dab1...36fc）+auto 失败单+manual 切换演练→评估转 done；Production 另行授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13108,6 +13114,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Acceptance fixes PR #1214 + Preproduction r20260916-14f3b4c",
           "command": "release_automation_ecs_pipeline.sh --release-commit 14f3b4cf766ec6cf0083b4c89abed099d2eea7f4 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode manual",
           "details": "验收四项修复（3×P1+1×P2）：审批绑定（action/request_id/request_version/report_digest+执行前现场重算比对，非 JSON 拒绝）；dry-run 计划参数门禁（mismatch/unverified 双阻断，连带修 write-verified 误报 enable_failed 的归并 bug）；worker 服务端强制（enabled 须回读满足申请 target_params 快照+审批绑定才建完成回复，否则 relay_result_target_mismatch/approval_unbound 进统一失败链）；pilot 超时捕获（open 超时=attempted+unknown，回读可升 enabled）+_matches_target 健壮化。新增 test_enablement_local_pilot 12 用例+relay 负向×3；定向九套件 258 passed/79 subtests。发布全阶段 passed；live：provenance=14f3b4cf、worker td :39 manual+APP_BUILD_REF 匹配、部署窗口后 20 分钟零 ERROR。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction archer-mode release r20260916-799f53b",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 799f53bc82c165dafa0b2945ad81d30b0ad26dc2 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "details": "全阶段 passed。live：provenance=799f53bc、worker td :40 ENABLEMENT_WORKFLOW_MODE=archer、四 AGENTRELAY secret、无 ARCHER_OAUTH_COOKIE。部署窗口出现 16 条 stale_readiness_epoch 409 WARNING（滚动期新旧 worker 任务交替注册 listener、epoch 互踩），任务收敛为 1 后 6 分钟零 WARNING/ERROR——epoch 重置重注册自愈机制按设计工作（非缺陷，但值得在 Mac 侧启用前观察）。"
         }
       ],
       "source_refs": [
@@ -13170,6 +13182,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-16",
           "event": "acceptance_fixes_deployed",
           "summary": "PR#1214 合码并重发 preprod r20260916-14f3b4c（全阶段 passed，live 验证绿）。受控功能验收待 Mac 侧+archer 切换。"
+        },
+        {
+          "at": "2026-09-16",
+          "event": "archer_mode_deployed",
+          "summary": "用户指示先行部署 archer 模式到 preprod：r20260916-799f53b 上线（同代码仅翻模式），受控功能验收待 Mac 侧日汇总触发就绪后执行。"
         }
       ]
     },
