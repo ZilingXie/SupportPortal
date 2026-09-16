@@ -34,7 +34,7 @@
 | [random_case_review](https://n8n.stellarix.space/workflow/vvyPwdWXvJENN1zm) | 配套 / 随机质检 | 工作日 06:00 按每位已配置负责人抽一条未评审工单。 | [运维说明](./active-workflows.md#w-vvyPwdWXvJENN1zm) |
 | [Slack Interaction to SupportPortal - Consume Button V3](https://n8n.stellarix.space/workflow/FKv8vtZBQk6tH4Gt) | 直接接入 / Slack 操作 | 消费 Slack 按钮操作，交给 ECS Preproduction Hermes 并移除按钮。 | [运维说明](./active-workflows.md#w-FKv8vtZBQk6tH4Gt) |
 | [Slack_zen_Bot](https://n8n.stellarix.space/workflow/kyiA0QuiVx6JJ03i) | 上游接入 / Slack 建单 | Slack 支持请求创建 Zendesk 工单；内部线程消息转交 SupportPortal。 | [运维说明](./active-workflows.md#w-kyiA0QuiVx6JJ03i) |
-| [status_sync_automation_production](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) | 直接接入 / 状态联动 | 旧环境状态同步；ECS 评论分支存在失效节点引用。 | [运维说明](./active-workflows.md#w-03B6AvcrOgRkWlUc) |
+| [status_sync_automation_production](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) | 直接接入 / 状态联动 | 旧 EC2 双环境状态同步；持续 404 的 ECS 分支已于 2026-09-16 移除。 | [运维说明](./active-workflows.md#w-03B6AvcrOgRkWlUc) |
 | [test_error](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) | 配套 / 运维测试 | 聊天输入工单号后查询 Zendesk，失败时验证共享错误处理。 | [运维说明](./active-workflows.md#w-3zJvu5KQFZIoOoqu) |
 | [ticket_2_KB](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) | 知识入库 / Zendesk | SOLVED 工单经去重和 AI 筛选后生成 KB 草稿并提交知识库。 | [运维说明](./active-workflows.md#w-MM3Z3T469Eru3Q1I) |
 
@@ -60,7 +60,7 @@
 ## 主要调用关系
 
 - Zendesk 新工单 → `new_case_2_supporportal_prod` → ECS Preproduction / Production；旧 Staging 流程仍启用，目标需另行核对。
-- Zendesk 评论 → `commen_sync_ecs_production` → 旧 Production 与 ECS 两个环境；状态变化 → `status_sync_automation_production`，其 ECS 分支有已记录的配置缺陷。
+- Zendesk 评论 → `commen_sync_ecs_production` → 旧 Production 与 ECS 两个环境；状态变化 → `status_sync_automation_production` → 旧主栈与旧 Production（ECS 不经此流程，2026-09-16 移除了持续 404 的 ECS 分支）。
 - Slack → `Slack_zen_Bot` → Zendesk 建单，或 `NonAutomate_to_slack_fixed` → ECS Production；按钮交互另由 Consume Button V3 发往 ECS Preproduction。
 - SupportPortal 交接确认 → `2_slack - SupportPortal Account Handoff -> Slack` → Slack。
 - `random_case_review` / `longage_case_review` / `negative_case_review` → `case_review_subflow` → Slack 人工评审及记录。
@@ -75,7 +75,7 @@
 5. `sendAndWait` 是流程中已设计的人工等待点，应使用原等待入口恢复。开启 MCP 不会自动为任意节点添加暂停/恢复能力；新增检查点需作为流程变更单独实施。
 6. 改动后回读受影响字段并核对实际发布版本。执行验证另按授权进行；在运行前说明可能产生的建单、发消息、知识入库或其他业务写入。
 
-需先处理的配置差异见 [待核对配置](./active-workflows.md#configuration-findings)。本次没有全面查询执行历史，未评估各流程近期成功率，也未建立定时监控。
+仍未处理的配置差异见 [待核对配置](./active-workflows.md#configuration-findings)。本次没有全面查询执行历史，未评估各流程近期成功率，也未建立定时监控。
 
 ## 文档维护与来源
 
