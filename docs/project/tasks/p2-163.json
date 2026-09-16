@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-  "next_action": "代码+测试+文档已完成待 finalize；剩：①用户在 relay 服务器执行配置 Prompt 创建 supportportal-preproduction/production 身份并把四元组写入 /supportportal/{env}/ SSM → ②finalize 合码 → ③preproduction 部署（--enablement-workflow-mode manual 先行）→ ④受控验收（auto 成功=fcd0dab1...36fc、auto 失败、manual 切换演练）后转 done。",
+  "next_action": "Preproduction 已上线 r20260916-f5c5c96（manual 模式+新部署合同，live 验证全绿）。剩：受控验收——①用户在 Mac 配置 skill 日汇总触发后切 archer 模式跑一条 auto 成功（AppID fcd0dab1...36fc）+一条 auto 失败 +一次 manual 切换演练；②Production 推广另行授权。全部通过后转 done。",
   "acceptance_criteria": [
     "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
     "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -18,7 +18,7 @@
     "preproduction 受控验收：auto 成功（真实开通+回读+客户回复）、auto 失败（note/接管/邮件、无 manual 邮件）、manual 切换演练，均有证据。"
   ],
   "blockers": [
-    "AgentRelay ECS 服务身份未创建：需用户在 relay 服务器执行 docs/operations/agentrelay-server-provisioning-prompt.md，并把 (base-url/agent-id/username/token) 写入 /supportportal/{env}/ SSM——部署前置检查 ensure_agentrelay_parameters 会强制该条件。"
+    "受控验收依赖 Mac 侧：用户需为 .codex/skills/supportportal-media-relay-enablement 配置工作日 10:00 汇总触发（Codex 定时）并以 --enablement-workflow-mode archer 发布 preprod 后方可执行 auto 两段验收。"
   ],
   "evidence": [
     {
@@ -32,6 +32,12 @@
       "label": "Contract + provisioning + docs",
       "command": "python3 scripts/verify_feature_list.py && python3 scripts/generate_project_overview.py --write && python3 scripts/generate_project_overview.py --check",
       "details": "AgentRelay HTTP 契约与服务器配置 Prompt 落 docs/operations/（索引已挂）；deploy runbook「Enablement 工作流模式」重写（p2-163：两模式禁 Archer 凭据+relay SSM 四参+ensure_agentrelay_parameters 前置）；archer 架构文档改「直连实现已删除」；feature_list/prompt_change_log/.env.example 同步。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction manual-mode release r20260916-f5c5c96",
+      "command": "release_automation_ecs_pipeline.sh --release-commit f5c5c96e6c3c0116b0f328e974ef15240fab7c44 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode manual",
+      "details": "全阶段 passed（preflight/prompt_schema/route_worker 279s/heartbeat/api_rollout 174s/collector/activation/release_note）。历经三轮根因修复后一次通过：#1207=relay 表未登记 ACCOUNT_RUNTIME_TABLES 致 schema 检查假绿+cloudwatch 多页 jq；#1210=psycopg tuple→record literal 使 ANY(%s) 炸（malformed array literal）+CDN 浏览器完整性检查拦截默认 python-urllib UA（403 error 1010）→换 supportportal-automation/1.0；v6 一次瞬态 ECR digest 拉取失败（digest 事后可解析）+两次并发 main 前进触发源门禁重建（#1208/#1211）。Live 验证：/health/live 200；provenance release_id=r20260916-f5c5c96、git_commit=f5c5c96e（含 #1203/#1204/#1207/#1210）、prompt pr-434d9524e18d active；worker td :38 ENABLEMENT_WORKFLOW_MODE=manual、四 AGENTRELAY secret 注入、无 ARCHER_OAUTH_COOKIE；relay 双表存在于 supportportal_preproduction；部署窗口后 30 分钟 worker 零 ERROR、零 relay 告警。SSM 四参数（base-url/agent-id/username 由 agent 写入、token 由用户写入）经 ensure_agentrelay_parameters 前置校验。未执行受控工单验收（待 Mac 侧+archer 切换）。"
     }
   ],
   "source_refs": [
@@ -79,6 +85,11 @@
       "at": "2026-09-16",
       "event": "pg_contracts_passed",
       "summary": "PostgreSQL 隔离 DSN 契约通过：结果与重复投递单胜者（首投 winner、重复证据化、request 停在 result_received）；4 线程 Barrier 并发释放恰一次（FOR UPDATE SKIP LOCKED + 谓词）。修复 PG claim 的 lease_expires_at 绑定（Python 侧计算，避免 interval 类型错配）。"
+    },
+    {
+      "at": "2026-09-16",
+      "event": "preproduction_deployed_manual_mode",
+      "summary": "r20260916-f5c5c96 发布成功（此前 v3-v6 四次失败：两轮代码级根因各修复合入 #1207/#1210、一次瞬态 ECR 拉取、两次源门禁拦截并发前进）。ECS 侧合同=两模式禁 Archer 凭据、worker 恒注入 relay 身份、manual 默认；表/扫描/UA 三处运行时问题全部实证消除。auto 受控验收待 Mac 侧就绪。"
     }
   ]
 }
