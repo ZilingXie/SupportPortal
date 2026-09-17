@@ -1132,6 +1132,21 @@ class TestRouteWorkerHandOff:
         assert result["ignored"] == "ticket_updated_no_turn"
         assert store.list_hermes_case_turns("123").__len__() == 1
 
+    def test_customer_comment_with_explicit_is_agent_false_advances(self) -> None:
+        # p2-163 ticket 13550 regression: the n8n comment chain sends
+        # is_agent=false explicitly for end-users; the inverted predicate
+        # rejected exactly the customer and ignored the comment.
+        store = _store()
+        _accept_and_hand_off(store, _event())
+        mirror_before = store.get_case_mirror("123")["case_revision"]
+        store.accept_intake(
+            _customer_comment_event_explicit_flag(), _settings("route").provenance()
+        )
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        result = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        assert "ignored" not in result
+        assert store.get_case_mirror("123")["case_revision"] > mirror_before
+
     def test_agent_comment_does_not_advance_or_turn(self) -> None:
         store = _store()
         _accept_and_hand_off(store, _event())
@@ -1224,6 +1239,44 @@ class TestWorkerAgentTurnLoop:
         execution = store.get_execution(turn["execution_id"])
         assert execution["status"] == ExecutionStatus.HUMAN_REVIEW.value
         assert execution["deliveries"] == []
+
+
+def _customer_comment_event_explicit_flag() -> Any:
+    payload: dict[str, Any] = {
+        "schema_version": INTAKE_CONTRACT_VERSION,
+        "event_id": "zendesk:ticket:123:customer-comment-explicit",
+        "event_type": "comment.created",
+        "occurred_at": "2026-09-08T10:07:00Z",
+        "ticket": {
+            "id": "123",
+            "status": "open",
+            "subject": "Enable Media Relay",
+            "description": "Please enable Media Relay for app 123.",
+            "requester": {"email": "cx@example.com", "name": "Customer"},
+        },
+        "comment_snapshot": {
+            "source_updated_at": "2026-09-08T10:07:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "88",
+            "comments": [
+                {
+                    "id": "88",
+                    "public": True,
+                    "author": {
+                        "id": "31446696404244",
+                        "name": "Ziling Xie",
+                        "role": "end-user",
+                        "is_agent": False,
+                    },
+                    "body": "what is appid?",
+                    "created_at": "2026-09-08T10:07:00Z",
+                }
+            ],
+        },
+    }
+    from backend.services.automation_ecs_contracts import AutomationIntakeEvent
+
+    return AutomationIntakeEvent.model_validate(payload)
 
 
 def _agent_comment_event() -> Any:

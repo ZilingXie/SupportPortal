@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-17T03:19:47Z",
-  "source_base_commit": "29f8dd3eede89bd9a9c89aaecb4d9ac95f89997f",
-  "registry_digest": "0fdf5076420a4c321c161e9bf6fdc778357984e4524e3df4bccb915eca4a9deb",
+  "generated_at": "2026-09-17T03:54:51Z",
+  "source_base_commit": "f8ae7e72df262c56573ffb06e1f697b7c437914c",
+  "registry_digest": "f642ba8140da717fcbf7e8490a15577ed4463c6fb022940bceb2b1082bc9ceba",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13209,6 +13209,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-17",
           "event": "fix_a_deployed",
           "summary": "PR#1217 合码并发布 r20260917-29f8dd3。B/D 决策与受控验收待用户。"
+        },
+        {
+          "at": "2026-09-17",
+          "event": "comment_predicate_bug_fixed",
+          "summary": "13550 后续调查：用户评论 what is appid 到达 intake（03:38 事件落库）但被路由层忽略（comment_not_customer_event）——根因=_author_is_customer 谓词反写（p2-148 引入：客户角色分支 is_agent is not False，显式 is_agent=false 的真实客户被拒；测试 fixture 不带该字段故从未暴露；n8n 链显式带 false 每条客户公开评论都会被忽略）。修复=is_agent is not True + 显式 false 的回归用例。dashboard 未见工单=视图问题非数据丢失：根路径 Cases 列表读 engineer cases（enablement 走 account automation 不建 engineer case），AC-13550 在 Account Automation 视图（profile=preproduction 实证在库）。"
         }
       ]
     },
