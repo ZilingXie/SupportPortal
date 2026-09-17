@@ -107,7 +107,7 @@ def _customer_author(author: Any) -> bool:
     role = str(author.get("role") or "").strip().lower()
     is_agent = author.get("is_agent")
     if role in _CUSTOMER_ROLES:
-        return is_agent is not False
+        return is_agent is not True
     if role in _AGENT_ROLES or is_agent is True:
         return False
     return is_agent is False
@@ -308,6 +308,7 @@ class HermesAgentTurnProcessor:
         if status == "pending":
             self._ensure_case_mirror(payload)
             self._ensure_adhoc_case_mirror(payload)
+            self._ensure_customer_comments_mirrored(payload)
             try:
                 snapshot = build_case_snapshot(
                     self.store,
@@ -967,6 +968,65 @@ class HermesAgentTurnProcessor:
         raise HermesTurnDeferred(f"Hermes cancellation is still pending for turn {turn_id}")
 
     # ----------------------------------------------------------------- mirror
+
+    def _ensure_customer_comments_mirrored(self, payload: AgentTurnJobPayload) -> None:
+        """Persist public customer comments into the local ticket mirror.
+
+        The deterministic automation tools (enablement field extraction and
+        friends) read ``ticket.messages`` from the legacy mirror; under the
+        hermes engine only the ticket-created description was mirrored, so a
+        customer-supplied App ID sent in a later comment was invisible to the
+        extractor and the enablement chain kept asking for the App ID
+        forever (ticket 13560).  Idempotent by comment id in message meta.
+        """
+        if self.repository is None or payload.event.comment_snapshot is None:
+            return
+        snapshot = payload.event.comment_snapshot
+        ticket_id = payload.event.ticket.id
+        ticket = self.repository.get_ticket(ticket_id)
+        if not isinstance(ticket, dict):
+            return
+        existing_ids = {
+            str((message.get("meta") or {}).get("zendesk_comment_id") or "")
+            for message in ticket.get("messages") or []
+            if isinstance(message, dict)
+        }
+        new_messages: list[dict[str, Any]] = []
+        for comment in snapshot.comments or []:
+            author = getattr(comment, "author", None)
+            body = str(getattr(comment, "body", "") or "").strip()
+            if not body or not getattr(comment, "public", False):
+                continue
+            if author is None or not _customer_author(
+                {
+                    "role": getattr(author, "role", None),
+                    "is_agent": getattr(author, "is_agent", None),
+                }
+            ):
+                continue
+            comment_id = str(getattr(comment, "id", "") or "")
+            if comment_id and comment_id in existing_ids:
+                continue
+            created_at = getattr(comment, "created_at", None)
+            new_messages.append(
+                {
+                    "role": "customer",
+                    "content": body,
+                    "created_at": (
+                        created_at.isoformat()
+                        if hasattr(created_at, "isoformat")
+                        else str(created_at or payload.event.occurred_at.isoformat())
+                    ),
+                    "content_format": "plaintext",
+                    "source": "zendesk-comment",
+                    "meta": {"zendesk_comment_id": comment_id} if comment_id else {},
+                }
+            )
+        if not new_messages:
+            return
+        ticket.setdefault("messages", []).extend(new_messages)
+        ticket["updated_at"] = payload.event.occurred_at.isoformat()
+        self.repository.save_ticket(ticket, new_messages=new_messages)
 
     def _ensure_case_mirror(self, payload: AgentTurnJobPayload) -> None:
         if self.repository is None or payload.event.event_type != IntakeEventType.TICKET_CREATED:
