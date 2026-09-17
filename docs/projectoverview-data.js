@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-17T02:55:38Z",
-  "source_base_commit": "398db22bf8cc8e7f106189f78c56a535880e439e",
-  "registry_digest": "92c0d8395a06115e5a02d979113b87274f96d238a40cbd73d30a48eceb979b64",
+  "generated_at": "2026-09-17T03:19:47Z",
+  "source_base_commit": "29f8dd3eede89bd9a9c89aaecb4d9ac95f89997f",
+  "registry_digest": "0fdf5076420a4c321c161e9bf6fdc778357984e4524e3df4bccb915eca4a9deb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1195,6 +1195,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction archer-mode release r20260916-799f53b",
           "command": "release_automation_ecs_pipeline.sh --release-commit 799f53bc82c165dafa0b2945ad81d30b0ad26dc2 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
           "details": "全阶段 passed。live：provenance=799f53bc、worker td :40 ENABLEMENT_WORKFLOW_MODE=archer、四 AGENTRELAY secret、无 ARCHER_OAUTH_COOKIE。部署窗口出现 16 条 stale_readiness_epoch 409 WARNING（滚动期新旧 worker 任务交替注册 listener、epoch 互踩），任务收敛为 1 后 6 分钟零 WARNING/ERROR——epoch 重置重注册自愈机制按设计工作（非缺陷，但值得在 Mac 侧启用前观察）。"
+        },
+        {
+          "type": "deployment",
+          "label": "13549 fix A: api OPENAI_API_KEY injection, r20260917-29f8dd3",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 29f8dd3eede89bd9a9c89aaecb4d9ac95f89997f --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "details": "api 任务定义注入 OPENAI_API_KEY（initial secret map + 正式渲染强制回写，随 Zendesk readback 对一起），修复 hermes 引擎下 execute_automation_action 工具 500（account_ai_missing_credentials，13549 两次复现）。全阶段 passed；live：provenance=29f8dd3e、api td :41 secrets 含 OPENAI_API_KEY→/supportportal/preproduction/openai-api-key、部署后 10 分钟 api/worker 零错误。待用户重测工单验证工具链恢复（进入 enablement auto 派发）。"
         },
         {
           "type": "test",
@@ -13075,7 +13081,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "archer 模式已上线 preprod（r20260916-799f53b，worker td :40，四 relay secret 注入、无 Archer 凭据；部署窗口中滚动期双任务竞争 listener epoch 出现 16 条 stale_readiness_epoch WARNING，收敛单任务后 6 分钟零 WARNING/ERROR，恢复拉取自愈机制按设计工作）。剩：用户 Mac 侧配 10:00 汇总触发→auto 成功单（AppID fcd0dab1...36fc）+auto 失败单+manual 切换演练→评估转 done；Production 另行授权。",
+      "next_action": "修复 A 已上线（PR#1217+r20260917-29f8dd3，api td :41 已携带 OPENAI_API_KEY，部署后零错误）。剩：①用户重测一张 enablement 工单验证 500 消除+hermes 工具路径进入 auto 派发链；②B（persona 失败兜底=internal note+转人工）与 D（enablement 是否确定性旁路 legacy 引擎）待用户决策；③Mac 侧+三段受控验收。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13120,6 +13126,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction archer-mode release r20260916-799f53b",
           "command": "release_automation_ecs_pipeline.sh --release-commit 799f53bc82c165dafa0b2945ad81d30b0ad26dc2 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
           "details": "全阶段 passed。live：provenance=799f53bc、worker td :40 ENABLEMENT_WORKFLOW_MODE=archer、四 AGENTRELAY secret、无 ARCHER_OAUTH_COOKIE。部署窗口出现 16 条 stale_readiness_epoch 409 WARNING（滚动期新旧 worker 任务交替注册 listener、epoch 互踩），任务收敛为 1 后 6 分钟零 WARNING/ERROR——epoch 重置重注册自愈机制按设计工作（非缺陷，但值得在 Mac 侧启用前观察）。"
+        },
+        {
+          "type": "deployment",
+          "label": "13549 fix A: api OPENAI_API_KEY injection, r20260917-29f8dd3",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 29f8dd3eede89bd9a9c89aaecb4d9ac95f89997f --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "details": "api 任务定义注入 OPENAI_API_KEY（initial secret map + 正式渲染强制回写，随 Zendesk readback 对一起），修复 hermes 引擎下 execute_automation_action 工具 500（account_ai_missing_credentials，13549 两次复现）。全阶段 passed；live：provenance=29f8dd3e、api td :41 secrets 含 OPENAI_API_KEY→/supportportal/preproduction/openai-api-key、部署后 10 分钟 api/worker 零错误。待用户重测工单验证工具链恢复（进入 enablement auto 派发）。"
         }
       ],
       "source_refs": [
@@ -13192,6 +13204,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-17",
           "event": "test_ticket_13549_diagnosis",
           "summary": "受控验收测试单 13549 暴露 hermes 引擎组合问题：工单经 p2-162 的 hermes case engine 进入 agent，route 阶段正确识别 enablement 但 work 阶段两次调用 execute_automation_action 均 500（根因=api 任务定义从未注入 OPENAI_API_KEY，hermes 引擎把执行从 worker 挪到 api 侧工具调用撞上既有布线缺口），且 agent 工具集无升级工具，persona 将错误信息公开发布给客户（02:21:05，实测创建→回复 60 秒，非 6-10 分钟）；无认领/交接，工单留初始 assignee。修复 A（本 PR）：api secret map+正式渲染强制注入 OPENAI_API_KEY。B（persona 失败兜底=internal note+转人工）与 D（enablement 是否确定性旁路 legacy 引擎）待用户决策。"
+        },
+        {
+          "at": "2026-09-17",
+          "event": "fix_a_deployed",
+          "summary": "PR#1217 合码并发布 r20260917-29f8dd3。B/D 决策与受控验收待用户。"
         }
       ]
     },
