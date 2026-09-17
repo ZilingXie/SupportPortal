@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
@@ -308,6 +309,140 @@ class TestAgentTurnProcessor:
             agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
             assert agent_job is not None
         return handoff, agent_job
+
+    def test_customer_comment_with_appid_mirrored_into_ticket(self) -> None:
+        # p2-163 ticket 13560 regression: the deterministic enablement tools
+        # read ticket.messages from the local mirror; customer comments must
+        # be persisted there or the App ID supplied in a later comment is
+        # invisible and the chain asks for it forever.
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Enable Media Relay",
+                "status": "open",
+                "created_at": "2026-09-08T10:00:00Z",
+                "updated_at": "2026-09-08T10:00:00Z",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable Media Relay.",
+                        "created_at": "2026-09-08T10:00:00Z",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+        # First turn (ticket created) completes without touching messages.
+        assert processor.process(agent_job)["status"] == "completed"
+
+        # Customer replies with the App ID in a comment.
+        raw_event = _event(
+            "zendesk:ticket:123:comment:99",
+            event_type=IntakeEventType.COMMENT_CREATED,
+        )
+        raw_payload = json.loads(raw_event.model_dump_json())
+        raw_payload["comment_snapshot"] = {
+            "source_updated_at": "2026-09-08T10:09:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "99",
+            "comments": [
+                {
+                    "id": "98",
+                    "public": True,
+                    "author": {
+                        "id": "31446696404244",
+                        "name": "Ziling Xie",
+                        "role": "end-user",
+                        "is_agent": False,
+                    },
+                    "body": "what is appid?",
+                    "created_at": "2026-09-08T10:08:00Z",
+                },
+                {
+                    "id": "99",
+                    "public": True,
+                    "author": {
+                        "id": "31446696404244",
+                        "name": "Ziling Xie",
+                        "role": "end-user",
+                        "is_agent": False,
+                    },
+                    "body": "can you try: fcd0dab13017495bbe25a63bfdb236fc",
+                    "created_at": "2026-09-08T10:09:00Z",
+                },
+                {
+                    "id": "100",
+                    "public": True,
+                    "author": {"email": "agent@agora.io", "role": "agent", "is_agent": True},
+                    "body": "agent reply that must not be mirrored as customer",
+                    "created_at": "2026-09-08T10:09:30Z",
+                },
+            ],
+        }
+        from backend.services.automation_ecs_contracts import AutomationIntakeEvent
+
+        event = AutomationIntakeEvent.model_validate(raw_payload)
+        receipt = store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff2 = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job2 = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert agent_job2 is not None and agent_job2.execution_id == receipt.execution_id
+
+        def on_run_completed2(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff2["turn_id"], direction="automation", route="enablement"
+                )
+
+        client2 = FakeHermesClient(on_run_completed=on_run_completed2)
+        processor2 = HermesAgentTurnProcessor(
+            store,
+            client=client2,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+        assert processor2.process(agent_job2)["status"] == "completed"
+
+        ticket = repository.get_ticket("123")
+        bodies = [m["content"] for m in ticket["messages"] if m.get("role") == "customer"]
+        assert "can you try: fcd0dab13017495bbe25a63bfdb236fc" in bodies
+        assert "what is appid?" in bodies
+        assert all(
+            "agent reply" not in body for body in bodies
+        )
+        # Mirrored messages carry the comment id for idempotency; re-running
+        # the same turn never duplicates them.
+        mirrored = [
+            m
+            for m in ticket["messages"]
+            if (m.get("meta") or {}).get("zendesk_comment_id") == "99"
+        ]
+        assert len(mirrored) == 1
 
     def test_full_turn_runs_route_work_persona_with_phase_runs(self) -> None:
         store = _store()

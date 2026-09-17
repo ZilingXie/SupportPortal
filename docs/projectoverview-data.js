@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-17T04:57:15Z",
-  "source_base_commit": "aefa9014a71b98748c123321b2e7bbcac38a9a4d",
-  "registry_digest": "378264c734ecdfe8c6e9d2f3bc3f8d32bcd944cd4e8203613c9eb290c7673213",
+  "generated_at": "2026-09-17T10:17:59Z",
+  "source_base_commit": "978a3c9265295907eca66a3ad3ce6e0a2a2f3883",
+  "registry_digest": "72021e6e3888be86a78d801f164fc67bef52696084ad28f3d8fc69d66553953c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13244,6 +13244,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-17",
           "event": "comment_predicate_bug_fixed",
           "summary": "13550 后续调查：用户评论 what is appid 到达 intake（03:38 事件落库）但被路由层忽略（comment_not_customer_event）——根因=_author_is_customer 谓词反写（p2-148 引入：客户角色分支 is_agent is not False，显式 is_agent=false 的真实客户被拒；测试 fixture 不带该字段故从未暴露；n8n 链显式带 false 每条客户公开评论都会被忽略）。修复=is_agent is not True + 显式 false 的回归用例。dashboard 未见工单=视图问题非数据丢失：根路径 Cases 列表读 engineer cases（enablement 走 account automation 不建 engineer case），AC-13550 在 Account Automation 视图（profile=preproduction 实证在库）。"
+        },
+        {
+          "at": "2026-09-17",
+          "event": "comment_mirror_gap_fixed",
+          "summary": "13560 调查：客户两轮评论（what is appid / can you try: fcd0dab1...36fc）均推进了 turn（B1 生效），persona 也看到了内容，但 hermes 引擎只镜像 ticket.created 的 description——客户评论从未落入本地 ticket.messages，而确定性 enablement 工具（_build_enablement_attempt→extract_enablement_fields）读的是镜像消息列表，抽取永远 missing app_id，永远不进 auto 派发（relay_requests 空），persona 只能反复索要 AppID。修复 C=processor 每次 pending turn 前把 comment_snapshot 中公开客户评论幂等（meta.zendesk_comment_id）落入镜像；同文件 _customer_author 谓词同样反转（is not False→is not True）一并修复；新增 13560 复现回归（AppID 评论可见+agent 评论不镜像+幂等）。"
         }
       ]
     },
