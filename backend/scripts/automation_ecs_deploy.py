@@ -454,6 +454,11 @@ def _base_environment(
         )
         if role == "route":
             values["AUTOMATION_CASE_ENGINE"] = automation_case_engine
+    if role == "api":
+        # The hermes engine executes business tools on the API role; without
+        # this flag every action is silently blocked and reports a fake
+        # success (ticket 13567). Mirrors the worker value.
+        values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] = "1"
     if role == "worker":
         values.update(
             {
@@ -907,6 +912,11 @@ def render_task_definition(
                 _set_secret_reference(
                     container, name, _parameter_arn(relay_prefix_arn, suffix)
                 )
+    if role in {"api", "worker"}:
+        # Ensure the Zendesk side-effects gate is enabled on every rendered
+        # api/worker revision (p2-163, ticket 13567): the hermes engine's
+        # business tools must never be silently blocked.
+        _set_environment_value(container, "AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED", "1")
     if role in {"api", "worker"}:
         # Ensure the outbound Slack kill switch reflects the target environment
         # on every rendered revision (p2-150): off in Production, on in

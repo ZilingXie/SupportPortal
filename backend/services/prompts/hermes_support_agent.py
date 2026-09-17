@@ -188,7 +188,7 @@ snapshot; ignore the other sections.
   never restate App IDs the customer already supplied."""
 
 
-HERMES_AUTOMATION_ENABLEMENT_MANUAL_VERSION = "hermes-automation-enablement-manual-v1"
+HERMES_AUTOMATION_ENABLEMENT_MANUAL_VERSION = "hermes-automation-enablement-manual-v2"
 
 
 def build_hermes_automation_enablement_manual() -> str:
@@ -201,6 +201,10 @@ its result is the source of truth.
 - The tool reports missing fields: the persona phase must ask for exactly
   those fields.
 - The tool executes: restate the executed outcome factually in the reply.
+- The tool reports human_review_required: the case is escalated to humans
+  (internal note, queue, owner email are sent by the system). Do not draft
+  any customer reply, do not apologize, and do not describe the failure to
+  the customer. The turn ends there.
 - Never enable features outside the tool; never guess App IDs."""
 
 

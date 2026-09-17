@@ -348,20 +348,32 @@ async def tool_execute_automation_action(
         internal_email_reason = str(delivery_result.reason)
     elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
         if automation_handler == "enablement":
-            account_case, _reply_job, workflow_outcome = (
-                await _run_enablement_workflow(
+            try:
+                account_case, _reply_job, workflow_outcome = (
+                    await _run_enablement_workflow(
+                        repository=repository,
+                        account_case=account_case,
+                        ticket_id=ticket_id,
+                        email_payload=dict(attempt["internal_email_to_send"]),
+                        customer_email=str(ticket.get("customer_id") or "") or None
+                        if isinstance(ticket, dict)
+                        else None,
+                        persona_assignment=None,
+                        processing_profile=environment,
+                        trigger_message_created_at=timestamp,
+                    )
+                )
+            except Exception as exc:
+                return _escalate_uncompleted_automation(
+                    store=store,
                     repository=repository,
                     account_case=account_case,
                     ticket_id=ticket_id,
-                    email_payload=dict(attempt["internal_email_to_send"]),
-                    customer_email=str(ticket.get("customer_id") or "") or None
-                    if isinstance(ticket, dict)
-                    else None,
-                    persona_assignment=None,
-                    processing_profile=environment,
-                    trigger_message_created_at=timestamp,
+                    turn_id=turn_id,
+                    automation_handler=automation_handler,
+                    reason_code="enablement_workflow_failed",
+                    detail=f"The enablement workflow raised: {exc}",
                 )
-            )
             executed_actions.append(
                 f"enablement_{enablement_workflow_mode()}:{workflow_outcome}"
             )
@@ -385,12 +397,22 @@ async def tool_execute_automation_action(
             internal_email_status = str(delivery_result.status)
             internal_email_reason = str(delivery_result.reason)
     elif attempt.get("internal_email_to_send"):
-        executed_actions.append("internal_email_blocked_no_side_effects")
-        internal_email_status = "not_applicable"
-        internal_email_reason = "zendesk_side_effects_disabled"
+        # A blocked business action is a failure handoff, never a fake
+        # success the model would narrate to the customer (ticket 13567).
+        return _escalate_uncompleted_automation(
+            store=store,
+            repository=repository,
+            account_case=account_case,
+            ticket_id=ticket_id,
+            turn_id=turn_id,
+            automation_handler=automation_handler,
+            reason_code="zendesk_side_effects_disabled",
+            detail="The business action was blocked because Zendesk side effects are disabled on this container.",
+        )
 
-    account_case["automation_status"] = "automation"
-    if missing_fields:
+    if str(account_case.get("automation_status") or "") != "human_review_required":
+        account_case["automation_status"] = "automation"
+    if missing_fields and str(account_case.get("automation_status") or "") != "human_review_required":
         account_case["execution_reason_code"] = None
     repository.save_account_case(account_case)
     result = {
@@ -404,6 +426,63 @@ async def tool_execute_automation_action(
     }
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result
+
+
+def _escalate_uncompleted_automation(
+    *,
+    store: AutomationEcsStore,
+    repository: Any,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    turn_id: str,
+    automation_handler: str,
+    reason_code: str,
+    detail: str,
+) -> dict[str, Any]:
+    """Unified failure handoff for a business action that could not complete.
+
+    Runs the existing chain (internal Zendesk note, route back to the human
+    queue, ownership release, idempotent owner alert email) and parks the
+    hermes binding.  NEVER a customer-facing failure narrative: the tool
+    result tells the agent the case is escalated, and the publication gate
+    skips persona/publication for human-review turns (ticket 13567).
+    """
+    from backend.services.account_failure_alerts import notify_account_failure
+    from backend.services.account_human_review_escalation import (
+        escalate_account_case_to_human_review,
+    )
+
+    account_case["automation_status"] = "human_review_required"
+    account_case["execution_reason_code"] = reason_code
+    repository.save_account_case(account_case)
+    escalate_account_case_to_human_review(
+        account_case=account_case,
+        ticket_id=ticket_id,
+        handler=automation_handler or "enablement",
+        failure_stage="hermes_tool",
+        failure_code=reason_code,
+        reason=detail,
+        repository=repository,
+    )
+    account_case_id = str(
+        account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ticket_id
+    )
+    notify_account_failure(
+        repository=repository,
+        incident_id=f"account-automation:{account_case_id}:hermes_tool:{reason_code}",
+        stage="hermes_tool",
+        code=reason_code,
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        detail=detail[:500],
+    )
+    store.escalate_hermes_case(turn_id, reason=reason_code)
+    return {
+        "status": "human_review_required",
+        "reason": reason_code,
+        "route": automation_handler,
+        "executed_actions": [],
+    }
 
 
 def tool_save_investigation_progress(
