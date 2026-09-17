@@ -211,6 +211,11 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     assert secrets["OPENAI_API_KEY"].endswith(
         "parameter/supportportal/production/openai-api-key"
     )
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    # p2-163 ticket 13567: the same tool path executes business actions; the
+    # side-effects gate must be enabled on the API role too, or every action
+    # is silently blocked and reports a fake success.
+    assert values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] == "1"
 
 
 def _as_preproduction(current: Path) -> None:

@@ -379,6 +379,34 @@ class HermesAgentTurnProcessor:
                     "status": str(failed.get("status") or "failed"),
                     "error_code": failed.get("error_code"),
                 }
+            if phase == HermesTurnPhase.WORK and outcome == _PHASE_COMPLETED:
+                after_work = self.store.get_hermes_turn(payload.turn_id) or {}
+                work_result = after_work.get("work_result")
+                work_status = (
+                    str(work_result.get("status") or "")
+                    if isinstance(work_result, dict)
+                    else ""
+                )
+                if work_status == "human_review_required":
+                    # The business tool could not complete and already ran the
+                    # unified handoff (internal note, queue, owner email).
+                    # Park the turn here: persona must never draft a
+                    # customer-facing failure narrative (ticket 13567).
+                    self.store.complete_hermes_agent_turn(
+                        payload.turn_id,
+                        result={
+                            "engine": "hermes",
+                            "turn_id": payload.turn_id,
+                            "status": "human_review",
+                            "reason": str(work_result.get("reason") or "tool_human_review"),
+                        },
+                    )
+                    return {
+                        "engine": "hermes",
+                        "turn_id": payload.turn_id,
+                        "status": "human_review",
+                        "reason": str(work_result.get("reason") or "tool_human_review"),
+                    }
             if outcome == _PHASE_SUPERSEDED:
                 final = self.store.get_hermes_turn(payload.turn_id) or {}
                 return {
@@ -986,10 +1014,24 @@ class HermesAgentTurnProcessor:
         ticket = self.repository.get_ticket(ticket_id)
         if not isinstance(ticket, dict):
             return
+        def _mirrored_comment_id(message: dict[str, Any]) -> str:
+            # The PG read path flattens message meta into top-level keys
+            # (_ticket_message_row_to_payload); accept both shapes.
+            nested = message.get("meta")
+            return str(
+                (nested.get("zendesk_comment_id") if isinstance(nested, dict) else None)
+                or message.get("zendesk_comment_id")
+                or ""
+            ).strip()
+
         existing_ids = {
-            str((message.get("meta") or {}).get("zendesk_comment_id") or "")
-            for message in ticket.get("messages") or []
-            if isinstance(message, dict)
+            comment_id
+            for comment_id in (
+                _mirrored_comment_id(message)
+                for message in ticket.get("messages") or []
+                if isinstance(message, dict)
+            )
+            if comment_id
         }
         new_messages: list[dict[str, Any]] = []
         for comment in snapshot.comments or []:

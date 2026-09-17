@@ -436,13 +436,56 @@ class TestAgentTurnProcessor:
             "agent reply" not in body for body in bodies
         )
         # Mirrored messages carry the comment id for idempotency; re-running
-        # the same turn never duplicates them.
-        mirrored = [
-            m
-            for m in ticket["messages"]
-            if (m.get("meta") or {}).get("zendesk_comment_id") == "99"
-        ]
-        assert len(mirrored) == 1
+        # the same turn never duplicates them. The PG read path flattens meta
+        # into top-level keys, so accept both shapes (13567 duplication).
+        def _ids(messages):
+            ids = []
+            for m in messages:
+                nested = m.get("meta") if isinstance(m.get("meta"), dict) else {}
+                ids.append(str(nested.get("zendesk_comment_id") or m.get("zendesk_comment_id") or ""))
+            return ids
+
+        body_counts = {}
+        for m in ticket["messages"]:
+            if m.get("role") == "customer":
+                body_counts[m["content"]] = body_counts.get(m["content"], 0) + 1
+        assert all(count == 1 for count in body_counts.values()), body_counts
+        # Simulate the PG round-trip flattening and verify the second call
+        # still dedupes: flatten meta, run another turn with same snapshot.
+        for m in ticket["messages"]:
+            nested = m.pop("meta", None)
+            if isinstance(nested, dict):
+                for k, v in nested.items():
+                    m.setdefault(k, v)
+        repository._tickets["123"] = ticket
+        event3 = _customer_comment_event_explicit_flag()
+        receipt3 = store.accept_intake(event3, _settings().provenance())
+        job3 = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff3 = store.hand_off_to_hermes_agent(job3, prompt_release_id="prompt-1")
+        agent_job3 = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+
+        def on_run_completed3(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff3["turn_id"], direction="automation", route="enablement"
+                )
+
+        client3 = FakeHermesClient(on_run_completed=on_run_completed3)
+        processor3 = HermesAgentTurnProcessor(
+            store,
+            client=client3,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+        assert processor3.process(agent_job3)["status"] == "completed"
+        ticket = repository.get_ticket("123")
+        body_counts = {}
+        for m in ticket["messages"]:
+            if m.get("role") == "customer":
+                body_counts[m["content"]] = body_counts.get(m["content"], 0) + 1
+        assert all(count == 1 for count in body_counts.values()), body_counts
 
     def test_full_turn_runs_route_work_persona_with_phase_runs(self) -> None:
         store = _store()
@@ -1390,12 +1433,12 @@ def _customer_comment_event_explicit_flag() -> Any:
             "requester": {"email": "cx@example.com", "name": "Customer"},
         },
         "comment_snapshot": {
-            "source_updated_at": "2026-09-08T10:07:00Z",
+            "source_updated_at": "2026-09-08T10:09:00Z",
             "snapshot_complete": True,
-            "trigger_comment_id": "88",
+            "trigger_comment_id": "99",
             "comments": [
                 {
-                    "id": "88",
+                    "id": "98",
                     "public": True,
                     "author": {
                         "id": "31446696404244",
@@ -1404,8 +1447,27 @@ def _customer_comment_event_explicit_flag() -> Any:
                         "is_agent": False,
                     },
                     "body": "what is appid?",
-                    "created_at": "2026-09-08T10:07:00Z",
-                }
+                    "created_at": "2026-09-08T10:08:00Z",
+                },
+                {
+                    "id": "99",
+                    "public": True,
+                    "author": {
+                        "id": "31446696404244",
+                        "name": "Ziling Xie",
+                        "role": "end-user",
+                        "is_agent": False,
+                    },
+                    "body": "can you try: fcd0dab13017495bbe25a63bfdb236fc",
+                    "created_at": "2026-09-08T10:09:00Z",
+                },
+                {
+                    "id": "100",
+                    "public": True,
+                    "author": {"email": "agent@agora.io", "role": "agent", "is_agent": True},
+                    "body": "agent reply that must not be mirrored",
+                    "created_at": "2026-09-08T10:09:30Z",
+                },
             ],
         },
     }

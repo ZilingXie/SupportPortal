@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-  "next_action": "修复 C（客户评论镜像进本地 ticket.messages，#1222）已上线 r20260917-caec050（首次 heartbeat 90s 未收敛瞬态回滚，--resume 二次通过；live 零错误）。剩：①用户重测——工单评论发 AppID，预期链路：抽取看到 AppID→auto 提交确认→readback→派发 Relay Task（DB 出现 relay_requests 行+Mac 收件箱出现任务）；②B（persona 失败兜底）与 D（enablement 旁路）待拍板；③Mac 侧 10:00 触发配置+三段受控验收。",
+  "next_action": "13567 三件最小修复已实现待合码/重发：①api 注入 AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED=1（13567 直接根因：hermes 工具跑 api 但该 env 只在 worker，enablement 被静默阻断假报成功）；②确定性失败兜底（工具层无法完成→统一链 internal note+回队列+owner 邮件+hermes binding 停车；work_result=human_review_required 时出版门禁跳过 persona，绝不向客户公开失败叙事；手册 v2 同步）；③镜像去重（PG 读回把 meta 摊平成顶层键致幂等键恒空，兼容两种形态）。appid 29 字符=用户测试评论本身少 3 位（Zendesk 原文实证），非代码 bug。剩：合码→preprod 重发→用户重测（带完整 32 位 AppID）。",
   "acceptance_criteria": [
     "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
     "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -155,6 +155,11 @@
       "at": "2026-09-17",
       "event": "comment_mirror_gap_fixed",
       "summary": "13560 调查：客户两轮评论（what is appid / can you try: fcd0dab1...36fc）均推进了 turn（B1 生效），persona 也看到了内容，但 hermes 引擎只镜像 ticket.created 的 description——客户评论从未落入本地 ticket.messages，而确定性 enablement 工具（_build_enablement_attempt→extract_enablement_fields）读的是镜像消息列表，抽取永远 missing app_id，永远不进 auto 派发（relay_requests 空），persona 只能反复索要 AppID。修复 C=processor 每次 pending turn 前把 comment_snapshot 中公开客户评论幂等（meta.zendesk_comment_id）落入镜像；同文件 _customer_author 谓词同样反转（is not False→is not True）一并修复；新增 13560 复现回归（AppID 评论可见+agent 评论不镜像+幂等）。"
+    },
+    {
+      "at": "2026-09-17",
+      "event": "min_fix_13567_implemented",
+      "summary": "13567 证据链：工具 200（A 有效）、评论已镜像（C 有效、appid 入 collected_fields）但 api 无副作用权限→工具走阻断分支返回 executed+internal_email_blocked_no_side_effects 假成功→LLM 向客户编写失败叙事；无任何失败兜底（escalate 工具只改本地、publication 硬编码 public、手册无禁令）。三件修复：api env 双点注入+测试；_escalate_uncompleted_automation（escalate+notify+binding 停车，阻断/异常两入口接入，status 不再翻回 automation）+出版门禁（work 后 human_review_required 停车跳 persona）+新套件 test_hermes_tool_failure_handoff；镜像幂等兼容 PG meta 摊平形态+回归强化。appid 截断证伪（用户评论原文即 29 位）。"
     }
   ]
 }
