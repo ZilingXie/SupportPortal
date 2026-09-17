@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-17 - Solved Cases KB excludes Media Relay enablement (p2-164)
+
+- Area or subsystem: n8n `[kb]Build|Solved Cases` AI eligibility classifier.
+- Prompt behavior: `AI_Approval` preserves the existing rule for general product activation requests, and adds a narrower rule that always rejects Media Relay and Cross-Channel Media Stream Relay activation, enablement, provisioning, and completion tickets even when they contain technical discussion or internal execution details.
+- Reason: Media Relay enablement ticket 13415 was converted into the generated KB draft `[AI Generated][Ticket#13415][Cross-Channel Media Stream Relay Activation Completed]`, although an account-level feature enablement record is not reusable troubleshooting knowledge.
+- Boundaries: Technical Media Relay troubleshooting remains eligible for the existing classifier when it is not an activation or enablement request. No workflow credential, trigger, connection, downstream output, or historical execution was changed or replayed.
+- Verification: n8n `validate_node_config` returned valid for the edited OpenAI node; version `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991` was published and read back with draft equal to active, the rule and description present, the non-target graph unchanged, and no new validation warnings. Runtime classification awaits a future natural SOLVED event.
+
 
 ## 2026-09-16 - Enablement auto acceptance hardening: bound approvals and server-side read-back gate (p2-163)
 

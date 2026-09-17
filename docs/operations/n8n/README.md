@@ -87,7 +87,7 @@
 | [[slack]Route Support](https://n8n.stellarix.space/workflow/kyiA0QuiVx6JJ03i) | 上游接入 / Slack 建单 | Slack 支持请求创建 Zendesk 工单；内部线程消息转交 SupportPortal。 | [运维说明](./active-workflows.md#w-kyiA0QuiVx6JJ03i) |
 | [[case]Sync Status](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) | 直接接入 / 状态联动 | 旧 EC2 双环境状态同步；持续 404 的 ECS 分支已于 2026-09-16 移除。 | [运维说明](./active-workflows.md#w-03B6AvcrOgRkWlUc) |
 | [[ops]Error Test\|Zendesk](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) | 配套 / 运维测试 | 聊天输入工单号后查询 Zendesk，失败时验证共享错误处理。 | [运维说明](./active-workflows.md#w-3zJvu5KQFZIoOoqu) |
-| [[kb]Build\|Solved Cases](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) | 知识入库 / Zendesk | SOLVED 工单经去重和 AI 筛选后生成 KB 草稿，同步 Tencent Memory 并提交原有知识库。 | [运维说明](./active-workflows.md#w-MM3Z3T469Eru3Q1I) |
+| [[kb]Build\|Solved Cases](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) | 知识入库 / Zendesk | SOLVED 工单经去重和 AI 筛选后生成 KB 草稿；Media Relay enablement 等非知识型请求会被排除。合格内容同步 Tencent Memory 并提交原有知识库。 | [运维说明](./active-workflows.md#w-MM3Z3T469Eru3Q1I) |
 
 ## 未启用工作流（13）
 
