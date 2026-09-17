@@ -155,11 +155,16 @@ def _trigger_comment(event: AutomationIntakeEvent) -> Any:
 
 
 def _author_is_customer(comment: Any) -> bool:
-    """The author must be unambiguously the customer for a comment to advance the case."""
+    """The author must be unambiguously the customer for a comment to advance the case.
+
+    A customer-role author counts unless it is EXPLICITLY flagged as an agent
+    (the n8n comment chain sends ``is_agent: false`` for end-users, which the
+    previous inverted check rejected — ticket 13550).
+    """
     author = comment.author
     role = str(author.role or "").strip().lower()
     if role in _CUSTOMER_ROLES:
-        return author.is_agent is not False
+        return author.is_agent is not True
     if role in {"agent", "staff", "admin", "support"} or author.is_agent is True:
         return False
     return author.is_agent is False
