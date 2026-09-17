@@ -54,6 +54,13 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
     "zendesk_basic_auth": "zendesk-basic-auth",
     "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
 }
+# LLM credential for API-role tool executions.  Under the hermes case engine
+# the agent calls execute_automation_action on the API role, whose enablement
+# branch runs grounded field extraction (an LLM call); without this key the
+# tool 500s with account_ai_missing_credentials (ticket 13549).
+API_RUNTIME_LLM_SECRET_SUFFIXES = {
+    "OPENAI_API_KEY": "openai-api-key",
+}
 # Enablement execution mode switch (p2-152): "manual" keeps the p2-149 human
 # review flow; "archer" restores the Archer auto-enablement workflow.
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
@@ -536,6 +543,9 @@ def render_initial_task_definition(
             # needs the Zendesk credentials and configured assignee email.
             "zendesk_basic_auth": "zendesk-basic-auth",
             "ZENDESK_AI_ASSIGNEE_EMAIL": "zendesk-ai-assignee-email",
+            # Hermes-agent tool executions on the API role need the LLM
+            # credential (enablement grounded field extraction).
+            "OPENAI_API_KEY": "openai-api-key",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
@@ -877,7 +887,11 @@ def render_task_definition(
         except ValueError:
             prefix_arn = None
         if prefix_arn:
-            for name, suffix in sorted(API_ZENDESK_READBACK_SECRET_SUFFIXES.items()):
+            required_api_secrets = {
+                **API_ZENDESK_READBACK_SECRET_SUFFIXES,
+                **API_RUNTIME_LLM_SECRET_SUFFIXES,
+            }
+            for name, suffix in sorted(required_api_secrets.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
     if role == "worker":
         # Ensure the AgentRelay transport identity is present on every rendered

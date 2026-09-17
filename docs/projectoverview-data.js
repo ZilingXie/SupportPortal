@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-16T14:23:39Z",
-  "source_base_commit": "799f53bc82c165dafa0b2945ad81d30b0ad26dc2",
-  "registry_digest": "7a3f3a158edf4a994f3b0b2d12568f0c274bd5d6d1f7a92fd3cda082bfbbb91a",
+  "generated_at": "2026-09-17T02:55:38Z",
+  "source_base_commit": "398db22bf8cc8e7f106189f78c56a535880e439e",
+  "registry_digest": "92c0d8395a06115e5a02d979113b87274f96d238a40cbd73d30a48eceb979b64",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13143,7 +13143,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".codex/skills/supportportal-media-relay-enablement/"
       ],
       "created_at": "2026-09-16",
-      "updated_at": "2026-09-16",
+      "updated_at": "2026-09-17",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -13187,6 +13187,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-16",
           "event": "archer_mode_deployed",
           "summary": "用户指示先行部署 archer 模式到 preprod：r20260916-799f53b 上线（同代码仅翻模式），受控功能验收待 Mac 侧日汇总触发就绪后执行。"
+        },
+        {
+          "at": "2026-09-17",
+          "event": "test_ticket_13549_diagnosis",
+          "summary": "受控验收测试单 13549 暴露 hermes 引擎组合问题：工单经 p2-162 的 hermes case engine 进入 agent，route 阶段正确识别 enablement 但 work 阶段两次调用 execute_automation_action 均 500（根因=api 任务定义从未注入 OPENAI_API_KEY，hermes 引擎把执行从 worker 挪到 api 侧工具调用撞上既有布线缺口），且 agent 工具集无升级工具，persona 将错误信息公开发布给客户（02:21:05，实测创建→回复 60 秒，非 6-10 分钟）；无认领/交接，工单留初始 assignee。修复 A（本 PR）：api secret map+正式渲染强制注入 OPENAI_API_KEY。B（persona 失败兜底=internal note+转人工）与 D（enablement 是否确定性旁路 legacy 引擎）待用户决策。"
         }
       ]
     },
