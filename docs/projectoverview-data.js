@@ -1,7 +1,7 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-17T10:17:59Z",
-  "source_base_commit": "978a3c9265295907eca66a3ad3ce6e0a2a2f3883",
+  "generated_at": "2026-09-17T11:09:26Z",
+  "source_base_commit": "caec050e7467394d37b46a8f660c82294b452201",
   "registry_digest": "72021e6e3888be86a78d801f164fc67bef52696084ad28f3d8fc69d66553953c",
   "project": {
     "schema_version": 2,
