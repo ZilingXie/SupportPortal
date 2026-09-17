@@ -205,6 +205,12 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     assert secrets["ZENDESK_AI_ASSIGNEE_EMAIL"].endswith(
         "parameter/supportportal/production/zendesk-ai-assignee-email"
     )
+    # p2-163 ticket 13549: hermes-engine tool executions run grounded field
+    # extraction on the API role; without the LLM key the tool 500s with
+    # account_ai_missing_credentials.
+    assert secrets["OPENAI_API_KEY"].endswith(
+        "parameter/supportportal/production/openai-api-key"
+    )
 
 
 def _as_preproduction(current: Path) -> None:
