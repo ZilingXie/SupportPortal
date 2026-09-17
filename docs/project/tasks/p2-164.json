@@ -1,17 +1,19 @@
 {
   "schema_version": 2,
   "task_id": "p2-164",
-  "title": "n8n Solved Cases KB 同步至 Tencent Memory",
-  "status": "done",
+  "title": "n8n Solved Cases KB 输出与 Enablement 排除",
+  "status": "active",
   "owner": "zac",
-  "summary": "在 [kb]Build|Solved Cases 中复用 [kb]Build|CSD 的 Wiki create、Markdown raw/write、ingest 链路；生成 Zendesk KB 草稿后同步至同一 Tencent Memory team，再继续原有 Google Sheets 与 SupportPortal 知识输出。",
-  "next_action": "",
+  "summary": "[kb]Build|Solved Cases 为合格的 SOLVED 工单生成 Zendesk KB 草稿并同步 Tencent Memory、Google Sheets 与 SupportPortal；AI eligibility classifier 保留既有通用 product activation 判断，并新增 Media Relay 与 Cross-Channel Media Stream Relay 专属排除规则：开通、配置下发和完成记录即使包含技术讨论或内部执行细节也不生成 KB。",
+  "next_action": "已发布 n8n 版本 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991。等待后续自然发生的 SOLVED 工单确认 Media Relay enablement 进入 reject 分支、普通技术问题仍按原规则处理；不重放 13415 或其他历史 execution。",
   "acceptance_criteria": [
-    "已发布的 Solved Cases 节点图包含 Wiki 创建、article.md 写入和 ingest，使用 CSD 同一 team 和认证配置。",
-    "正文取自 Geneate_KB_Content 的配对 item，Wiki ID 沿当前 item 传递；原节点参数、凭据引用、触发器与错误处理设置保持原配置。",
-    "发布前后保存脱敏快照及 draft/published version ID，快照校验通过；不重放历史业务 execution。"
+    "AI_Approval 保留既有通用 product activation 规则，并明确拒绝 Media Relay 与 Cross-Channel Media Stream Relay 的 activation、enablement、provisioning 和 completion ticket，即使工单含技术讨论或内部执行细节。",
+    "非 enablement 的技术排错工单仍沿用既有 AI eligibility classifier；Zendesk 草稿、Tencent Memory、Google Sheets 与 SupportPortal 输出链路不变。",
+    "发布前后保存脱敏快照及 draft/published version ID，快照校验通过；不修改凭据、触发器、连接或历史 execution。"
   ],
-  "blockers": [],
+  "blockers": [
+    "运行时分类需等待未来自然 SOLVED 事件验证；本次未重放 13415，也未构造会触发 Zendesk、Tencent Memory 或 Google Sheets 写入的测试 execution。"
+  ],
   "evidence": [
     {
       "type": "test",
@@ -36,6 +38,24 @@
       "label": "Git 快照脱敏校验",
       "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
       "details": "16 published snapshots、1 divergent draft、65 redacted values 均通过；Tencent User Key 在新增快照中被替换为占位符，未写入明文。"
+    },
+    {
+      "type": "test",
+      "label": "Media Relay enablement classifier node validation",
+      "command": "n8n validate_node_config",
+      "details": "编辑后的 AI_Approval OpenAI 节点 valid=true；既有通用 product activation 规则保留，并新增 Media Relay 与 Cross-Channel Media Stream Relay activation/enablement/provisioning/completion 专属排除规则。"
+    },
+    {
+      "type": "deployment",
+      "label": "n8n publish and independent readback",
+      "command": "n8n update_workflow + publish_workflow + get_workflow_details",
+      "details": "以 05c7588b-bba0-40b0-ab67-14e9b12820e6 为原始并发基线；复核发现首版规则范围过宽后，基于已发布 adca4bbf-910b-473a-8477-7f316af84b12 收窄并发布 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991。最终 active=true、draft=active、通用规则保留、Media Relay 专属规则和 description 回读一致，非目标节点图不变，新增 warning 为 0。"
+    },
+    {
+      "type": "test",
+      "label": "Final Git snapshot validation",
+      "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
+      "details": "发布后脱敏快照与 manifest 更新为 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991；15 个 published snapshot、1 个 divergent draft、65 个 redacted value 校验通过。"
     }
   ],
   "source_refs": [
@@ -44,7 +64,7 @@
     "docs/operations/n8n/active-workflows.md"
   ],
   "created_at": "2026-09-16",
-  "updated_at": "2026-09-16",
+  "updated_at": "2026-09-17",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-ingestion-pipeline",
@@ -60,6 +80,16 @@
       "at": "2026-09-16T08:27:00.293Z",
       "event": "published",
       "summary": "四个 Tencent Memory 节点发布并回读一致；保持原有 Google Sheets、SupportPortal 和错误工作流链路，Git 保存脱敏发布快照。"
+    },
+    {
+      "at": "2026-09-17T04:45:00Z",
+      "event": "implementation_started",
+      "summary": "用户要求 Media Relay enablement 工单不再生成 KB；以当前 draft/active 05c7588b-bba0-40b0-ab67-14e9b12820e6 刷新脱敏基线，不修改凭据或重放业务 execution。"
+    },
+    {
+      "at": "2026-09-17T04:52:52.627Z",
+      "event": "published",
+      "summary": "复核后将首版过宽的 activation/enablement 规则收窄为 Media Relay 专属排除，保留原通用 product activation 条件；发布 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991，回读 draft/active 一致且非目标图不变。"
     }
   ]
 }

@@ -6,15 +6,15 @@
     "workflowId": "MM3Z3T469Eru3Q1I",
     "workflowName": "[kb]Build|Solved Cases",
     "snapshotKind": "published",
-    "versionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
-    "draftVersionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
-    "publishedVersionId": "f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83",
-    "updatedAt": "2026-09-16T08:27:00.293Z",
+    "versionId": "de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991",
+    "draftVersionId": "de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991",
+    "publishedVersionId": "de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991",
+    "updatedAt": "2026-09-17T04:52:52.627Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
     "name": "[kb]Build|Solved Cases",
-    "description": "接收 Zendesk SOLVED 事件，经 PostgreSQL 去重、评论脱敏和 AI 筛选生成英文 KB 草稿；同步至 Tencent Memory，创建 Wiki、写入 Markdown 并触发 ingest，再写入 Google Sheets 和 SupportPortal 知识库。",
+    "description": "接收 Zendesk SOLVED 事件，排除 Media Relay enablement 等非知识型请求，经 PostgreSQL 去重、评论脱敏和 AI 筛选生成英文 KB 草稿；同步至 Tencent Memory，创建 Wiki、写入 Markdown 并触发 ingest，再写入 Google Sheets 和 SupportPortal 知识库。",
     "nodes": [
       {
         "parameters": {
@@ -543,7 +543,7 @@
           "messages": {
             "values": [
               {
-                "content": "I want you to act as a **technical support ticket reviewer**. Your task is to evaluate technical support tickets and decide whether they are suitable to be converted into knowledge base articles.  \n\nYou should carefully read the ticket and categorize it based on the following rules:  \n\n- If it is a **billing issue**, return → `disapproved`  \n- If the **customer never responded after creating the ticket**, return → `disapproved`  \n- If it’s an **account suspended** ticket, return → `disapproved`  \n- If it’s a **product activation request** that does **not** include any technical discussion, return → `disapproved`  \n- If it’s a **ticket regarding account deletion**, return → `disapproved`  \n- If the **customer did not clearly confirm that the resolution solved the issue**, return → `disapproved`  \n- if this ticket is contains content \"This ticket is auto generated from thread: https://agoraiolab.slack.com\", return → `disapproved`  \n- For all other cases where the ticket contains technical discussion, troubleshooting steps, or confirmed resolution that could help others, return → `approved`  \n\n\n**Output format:**  \n- For approved tickets → `approved`  \n- For disapproved tickets → `disapproved`\n\nOnce I provide you with a technical support ticket, you will respond only with the appropriate decision following the above rules.",
+                "content": "I want you to act as a **technical support ticket reviewer**. Your task is to evaluate technical support tickets and decide whether they are suitable to be converted into knowledge base articles.  \n\nYou should carefully read the ticket and categorize it based on the following rules:  \n\n- If it is a **billing issue**, return → `disapproved`  \n- If the **customer never responded after creating the ticket**, return → `disapproved`  \n- If it’s an **account suspended** ticket, return → `disapproved`  \n- If it’s a **product activation request** that does **not** include any technical discussion, return → `disapproved`  \n- If it is a **Media Relay or Cross-Channel Media Stream Relay activation, enablement, provisioning, or completion ticket**, return → `disapproved`, even when it contains technical discussion or internal execution details.  \n- If it’s a **ticket regarding account deletion**, return → `disapproved`  \n- If the **customer did not clearly confirm that the resolution solved the issue**, return → `disapproved`  \n- if this ticket is contains content \"This ticket is auto generated from thread: https://agoraiolab.slack.com\", return → `disapproved`  \n- For all other cases where the ticket contains technical discussion, troubleshooting steps, or confirmed resolution that could help others, return → `approved`  \n\n\n**Output format:**  \n- For approved tickets → `approved`  \n- For disapproved tickets → `disapproved`\n\nOnce I provide you with a technical support ticket, you will respond only with the appropriate decision following the above rules.",
                 "role": "system"
               },
               {
@@ -877,7 +877,8 @@
         "id": "9ba95200-2bb2-4a9c-822d-0a8ecb9c81c6",
         "name": "2_rag",
         "retryOnFail": true,
-        "waitBetweenTries": 5000
+        "waitBetweenTries": 5000,
+        "disabled": true
       },
       {
         "parameters": {
@@ -906,14 +907,6 @@
         "name": "Code in JavaScript1"
       },
       {
-        "id": "592df6c5-b737-45e2-8d69-7cbb656392d8",
-        "name": "2_tencent_title",
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          1728,
-          608
-        ],
         "parameters": {
           "method": "POST",
           "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/create",
@@ -944,9 +937,23 @@
             ]
           },
           "options": {}
-        }
+        },
+        "id": "592df6c5-b737-45e2-8d69-7cbb656392d8",
+        "name": "2_tencent_title",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1728,
+          608
+        ]
       },
       {
+        "parameters": {
+          "mode": "raw",
+          "jsonOutput": "={{ JSON.stringify({\n   team_id: \"team-7oif6fsv17\",\n   wiki_id: $json.data.wiki_id,\n   files: [{ filename: \"article.md\", content:$('Geneate_KB_Content').item.json.choices[0].message.content }]\n}) }} ",
+          "includeOtherFields": true,
+          "options": {}
+        },
         "id": "71545d60-e8f4-4fc6-b135-bf6ee335f90a",
         "name": "Edit Fields",
         "type": "n8n-nodes-base.set",
@@ -954,15 +961,34 @@
         "position": [
           1952,
           608
-        ],
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={{ JSON.stringify({\n   team_id: \"team-7oif6fsv17\",\n   wiki_id: $json.data.wiki_id,\n   files: [{ filename: \"article.md\", content:$('Geneate_KB_Content').item.json.choices[0].message.content }]\n}) }} ",
-          "includeOtherFields": true,
-          "options": {}
-        }
+        ]
       },
       {
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/raw/write",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "X-Tdai-Service-Id",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
+              },
+              {
+                "name": "X-Tdai-User-Key",
+                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ team_id: $json.team_id, wiki_id: $json.wiki_id, files: $json.files }) }}",
+          "options": {}
+        },
         "id": "ca9e8114-171d-4c2e-b6bf-7d7dd5af66d4",
         "name": "2_tencent_body",
         "type": "n8n-nodes-base.httpRequest",
@@ -970,12 +996,13 @@
         "position": [
           2176,
           608
-        ],
+        ]
+      },
+      {
         "parameters": {
           "method": "POST",
-          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/raw/write",
+          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/ingest",
           "sendHeaders": true,
-          "specifyHeaders": "keypair",
           "headerParameters": {
             "parameters": [
               {
@@ -993,13 +1020,10 @@
             ]
           },
           "sendBody": true,
-          "contentType": "json",
           "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ team_id: $json.team_id, wiki_id: $json.wiki_id, files: $json.files }) }}",
+          "jsonBody": "={{ JSON.stringify({ wiki_id: $('Edit Fields').item.json.wiki_id }) }}",
           "options": {}
-        }
-      },
-      {
+        },
         "id": "6065d213-be82-4f3b-abf1-c4005d678fc6",
         "name": "2_tencent_ingest",
         "type": "n8n-nodes-base.httpRequest",
@@ -1007,34 +1031,7 @@
         "position": [
           2400,
           608
-        ],
-        "parameters": {
-          "method": "POST",
-          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/ingest",
-          "sendHeaders": true,
-          "specifyHeaders": "keypair",
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-Tdai-Service-Id",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
-              },
-              {
-                "name": "X-Tdai-User-Key",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
-          },
-          "sendBody": true,
-          "contentType": "json",
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ wiki_id: $('Edit Fields').item.json.wiki_id }) }}",
-          "options": {}
-        }
+        ]
       }
     ],
     "connections": {
