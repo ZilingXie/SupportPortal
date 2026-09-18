@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T04:55:30Z",
-  "source_base_commit": "568fcdb769bc32b88e34b247288b1ee1e19db78f",
-  "registry_digest": "339707b3768a2c5de09656c74798243a1653aba4b8312e4eb36cb93ced0f9231",
+  "generated_at": "2026-09-18T05:06:49Z",
+  "source_base_commit": "12fa69a05df44434f98570258b2c539c4d151ef1",
+  "registry_digest": "bc7ce6ef3f151cc0fc4996b89edc31bc95144a34e75a0de651d5e76050f4216d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12982,7 +12982,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/integrations/n8n/Slack_App_Mention_To_SupportPortal_Engineer.json"
       ],
       "created_at": "2026-09-15",
-      "updated_at": "2026-09-15",
+      "updated_at": "2026-09-18",
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
@@ -13003,6 +13003,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-15",
           "event": "done",
           "summary": "live 双回合实证闭环：adhoc 创建→真实 hermes work run（消息注入经 memory FTS 铁证）→停车→Slack 无按钮投递 delivered；同线程二回合走既有 feedback 流再投递；幂等/围栏/频道校验负路径全过。遗留（后续可选）：n8n 更新版 mention workflow 待用户导入后真实 @ 终验；adhoc manual 的 shared-knowledge 措辞与 write_knowledge 工具可用性对齐；工程师频道残留 2 条验证消息可删。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "amended",
+          "summary": "n8n 遗留项以新方式收口：经 n8n MCP 直接修改用户自建 workflow r1HIW8UNuCabiOPn（原 [slack]Forward Thread|Prod，只认 production 绑定——case 13582 反馈被静默丢弃的根因）为 [slack]Forward Thread|Prod+Preprod（版本 ddf01d26 已发布）：production 分支零改动，新增 preprod hermes 分支（unbound→hermes resolve→bound=messages 反馈 / unbound=adhoc-sessions 首问），三个新 HTTP 节点用既有 preprodcution 凭证。快照已刷新入 Git（前版 91ca9a17 在历史中），validate_workflow_snapshots 过检。用户侧真实 @ 复验待做（13582 线程重发即可）。"
         }
       ]
     },
