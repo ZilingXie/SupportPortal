@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T04:25:12Z",
-  "source_base_commit": "5a7ccf40b735bb6b9c7ae972b4e8267afcdeb81f",
-  "registry_digest": "77e87421ae6cdc4e45cd07b7af5d993cbfa6d94229d4391136b7c5d3bd0ce578",
+  "generated_at": "2026-09-18T04:55:30Z",
+  "source_base_commit": "568fcdb769bc32b88e34b247288b1ee1e19db78f",
+  "registry_digest": "339707b3768a2c5de09656c74798243a1653aba4b8312e4eb36cb93ced0f9231",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13305,6 +13305,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "review4_fixes_implemented",
           "summary": "四项 review 修复：①失败 helper/requires_human_review 都写 turn.work_result（persona 门禁读的正是它，此前只在正常路径 :427 写，三个 early-return 全绕过→失败后照跑 persona）；②try/except 扩到整个执行段（attempt builder 含 LLM 抽取、delivery 全覆盖，HermesToolError 仍原样抛给 API 422）；③enablement 成功后 skip_persona=True——旧管线 submission_confirmation/appid_invalid 回复 job 是唯一客户回复（relay 门禁绑的正是它），agent 循环新增 skip_persona 完成分支；④结果字段从执行后 account_case 重取（appid_invalid 后 missing=['app_id'] 与 DB 一致）。新增/修正测试：work_result 由真实 helper 写入（单元断言）、skip_persona 完成分支、appid 一致性。十套件 339 passed。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "trigger_notify_fixes",
+          "summary": "13580 双修复：①trigger_message_created_at 从镜像客户消息 max(created_at) 取值（与 legacy 同源，修 stale_customer_revision 取消——hermes 工具此前传 turn created_at 永远不匹配栅栏的精确字符串比较）；②notify_account_failure 补必填 now 参数（此前 TypeError 在邮件前抛出→email 永不发送且跳过 binding park）+ 全链 try/except 守卫（escalate/notify 各子步骤失败不阻塞 park）；③api 注入 Graph 邮件凭据（BILLING_AUTOMATION_GRAPH_CLIENT_SECRET secret + tenant/client/username/token_cache env，修 api 容器无法发邮件）。13580 诊断：escalation context 完全缺失（escalate 从未持久化），case 实际停在 gated/awaiting_public_reply（非失败态）。"
         }
       ]
     },

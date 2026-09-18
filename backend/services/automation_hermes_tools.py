@@ -233,6 +233,30 @@ async def tool_execute_automation_action(
         if messages and (messages[0] or {}).get("role") == "customer"
         else (ticket.get("question") or subject)
     )
+    # The reply-job trigger must equal the mirror's latest customer message
+    # created_at byte-for-byte — the worker's customer-currency fence does an
+    # exact string match (worker.py _account_reply_trigger_is_latest). The
+    # turn's created_at is a different moment/format and never matches
+    # (ticket 13580).
+    customer_timestamps = [
+        str(message.get("created_at") or "")
+        for message in messages
+        if isinstance(message, dict)
+        and str(message.get("role") or "").strip().lower() in {"customer", "user"}
+        and str(message.get("created_at") or "").strip()
+    ]
+    if not customer_timestamps:
+        return _escalate_uncompleted_automation(
+            store=store,
+            repository=repository,
+            account_case=account_case,
+            ticket_id=ticket_id,
+            turn_id=turn_id,
+            automation_handler=automation_handler,
+            reason_code="missing_customer_timestamp",
+            detail="The ticket mirror has no customer message timestamp to bind the reply job trigger.",
+        )
+    trigger_message_created_at = max(customer_timestamps)
     timestamp = str(turn["created_at"])
 
     attempt: dict[str, Any] | None = None
@@ -366,7 +390,7 @@ async def tool_execute_automation_action(
                             else None,
                             persona_assignment=None,
                             processing_profile=environment,
-                            trigger_message_created_at=timestamp,
+                            trigger_message_created_at=trigger_message_created_at,
                         )
                     )
                 except Exception as exc:
@@ -520,27 +544,41 @@ def _escalate_uncompleted_automation(
         # A raced turn (already terminal) must not block the unified chain;
         # the binding park below still stops further phases.
         pass
-    escalate_account_case_to_human_review(
-        account_case=account_case,
-        ticket_id=ticket_id,
-        handler=automation_handler or "enablement",
-        failure_stage="hermes_tool",
-        failure_code=reason_code,
-        reason=detail,
-        repository=repository,
-    )
+    # Each sub-step is individually guarded: a failure in the note, the
+    # alert email, or the escalation itself must never skip the remaining
+    # steps (the binding park is the last safety line). The previous
+    # missing `now` kwarg raised a TypeError that silently killed the
+    # email AND skipped the park (ticket 13580).
+    try:
+        escalate_account_case_to_human_review(
+            account_case=account_case,
+            ticket_id=ticket_id,
+            handler=automation_handler or "enablement",
+            failure_stage="hermes_tool",
+            failure_code=reason_code,
+            reason=detail,
+            repository=repository,
+        )
+    except Exception:
+        pass
     account_case_id = str(
         account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ticket_id
     )
-    notify_account_failure(
-        repository=repository,
-        incident_id=f"account-automation:{account_case_id}:hermes_tool:{reason_code}",
-        stage="hermes_tool",
-        code=reason_code,
-        ticket_id=ticket_id,
-        account_case_id=account_case_id,
-        detail=detail[:500],
-    )
+    from backend.services.automation_account_intake import _now_iso
+
+    try:
+        notify_account_failure(
+            repository=repository,
+            incident_id=f"account-automation:{account_case_id}:hermes_tool:{reason_code}",
+            stage="hermes_tool",
+            code=reason_code,
+            ticket_id=ticket_id,
+            account_case_id=account_case_id,
+            detail=detail[:500],
+            now=str(account_case.get("updated_at") or _now_iso()),
+        )
+    except Exception:
+        pass
     store.escalate_hermes_case(turn_id, reason=reason_code)
     return {
         "status": "human_review_required",
