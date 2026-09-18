@@ -236,169 +236,212 @@ async def tool_execute_automation_action(
     timestamp = str(turn["created_at"])
 
     attempt: dict[str, Any] | None = None
-    if handler_implementation == "account_verification" or normalized_route == "fraud_account":
-        attempt = _build_verification_attempt(
-            ticket_subject=subject,
-            customer_messages=messages,
-            automation_context=conversation_context,
-            ticket_id=ticket_id,
-            account_case_id=account_case_id,
-            customer_email=str(ticket.get("customer_id") or ""),
-            zendesk_ticket_url=zendesk_ticket_url,
-        )
-    elif handler_implementation == "billing" or normalized_route in {"fraud_account", "detailed_invoice"}:
-        attempt = _build_billing_attempt(
-            action=normalized_route,
-            message=question,
-            ticket_id=ticket_id,
-            billing_ticket_id=account_case_id,
-            customer_email=str(ticket.get("customer_id") or ""),
-            requester=str(ticket.get("customer_id") or ""),
-            zendesk_ticket_url=zendesk_ticket_url,
-        )
-    elif handler_implementation == "account_suspension" or normalized_route == "account_suspension":
-        suspension_direct_handoff = normalized_route == "account_suspension" and environment in {
-            "preproduction",
-            "production",
-        }
-        if suspension_direct_handoff:
-            attempt = _build_suspension_direct_handoff_attempt(
+    try:
+        if handler_implementation == "account_verification" or normalized_route == "fraud_account":
+            attempt = _build_verification_attempt(
                 ticket_subject=subject,
                 customer_messages=messages,
                 automation_context=conversation_context,
-                message=f"{subject}\n\n{question}",
                 ticket_id=ticket_id,
                 account_case_id=account_case_id,
-                ticket_email=str(ticket.get("customer_id") or ""),
-                customer_name=str(account_case.get("customer_name") or ""),
-                created_at=timestamp,
+                customer_email=str(ticket.get("customer_id") or ""),
+                zendesk_ticket_url=zendesk_ticket_url,
+            )
+        elif handler_implementation == "billing" or normalized_route in {"fraud_account", "detailed_invoice"}:
+            attempt = _build_billing_attempt(
+                action=normalized_route,
+                message=question,
+                ticket_id=ticket_id,
+                billing_ticket_id=account_case_id,
+                customer_email=str(ticket.get("customer_id") or ""),
+                requester=str(ticket.get("customer_id") or ""),
+                zendesk_ticket_url=zendesk_ticket_url,
+            )
+        elif handler_implementation == "account_suspension" or normalized_route == "account_suspension":
+            suspension_direct_handoff = normalized_route == "account_suspension" and environment in {
+                "preproduction",
+                "production",
+            }
+            if suspension_direct_handoff:
+                attempt = _build_suspension_direct_handoff_attempt(
+                    ticket_subject=subject,
+                    customer_messages=messages,
+                    automation_context=conversation_context,
+                    message=f"{subject}\n\n{question}",
+                    ticket_id=ticket_id,
+                    account_case_id=account_case_id,
+                    ticket_email=str(ticket.get("customer_id") or ""),
+                    customer_name=str(account_case.get("customer_name") or ""),
+                    created_at=timestamp,
+                    zendesk_ticket_url=zendesk_ticket_url,
+                )
+            else:
+                attempt = _build_suspension_contact_attempt(
+                    ticket_subject=subject,
+                    customer_messages=messages,
+                    automation_context=conversation_context,
+                    ticket_email=str(ticket.get("customer_id") or ""),
+                    customer_name=str(account_case.get("customer_name") or ""),
+                )
+        elif handler_implementation == "enablement" or normalized_route == "enablement":
+            attempt = _build_enablement_attempt(
+                message=f"{subject}\n\n{question}",
+                ticket_subject=subject,
+                customer_messages=messages,
+                automation_context=conversation_context,
+                ticket_id=ticket_id,
+                account_case_id=account_case_id,
+                customer_email=str(ticket.get("customer_id") or ""),
                 zendesk_ticket_url=zendesk_ticket_url,
             )
         else:
-            attempt = _build_suspension_contact_attempt(
-                ticket_subject=subject,
-                customer_messages=messages,
-                automation_context=conversation_context,
-                ticket_email=str(ticket.get("customer_id") or ""),
-                customer_name=str(account_case.get("customer_name") or ""),
+            raise HermesToolError(
+                "handler_unsupported",
+                f"automation handler {handler_implementation} is not executable by the hermes engine",
             )
-    elif handler_implementation == "enablement" or normalized_route == "enablement":
-        attempt = _build_enablement_attempt(
-            message=f"{subject}\n\n{question}",
-            ticket_subject=subject,
-            customer_messages=messages,
-            automation_context=conversation_context,
-            ticket_id=ticket_id,
-            account_case_id=account_case_id,
-            customer_email=str(ticket.get("customer_id") or ""),
-            zendesk_ticket_url=zendesk_ticket_url,
+
+        extraction = attempt.get("field_extraction")
+        collected_fields = dict(attempt.get("collected_fields") or {})
+        missing_fields = list(attempt.get("missing_fields") or [])
+        requires_human_review = bool(attempt.get("requires_human_review"))
+        executed_actions: list[str] = []
+        internal_email_status = "not_applicable"
+        internal_email_reason = ""
+
+        account_case["route"] = normalized_route
+        account_case["execution_action"] = normalized_route
+        account_case["collected_fields"] = collected_fields
+        account_case["missing_fields"] = missing_fields
+        account_case["automation_context"] = dict(
+            attempt.get("automation_context") or account_case.get("automation_context") or {}
         )
-    else:
-        raise HermesToolError(
-            "handler_unsupported",
-            f"automation handler {handler_implementation} is not executable by the hermes engine",
-        )
 
-    extraction = attempt.get("field_extraction")
-    collected_fields = dict(attempt.get("collected_fields") or {})
-    missing_fields = list(attempt.get("missing_fields") or [])
-    requires_human_review = bool(attempt.get("requires_human_review"))
-    executed_actions: list[str] = []
-    internal_email_status = "not_applicable"
-    internal_email_reason = ""
-
-    account_case["route"] = normalized_route
-    account_case["execution_action"] = normalized_route
-    account_case["collected_fields"] = collected_fields
-    account_case["missing_fields"] = missing_fields
-    account_case["automation_context"] = dict(
-        attempt.get("automation_context") or account_case.get("automation_context") or {}
-    )
-
-    if requires_human_review:
-        account_case["automation_status"] = "human_review_required"
-        account_case["execution_reason_code"] = f"{automation_handler}_field_extraction_failed"
-        repository.save_account_case(account_case)
-        store.escalate_hermes_case(turn_id, reason="field_extraction_requires_human_review")
-        return {
-            "status": "human_review_required",
-            "reason": "field_extraction_requires_human_review",
-            "missing_fields": missing_fields,
-            "collected_fields": collected_fields,
-            "executed_actions": [],
-        }
-
-    suspension_handoff_payload = dict(attempt.get("internal_email_payload") or {}) or None
-    if (
-        normalized_route == "account_suspension"
-        and suspension_handoff_payload
-        and not missing_fields
-        and zendesk_side_effects_enabled
-    ):
-        delivery_result, account_case = await _run_internal_email_delivery(
-            repository=repository,
-            account_case=account_case,
-            ticket_id=ticket_id,
-            handler=automation_handler or "billing",
-            payload=suspension_handoff_payload,
-            sender=send_billing_internal_email,
-        )
-        executed_actions.append("internal_email_submitted")
-        internal_email_status = str(delivery_result.status)
-        internal_email_reason = str(delivery_result.reason)
-    elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
-        if automation_handler == "enablement":
+        if requires_human_review:
+            account_case["automation_status"] = "human_review_required"
+            account_case["execution_reason_code"] = f"{automation_handler}_field_extraction_failed"
+            repository.save_account_case(account_case)
+            human_review_work_result = {
+                "status": "human_review_required",
+                "reason": "field_extraction_requires_human_review",
+                "missing_fields": missing_fields,
+                "collected_fields": collected_fields,
+                "executed_actions": [],
+            }
             try:
-                account_case, _reply_job, workflow_outcome = (
-                    await _run_enablement_workflow(
-                        repository=repository,
-                        account_case=account_case,
-                        ticket_id=ticket_id,
-                        email_payload=dict(attempt["internal_email_to_send"]),
-                        customer_email=str(ticket.get("customer_id") or "") or None
-                        if isinstance(ticket, dict)
-                        else None,
-                        persona_assignment=None,
-                        processing_profile=environment,
-                        trigger_message_created_at=timestamp,
-                    )
-                )
-            except Exception as exc:
-                return _escalate_uncompleted_automation(
-                    store=store,
-                    repository=repository,
-                    account_case=account_case,
-                    ticket_id=ticket_id,
-                    turn_id=turn_id,
-                    automation_handler=automation_handler,
-                    reason_code="enablement_workflow_failed",
-                    detail=f"The enablement workflow raised: {exc}",
-                )
-            executed_actions.append(
-                f"enablement_{enablement_workflow_mode()}:{workflow_outcome}"
-            )
-            internal_email_status = str(account_case.get("internal_email_send_status") or "")
-            internal_email_reason = str(account_case.get("internal_email_send_reason") or "")
-        else:
-            sender = (
-                send_enablement_internal_email
-                if automation_handler == "enablement"
-                else send_billing_internal_email
-            )
+                store.record_hermes_turn_work(turn_id, work_result=human_review_work_result)
+            except Exception:
+                pass
+            store.escalate_hermes_case(turn_id, reason="field_extraction_requires_human_review")
+            return human_review_work_result
+
+        suspension_handoff_payload = dict(attempt.get("internal_email_payload") or {}) or None
+        if (
+            normalized_route == "account_suspension"
+            and suspension_handoff_payload
+            and not missing_fields
+            and zendesk_side_effects_enabled
+        ):
             delivery_result, account_case = await _run_internal_email_delivery(
                 repository=repository,
                 account_case=account_case,
                 ticket_id=ticket_id,
                 handler=automation_handler or "billing",
-                payload=dict(attempt["internal_email_to_send"]),
-                sender=sender,
+                payload=suspension_handoff_payload,
+                sender=send_billing_internal_email,
             )
             executed_actions.append("internal_email_submitted")
             internal_email_status = str(delivery_result.status)
             internal_email_reason = str(delivery_result.reason)
-    elif attempt.get("internal_email_to_send"):
-        # A blocked business action is a failure handoff, never a fake
-        # success the model would narrate to the customer (ticket 13567).
+        elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
+            if automation_handler == "enablement":
+                try:
+                    account_case, _reply_job, workflow_outcome = (
+                        await _run_enablement_workflow(
+                            repository=repository,
+                            account_case=account_case,
+                            ticket_id=ticket_id,
+                            email_payload=dict(attempt["internal_email_to_send"]),
+                            customer_email=str(ticket.get("customer_id") or "") or None
+                            if isinstance(ticket, dict)
+                            else None,
+                            persona_assignment=None,
+                            processing_profile=environment,
+                            trigger_message_created_at=timestamp,
+                        )
+                    )
+                except Exception as exc:
+                    return _escalate_uncompleted_automation(
+                        store=store,
+                        repository=repository,
+                        account_case=account_case,
+                        ticket_id=ticket_id,
+                        turn_id=turn_id,
+                        automation_handler=automation_handler,
+                        reason_code="enablement_workflow_failed",
+                        detail=f"The enablement workflow raised: {exc}",
+                    )
+                executed_actions.append(
+                    f"enablement_{enablement_workflow_mode()}:{workflow_outcome}"
+                )
+                internal_email_status = str(account_case.get("internal_email_send_status") or "")
+                internal_email_reason = str(account_case.get("internal_email_send_reason") or "")
+                # The enablement workflow created the customer-facing reply
+                # job (submission confirmation or appid-invalid ask) in the
+                # legacy pipeline — that job is the SOLE customer reply.
+                # Persona must not draft a second one (review #3), and the
+                # relay gate binds to exactly that job's delivered public
+                # reply.
+                skip_persona_result = {
+                    "status": "workflow_completed",
+                    "route": normalized_route,
+                    "outcome": workflow_outcome,
+                    "skip_persona": True,
+                    "missing_fields": list(account_case.get("missing_fields") or []),
+                    "collected_fields": dict(account_case.get("collected_fields") or {}),
+                    "executed_actions": list(executed_actions),
+                    "internal_email_send_status": internal_email_status,
+                    "internal_email_send_reason": internal_email_reason,
+                }
+                try:
+                    store.record_hermes_turn_work(turn_id, work_result=skip_persona_result)
+                except Exception:
+                    pass
+                store.escalate_hermes_case(turn_id, reason=f"enablement_{workflow_outcome}_pipeline_reply")
+                return skip_persona_result
+            else:
+                sender = (
+                    send_enablement_internal_email
+                    if automation_handler == "enablement"
+                    else send_billing_internal_email
+                )
+                delivery_result, account_case = await _run_internal_email_delivery(
+                    repository=repository,
+                    account_case=account_case,
+                    ticket_id=ticket_id,
+                    handler=automation_handler or "billing",
+                    payload=dict(attempt["internal_email_to_send"]),
+                    sender=sender,
+                )
+                executed_actions.append("internal_email_submitted")
+                internal_email_status = str(delivery_result.status)
+                internal_email_reason = str(delivery_result.reason)
+        elif attempt.get("internal_email_to_send"):
+            # A blocked business action is a failure handoff, never a fake
+            # success the model would narrate to the customer (ticket 13567).
+            return _escalate_uncompleted_automation(
+                store=store,
+                repository=repository,
+                account_case=account_case,
+                ticket_id=ticket_id,
+                turn_id=turn_id,
+                automation_handler=automation_handler,
+                reason_code="zendesk_side_effects_disabled",
+                detail="The business action was blocked because Zendesk side effects are disabled on this container.",
+            )
+
+    except HermesToolError:
+        raise
+    except Exception as exc:
         return _escalate_uncompleted_automation(
             store=store,
             repository=repository,
@@ -406,10 +449,16 @@ async def tool_execute_automation_action(
             ticket_id=ticket_id,
             turn_id=turn_id,
             automation_handler=automation_handler,
-            reason_code="zendesk_side_effects_disabled",
-            detail="The business action was blocked because Zendesk side effects are disabled on this container.",
+            reason_code=f"{automation_handler or normalized_route}_execution_failed",
+            detail=f"The automation execution raised: {exc}",
         )
 
+    # Refresh fields from the post-execution case: downstream validation
+    # (e.g. the enablement app-id format check) mutates them, and the tool
+    # result must reflect the persisted business state, not the
+    # pre-execution snapshot (review #4).
+    missing_fields = list(account_case.get("missing_fields") or missing_fields)
+    collected_fields = dict(account_case.get("collected_fields") or collected_fields)
     if str(account_case.get("automation_status") or "") != "human_review_required":
         account_case["automation_status"] = "automation"
     if missing_fields and str(account_case.get("automation_status") or "") != "human_review_required":
@@ -455,6 +504,22 @@ def _escalate_uncompleted_automation(
     account_case["automation_status"] = "human_review_required"
     account_case["execution_reason_code"] = reason_code
     repository.save_account_case(account_case)
+    # The persona gate reads turn.work_result; without this write it misses
+    # and the turn continues into persona after a failed tool (review #1).
+    try:
+        store.record_hermes_turn_work(
+            turn_id,
+            work_result={
+                "status": "human_review_required",
+                "reason": reason_code,
+                "route": automation_handler,
+                "executed_actions": [],
+            },
+        )
+    except Exception:
+        # A raced turn (already terminal) must not block the unified chain;
+        # the binding park below still stops further phases.
+        pass
     escalate_account_case_to_human_review(
         account_case=account_case,
         ticket_id=ticket_id,
