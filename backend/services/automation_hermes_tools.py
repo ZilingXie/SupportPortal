@@ -219,6 +219,58 @@ async def tool_execute_automation_action(
         )
         or normalized_route
     )
+
+    # Ownership gate: claim the Zendesk ticket for the automation agent before
+    # any business execution. The legacy pipeline does this at intake
+    # (_apply_ownership_gate); without it the ticket stays unassigned and the
+    # delivery worker's ownership check rejects every reply
+    # (zendesk_assignment_unverified, ticket 13593).
+    from backend.services.account_automation_ownership import (
+        OWNERSHIP_EVENT_TYPE,
+        ensure_production_automation_ownership,
+        ownership_gate_eligible,
+    )
+
+    if zendesk_side_effects_enabled and ownership_gate_eligible(account_case):
+        ownership_result = ensure_production_automation_ownership(
+            account_case,
+            mode="gate",
+            updated_at=str(turn.get("created_at") or ""),
+        )
+        repository.record_event(
+            ticket_id or None,
+            OWNERSHIP_EVENT_TYPE,
+            {
+                "account_case_id": str(
+                    account_case.get("account_case_id")
+                    or account_case.get("billing_ticket_id")
+                    or ""
+                ),
+                "state": ownership_result.state,
+                "assignee_id": ownership_result.assignee_id,
+                "group_id": ownership_result.group_id,
+                "failure_code": ownership_result.failure_code,
+                "failure_category": ownership_result.failure_category,
+                "zendesk_status_code": ownership_result.zendesk_status_code,
+                "failure_detail": ownership_result.failure_detail,
+                "blocking_comment_id": ownership_result.blocking_comment_id,
+                "created_at": str(turn.get("created_at") or ""),
+            },
+        )
+        if not ownership_result.fail_closed:
+            repository.save_account_case(account_case)
+        else:
+            return _escalate_uncompleted_automation(
+                store=store,
+                repository=repository,
+                account_case=account_case,
+                ticket_id=ticket_id,
+                turn_id=turn_id,
+                automation_handler=automation_handler,
+                reason_code=f"ownership_gate_{ownership_result.failure_code or 'failed'}",
+                detail=f"Zendesk ownership gate failed: {ownership_result.failure_detail or ownership_result.failure_code}",
+            )
+
     messages = list(ticket.get("messages") or [])
     conversation_context = build_automation_context(
         ticket, {"automation_handler": automation_handler, "automation_status": "automation"}, initial=True
