@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T03:44:53Z",
-  "source_base_commit": "2f6345115d5bc3ccbb75e9657c53b02b98ede7e0",
-  "registry_digest": "ba693a3679d693d746881bee37a59fd07371c2cdfb0092b88f62ed11ec8c9155",
+  "generated_at": "2026-09-18T04:25:12Z",
+  "source_base_commit": "5a7ccf40b735bb6b9c7ae972b4e8267afcdeb81f",
+  "registry_digest": "77e87421ae6cdc4e45cd07b7af5d993cbfa6d94229d4391136b7c5d3bd0ce578",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3508,6 +3508,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "插件本地自检（v1.1.0）",
+          "command": "python3 冒烟：_normalize_ts 矩阵（int/float/数字串/Z/偏移/naive→UTC/垃圾→None/bool 拒绝）；GET 查询串与 POST body 的 ISO→epoch 归一化；垃圾时间戳显式错误不发起请求；六工具 12 处 ts schema type/description 断言",
+          "details": "全过；2026-08-20T14:41:00Z/naive/+08:00 三种写法均=1787236860。"
+        },
+        {
+          "type": "deployment",
+          "label": "镜像+td:29 部署+决定性功能探针",
+          "command": "zacBot docker build Dockerfile.hermes-argus-overlay（tag hermes-20260918-argus-iso，digest sha256:c2001afd…）→ push ECR（ECR 登录过期重登一次）→ register td:29（克隆 :28 仅换镜像）→ update-service → rollout COMPLETED 五容器 HEALTHY；临时 SG 探针（用后已撤）POST /v1/runs enabled_toolsets=[common]",
+          "details": "镜像内 grep _normalize_ts + plugin.yaml 1.1.0 + md5 与源一致；dashboard 302/200、/v1 无凭证 401 回归不变；探针指示模型原样传 fromTs='2026-08-20T14:41:00Z' → run completed 回报 sessions=2 first8=6a8712ba,6a8711bc，与直连精确窗口复核的 callId（6a8712ba0df1180c3b9aca00/6a8711bc0df1180c3b9aca00）完全一致。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3850,8 +3862,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 32,
-      "done_count": 14,
+      "task_count": 33,
+      "done_count": 15,
       "blocked_count": 0
     },
     {
@@ -13473,6 +13485,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "ui/workspace-ui/admin/app.js",
         "design.md",
         "docs/feature_list.md"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-167",
+      "title": "Preprod Hermes Argus 工具 ISO-8601 时间参数修复（case 13582 根因，td:29）",
+      "status": "done",
+      "owner": "codex",
+      "summary": "case 13582 实证的可用性缺陷修复：Argus 检索要求整数 epoch 秒，模型无法把客户 wall-clock 窗口换算 epoch（自称无时间转换工具），退而用 fromTs=0&toTs=2000000000 全历史窗口，Argus 对宽范围直接 500，调查只能保守收口（而精确窗口直连复核即 200+两段会话）。修复=argus_call_search 插件 v1.1.0（hermes-deploy c9226fd）：插件内 _normalize_ts 把 ISO-8601（Z/偏移/naive=UTC）转 epoch，12 处 fromTs/toTs schema 改 integer|string 并要求最窄窗口；镜像 hermes-20260918-argus-iso（c2001afd，overlay FROM 5c0bbc3f）+ td:29（克隆 :28 仅换 hermes 镜像）。决定性验证：功能探针让模型原样传 ISO 串调 argus_search_call_sessions → sessions=2 first8=6a8712ba,6a8711bc 与直连复核 callId 完全一致。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "fromTs/toTs 同时接受 epoch 与 ISO-8601（插件内转换，不可解析显式报错），描述要求最窄窗口。",
+        "镜像含 v1.1.0 插件、td:29 上线五容器 HEALTHY、dashboard/v1 回归不变。",
+        "功能探针：模型原样传 ISO 串 → Argus 200 且 callId 与直连复核一致。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "插件本地自检（v1.1.0）",
+          "command": "python3 冒烟：_normalize_ts 矩阵（int/float/数字串/Z/偏移/naive→UTC/垃圾→None/bool 拒绝）；GET 查询串与 POST body 的 ISO→epoch 归一化；垃圾时间戳显式错误不发起请求；六工具 12 处 ts schema type/description 断言",
+          "details": "全过；2026-08-20T14:41:00Z/naive/+08:00 三种写法均=1787236860。"
+        },
+        {
+          "type": "deployment",
+          "label": "镜像+td:29 部署+决定性功能探针",
+          "command": "zacBot docker build Dockerfile.hermes-argus-overlay（tag hermes-20260918-argus-iso，digest sha256:c2001afd…）→ push ECR（ECR 登录过期重登一次）→ register td:29（克隆 :28 仅换镜像）→ update-service → rollout COMPLETED 五容器 HEALTHY；临时 SG 探针（用后已撤）POST /v1/runs enabled_toolsets=[common]",
+          "details": "镜像内 grep _normalize_ts + plugin.yaml 1.1.0 + md5 与源一致；dashboard 302/200、/v1 无凭证 401 回归不变；探针指示模型原样传 fromTs='2026-08-20T14:41:00Z' → run completed 回报 sessions=2 first8=6a8712ba,6a8711bc，与直连精确窗口复核的 callId（6a8712ba0df1180c3b9aca00/6a8711bc0df1180c3b9aca00）完全一致。"
+        }
+      ],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md"
+      ],
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户排查 case 13582（只读）发现：调查回合两次 Argus 检索 500 根因=模型用全历史宽窗口（无法做 epoch 换算），精确窗口数据存在。用户拍板修根因（工具侧接受 ISO-8601）。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "done",
+          "summary": "v1.1.0 插件+镜像 c2001afd+td:29 上线并决定性实证（模型原样传 ISO → 与直连一致的 callId）。教训沉淀：面向模型的工具参数应接受人类格式，勿指望模型做单位换算。"
+        }
       ]
     },
     {

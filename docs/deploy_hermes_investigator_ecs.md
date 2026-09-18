@@ -233,6 +233,18 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - 回滚:`update-service --task-definition supportportal-preproduction-hermes:24`(SSM 参数/镜像/插件为无害残留)。
 - Production 推广路径(未在本任务范围):另建 `/supportportal/production/hermes-argus-api-key`+同 overlay 管道(FROM production 当前部署 digest)+production td 注册部署。
 
+## 2026-09-18 Preproduction Hermes Argus 工具 ISO-8601 时间参数(p2-167,td:29)
+
+根因(case 13582):Argus 检索要求整数 epoch 秒,模型无法把客户的 wall-clock 窗口(如 `2026-08-20 14:45:35 UTC`)换算成 epoch(自称无时间转换工具),退而用 `fromTs=0&toTs=2000000000` 全历史窗口,Argus 服务端对宽范围直接 500 → 调查卡在"检索失败"只能保守收口。**数据本身存在**:用精确窗口直连复核即 200+两段会话(callId `6a8711bc…` 232s / `6a8712ba…` 938s,uphone-prod)。
+
+修复(argus_call_search v1.1.0,hermes-deploy `c9226fd`):
+
+- 插件内 `_normalize_ts`:epoch int/数字串直通;ISO-8601 字符串(Z/带偏移/naive=UTC)转 epoch 秒;不可解析返回显式错误。六个工具共 12 处 fromTs/toTs schema 改 `["integer","string"]`,描述要求**用覆盖报告时间的最窄窗口、禁止全历史范围**。
+- 镜像 `hermes-20260918-argus-iso`(digest `sha256:c2001afd…`,overlay FROM td:28 仍部署的 `5c0bbc3f` 仅替换插件目录);td:29=克隆 :28 仅换 hermes 镜像(:28 为五容器:memory-core/hermes/memory-panel/ui-proxy/knowledge)。rollout COMPLETED、五容器 HEALTHY、dashboard/v1 回归不变。
+- 验证(决定性):功能探针让模型**原样传 ISO 串**(`fromTs='2026-08-20T14:41:00Z'`)调 `argus_search_call_sessions` → run completed,回报 `sessions=2 first8=6a8712ba,6a8711bc`,与直连复核的 callId 完全一致——ISO→epoch 转换在插件内端到端生效。临时 SG 规则探针后已撤。
+- 教训(通用):**面向模型的工具参数应接受人类格式(ISO 时间),不要指望模型自己做单位换算**——13582 实证模型会宁可用荒谬的默认范围也不换算。
+- 回滚:`update-service --task-definition supportportal-preproduction-hermes:28`。
+
 ## 2026-09-14 Preproduction Hermes 装载 Agora Skills(p2-158,一次性 drop task)
 
 目的:给调查回合补充 Agora 内部排障/调查知识面(55 项技能:token/AVSync/静音/卡顿/首帧/codec/设备网络画像/QoE/回归调查等)。来源=agora-skills 私仓(`ssh://git@git.agoralab.co/ai/agora-skills.git`)的用户本地克隆(pull 至 `0deb0e2`);其 `.codex/INSTALL.md` 是 Codex symlink 流程,容器内 SSH clone 不可行 → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」。
