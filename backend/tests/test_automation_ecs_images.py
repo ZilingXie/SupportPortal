@@ -36,8 +36,10 @@ def test_only_ecs_api_image_retains_read_only_dashboard_assets() -> None:
     route = _role_block("ecs-route", "ecs-worker")
     worker = _role_block("ecs-worker", "production")
     assert "! -name automation-ecs-production" in api
-    assert "! -name workspace-ui" in api
-    assert "! -name admin" in api
+    # The workspace admin console lives only on the EC2 stack; ECS images do
+    # not ship it anymore.
+    assert "workspace-ui" not in api
+    assert "! -name admin" not in api
     assert "rm -rf /app/ui" not in api
     assert "rm -rf /app/backend/tests" in api
     assert "/app/ui /app/docs" in route

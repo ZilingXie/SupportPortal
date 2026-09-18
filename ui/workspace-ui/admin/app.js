@@ -13,11 +13,6 @@ const WORKSPACE_ADMIN_ENDPOINTS = Object.freeze({
   environmentConfig: "/api/workspace/admin/environment-config",
   releaseNotes: "/api/workspace/admin/release-notes",
 });
-const currentPath = String(globalThis.location?.pathname || globalThis.window?.location?.pathname || "");
-const ecsAdminMatch = currentPath.match(/^\/automation\/(preproduction|production)\/admin(?:\/|$)/);
-const isEcsAdmin = Boolean(ecsAdminMatch);
-const ECS_ENV_BASE_PATH = ecsAdminMatch ? `/automation/${ecsAdminMatch[1]}` : "";
-const ECS_ADMIN_ROOT = `${ECS_ENV_BASE_PATH}/admin/api`;
 const ECS_READ_ONLY_ACTIONS = new Set([
   "dispatch",
   "reassign-due",
@@ -31,21 +26,7 @@ const ECS_READ_ONLY_ACTIONS = new Set([
   "publish-persona",
   "rollback-persona",
 ]);
-const adminEndpoints = isEcsAdmin
-  ? Object.freeze({
-      authLogin: `${ECS_ENV_BASE_PATH}/dashboard/auth/login`,
-      authSession: `${ECS_ENV_BASE_PATH}/dashboard/auth/session`,
-      authLogout: `${ECS_ENV_BASE_PATH}/dashboard/auth/logout`,
-      accounts: `${ECS_ADMIN_ROOT}/accounts`,
-      cases: `${ECS_ADMIN_ROOT}/cases`,
-      metrics: `${ECS_ADMIN_ROOT}/metrics`,
-      audit: `${ECS_ADMIN_ROOT}/audit?limit=200`,
-      schedules: `${ECS_ADMIN_ROOT}/engineer-schedules`,
-      automation: `${ECS_ADMIN_ROOT}/account-automation`,
-      agentConfig: `${ECS_ADMIN_ROOT}/agent-config`,
-      environmentConfig: `${ECS_ADMIN_ROOT}/environment-config`,
-    })
-  : WORKSPACE_ADMIN_ENDPOINTS;
+const adminEndpoints = WORKSPACE_ADMIN_ENDPOINTS;
 const ADMIN_SECTION_TITLES = {
   overview: "Operations Overview",
   "automated-cases": "Automated Cases",
@@ -74,8 +55,8 @@ const AUTOMATION_BEHAVIOR_KEYS = new Set([
 
 const root = document.getElementById("workspace-admin-root");
 
-let accessToken = isEcsAdmin ? "" : readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
-let currentAccount = isEcsAdmin ? null : readStorage(WORKSPACE_ACCOUNT_KEY, null);
+let accessToken = readStorage(WORKSPACE_ACCESS_TOKEN_KEY, "");
+let currentAccount = readStorage(WORKSPACE_ACCOUNT_KEY, null);
 let adminSection = sectionFromHash();
 const initialAgentSelection = agentSelectionFromHash();
 let selectedAgentPath = initialAgentSelection.path;
@@ -123,7 +104,6 @@ function sectionFromHash() {
   const section = String(globalThis.location?.hash || window.location?.hash || "").replace(/^#/, "");
   if (section === "route-strategy") return "agent-config";
   const rootSection = section.split("/")[0];
-  if (rootSection === "release-notes" && isEcsAdmin) return "overview";
   return ["overview", "automated-cases", "release-notes", "agent-config", "environment-config", "engineers", "schedule", "new-account", "pending-assignment", "assigned", "resolved", "audit"].includes(rootSection)
     ? rootSection
     : "overview";
@@ -192,7 +172,7 @@ async function fetchJson(url, options = {}) {
     throw new Error("Admin console is read-only");
   }
   const headers = new Headers(options.headers || {});
-  if (!isEcsAdmin && accessToken) {
+  if (accessToken) {
     headers.set("Authorization", `Bearer ${accessToken}`);
   }
   const response = await fetch(url, { ...options, headers });
@@ -214,7 +194,7 @@ async function fetchJson(url, options = {}) {
 
 function isAdminAuthenticated() {
   return Boolean(
-    (isEcsAdmin || accessToken) &&
+    accessToken &&
       currentAccount &&
       String(currentAccount.role || "").toLowerCase() === "admin"
   );
@@ -356,7 +336,7 @@ function renderAdminShell(content) {
     ["resolved", "task_alt", "Resolved", "RS"],
     ["audit", "history", "Audit", "AU"],
   ];
-  const visibleNavItems = isEcsAdmin ? navItems.filter(([id]) => id !== "release-notes") : navItems;
+  const visibleNavItems = navItems;
   const activeNavSection = adminSection === "new-account" ? "engineers" : adminSection;
   const accountName = String(currentAccount?.display_name || currentAccount?.account_id || "Admin");
   const sectionTitle = ADMIN_SECTION_TITLES[adminSection] || ADMIN_SECTION_TITLES.overview;
@@ -992,7 +972,6 @@ function formatModelRateUsd(value) {
 }
 
 function renderModelPricingStrip() {
-  if (isEcsAdmin) return "";
   const entries = Array.isArray(automationData.model_pricing) ? automationData.model_pricing : [];
   if (!entries.length) return "";
   const items = entries.map((entry) => {
@@ -1635,7 +1614,7 @@ function renderEnvironmentConfig() {
   const items = sourceItems.filter(({ name, description }) => (
     name.toLowerCase().includes(normalizedQuery) || description.toLowerCase().includes(normalizedQuery)
   ));
-  const sourceLabel = isEcsAdmin ? "the ECS API container environment" : "the project root .env";
+  const sourceLabel = "the project root .env";
   return `<header class="admin-main-header"><div><p class="admin-eyebrow">NAMES ONLY</p><p>Configuration names from ${sourceLabel}. Values and value-derived metadata are never returned.</p></div></header><section class="admin-ops-surface">${environmentLoadError ? `<p class="login-error" role="alert">${escapeHtml(environmentLoadError)}</p><button class="btn btn-ghost" type="button" data-action="retry-environment-config">Retry</button>` : `<label class="admin-config-search"><span class="material-symbols-outlined" aria-hidden="true">search</span><input data-env-search type="search" value="${escapeHtml(environmentQuery)}" placeholder="Search names or descriptions" /></label><h2>Configuration names <span class="admin-count">${items.length}</span></h2><div class="admin-config-list">${items.length ? items.map(({ name, description }) => `<div class="admin-config-item"><div class="admin-config-copy"><code>${escapeHtml(name)}</code><span class="admin-config-description">${escapeHtml(description)}</span></div><button type="button" data-action="copy-config-name" data-config-name="${escapeHtml(name)}" title="Copy ${escapeHtml(name)}" aria-label="Copy ${escapeHtml(name)}"><span class="material-symbols-outlined" aria-hidden="true">content_copy</span></button></div>`).join("") : `<p>No matching configuration names or descriptions.</p>`}</div>`}</section>`;
 }
 
@@ -1740,7 +1719,7 @@ function renderReleaseNotes() {
 }
 
 async function loadReleaseNotes({ render = true, force = false } = {}) {
-  if (isEcsAdmin || releaseNotesLoading || (releaseNotesData && !force)) return;
+  if (releaseNotesLoading || (releaseNotesData && !force)) return;
   releaseNotesLoading = true;
   releaseNotesLoadError = "";
   if (render) renderAdmin();
@@ -1809,11 +1788,9 @@ async function loadAdminData() {
 }
 
 function signOut(options = {}) {
-  if (!isEcsAdmin) {
-    removeStorage(WORKSPACE_ACCESS_TOKEN_KEY);
-    removeStorage(WORKSPACE_ACCOUNT_KEY);
-    removeStorage(WORKSPACE_AUTH_KEY);
-  }
+  removeStorage(WORKSPACE_ACCESS_TOKEN_KEY);
+  removeStorage(WORKSPACE_ACCOUNT_KEY);
+  removeStorage(WORKSPACE_AUTH_KEY);
   accessToken = "";
   currentAccount = null;
   accounts = [];
@@ -1851,43 +1828,21 @@ async function handleAdminLogin(form) {
   const payload = await fetchJson(adminEndpoints.authLogin, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(isEcsAdmin
-      ? { username: identity, password: String(data.get("password") || "") }
-      : { email: identity, password: String(data.get("password") || "") }),
+    body: JSON.stringify({ email: identity, password: String(data.get("password") || "") }),
   });
   if (String(payload?.account?.role || "").toLowerCase() !== "admin") {
     throw new Error("Admin role required");
   }
-  accessToken = isEcsAdmin ? "" : payload.access_token;
+  accessToken = payload.access_token;
   currentAccount = payload.account;
-  if (!isEcsAdmin) {
-    writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
-    writeStorage(WORKSPACE_ACCOUNT_KEY, currentAccount);
-    writeStorage(WORKSPACE_AUTH_KEY, currentAccount.account_id);
-  }
+  writeStorage(WORKSPACE_ACCESS_TOKEN_KEY, accessToken);
+  writeStorage(WORKSPACE_ACCOUNT_KEY, currentAccount);
+  writeStorage(WORKSPACE_AUTH_KEY, currentAccount.account_id);
   await loadAdminData();
 }
 
 async function handleSignOut() {
-  if (!isEcsAdmin) {
-    signOut();
-    return;
-  }
-  try {
-    await fetchJson(adminEndpoints.authLogout, { method: "POST" });
-  } finally {
-    signOut();
-  }
-}
-
-async function restoreEcsAdminSession() {
-  try {
-    const payload = await fetchJson(adminEndpoints.authSession);
-    currentAccount = payload.account;
-    await loadAdminData();
-  } catch {
-    signOut();
-  }
+  signOut();
 }
 
 async function handleInvitation(form) {
@@ -2194,8 +2149,6 @@ window.addEventListener?.("hashchange", () => {
 
 normalizeAgentLocation(initialAgentSelection);
 renderAdmin();
-if (isEcsAdmin) {
-  restoreEcsAdminSession();
-} else if (isAdminAuthenticated()) {
+if (isAdminAuthenticated()) {
   loadAdminData();
 }

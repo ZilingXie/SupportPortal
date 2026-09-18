@@ -449,11 +449,11 @@ class WorkspaceApiTests(unittest.TestCase):
             self.assertIn("released_at", version)
             self.assertIn("summary", version)
             self.assertIsInstance(version.get("sections", []), list)
-        # newest first
+        # newest first, and the baseline entry always exists
         self.assertGreaterEqual(
             versions[0]["released_at"], versions[-1]["released_at"]
         )
-        self.assertEqual(versions[0]["version"], "1.0.0")
+        self.assertIn("1.0.0", {version["version"] for version in versions})
         self.assertNotIn("deployments", data, "machine records are read live from the production database")
 
     def test_release_notes_combine_file_versions_with_live_deployments(self) -> None:
