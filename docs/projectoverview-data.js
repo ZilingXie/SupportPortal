@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T05:36:47Z",
-  "source_base_commit": "9211ad49239308dd6f05c77b770c4eb97e9f6eff",
-  "registry_digest": "58a48252625cd55dcdea4c1d79097673b44f38bf77409d6796342a7890fa9665",
+  "generated_at": "2026-09-18T05:50:58Z",
+  "source_base_commit": "8d3b1f164a667e56de14e92eae07311463e71447",
+  "registry_digest": "1c6ee2e8d8de54e312d372a2bf3c5a133f490a18fcbeed5d8ca96cf94919a823",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3520,6 +3520,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "v1.1.1 本地自检",
+          "command": "python3 断言：六条 _DESCRIPTIONS 均含 ISO-8601；_normalize_ts 功能不回归",
+          "details": "6/6 通过；2026-08-20T14:41:00Z→1787236860。镜像内 plugin.yaml=1.1.1、ISO-8601 出现 20 处、md5 与源一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "镜像+td:30+自然语言探针",
+          "command": "zacBot overlay 构建 push（digest sha256:f8126cd4…）→ register td:30（克隆 :29 仅换 hermes 镜像）→ update-service rollout COMPLETED 五容器 HEALTHY；临时 SG 探针（用后已撤）POST /v1/runs enabled_toolsets=[common]",
+          "details": "探针输入=工程师原话风格报告（channel lesson_20755308、14:41–14:51 UTC、双 UID），零格式提示。OUTPUT：找到两段会话 6a8712ba0df1180c3b9aca00(938s)/6a8711bc0df1180c3b9aca00(232s) 与直连一致，并继续下钻双 UID user sessions（iPhone17,3/iOS 26.5/SDK 4.6.2/3G/quitState=1）——检索链完全打通。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3862,8 +3874,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 33,
-      "done_count": 15,
+      "task_count": 34,
+      "done_count": 16,
       "blocked_count": 0
     },
     {
@@ -13550,6 +13562,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "done",
           "summary": "v1.1.0 插件+镜像 c2001afd+td:29 上线并决定性实证（模型原样传 ISO → 与直连一致的 callId）。教训沉淀：面向模型的工具参数应接受人类格式，勿指望模型做单位换算。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-168",
+      "title": "Preprod Hermes Argus 工具 ISO 能力描述层修复（case 13582 第二轮根因，td:30）",
+      "status": "done",
+      "owner": "codex",
+      "summary": "case 13582 第二轮复盘结论：链路（n8n 双环境分支→messages→feedback turn→td:29 新镜像）全通，服务端 ISO 转换（v1.1.0）也正常（正午探针直传 ISO 字符串成功），但模型未调用 Argus——hermes 默认开启渐进式工具披露（tool_search 桥），插件工具的完整参数 schema（ISO 支持所在）被折叠，模型在 tier-1 清单只看到 name+short description（无 ISO 字样），叠加同会话上一轮「工具只接受整数 epoch」的旧结论锚定（astra/medium），直接拒绝尝试（hermes-agent 日志该窗口零 Argus 调用）。修复=argus_call_search v1.1.1（hermes-deploy cf82dbf）：六个工具的 short description 全部声明 fromTs/toTs 接受 ISO-8601 文本或 epoch 秒、入口工具明示「按客户给的原样传、用最窄窗口」；镜像 hermes-20260918-argus-desc（f8126cd4，overlay FROM c2001afd）+ td:30（克隆 :29 仅换镜像）。自然语言探针（零格式提示，模拟工程师原话）通过：模型自主完成会话检索→双 UID 用户会话下钻，callId/时长与直连复核一致。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "六个工具 short description 声明 ISO-8601/epoch 双格式（模型 tier-1 可见层）。",
+        "td:30 上线五容器 HEALTHY。",
+        "自然语言探针（无 verbatim 提示）：模型自主调用 argus 工具并完成 user-sessions 下钻，结果与直连复核一致。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "v1.1.1 本地自检",
+          "command": "python3 断言：六条 _DESCRIPTIONS 均含 ISO-8601；_normalize_ts 功能不回归",
+          "details": "6/6 通过；2026-08-20T14:41:00Z→1787236860。镜像内 plugin.yaml=1.1.1、ISO-8601 出现 20 处、md5 与源一致。"
+        },
+        {
+          "type": "deployment",
+          "label": "镜像+td:30+自然语言探针",
+          "command": "zacBot overlay 构建 push（digest sha256:f8126cd4…）→ register td:30（克隆 :29 仅换 hermes 镜像）→ update-service rollout COMPLETED 五容器 HEALTHY；临时 SG 探针（用后已撤）POST /v1/runs enabled_toolsets=[common]",
+          "details": "探针输入=工程师原话风格报告（channel lesson_20755308、14:41–14:51 UTC、双 UID），零格式提示。OUTPUT：找到两段会话 6a8712ba0df1180c3b9aca00(938s)/6a8711bc0df1180c3b9aca00(232s) 与直连一致，并继续下钻双 UID user sessions（iPhone17,3/iOS 26.5/SDK 4.6.2/3G/quitState=1）——检索链完全打通。"
+        }
+      ],
+      "source_refs": [
+        "docs/deploy_hermes_investigator_ecs.md"
+      ],
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户收到 13582 第二轮回复发现模型仍称工具只收整数 epoch；只读复盘定位为描述层不可见+会话历史锚定（服务端 v1.1.0 正常，模型零调用）。用户拍板修描述层（方案①）。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "done",
+          "summary": "v1.1.1+td:30 上线，自然语言探针通过（模型自主完成两段式调查链）。用户在 13582 线程重新 @ 的真实会话复验待做（其会话带旧结论历史，描述层新信息应足以翻转；若仍锚定则升级为调查 manual 加一句，需 prompt release）。"
         }
       ]
     },

@@ -245,6 +245,14 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - 教训(通用):**面向模型的工具参数应接受人类格式(ISO 时间),不要指望模型自己做单位换算**——13582 实证模型会宁可用荒谬的默认范围也不换算。
 - 回滚:`update-service --task-definition supportportal-preproduction-hermes:28`。
 
+## 2026-09-18 Preproduction Hermes Argus 工具描述层 ISO 修复(p2-168,td:30)
+
+根因(13582 第二轮):td:29 的 ISO 支持只写在参数 schema 里,而 hermes 默认开启**渐进式工具披露**(tool_search 桥,`tools/tool_search.py`):插件工具的完整 schema 被折叠,tier-1 清单只给模型看 name+short description——其中无 ISO 字样;叠加同会话上一轮「工具只接受整数 epoch」结论锚定(astra/medium),模型零 Argus 调用直接拒绝(hermes-agent 日志窗口内无任何工具调用为证)。服务端 v1.1.0 转换本身正常(正午 verbatim 探针已证)。
+
+修复(argus_call_search v1.1.1,hermes-deploy `cf82dbf`):六个工具 short description 全部声明「fromTs/toTs accept ISO-8601 text or epoch seconds」,入口工具并明示按客户给的原样传、用最窄窗口。镜像 `hermes-20260918-argus-desc`(digest `sha256:f8126cd4…`,overlay FROM `c2001afd`)、td:30=克隆 :29 仅换 hermes 镜像;rollout COMPLETED 五容器 HEALTHY。
+
+验证(决定性,自然语言零提示探针):输入=工程师原话风格报告(channel/UTC 窗口/双 UID)→ 模型自主检索到两段会话(callId/时长与直连复核一致)并继续下钻双 UID 用户会话(设备/SDK/网络/quitState)——调查链完全打通。**教训(叠加 p2-167):给模型的工具能力必须写在 description 层(渐进披露下模型默认看不到参数 schema)。** 回滚:`update-service --task-definition :29`。
+
 ## 2026-09-14 Preproduction Hermes 装载 Agora Skills(p2-158,一次性 drop task)
 
 目的:给调查回合补充 Agora 内部排障/调查知识面(55 项技能:token/AVSync/静音/卡顿/首帧/codec/设备网络画像/QoE/回归调查等)。来源=agora-skills 私仓(`ssh://git@git.agoralab.co/ai/agora-skills.git`)的用户本地克隆(pull 至 `0deb0e2`);其 `.codex/INSTALL.md` 是 Codex symlink 流程,容器内 SSH clone 不可行 → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」。
