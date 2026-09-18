@@ -7,6 +7,7 @@ the model never chooses which ticket it operates on.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -231,8 +232,19 @@ async def tool_execute_automation_action(
         ownership_gate_eligible,
     )
 
+    # eligibility resolves is_registered_automation via route_family; the
+    # legacy intake writes it onto the case before its gate (ticket 13595: the
+    # gate evaluated an empty route_family here and skipped the claim, so the
+    # delivery worker later saw the routed human assignee and stopped).
+    if not str(account_case.get("route_family") or "").strip():
+        account_case["route_family"] = "automated"
+
     if zendesk_side_effects_enabled and ownership_gate_eligible(account_case):
-        ownership_result = ensure_production_automation_ownership(
+        # gate mode sleeps out the ~90s Zendesk omnichannel routing window with
+        # 422 retries before the assignment PUT (same as the legacy intake);
+        # keep that wait off the api event loop.
+        ownership_result = await asyncio.to_thread(
+            ensure_production_automation_ownership,
             account_case,
             mode="gate",
             updated_at=str(turn.get("created_at") or ""),

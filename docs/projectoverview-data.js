@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T16:46:22Z",
-  "source_base_commit": "e7923e3afb18fffb8677afc8dffd0525beb2332e",
-  "registry_digest": "76d9881ae883ef7a70f7ae0904b74ba525810bf497b885b4e9a8b05624917470",
+  "generated_at": "2026-09-18T17:03:32Z",
+  "source_base_commit": "80b63e1fba0f2e130e594e5cf962b74ecbc732d6",
+  "registry_digest": "7906193bfd3427766fe2399e5b7e12cc5f289d833485700b887b3b7625842f14",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1225,6 +1225,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13580/13583 fixes: r20260918-12fa69a + r20260918-8d3b1f1",
           "command": "release_automation_ecs_pipeline.sh --release-commit 12fa69a0.../8d3b1f16... --prompt-release-id pr-281f5ed8ad68 --through preproduction（同标准 flags）",
           "details": "五项修复分两轮上线：r20260918-12fa69a（#1231：trigger 从镜像取值+notify 补 now+全链守卫+api Graph 凭据）和 r20260918-8d3b1f1（#1232：hermes 工具补 route_family=automated）。13583 诊断确认 trigger/skip_persona/AppID 抽取全部正常工作，唯一剩余断点=route_family 缺失导致 delivery worker 的 Zendesk 发送被跳过（unregistered_automation）。两轮全阶段 passed、live 零错误。"
+        },
+        {
+          "type": "test",
+          "label": "Ownership gate ordering + offload regression (13595)",
+          "command": "pytest -q backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_account_automation_ownership.py backend/tests/test_automation_account_intake.py; pytest -q backend/tests/test_worker.py backend/tests/test_account_automation_delivery.py backend/tests/test_automation_ecs_worker.py",
+          "details": "108 passed + 154 passed（+33 subtests）。新增两用例：①播种线上真实形状（无 route_family 的 hermes case）断言门禁被调、见到归一后的 route_family=automated、zendesk_ai_ownership 事件 state=assigned 落库、case 保存、业务走完 skip_persona（修复前该用例必红）；②fail-closed（human_reassigned）走统一失败交接（事件照记+binding parked+转人工+通知），与 legacy 语义一致。线上证据（13595）：support_ticket_events 无 zendesk_ai_ownership、worker 日志 production_zendesk_delivery_stopped failure_code=zendesk_ownership_human_reassigned assignee=mark（路由指派）。"
         },
         {
           "type": "test",
@@ -13186,7 +13192,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "review4 四项修复已上线 r20260918-e950e1a（含 #1226+#1227，prompt 更新为 pr-281f5ed8ad68；发布历经：AWS 会话过期→旧 prompt 被取代→checkpoint 身份不匹配，最终全新发布通过）。剩：用户重测完整链路（32 位 AppID→单条确认回复→relay 派发→Mac 收件箱）。",
+      "next_action": "修复 7（13595）已实施：ownership gate 对齐 legacy——route_family 在 eligibility 前归一（hermes 建的 case 此前为空致门禁静默跳过，工单留在路由人类客服手里被 delivery worker 正确拒发）+ 门禁调用 asyncio.to_thread 卸载（90s 认领等待不冻结 api 事件循环）。剩：合码部署 preprod（archer）后用户新开工单复测（13595 的 relay 门禁绑定已停滞的单不会自愈，手动关闭）。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13261,6 +13267,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13580/13583 fixes: r20260918-12fa69a + r20260918-8d3b1f1",
           "command": "release_automation_ecs_pipeline.sh --release-commit 12fa69a0.../8d3b1f16... --prompt-release-id pr-281f5ed8ad68 --through preproduction（同标准 flags）",
           "details": "五项修复分两轮上线：r20260918-12fa69a（#1231：trigger 从镜像取值+notify 补 now+全链守卫+api Graph 凭据）和 r20260918-8d3b1f1（#1232：hermes 工具补 route_family=automated）。13583 诊断确认 trigger/skip_persona/AppID 抽取全部正常工作，唯一剩余断点=route_family 缺失导致 delivery worker 的 Zendesk 发送被跳过（unregistered_automation）。两轮全阶段 passed、live 零错误。"
+        },
+        {
+          "type": "test",
+          "label": "Ownership gate ordering + offload regression (13595)",
+          "command": "pytest -q backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_account_automation_ownership.py backend/tests/test_automation_account_intake.py; pytest -q backend/tests/test_worker.py backend/tests/test_account_automation_delivery.py backend/tests/test_automation_ecs_worker.py",
+          "details": "108 passed + 154 passed（+33 subtests）。新增两用例：①播种线上真实形状（无 route_family 的 hermes case）断言门禁被调、见到归一后的 route_family=automated、zendesk_ai_ownership 事件 state=assigned 落库、case 保存、业务走完 skip_persona（修复前该用例必红）；②fail-closed（human_reassigned）走统一失败交接（事件照记+binding parked+转人工+通知），与 legacy 语义一致。线上证据（13595）：support_ticket_events 无 zendesk_ai_ownership、worker 日志 production_zendesk_delivery_stopped failure_code=zendesk_ownership_human_reassigned assignee=mark（路由指派）。"
         }
       ],
       "source_refs": [
@@ -13284,7 +13296,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".codex/skills/supportportal-media-relay-enablement/"
       ],
       "created_at": "2026-09-16",
-      "updated_at": "2026-09-18",
+      "updated_at": "2026-09-19",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -13373,6 +13385,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "ownership_gate_added",
           "summary": "13593 诊断：前五个修复全部生效（route_family/trigger/skip_persona/AppID 抽取/回复 job published），delivery worker 尝试发送但被 ownership 检查拒绝（zendesk_assignment_unverified，assignee_id=unknown，工单 assignee=None）。根因=hermes 工具从未调用 _apply_ownership_gate/ensure_production_automation_ownership 认领 Zendesk 工单（legacy 在 intake 时认领，把 AI agent 指派到工单上）。修复=工具在业务执行前补 ownership gate（认领+失败走统一升级链）。第 6 个也是最后一个已知的 hermes×legacy 组合缺口。"
+        },
+        {
+          "at": "2026-09-19",
+          "event": "ownership_gate_ordering_fix",
+          "summary": "13595 受控验收暴露第 7 个 hermes×legacy 断点：门禁 eligibility 在 route_family 归一化（业务段 392 行）之前评估（234 行），hermes 建的 case 无 route_family → is_registered_automation 为假 → 认领静默跳过；工单留在全渠道路由指派的人类客服（mark）手里，delivery worker verify 模式正确拒发（human_reassigned），relay 门禁不释放。修复=归一化前移+asyncio.to_thread 卸载 90s 认领等待，镜像 legacy intake 的 _apply_ownership_gate 语义。"
         }
       ]
     },
