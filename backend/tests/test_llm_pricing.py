@@ -112,13 +112,17 @@ class LlmPricingTests(unittest.TestCase):
         self.assertEqual(estimate["total_usd"], 0.0)
         self.assertEqual(estimate["by_model"], [])
 
-    def test_default_table_prices_luna_and_keeps_legacy_models_unpriced(self) -> None:
+    def test_default_table_prices_luna_and_astra_and_keeps_legacy_models_unpriced(self) -> None:
         self.assertEqual(
             LLM_PRICING_USD_PER_1M["openai:gpt-5.6-luna"],
             {"input": 0.2, "output": 1.2, "cached_input": 0.02},
         )
+        self.assertEqual(
+            LLM_PRICING_USD_PER_1M["openai:gpt-6-astra"],
+            {"input": 10.0, "output": 50.0, "cached_input": 1.0},
+        )
         for key, prices in LLM_PRICING_USD_PER_1M.items():
-            if key == "openai:gpt-5.6-luna":
+            if key in {"openai:gpt-5.6-luna", "openai:gpt-6-astra"}:
                 continue
             for price in prices.values():
                 self.assertIsNone(price, msg=key)
@@ -141,6 +145,24 @@ class LlmPricingTests(unittest.TestCase):
         # (800k * 0.2 + 200k * 0.02 + 50k * 1.2) / 1M = 0.16 + 0.004 + 0.06
         self.assertAlmostEqual(estimate["total_usd"], 0.224)
 
+    def test_astra_pricing_estimates_real_usage(self) -> None:
+        estimate = estimate_token_usage_cost_usd(
+            _usage(
+                [
+                    {
+                        "provider": "openai",
+                        "model": "gpt-6-astra",
+                        "input_tokens": 1_000_000,
+                        "cached_input_tokens": 200_000,
+                        "output_tokens": 50_000,
+                    }
+                ]
+            )
+        )
+        self.assertTrue(estimate["available"])
+        # (800k * 10 + 200k * 1 + 50k * 50) / 1M = 8 + 0.2 + 2.5
+        self.assertAlmostEqual(estimate["total_usd"], 10.7)
+
     def test_model_pricing_payload_marks_priced_models(self) -> None:
         entry_map = {
             (row["provider"], row["model"]): row for row in model_pricing_payload()
@@ -153,6 +175,18 @@ class LlmPricingTests(unittest.TestCase):
                 "input_usd_per_1m": 0.2,
                 "cached_input_usd_per_1m": 0.02,
                 "output_usd_per_1m": 1.2,
+                "embedding_usd_per_1m": None,
+                "priced": True,
+            },
+        )
+        self.assertEqual(
+            entry_map[("openai", "gpt-6-astra")],
+            {
+                "provider": "openai",
+                "model": "gpt-6-astra",
+                "input_usd_per_1m": 10.0,
+                "cached_input_usd_per_1m": 1.0,
+                "output_usd_per_1m": 50.0,
                 "embedding_usd_per_1m": None,
                 "priced": True,
             },

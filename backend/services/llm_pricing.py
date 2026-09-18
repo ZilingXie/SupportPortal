@@ -11,14 +11,16 @@ from __future__ import annotations
 from typing import Any
 
 LLM_PRICING_USD_PER_1M: dict[str, dict[str, float | None]] = {
-    # gpt-5.6-luna rates from the official pricing page
-    # (developers.openai.com/api/docs/models/gpt-5.6-luna). Legacy models stay
-    # unpriced rather than guessing rates; cached_input is optional; when None
-    # it falls back to the input price.
+    # gpt-5.6-luna and gpt-6-astra rates from the official pricing page
+    # (developers.openai.com/api/docs/pricing). Legacy models stay unpriced
+    # rather than guessing rates; cached_input is optional; when None it falls
+    # back to the input price. astra's long-context surcharge (input > 272k
+    # tokens doubles the rates) is not modelled; costs use the standard rates.
     "openai:gpt-5.4": {"input": None, "output": None, "cached_input": None},
     "openai:gpt-5.4-mini": {"input": None, "output": None, "cached_input": None},
     "openai:gpt-5.4-nano": {"input": None, "output": None, "cached_input": None},
     "openai:gpt-5.6-luna": {"input": 0.2, "output": 1.2, "cached_input": 0.02},
+    "openai:gpt-6-astra": {"input": 10.0, "output": 50.0, "cached_input": 1.0},
     "deepseek:deepseek-v4-pro": {"input": None, "output": None, "cached_input": None},
     "siliconflow:BAAI/bge-m3": {"embedding": None},
 }
