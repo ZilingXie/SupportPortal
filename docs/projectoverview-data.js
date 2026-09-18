@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T02:45:41Z",
-  "source_base_commit": "676c1039b5af9ed61e4e7f9e10e356296784a4f2",
-  "registry_digest": "3bf8ed251aa5cfcf643a7666894c5862c3839570888cb578127173f0cc09456a",
+  "generated_at": "2026-09-18T02:49:37Z",
+  "source_base_commit": "e5518506855c7dc5ef27d71169f0c892f34c7317",
+  "registry_digest": "784880d3179995ccfaec6641faf261a3b98da4a6f5a896d22ab317b1f14fcb30",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2820,6 +2820,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "EC2 rollout and live acceptance",
           "details": "2026-09-12 EC2 ~/SupportPortal .env 注入 ECS_PRODUCTION_ADMIN_DSN（SSM /supportportal/production/ec2-admin-read-dsn，stdin 传递不落命令行）+ deploy_ec2.sh --branch main（0d80f354→e255c221，Prompt Release pr-175312c491e7 同步验证，健康检查内外网 200）。线上验收：support.stellarix.space/health build ref=e255c221af56 匹配；/workspace/admin/ 提供新 app.js（指纹 20260912-ecs-production-console-1）；登录后 release-notes 返回 versions=[1.0.0/r20260911-42f2f11]+deployments=[]（实时读 production 库）；account-automation 返回真实 production 数据（56 单）；dispatch POST=405。production 库 support_release_notes 表已提前幂等建好（下次 production bootstrap no-op），deployments 视图待 production 下次授权部署写入首条记录。"
+        },
+        {
+          "type": "test",
+          "label": "Pricing entry verified",
+          "details": "2026-09-18：test_llm_pricing 44 passed（含新增 astra 用例）+ UI 合同回归。production 只读查询（ECS_PRODUCTION_ADMIN_DSN）：近 10 天 support_account_case_llm_usage 仅 openai|gpt-6-astra（82 calls，最近 2026-09-18）。价格来源=OpenAI 官方 pricing 页（web 检索）+ 用户确认选用 $10/$1/$50。"
         }
       ],
       "source_refs": [
@@ -2832,8 +2837,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 9,
-      "done_count": 7,
+      "task_count": 10,
+      "done_count": 8,
       "blocked_count": 0
     },
     {
@@ -13367,6 +13372,46 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "event": "published",
           "summary": "复核后将首版过宽的 activation/enablement 规则收窄为 Media Relay 专属排除，保留原通用 product activation 条件；发布 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991，回读 draft/active 一致且非目标图不变。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-165",
+      "title": "补 gpt-6-astra 定价恢复 admin 成本显示",
+      "status": "done",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "summary": "模型切到 gpt-6-astra 后 admin 页 token 成本/单价显示为 $—：根因是 LLM_PRICING_USD_PER_1M 无 openai:gpt-6-astra 条目，而成本计算按 p2-107 全有或全无契约（任一模型未定价→整 case 不可用）。只读 DSN 实证 production 近 10 天 token 记录全部为 openai|gpt-6-astra（82 calls）。按 OpenAI 官方价格页（developers.openai.com/api/docs/pricing，用户确认）加条目 input $10.0 / cached_input $1.0 / output $50.0 per 1M；超长上下文附加费（input>272K 双倍）不建模，按标准价计。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "test_llm_pricing：astra 三价精确断言 + 端到端计价（100 万 in/20 万 cached/5 万 out = $10.7）+ payload priced 标志。",
+        "本地官方栈与 support.stellarix.space 的 Automated Cases 含 astra 的真实 case 成本恢复显示具体金额。",
+        "全有或全无契约不变；luna 定价不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Pricing entry verified",
+          "details": "2026-09-18：test_llm_pricing 44 passed（含新增 astra 用例）+ UI 合同回归。production 只读查询（ECS_PRODUCTION_ADMIN_DSN）：近 10 天 support_account_case_llm_usage 仅 openai|gpt-6-astra（82 calls，最近 2026-09-18）。价格来源=OpenAI 官方 pricing 页（web 检索）+ 用户确认选用 $10/$1/$50。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户反馈换模型 luna->astra 后 admin 单价不显示；定位为定价表缺 astra 条目触发全有或全无契约；补条目并同步测试。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/llm_pricing.py",
+        "backend/tests/test_llm_pricing.py"
       ]
     },
     {
