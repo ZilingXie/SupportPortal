@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-166",
+  "title": "移除 ECS 侧 admin 页，只留 workspace admin 单一控制台",
+  "status": "done",
+  "owner": "codex",
+  "phase_id": "phase-1",
+  "module_id": "platform-delivery",
+  "function_id": "ecs-environment-migration",
+  "created_at": "2026-09-18",
+  "updated_at": "2026-09-18",
+  "summary": "用户确认最终只保留一个 Admin 页面（support.stellarix.space/workspace/admin/，production-only，不加环境切换）：移除 automation_ecs_api.py 的全部 admin 面（import/create_app admin_reader 参数与实例化/9 个 {base}/admin/api/* 端点/{base}/admin 静态 mount）；ecs-api 镜像不再打包 workspace-ui；app.js 完全剥离 ECS 模式分支（isEcsAdmin/ECS_ADMIN_ROOT/dashboard auth 三件套/restoreEcsAdminSession 等约 20 处），只读控件逻辑内建；dashboard（ticket 控制台）与其共用件（admin_account/require_dashboard_session/hermes-review）不动；deploy 落库 support_release_notes 与 reader 读库链路不经被删端点，release notes 数据不受影响。本次部署 preproduction 验证移除效果；production 侧移除随其下次授权部署生效。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "/automation/preproduction/admin/ 与 /admin/api/* 部署后 404；dashboard（/automation/<env>/）回归正常。",
+    "app.js 源码无 isEcsAdmin/ECS_ADMIN_ROOT（UI 合同测试锁定）；workspace admin 全功能回归。",
+    "ecs-api 镜像不含 workspace-ui（镜像合同测试锁定）。",
+    "release notes 数据链（deploy 落库+reader 读库）不受影响。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Removal coverage",
+      "details": "2026-09-18：定向 238 passed（ecs api 删 4 admin 用例+stub、UI 合同删 4 ECS 用例并加\"无 isEcsAdmin\"源码断言、镜像合同更新为不打包 workspace-ui、workspace api/reader/repository 回归；release_notes 契约断言改为基线存在而非首个）。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-09-18",
+      "event": "created",
+      "summary": "用户指出应只有一个 Admin 页面；确认 p2-155 时的移除范围收窄（只移了 release-notes tab）。决策：不加环境切换（只看 production）、本次仅部署 preproduction。"
+    }
+  ],
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "source_refs": [
+    "backend/automation_ecs_api.py",
+    "backend/Dockerfile.automation",
+    "ui/workspace-ui/admin/app.js",
+    "design.md",
+    "docs/feature_list.md"
+  ]
+}

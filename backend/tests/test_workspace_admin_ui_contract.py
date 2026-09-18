@@ -79,96 +79,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
         self.assertNotIn('/api/engineer/tickets?status=all', source)
         self.assertNotIn("/availability", source)
 
-    def test_ecs_admin_adapter_uses_cookie_get_apis_and_blocks_business_writes(self) -> None:
-        source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
-        for marker in (
-            "(preproduction|production)\\/admin",
-            "`${ECS_ENV_BASE_PATH}/dashboard/auth/login`",
-            "`${ECS_ENV_BASE_PATH}/dashboard/auth/session`",
-            "`${ECS_ENV_BASE_PATH}/dashboard/auth/logout`",
-            "`${ECS_ADMIN_ROOT}/accounts`",
-            "Admin console is read-only",
-            "applyReadOnlyControls",
-            "ECS_READ_ONLY_ACTIONS",
-            'rag.available === false',
-            '>Unavailable</span>',
-        ):
-            self.assertIn(marker, source)
-        self.assertNotIn("/automation/production/dashboard/auth/login", source)
-        self.assertNotIn('"/automation/production/admin/api"', source)
-        self.assertNotIn('sectionLink.dataset.section === "new-account"', source)
-        self.assertNotIn("a.is-read-only", Path("ui/workspace-ui/admin/styles.css").read_text(encoding="utf-8"))
-
-        self.run_admin_app_script(
-            """
-            await Promise.resolve();
-            const calls = [];
-            globalThis.fetch = async (url, options = {}) => {
-              calls.push({ url: String(url), method: String(options.method || 'GET').toUpperCase(), authorization: new Headers(options.headers || {}).get('Authorization') });
-              return { ok: true, status: 200, json: async () => ({ authenticated: true, account: { account_id: 'admin', display_name: 'Production Admin', role: 'admin' } }) };
-            };
-            currentAccount = { account_id: 'admin', display_name: 'Production Admin', role: 'admin' };
-            accessToken = 'must-not-be-used';
-            if (!isEcsAdmin || !isAdminAuthenticated()) throw new Error('ECS session mode missing');
-            if (adminEndpoints.accounts !== '/automation/production/admin/api/accounts') throw new Error('ECS accounts endpoint mismatch');
-            let rejected = false;
-            try { await fetchJson('/api/workspace/admin/dispatch', { method: 'POST' }); } catch (error) { rejected = error.message === 'Admin console is read-only'; }
-            if (!rejected || calls.length !== 0) throw new Error('business write reached the network');
-            await fetchJson(adminEndpoints.accounts);
-            if (calls.length !== 1 || calls[0].method !== 'GET' || calls[0].authorization) throw new Error('ECS read did not use Cookie-only GET');
-            await fetchJson(adminEndpoints.authLogout, { method: 'POST' });
-            if (calls.length !== 2 || calls[1].url !== adminEndpoints.authLogout) throw new Error('logout exception missing');
-            const control = { disabled: false, title: '', attrs: {}, setAttribute(name, value) { this.attrs[name] = value; } };
-            root.querySelectorAll = (selector) => selector.includes('dispatch') ? [control] : [];
-            applyReadOnlyControls();
-            if (!control.disabled || control.attrs['aria-disabled'] !== 'true') throw new Error('write control was not disabled');
-            """,
-            pathname="/automation/production/admin/",
-        )
-
-    def test_ecs_admin_adapter_serves_preproduction_paths(self) -> None:
-        self.run_admin_app_script(
-            """
-            await Promise.resolve();
-            if (!isEcsAdmin) throw new Error('preproduction ECS admin mode missing');
-            if (adminEndpoints.accounts !== '/automation/preproduction/admin/api/accounts') throw new Error('preproduction accounts endpoint mismatch');
-            if (adminEndpoints.authLogin !== '/automation/preproduction/dashboard/auth/login') throw new Error('preproduction login endpoint mismatch');
-            if (adminEndpoints.authSession !== '/automation/preproduction/dashboard/auth/session') throw new Error('preproduction session endpoint mismatch');
-            if (adminEndpoints.authLogout !== '/automation/preproduction/dashboard/auth/logout') throw new Error('preproduction logout endpoint mismatch');
-            let rejected = false;
-            try { await fetchJson(adminEndpoints.accounts, { method: 'POST' }); } catch (error) { rejected = error.message === 'Admin console is read-only'; }
-            if (!rejected) throw new Error('preproduction business write was not blocked');
-            """,
-            pathname="/automation/preproduction/admin/",
-        )
-
-    def test_workspace_admin_local_mode_keeps_workspace_endpoints(self) -> None:
-        self.run_admin_app_script(
-            """
-            await Promise.resolve();
-            if (isEcsAdmin) throw new Error('local workspace mode must not enable ECS admin adapter');
-            if (adminEndpoints.accounts !== '/api/workspace/admin/accounts') throw new Error('local accounts endpoint mismatch');
-            if (adminEndpoints.authLogin !== '/api/workspace/auth/login') throw new Error('local login endpoint mismatch');
-            """,
-            pathname="/workspace/admin/",
-        )
-
-    def test_ecs_admin_hides_model_pricing_strip(self) -> None:
-        self.run_admin_app_script(
-            """
-            automationData = {
-              metrics: { total_account_cases: 1, automated_cases: 1, not_automated_cases: 0, automation_rate: 1 },
-              cases: [],
-              model_pricing: [
-                { provider: 'openai', model: 'gpt-5.6-luna', input_usd_per_1m: 0.2, cached_input_usd_per_1m: 0.02, output_usd_per_1m: 1.2, embedding_usd_per_1m: null, priced: true }
-              ]
-            };
-            const markup = renderAutomatedCases();
-            if (markup.includes('Model pricing') || markup.includes('admin-model-pricing')) throw new Error('ECS model pricing strip must be hidden');
-            """,
-            pathname="/automation/production/admin/",
-        )
-
     def test_managed_prompt_diff_view_preserves_operator_context(self) -> None:
         self.run_admin_app_script(
             """
@@ -196,6 +106,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             pathname="/workspace/admin/",
         )
 
+
+
     def test_release_notes_section_is_workspace_only_and_renders_both_views(self) -> None:
         source = Path("ui/workspace-ui/admin/app.js").read_text(encoding="utf-8")
         for marker in (
@@ -203,8 +115,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             'cases: "/api/workspace/admin/cases"',
             '"release-notes": "Release Notes"',
             '["release-notes", "new_releases", "Release Notes", "RN"]',
-            'rootSection === "release-notes" && isEcsAdmin',
-            'isEcsAdmin ? navItems.filter(([id]) => id !== "release-notes") : navItems',
             "renderReleaseNotes",
             "loadReleaseNotes",
             'data-action="retry-release-notes"',
@@ -215,7 +125,8 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             "Read-only admin console",
         ):
             self.assertIn(marker, source)
-        self.assertNotIn("`${ECS_ADMIN_ROOT}/release-notes`", source)
+        self.assertNotIn("isEcsAdmin", source)
+        self.assertNotIn("/automation/production/admin/api", source)
 
         self.run_admin_app_script(
             """
@@ -256,15 +167,6 @@ class WorkspaceAdminUiContractTests(unittest.TestCase):
             if (!renderReleaseNotes().includes('No release notes recorded yet')) throw new Error('empty state missing');
             """,
             pathname="/workspace/admin/",
-        )
-
-        self.run_admin_app_script(
-            """
-            await Promise.resolve();
-            if (adminEndpoints.releaseNotes !== undefined) throw new Error('release notes must not be wired for ECS admin pages');
-            if (adminEndpoints.cases !== '/automation/production/admin/api/cases') throw new Error('ECS cases endpoint mismatch');
-            """,
-            pathname="/automation/production/admin/",
         )
 
     def test_workspace_admin_local_mode_is_read_only(self) -> None:

@@ -101,45 +101,9 @@ class _CaseReader:
         }
 
 
-class _AdminReader:
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
-    def _reply(self, name: str, **kwargs: Any) -> dict[str, Any]:
-        self.calls.append((name, kwargs))
-        return {"source": name, **kwargs}
-
-    def accounts(self) -> dict[str, Any]:
-        return self._reply("accounts")
-
-    def cases(self) -> dict[str, Any]:
-        return self._reply("cases")
-
-    def metrics(self) -> dict[str, Any]:
-        return self._reply("metrics")
-
-    def audit(self, *, limit: int) -> dict[str, Any]:
-        return self._reply("audit", limit=limit)
-
-    def engineer_schedules(self) -> dict[str, Any]:
-        return self._reply("engineer-schedules")
-
-    def account_automation(self, **kwargs: Any) -> dict[str, Any]:
-        return self._reply("account-automation", **kwargs)
-
-    def agent_config(self) -> dict[str, Any]:
-        return self._reply("agent-config")
-
-    def environment_config(self) -> dict[str, Any]:
-        return self._reply("environment-config")
-
-    def release_notes(self) -> dict[str, Any]:
-        return self._reply("release-notes")
-
 def _client(
     *,
     dashboard_reader: DashboardCaseReader | None = None,
-    admin_reader: Any | None = None,
 ) -> tuple[TestClient, InMemoryAutomationEcsStore]:
     settings = _settings("api")
     store = InMemoryAutomationEcsStore(settings)
@@ -154,7 +118,6 @@ def _client(
             store=store,
             dashboard_auth=auth,
             dashboard_reader=dashboard_reader,
-            admin_reader=admin_reader,
         ),
         base_url="https://supportcenter.stellarix.space",
     ), store
@@ -538,130 +501,6 @@ def test_dashboard_runtime_and_static_assets_are_available_without_route_shadowi
         assert {item["role"] for item in runtime.json()["workers"]} == {"route", "worker"}
         assert {item["role"] for item in runtime.json()["active_workers"]} == {"route", "worker"}
         assert all(not item["provenance_mismatches"] for item in runtime.json()["workers"])
-
-
-def test_admin_static_mount_precedes_dashboard_catch_all() -> None:
-    client, _ = _client(admin_reader=_AdminReader())
-    with client:
-        page = client.get("/automation/production/admin/")
-        asset = client.get("/automation/production/admin/app.js")
-    assert page.status_code == 200
-    assert "System Admin" in page.text
-    assert asset.status_code == 200
-    assert "isEcsAdmin" in asset.text
-    assert "(preproduction|production)\\/admin" in asset.text
-    assert "Production Automation" not in page.text
-
-
-def test_admin_is_mounted_on_preproduction_with_same_read_only_contract() -> None:
-    reader = _AdminReader()
-    settings = _preproduction_settings()
-    store = InMemoryAutomationEcsStore(settings)
-    store.migrate()
-    client = TestClient(
-        create_app(
-            settings=settings,
-            store=store,
-            dashboard_auth=DashboardAuthConfig(
-                session_secret="test-session-secret-that-is-long-enough",
-                session_ttl_seconds=120,
-            ),
-            admin_reader=reader,
-        ),
-        base_url="https://supportcenter.stellarix.space",
-    )
-    base = "/automation/preproduction/admin"
-    with client:
-        page = client.get(f"{base}/")
-        asset = client.get(f"{base}/app.js")
-        assert page.status_code == 200
-        assert "System Admin" in page.text
-        assert asset.status_code == 200
-        assert "Production Automation" not in page.text
-
-        for endpoint in ("accounts", "cases", "metrics"):
-            assert client.get(f"{base}/api/{endpoint}").status_code == 401
-
-        login = client.post(
-            "/automation/preproduction/dashboard/auth/login",
-            json={"username": "admin", "password": "admin"},
-        )
-        assert login.status_code == 200
-        assert login.json()["account"]["display_name"] == "Preproduction Admin"
-
-        for endpoint in ("accounts", "cases", "metrics"):
-            assert client.get(f"{base}/api/{endpoint}").status_code == 200
-        for method in ("POST", "PUT", "PATCH", "DELETE"):
-            response = client.request(method, f"{base}/api/cases", json={})
-            assert response.status_code in {404, 405}, (method, response.status_code)
-
-    assert [call[0] for call in reader.calls] == ["accounts", "cases", "metrics"]
-
-
-def test_admin_get_apis_share_dashboard_session_and_forward_filters() -> None:
-    reader = _AdminReader()
-    client, _ = _client(admin_reader=reader)
-    base = "/automation/production/admin/api"
-    endpoints = (
-        "accounts",
-        "cases",
-        "metrics",
-        "audit?limit=27",
-        "engineer-schedules",
-        "account-automation?page=2&page_size=25&route_status=automated&category=automation&created_from=2026-09-01&created_to=2026-09-05",
-        "agent-config",
-        "environment-config",
-        "release-notes",
-    )
-    with client:
-        for endpoint in endpoints:
-            assert client.get(f"{base}/{endpoint}").status_code == 401
-        _dashboard_login(client)
-        responses = [client.get(f"{base}/{endpoint}") for endpoint in endpoints]
-
-    assert all(response.status_code == 200 for response in responses)
-    assert reader.calls == [
-        ("accounts", {}),
-        ("cases", {}),
-        ("metrics", {}),
-        ("audit", {"limit": 27}),
-        ("engineer-schedules", {}),
-        (
-            "account-automation",
-            {
-                "page": 2,
-                "page_size": 25,
-                "route_status": "automated",
-                "category": "automation",
-                "created_from": "2026-09-01",
-                "created_to": "2026-09-05",
-            },
-        ),
-        ("agent-config", {}),
-        ("environment-config", {}),
-        ("release-notes", {}),
-    ]
-
-
-def test_admin_business_write_methods_are_not_registered() -> None:
-    client, _ = _client(admin_reader=_AdminReader())
-    base = "/automation/production/admin/api"
-    with client:
-        _dashboard_login(client)
-        for endpoint in (
-            "accounts",
-            "cases",
-            "metrics",
-            "audit",
-            "engineer-schedules",
-            "account-automation",
-            "agent-config",
-            "environment-config",
-            "release-notes",
-        ):
-            for method in ("POST", "PUT", "PATCH", "DELETE"):
-                response = client.request(method, f"{base}/{endpoint}", json={})
-                assert response.status_code in {404, 405}, (method, endpoint, response.status_code)
 
 
 def test_dashboard_css_keeps_interactive_targets_at_least_44px() -> None:

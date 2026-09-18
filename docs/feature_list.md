@@ -77,8 +77,8 @@
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
 - `/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。
-- `/workspace/admin` 可通过真实邮件邀请创建 Admin/Engineer 账号，一次性 setup link 将邀请邮箱锁定为不可修改的登录身份。
-- `/workspace/admin` 可在独立 Schedule tab 以 30 分钟格持久化管理 Engineer weekly schedule，支持跨夜与 `24:00` 全天边界；Engineer Management 直接以 on/off-schedule 展示 dispatch availability。
+- `/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。
+- `/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。
 - Engineer Case 使用 active 且 on-schedule 的 engineer 进行 round-robin 自动派单，派单后立即开始 3 小时 SLA。
 - Engineer 离开 schedule、账号 inactive 或 3 小时 SLA 到期时，系统会把未完成 Engineer Case 自动派给下一个合格 engineer。
 - Engineer Case 派单状态使用 pending、assigned、resolved，并通过版本保护、事务更新和审计避免重复派发。
@@ -129,7 +129,7 @@
 - Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。
 - Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。
 - ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。
-- ECS Production 与 Preproduction 均提供 `/automation/<environment>/admin/` 与 Workspace Admin 一致的只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。
+- Workspace Admin（`/workspace/admin/`）是唯一的 Admin 控制台；ECS 环境侧不提供 Admin 页面（`/automation/<environment>/admin/` 不存在），ticket dashboard 照常独立提供。
 - Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。
 - Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。
 

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T02:49:37Z",
-  "source_base_commit": "e5518506855c7dc5ef27d71169f0c892f34c7317",
-  "registry_digest": "784880d3179995ccfaec6641faf261a3b98da4a6f5a896d22ab317b1f14fcb30",
+  "generated_at": "2026-09-18T03:44:35Z",
+  "source_base_commit": "e950e1acec8f85a3f31bcc27e99478c4397164eb",
+  "registry_digest": "95fdb159ed54858922cda0d2595e72a749bb34e65fede936c342dba636fe19a0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2825,6 +2825,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Pricing entry verified",
           "details": "2026-09-18：test_llm_pricing 44 passed（含新增 astra 用例）+ UI 合同回归。production 只读查询（ECS_PRODUCTION_ADMIN_DSN）：近 10 天 support_account_case_llm_usage 仅 openai|gpt-6-astra（82 calls，最近 2026-09-18）。价格来源=OpenAI 官方 pricing 页（web 检索）+ 用户确认选用 $10/$1/$50。"
+        },
+        {
+          "type": "test",
+          "label": "Removal coverage",
+          "details": "2026-09-18：定向 238 passed（ecs api 删 4 admin 用例+stub、UI 合同删 4 ECS 用例并加\"无 isEcsAdmin\"源码断言、镜像合同更新为不打包 workspace-ui、workspace api/reader/repository 回归；release_notes 契约断言改为基线存在而非首个）。"
         }
       ],
       "source_refs": [
@@ -2837,8 +2842,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 10,
-      "done_count": 8,
+      "task_count": 11,
+      "done_count": 9,
       "blocked_count": 0
     },
     {
@@ -13416,6 +13421,50 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-166",
+      "title": "移除 ECS 侧 admin 页，只留 workspace admin 单一控制台",
+      "status": "done",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "summary": "用户确认最终只保留一个 Admin 页面（support.stellarix.space/workspace/admin/，production-only，不加环境切换）：移除 automation_ecs_api.py 的全部 admin 面（import/create_app admin_reader 参数与实例化/9 个 {base}/admin/api/* 端点/{base}/admin 静态 mount）；ecs-api 镜像不再打包 workspace-ui；app.js 完全剥离 ECS 模式分支（isEcsAdmin/ECS_ADMIN_ROOT/dashboard auth 三件套/restoreEcsAdminSession 等约 20 处），只读控件逻辑内建；dashboard（ticket 控制台）与其共用件（admin_account/require_dashboard_session/hermes-review）不动；deploy 落库 support_release_notes 与 reader 读库链路不经被删端点，release notes 数据不受影响。本次部署 preproduction 验证移除效果；production 侧移除随其下次授权部署生效。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "/automation/preproduction/admin/ 与 /admin/api/* 部署后 404；dashboard（/automation/\u003cenv>/）回归正常。",
+        "app.js 源码无 isEcsAdmin/ECS_ADMIN_ROOT（UI 合同测试锁定）；workspace admin 全功能回归。",
+        "ecs-api 镜像不含 workspace-ui（镜像合同测试锁定）。",
+        "release notes 数据链（deploy 落库+reader 读库）不受影响。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Removal coverage",
+          "details": "2026-09-18：定向 238 passed（ecs api 删 4 admin 用例+stub、UI 合同删 4 ECS 用例并加\"无 isEcsAdmin\"源码断言、镜像合同更新为不打包 workspace-ui、workspace api/reader/repository 回归；release_notes 契约断言改为基线存在而非首个）。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户指出应只有一个 Admin 页面；确认 p2-155 时的移除范围收窄（只移了 release-notes tab）。决策：不加环境切换（只看 production）、本次仅部署 preproduction。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/Dockerfile.automation",
+        "ui/workspace-ui/admin/app.js",
+        "design.md",
+        "docs/feature_list.md"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -18767,8 +18816,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。",
         "Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。",
         "`/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。",
-        "`/workspace/admin` 可通过真实邮件邀请创建 Admin/Engineer 账号，一次性 setup link 将邀请邮箱锁定为不可修改的登录身份。",
-        "`/workspace/admin` 可在独立 Schedule tab 以 30 分钟格持久化管理 Engineer weekly schedule，支持跨夜与 `24:00` 全天边界；Engineer Management 直接以 on/off-schedule 展示 dispatch availability。",
+        "`/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。",
+        "`/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。",
         "Engineer Case 使用 active 且 on-schedule 的 engineer 进行 round-robin 自动派单，派单后立即开始 3 小时 SLA。",
         "Engineer 离开 schedule、账号 inactive 或 3 小时 SLA 到期时，系统会把未完成 Engineer Case 自动派给下一个合格 engineer。",
         "Engineer Case 派单状态使用 pending、assigned、resolved，并通过版本保护、事务更新和审计避免重复派发。",
@@ -18820,7 +18869,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Account Automation 提供 Sid Precise、Sid Bright、Sid Warm 三套独立 Persona presets，首次客户回复随机分配并固定精确版本，完整 Rerun 后重新选择。",
         "Account Verification 使用 LLM 收集公司、联系人、使用场景和安全支付概况，最多追问一次并阻止敏感支付凭据进入派生数据。",
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
-        "ECS Production 与 Preproduction 均提供 `/automation/\u003cenvironment>/admin/` 与 Workspace Admin 一致的只读运营视图（ECS Admin），按环境读取对应 schema、namespace 与 processing profile，两环境同为只读。",
+        "Workspace Admin（`/workspace/admin/`）是唯一的 Admin 控制台；ECS 环境侧不提供 Admin 页面（`/automation/\u003cenvironment>/admin/` 不存在），ticket dashboard 照常独立提供。",
         "Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。",
         "Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。"
       ],
