@@ -940,6 +940,7 @@ class TestInvestigationReviewGate:
             "supportportal_work",
             "common",
             "memory",
+            "skills",
         ]
         # automation-direction work runs keep the plain work toolset
         automation_store = _store()
@@ -1993,3 +1994,17 @@ class TestAdhocSession:
                 assert "skills_list" in text
         finally:
             reset_prompt_runtime_for_tests()
+
+
+def test_investigation_work_toolsets_include_skills() -> None:
+    """p2-170: case investigations can skill_view the loaded agora skills."""
+    from backend.services.automation_hermes_agent import toolsets_for_phase
+
+    assert toolsets_for_phase("work", direction="investigation") == [
+        "supportportal_work", "common", "memory", "skills"
+    ]
+    assert toolsets_for_phase("work", direction="investigation", session_kind="adhoc") == [
+        "supportportal_work", "common", "memory", "skills"
+    ]
+    # automation work runs stay narrow
+    assert toolsets_for_phase("work", direction="automation") == ["supportportal_work"]

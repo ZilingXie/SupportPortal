@@ -4656,3 +4656,10 @@ For each new entry, record:
   - Ad-hoc results post to the engineer's own thread without action buttons or Zendesk surfaces; the actions endpoint and `continue_hermes_investigation` reject ad-hoc sessions.
 - Verification:
   - New unit tests: ad-hoc work run (manual key, toolsets, message injection, ad-hoc notify variant, actions closed), local mirror seeding, case-feedback message injection, prompt registry resolution; PG integration covers the ad-hoc session store method and the schema-008 unique thread index. Regression: hermes/api/store/worker/slack/workflow suites 205 passed.
+## 2026-09-18 - 调查回合开放 skills 工具集（p2-170）
+
+- Area or subsystem: Preproduction Hermes investigation chain (work-phase toolset selection).
+- Prompt or model versions: 无 prompt 内容变更（复用 active release）；工具面行为变更。
+- Reason: case 13582/13591 实证——模型查到 Argus 原始遥测后卡在枚举语义（quitState=1/reason=5/apiId=10 无权威解释），而这些映射就躺在已装载的 argus skill 参考文档（error_codes.md 的 vos.uquit sts 表等）里；case 调查回合未启用 skills 工具集导致 108 条技能目录可见而不可读（p2-158 装载时的已知副作用）。
+- Tooling and behavior changes: INVESTIGATION_WORK_TOOLSETS 增加 "skills"（与 adhoc 会话一致）——调查/反馈回合可 skills_list/skill_view 读取技能全文（枚举速查表、counter ID 表、排障流程）。平台侧 skills 工具集 enabled+configured 已实证，请求级子集校验通过。
+- Verification: 新增单测锁定 case/adhoc 调查 toolsets 均含 skills、automation 方向不回归；全量回归 + 发布后功能探针（quitState 枚举查阅）。

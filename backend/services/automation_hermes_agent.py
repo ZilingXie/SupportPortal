@@ -72,16 +72,16 @@ PHASE_TOOLSETS = {
 # the plugin's phase toolsets ride along until the gateway learns them.
 
 # The investigation work run additionally needs the plugin's read-only case
-# context tools (registered under the plugin's `common` toolset) and the
-# Hermes-native memory toolset: without `memory` in enabled_toolsets the
-# engine hides the memory-provider tools entirely (memory_manager gating),
-# which is exactly the "investigation without loaded tools" failure mode.
-INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory"]
+# context tools (registered under the plugin's `common` toolset), the
+# Hermes-native memory toolset (without `memory` the engine hides the
+# memory-provider tools entirely — the "investigation without loaded tools"
+# failure mode), and the skill library: the loaded agora skills carry the
+# enum lookup tables (quit states, error codes, counter ids) that turn raw
+# Argus telemetry into conclusions (case 13582/13591: quitState=1 was
+# unresolvable by the model while its mapping sat in an unreadable skill).
+INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
 
-# An ad-hoc work run additionally gets `skills`: skill_view opens the loaded
-# skill library (agora troubleshooting skills) for full-text reading. "skills"
-# is a first-class, enabled toolset on the gateway's api_server platform, so
-# the request-level subset check accepts it.
+# An ad-hoc work run gets the same surface.
 ADHOC_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
 
 
