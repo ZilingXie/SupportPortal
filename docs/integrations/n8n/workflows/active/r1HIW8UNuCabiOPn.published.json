@@ -1,20 +1,33 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-09-18T05:10:00Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "r1HIW8UNuCabiOPn",
-    "workflowName": "[slack]Forward Thread|Prod",
+    "workflowName": "[slack]Forward Thread|Prod+Preprod",
     "snapshotKind": "published",
-    "versionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
-    "draftVersionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
-    "publishedVersionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
-    "updatedAt": "2026-09-16T07:07:25.794Z",
+    "versionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
+    "draftVersionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
+    "publishedVersionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
+    "updatedAt": "2026-09-18T05:04:39.352Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore.",
+    "previousPublishedVersionId": "91ca9a17-afe8-4da0-ac22-cae48b43ca4b",
+    "changeSummary": "p2-161/case-13582: production engineer-case 分支保持不变；新增 preprod hermes 分支（Bound Case Thread1 false → Resolve Hermes Binding → Hermes Bound Thread → bound=Send Hermes Message / unbound=Send Adhoc Session），三个新 HTTP 节点用 preprodcution 凭证。"
+  },
   "workflow": {
-    "name": "[slack]Forward Thread|Prod",
-    "description": "供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，解析 ECS Production 的 Engineer Case 线程绑定，再将消息转发给 SupportPortal。",
+    "name": "[slack]Forward Thread|Prod+Preprod",
+    "description": "供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，先解析 ECS Production 的 Engineer Case 线程绑定并转发；未命中时解析 ECS Preproduction 的 Hermes 线程绑定，命中则作为调查反馈转发，仍未命中则作为 ad-hoc 会话首问转发（p2-161）。",
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "tags": [],
     "nodes": [
       {
         "parameters": {
@@ -167,6 +180,130 @@
             "name": "2_SupportPortal"
           }
         }
+      },
+      {
+        "id": "d6293681-67f1-4f7e-8829-a594ca431aa1",
+        "name": "Resolve Hermes Binding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          144,
+          320
+        ],
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "719d3ceb-aae7-4bb7-9ed7-f6d2b9a152ea",
+        "name": "Hermes Bound Thread",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          368,
+          320
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.status === 'bound' && !!$json.zendesk_ticket_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "6393db9c-2a55-4e46-a966-8f6edc9b04b1",
+        "name": "Send Hermes Message",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          592,
+          320
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "936675c8-ca63-4e51-ad8e-d9fcc9ee86bb",
+        "name": "Send Adhoc Session",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          592,
+          480
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/adhoc-sessions",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }) }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
       }
     ],
     "connections": {
@@ -211,21 +348,46 @@
               "type": "main",
               "index": 0
             }
+          ],
+          [
+            {
+              "node": "Resolve Hermes Binding",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Hermes Binding": {
+        "main": [
+          [
+            {
+              "node": "Hermes Bound Thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Hermes Bound Thread": {
+        "main": [
+          [
+            {
+              "node": "Send Hermes Message",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Send Adhoc Session",
+              "type": "main",
+              "index": 0
+            }
           ]
         ]
       }
     },
-    "settings": {
-      "binaryMode": "separate",
-      "availableInMCP": true,
-      "executionOrder": "v1"
-    },
-    "nodeGroups": [],
-    "tags": []
-  },
-  "restoreNotes": {
-    "activeAtCapture": true,
-    "redactedValues": [],
-    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+    "nodeGroups": []
   }
 }
