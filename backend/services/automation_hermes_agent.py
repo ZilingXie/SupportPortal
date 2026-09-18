@@ -407,6 +407,28 @@ class HermesAgentTurnProcessor:
                         "status": "human_review",
                         "reason": str(work_result.get("reason") or "tool_human_review"),
                     }
+                if isinstance(work_result, dict) and work_result.get("skip_persona") is True:
+                    # The business workflow already created its own
+                    # customer-facing reply job in the legacy pipeline (the
+                    # sole reply producer); the turn completes here without
+                    # a persona draft (review #3).
+                    self.store.complete_hermes_agent_turn(
+                        payload.turn_id,
+                        result={
+                            "engine": "hermes",
+                            "turn_id": payload.turn_id,
+                            "status": "completed",
+                            "reason": str(work_result.get("outcome") or "workflow_completed"),
+                            "work_result": work_result,
+                        },
+                    )
+                    return {
+                        "engine": "hermes",
+                        "turn_id": payload.turn_id,
+                        "status": "completed",
+                        "reason": str(work_result.get("outcome") or "workflow_completed"),
+                        "work_result": work_result,
+                    }
             if outcome == _PHASE_SUPERSEDED:
                 final = self.store.get_hermes_turn(payload.turn_id) or {}
                 return {

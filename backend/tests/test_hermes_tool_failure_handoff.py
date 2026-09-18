@@ -161,6 +161,13 @@ class ToolFailureHandoffTests(unittest.TestCase):
         # The persisted case is human-review and was not flipped back.
         saved = repository.get_account_case("AC-123")
         self.assertEqual(saved["automation_status"], "human_review_required")
+        # Review #1: the helper itself writes turn.work_result — the
+        # processor's persona gate reads exactly this field.
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        work_result = turn.get("work_result")
+        self.assertIsInstance(work_result, dict)
+        self.assertEqual(work_result["status"], "human_review_required")
+        self.assertEqual(work_result["reason"], "zendesk_side_effects_disabled")
 
     def test_publication_gate_parks_turn_before_persona(self) -> None:
         store = _store()
@@ -168,6 +175,10 @@ class ToolFailureHandoffTests(unittest.TestCase):
 
         submissions: list[dict] = []
 
+        # Simulate what the real tool now does when it escalates: write
+        # work_result with human_review_required (the processor gate reads
+        # exactly this). The fake LLM client can't invoke the real HTTP tool,
+        # so this manual write IS the simulation of the tool's behavior.
         def on_run_completed(run_id, idempotency_key):
             phase = idempotency_key.rsplit(":", 1)[-1]
             if phase == "route":
@@ -212,8 +223,62 @@ class ToolFailureHandoffTests(unittest.TestCase):
         # Route + work ran; persona must never be submitted.
         self.assertEqual(len(submissions), 2)
         turn = store.get_hermes_turn(handoff["turn_id"])
-        # The turn completes with a human-review result; no draft exists.
         self.assertEqual(turn["status"], "completed")
+
+    def test_enablement_success_skips_persona_with_pipeline_reply(self) -> None:
+        """Review #3: enablement workflow_completed skips persona; the legacy
+        pipeline reply job is the sole customer reply."""
+        store = _store()
+        handoff, agent_job, _event = self._seed(store)
+
+        submissions: list[dict] = []
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"],
+                    direction="automation",
+                    route="enablement",
+                )
+                store.record_hermes_case_direction(
+                    handoff["turn_id"],
+                    direction="automation",
+                    reason="test automation direction",
+                )
+            if phase == "work":
+                # Simulate what the enablement tool now returns on success:
+                # skip_persona=True (the workflow created the pipeline reply).
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={
+                        "status": "workflow_completed",
+                        "outcome": "review_requested",
+                        "skip_persona": True,
+                    },
+                )
+
+        client = harness.FakeHermesClient(on_run_completed=on_run_completed)
+        original_start = client.start_run
+
+        def counting_start(*args, **kwargs):
+            submissions.append(kwargs)
+            return original_start(*args, **kwargs)
+
+        client.start_run = counting_start
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=None,
+            poll_interval_seconds=0.01,
+        )
+        outcome = processor.process(agent_job)
+
+        # Turn completed (not human_review); persona never ran.
+        self.assertEqual(outcome["status"], "completed")
+        self.assertEqual(outcome["reason"], "review_requested")
+        self.assertEqual(len(submissions), 2)  # route + work only
 
 
 if __name__ == "__main__":

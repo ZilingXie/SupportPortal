@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-17T13:12:13Z",
-  "source_base_commit": "788cddbc7af08d7d2b56b106a90617dfd6f19d6e",
-  "registry_digest": "7e3fe9a57d6ac9964f993af9be2bcc7bfddfe983485fa3a3668532a4b581c9ed",
+  "generated_at": "2026-09-18T02:45:41Z",
+  "source_base_commit": "676c1039b5af9ed61e4e7f9e10e356296784a4f2",
+  "registry_digest": "3bf8ed251aa5cfcf643a7666894c5862c3839570888cb578127173f0cc09456a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13197,7 +13197,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".codex/skills/supportportal-media-relay-enablement/"
       ],
       "created_at": "2026-09-16",
-      "updated_at": "2026-09-17",
+      "updated_at": "2026-09-18",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -13266,6 +13266,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-17",
           "event": "min_fix_13567_implemented",
           "summary": "13567 证据链：工具 200（A 有效）、评论已镜像（C 有效、appid 入 collected_fields）但 api 无副作用权限→工具走阻断分支返回 executed+internal_email_blocked_no_side_effects 假成功→LLM 向客户编写失败叙事；无任何失败兜底（escalate 工具只改本地、publication 硬编码 public、手册无禁令）。三件修复：api env 双点注入+测试；_escalate_uncompleted_automation（escalate+notify+binding 停车，阻断/异常两入口接入，status 不再翻回 automation）+出版门禁（work 后 human_review_required 停车跳 persona）+新套件 test_hermes_tool_failure_handoff；镜像幂等兼容 PG meta 摊平形态+回归强化。appid 截断证伪（用户评论原文即 29 位）。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "review4_fixes_implemented",
+          "summary": "四项 review 修复：①失败 helper/requires_human_review 都写 turn.work_result（persona 门禁读的正是它，此前只在正常路径 :427 写，三个 early-return 全绕过→失败后照跑 persona）；②try/except 扩到整个执行段（attempt builder 含 LLM 抽取、delivery 全覆盖，HermesToolError 仍原样抛给 API 422）；③enablement 成功后 skip_persona=True——旧管线 submission_confirmation/appid_invalid 回复 job 是唯一客户回复（relay 门禁绑的正是它），agent 循环新增 skip_persona 完成分支；④结果字段从执行后 account_case 重取（appid_invalid 后 missing=['app_id'] 与 DB 一致）。新增/修正测试：work_result 由真实 helper 写入（单元断言）、skip_persona 完成分支、appid 一致性。十套件 339 passed。"
         }
       ]
     },
