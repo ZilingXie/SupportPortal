@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T05:50:58Z",
-  "source_base_commit": "8d3b1f164a667e56de14e92eae07311463e71447",
-  "registry_digest": "1c6ee2e8d8de54e312d372a2bf3c5a133f490a18fcbeed5d8ca96cf94919a823",
+  "generated_at": "2026-09-18T06:11:20Z",
+  "source_base_commit": "66ab4014b7c42fe325f9f65ce31a9f015c572afb",
+  "registry_digest": "3df12877de4528f3d34b08dd770f32caaef87aa93126e068dfcdd4ba4a620acd",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1219,6 +1219,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "review4 fixes: r20260918-e950e1a",
           "command": "release_automation_ecs_pipeline.sh --release-commit e950e1acec8f85a3f31bcc27e99478c4397164eb --prompt-release-id pr-281f5ed8ad68 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
           "details": "四项 review 修复上线：①失败 helper+requires_human_review 都写 turn.work_result（persona 门禁真正接线）；②try/except 覆盖整个执行段（含 LLM 抽取）；③enablement 成功后 skip_persona（旧管线回复 job 为唯一客户回复，relay 门禁语义自然正确）；④结果字段从执行后 case 重取。发布过程：AWS 会话过期→重新登录→旧 prompt pr-434d9524e18d 已被取代（源 schema 状态 failed/superseded by newer candidate）→新 prompt pr-281f5ed8ad68→旧 checkpoint 身份不匹配→rm checkpoint 全新发布全阶段 passed。live：provenance=e950e1ac、prompt=pr-281f5ed8ad68、api td :45 三合同 env 全对（archer/副作用=1/build ref 匹配）、worker td :45、部署后零错误。十套件 339 passed/26 subtests。"
+        },
+        {
+          "type": "deployment",
+          "label": "13580/13583 fixes: r20260918-12fa69a + r20260918-8d3b1f1",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 12fa69a0.../8d3b1f16... --prompt-release-id pr-281f5ed8ad68 --through preproduction（同标准 flags）",
+          "details": "五项修复分两轮上线：r20260918-12fa69a（#1231：trigger 从镜像取值+notify 补 now+全链守卫+api Graph 凭据）和 r20260918-8d3b1f1（#1232：hermes 工具补 route_family=automated）。13583 诊断确认 trigger/skip_persona/AppID 抽取全部正常工作，唯一剩余断点=route_family 缺失导致 delivery worker 的 Zendesk 发送被跳过（unregistered_automation）。两轮全阶段 passed、live 零错误。"
         },
         {
           "type": "test",
@@ -13225,6 +13231,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "review4 fixes: r20260918-e950e1a",
           "command": "release_automation_ecs_pipeline.sh --release-commit e950e1acec8f85a3f31bcc27e99478c4397164eb --prompt-release-id pr-281f5ed8ad68 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
           "details": "四项 review 修复上线：①失败 helper+requires_human_review 都写 turn.work_result（persona 门禁真正接线）；②try/except 覆盖整个执行段（含 LLM 抽取）；③enablement 成功后 skip_persona（旧管线回复 job 为唯一客户回复，relay 门禁语义自然正确）；④结果字段从执行后 case 重取。发布过程：AWS 会话过期→重新登录→旧 prompt pr-434d9524e18d 已被取代（源 schema 状态 failed/superseded by newer candidate）→新 prompt pr-281f5ed8ad68→旧 checkpoint 身份不匹配→rm checkpoint 全新发布全阶段 passed。live：provenance=e950e1ac、prompt=pr-281f5ed8ad68、api td :45 三合同 env 全对（archer/副作用=1/build ref 匹配）、worker td :45、部署后零错误。十套件 339 passed/26 subtests。"
+        },
+        {
+          "type": "deployment",
+          "label": "13580/13583 fixes: r20260918-12fa69a + r20260918-8d3b1f1",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 12fa69a0.../8d3b1f16... --prompt-release-id pr-281f5ed8ad68 --through preproduction（同标准 flags）",
+          "details": "五项修复分两轮上线：r20260918-12fa69a（#1231：trigger 从镜像取值+notify 补 now+全链守卫+api Graph 凭据）和 r20260918-8d3b1f1（#1232：hermes 工具补 route_family=automated）。13583 诊断确认 trigger/skip_persona/AppID 抽取全部正常工作，唯一剩余断点=route_family 缺失导致 delivery worker 的 Zendesk 发送被跳过（unregistered_automation）。两轮全阶段 passed、live 零错误。"
         }
       ],
       "source_refs": [
