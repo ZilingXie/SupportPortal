@@ -459,6 +459,16 @@ def _base_environment(
         # this flag every action is silently blocked and reports a fake
         # success (ticket 13567). Mirrors the worker value.
         values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] = "1"
+        # Graph mail config for the failure-alert email from tool escalation
+        # (ticket 13580: the api container could not send mail).
+        values.update(
+            {
+                "BILLING_AUTOMATION_GRAPH_TENANT_ID": "60275374-3eaa-49c2-83c3-cc189d126981",
+                "BILLING_AUTOMATION_GRAPH_CLIENT_ID": "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80",
+                "BILLING_AUTOMATION_GRAPH_USERNAME": "ai-support-agent@agora.io",
+                "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
+            }
+        )
     if role == "worker":
         values.update(
             {
@@ -551,6 +561,9 @@ def render_initial_task_definition(
             # Hermes-agent tool executions on the API role need the LLM
             # credential (enablement grounded field extraction).
             "OPENAI_API_KEY": "openai-api-key",
+            # Graph mail credentials for the failure-alert email sent by
+            # hermes tool escalation (the tool runs on the api role).
+            "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "billing-graph-client-secret",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
