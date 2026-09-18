@@ -334,6 +334,10 @@ async def tool_execute_automation_action(
 
         account_case["route"] = normalized_route
         account_case["execution_action"] = normalized_route
+        # The delivery worker's Zendesk gate checks is_registered_automation
+        # via route_family; without "automated" it skips the reply as
+        # unregistered_automation (ticket 13583).
+        account_case["route_family"] = "automated"
         account_case["collected_fields"] = collected_fields
         account_case["missing_fields"] = missing_fields
         account_case["automation_context"] = dict(

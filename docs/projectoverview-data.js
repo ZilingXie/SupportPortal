@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T05:06:49Z",
-  "source_base_commit": "12fa69a05df44434f98570258b2c539c4d151ef1",
-  "registry_digest": "bc7ce6ef3f151cc0fc4996b89edc31bc95144a34e75a0de651d5e76050f4216d",
+  "generated_at": "2026-09-18T05:36:47Z",
+  "source_base_commit": "9211ad49239308dd6f05c77b770c4eb97e9f6eff",
+  "registry_digest": "58a48252625cd55dcdea4c1d79097673b44f38bf77409d6796342a7890fa9665",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13315,6 +13315,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "trigger_notify_fixes",
           "summary": "13580 双修复：①trigger_message_created_at 从镜像客户消息 max(created_at) 取值（与 legacy 同源，修 stale_customer_revision 取消——hermes 工具此前传 turn created_at 永远不匹配栅栏的精确字符串比较）；②notify_account_failure 补必填 now 参数（此前 TypeError 在邮件前抛出→email 永不发送且跳过 binding park）+ 全链 try/except 守卫（escalate/notify 各子步骤失败不阻塞 park）；③api 注入 Graph 邮件凭据（BILLING_AUTOMATION_GRAPH_CLIENT_SECRET secret + tenant/client/username/token_cache env，修 api 容器无法发邮件）。13580 诊断：escalation context 完全缺失（escalate 从未持久化），case 实际停在 gated/awaiting_public_reply（非失败态）。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "route_family_fix",
+          "summary": "13583 诊断：trigger 修复生效（reply job 正常 published、不再被 stale_customer_revision 取消）、skip_persona 生效、AppID 首条消息即抽取——但确认回复未送达 Zendesk（delivery worker 日志 production_zendesk_delivery_skipped failure_code=unregistered_automation）。根因=hermes 工具只设 route/execution_action 不设 route_family，is_registered_automation 要求 route_family∈{automated,billing_automation} 判定失败跳过发送。修复=工具补 route_family='automated'。"
         }
       ]
     },
