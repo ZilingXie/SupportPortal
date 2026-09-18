@@ -1,4 +1,4 @@
-"""Hermes tool failure-handoff contract tests (p2-163, ticket 13567).
+"""Hermes tool failure-handoff contract tests (p2-163, tickets 13567/13595).
 
 The business tool must NEVER fake success when it cannot complete, and the
 turn must never reach persona/publication afterwards.  Covers:
@@ -7,7 +7,11 @@ turn must never reach persona/publication afterwards.  Covers:
   email), hermes binding parked, tool returns human_review_required;
 - enablement workflow raising -> same handoff;
 - a work_result of human_review_required parks the turn before persona, so
-  no customer-facing failure narrative can ever be drafted or published.
+  no customer-facing failure narrative can ever be drafted or published;
+- the ownership gate claims the Zendesk ticket before business execution even
+  when the hermes-created case has no route_family yet (13595: eligibility
+  resolved an empty route_family and silently skipped the claim), and a
+  fail-closed claim runs the same unified handoff.
 """
 
 from __future__ import annotations
@@ -279,6 +283,212 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(outcome["status"], "completed")
         self.assertEqual(outcome["reason"], "review_requested")
         self.assertEqual(len(submissions), 2)  # route + work only
+
+
+    def _seed_case_without_route_family(self, store: InMemoryAutomationEcsStore):
+        """The production shape from ticket 13595: the hermes-created account
+        case has route/execution_action but no route_family (the legacy intake
+        writes it at construction; the hermes path only wrote it deep inside
+        the business execution, after the ownership gate had already run)."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Enable Media Relay",
+                "status": "open",
+                "created_at": "2026-09-08T10:00:00Z",
+                "updated_at": "2026-09-08T10:00:00Z",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay for "
+                        "0123456789abcdef0123456789abcdef.",
+                        "created_at": "2026-09-08T10:00:00Z",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-123",
+                "billing_ticket_id": "AC-123",
+                "client_ticket_id": "123",
+                "zendesk_ticket_id": "123",
+                "processing_profile": "preproduction",
+                "automation_status": "automation",
+                "route": "enablement",
+                "collected_fields": {
+                    "app_id": "0123456789abcdef0123456789abcdef",
+                    "requested_feature": "media_relay",
+                    "requested_feature_label": "media relay",
+                },
+                "internal_email_payload": None,
+                "internal_email_send_status": "not_applicable",
+            }
+        )
+        handoff, agent_job, event = self._seed(store)
+        return repository, handoff, agent_job, event
+
+    def test_ownership_gate_claims_case_without_route_family(self) -> None:
+        """13595 regression: eligibility must see route_family='automated' and
+        the gate must claim the ticket BEFORE business execution."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        escalation: list[dict] = []
+        notified: list[dict] = []
+        complete = NS(
+            status="ok",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "0123456789abcdef0123456789abcdef",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "media relay",
+            },
+            requires_human_review=False,
+            audit_payload=lambda: {"status": "ok"},
+            follow_up=None,
+        )
+
+        async def fake_workflow(**kwargs):
+            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ) as ownership_mock, patch(
+            "backend.services.automation_account_intake.extract_enablement_fields",
+            return_value=complete,
+        ), patch(
+            "backend.services.automation_account_intake._run_enablement_workflow",
+            side_effect=fake_workflow,
+        ), patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            side_effect=lambda **kw: escalation.append(kw) or NS(status="escalated"),
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ) as notify_mock:
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+
+        # The gate ran (pre-fix it was skipped: eligibility saw an empty
+        # route_family) and saw the normalized route family on the case.
+        ownership_mock.assert_called_once()
+        self.assertEqual(ownership_mock.call_args.kwargs.get("mode"), "gate")
+        gate_case = ownership_mock.call_args.args[0]
+        self.assertEqual(gate_case.get("route_family"), "automated")
+        # The claim result is journaled and the case saved with the family.
+        events = repository.list_ticket_events("123")
+        ownership_events = [e for e in events if e.get("event_type") == "zendesk_ai_ownership"]
+        self.assertEqual(len(ownership_events), 1)
+        self.assertEqual(ownership_events[0]["payload"]["state"], "assigned")
+        saved = repository.get_account_case("AC-123")
+        self.assertEqual(saved["route_family"], "automated")
+        # Business execution completed through the enablement workflow.
+        self.assertEqual(result["status"], "workflow_completed")
+        self.assertTrue(result["skip_persona"])
+        escalate_mock.assert_not_called()
+        self.assertEqual(notified, [])
+
+    def test_ownership_gate_fail_closed_runs_unified_handoff(self) -> None:
+        """A fail-closed claim (e.g. routed human already replied) must park the
+        turn through the same unified handoff as any other failure."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_HUMAN_REASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_HUMAN_REASSIGNED,
+            assignee_id="31116509485716",
+            failure_code="zendesk_ownership_human_reassigned",
+            failure_category="policy",
+        )
+        escalate = NS(status="escalated")
+        notified: list[dict] = []
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ) as ownership_mock, patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=escalate,
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ) as notify_mock:
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+
+        ownership_mock.assert_called_once()
+        self.assertEqual(result["status"], "human_review_required")
+        self.assertIn(
+            "ownership_gate_zendesk_ownership_human_reassigned", result["reason"]
+        )
+        escalate_mock.assert_called_once()
+        notify_mock.assert_called_once()
+        # The fail path still journals the ownership event (legacy parity).
+        events = repository.list_ticket_events("123")
+        ownership_events = [e for e in events if e.get("event_type") == "zendesk_ai_ownership"]
+        self.assertEqual(len(ownership_events), 1)
+        self.assertEqual(
+            ownership_events[0]["payload"]["state"], "human_reassigned"
+        )
+        # Binding parked before persona; persisted case is human-review.
+        binding = store.get_hermes_case_binding("123")
+        self.assertEqual(str(binding.get("direction") or ""), "human")
+        self.assertEqual(str(binding.get("status") or ""), "paused")
+        saved = repository.get_account_case("AC-123")
+        self.assertEqual(saved["automation_status"], "human_review_required")
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        work_result = turn.get("work_result")
+        self.assertIsInstance(work_result, dict)
+        self.assertEqual(work_result["status"], "human_review_required")
 
 
 if __name__ == "__main__":
