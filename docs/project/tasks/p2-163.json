@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-  "next_action": "13567 三件最小修复已实现待合码/重发：①api 注入 AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED=1（13567 直接根因：hermes 工具跑 api 但该 env 只在 worker，enablement 被静默阻断假报成功）；②确定性失败兜底（工具层无法完成→统一链 internal note+回队列+owner 邮件+hermes binding 停车；work_result=human_review_required 时出版门禁跳过 persona，绝不向客户公开失败叙事；手册 v2 同步）；③镜像去重（PG 读回把 meta 摊平成顶层键致幂等键恒空，兼容两种形态）。appid 29 字符=用户测试评论本身少 3 位（Zendesk 原文实证），非代码 bug。剩：合码→preprod 重发→用户重测（带完整 32 位 AppID）。",
+  "next_action": "review4 四项修复已上线 r20260918-e950e1a（含 #1226+#1227，prompt 更新为 pr-281f5ed8ad68；发布历经：AWS 会话过期→旧 prompt 被取代→checkpoint 身份不匹配，最终全新发布通过）。剩：用户重测完整链路（32 位 AppID→单条确认回复→relay 派发→Mac 收件箱）。",
   "acceptance_criteria": [
     "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
     "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -68,6 +68,12 @@
       "label": "13560 fix C: customer-comment mirror, r20260917-caec050",
       "command": "release_automation_ecs_pipeline.sh --release-commit caec050e7467394d37b46a8f660c82294b452201 --prompt-release-id pr-434d9524e18d --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer --resume",
       "details": "修复 C=HermesAgentTurnProcessor 每次 pending turn 前把 comment_snapshot 公开客户评论幂等（meta.zendesk_comment_id）落入本地 ticket 镜像，agent 评论不混入；同文件 _customer_author 反转谓词一并修复；13560 复现回归（AppID 可见/不重复/agent 不入）。首次运行 heartbeat provenance 90s 未收敛（瞬态）回滚，resume 二次通过全阶段 passed；live：provenance=caec050e、部署后零错误。至此 13549→13560 四个串联根因全部修复上线：A=api OPENAI key（#1217）、B1=store 评论客户谓词（#1219）、C=评论镜像+agent 侧谓词（#1222）。"
+    },
+    {
+      "type": "deployment",
+      "label": "review4 fixes: r20260918-e950e1a",
+      "command": "release_automation_ecs_pipeline.sh --release-commit e950e1acec8f85a3f31bcc27e99478c4397164eb --prompt-release-id pr-281f5ed8ad68 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+      "details": "四项 review 修复上线：①失败 helper+requires_human_review 都写 turn.work_result（persona 门禁真正接线）；②try/except 覆盖整个执行段（含 LLM 抽取）；③enablement 成功后 skip_persona（旧管线回复 job 为唯一客户回复，relay 门禁语义自然正确）；④结果字段从执行后 case 重取。发布过程：AWS 会话过期→重新登录→旧 prompt pr-434d9524e18d 已被取代（源 schema 状态 failed/superseded by newer candidate）→新 prompt pr-281f5ed8ad68→旧 checkpoint 身份不匹配→rm checkpoint 全新发布全阶段 passed。live：provenance=e950e1ac、prompt=pr-281f5ed8ad68、api td :45 三合同 env 全对（archer/副作用=1/build ref 匹配）、worker td :45、部署后零错误。十套件 339 passed/26 subtests。"
     }
   ],
   "source_refs": [
