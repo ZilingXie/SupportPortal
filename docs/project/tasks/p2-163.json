@@ -187,6 +187,11 @@
       "at": "2026-09-18",
       "event": "route_family_fix",
       "summary": "13583 诊断：trigger 修复生效（reply job 正常 published、不再被 stale_customer_revision 取消）、skip_persona 生效、AppID 首条消息即抽取——但确认回复未送达 Zendesk（delivery worker 日志 production_zendesk_delivery_skipped failure_code=unregistered_automation）。根因=hermes 工具只设 route/execution_action 不设 route_family，is_registered_automation 要求 route_family∈{automated,billing_automation} 判定失败跳过发送。修复=工具补 route_family='automated'。"
+    },
+    {
+      "at": "2026-09-18",
+      "event": "ownership_gate_added",
+      "summary": "13593 诊断：前五个修复全部生效（route_family/trigger/skip_persona/AppID 抽取/回复 job published），delivery worker 尝试发送但被 ownership 检查拒绝（zendesk_assignment_unverified，assignee_id=unknown，工单 assignee=None）。根因=hermes 工具从未调用 _apply_ownership_gate/ensure_production_automation_ownership 认领 Zendesk 工单（legacy 在 intake 时认领，把 AI agent 指派到工单上）。修复=工具在业务执行前补 ownership gate（认领+失败走统一升级链）。第 6 个也是最后一个已知的 hermes×legacy 组合缺口。"
     }
   ]
 }

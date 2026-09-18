@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T10:26:26Z",
-  "source_base_commit": "bf3350525307602b605f61ac73afc5501bfa7e1b",
-  "registry_digest": "e92cfb123610341337a7894a1c1ab73da916fd9a44137bc58a1f3d519dc50ebc",
+  "generated_at": "2026-09-18T10:31:23Z",
+  "source_base_commit": "eb918dd4cc0c4b2e0d2fac69a9327f7978f1ccfa",
+  "registry_digest": "acb870704e26a339fcbc110b2797b952b08a9bd81de9d8150211f274d9a04ff3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -13356,6 +13356,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "route_family_fix",
           "summary": "13583 诊断：trigger 修复生效（reply job 正常 published、不再被 stale_customer_revision 取消）、skip_persona 生效、AppID 首条消息即抽取——但确认回复未送达 Zendesk（delivery worker 日志 production_zendesk_delivery_skipped failure_code=unregistered_automation）。根因=hermes 工具只设 route/execution_action 不设 route_family，is_registered_automation 要求 route_family∈{automated,billing_automation} 判定失败跳过发送。修复=工具补 route_family='automated'。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "ownership_gate_added",
+          "summary": "13593 诊断：前五个修复全部生效（route_family/trigger/skip_persona/AppID 抽取/回复 job published），delivery worker 尝试发送但被 ownership 检查拒绝（zendesk_assignment_unverified，assignee_id=unknown，工单 assignee=None）。根因=hermes 工具从未调用 _apply_ownership_gate/ensure_production_automation_ownership 认领 Zendesk 工单（legacy 在 intake 时认领，把 AI agent 指派到工单上）。修复=工具在业务执行前补 ownership gate（认领+失败走统一升级链）。第 6 个也是最后一个已知的 hermes×legacy 组合缺口。"
         }
       ]
     },
