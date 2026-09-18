@@ -2,17 +2,24 @@
   "schema_version": 2,
   "task_id": "p2-170",
   "title": "Preprod Hermes 调查回合开放 skills 工具集（枚举速查表可读，case 13582/13591 收尾）",
-  "status": "active",
+  "status": "done",
   "owner": "codex",
   "summary": "case 13582/13591 实证最后一环缺口：模型查到 Argus 原始遥测（事件序列/quitState）后卡在枚举语义（quitState=1、reason=5、apiId=10 无权威解释），而映射就躺在已装载的 argus skill 参考文档（error_codes.md 的 vos.uquit sts 表：1=S_QUIT 即 App 主动 leaveChannel 正常退出；counter_ids.md 含完整 counter 表与网络诊断阈值）里——case 调查回合未启用 skills 工具集，108 条技能目录可见不可读（p2-158 已知副作用）。修复=INVESTIGATION_WORK_TOOLSETS 增加 skills（与 adhoc 一致），平台侧 skills enabled+configured 已实证。需 preprod 发布。",
-  "next_action": "发布后功能探针（quitState 枚举查阅）+ 用户真实 @ 复验后收口 done",
+  "next_action": "",
   "acceptance_criteria": [
     "调查/反馈回合 work run 的 enabled_toolsets 含 skills；automation 方向不回归。",
     "回归全绿 + preprod 发布三检绿。",
     "功能探针：调查风格提问下模型经 skills_list/skill_view 引用枚举表作答（如 quitState=1=S_QUIT）。"
   ],
   "blockers": [],
-  "evidence": [],
+  "evidence": [
+    {
+      "type": "deployment",
+      "label": "发布 r20260918-e7923e3 + 真实用户验证",
+      "command": "release_automation_ecs_pipeline.sh --release-commit e7923e3a… --prompt-release-id pr-281f5ed8ad68 --through preproduction --automation-case-engine hermes --hermes-agent-enabled",
+      "details": "全阶段 passed（route/worker/api rollout/activation；prompt 复用 active 零变更）。真实用户验证代探针：13591 @bot 问「quitState=1 在 vos.uquit 里是什么含义」→ 回复 evidence 首条即 skill_view，正确引用 sts 枚举表（1=kClosedByPeer 正常关闭，排除 2/5/10），并纠 sts vs quitState 字段别名；随后 post_join_leave_rejoin 结论 + serviceId/installId 同安装证据 + reason 语义落定（LEAVE_CHANNEL）——枚举速查表可读缺口实证闭合。"
+    }
+  ],
   "source_refs": [
     "backend/services/automation_hermes_agent.py"
   ],
@@ -28,6 +35,11 @@
       "at": "2026-09-18",
       "event": "created",
       "summary": "用户复盘 13591 第二轮回复（events 已通、枚举语义缺口）后拍板实施②（此前已论证：一行改动收益最大）。"
+    },
+    {
+      "at": "2026-09-18",
+      "event": "done",
+      "summary": "发布+真实验证双收口（用户 quitState 提问回合为最终验收，超出原定功能探针）。"
     }
   ]
 }

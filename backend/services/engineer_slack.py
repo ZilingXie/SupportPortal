@@ -685,7 +685,11 @@ def notify_hermes_draft_pending(
         body_lines.append(
             "Guardrail notes: " + "; ".join(_clean_text(item) for item in record["blockers"])
         )
-    body_lines.append(f"Draft: {_clean_text(draft_content)[:700]}")
+    # Full draft content on purpose: the Slack review message is the primary
+    # approval surface, and a truncated preview reads like a broken draft
+    # (owner decision 2026-09-18, case 13591). Persona replies are far below
+    # Slack's message limit.
+    body_lines.append(f"Draft: {_clean_text(draft_content)}")
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-draft-pending:{draft_id}",
