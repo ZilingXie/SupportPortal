@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-169",
+  "title": "Preprod Hermes Argus events/counters 数组形态修复（case 13582/13591 根因，td:31）",
+  "status": "done",
+  "owner": "codex",
+  "summary": "case 13582/13591 实证 events/counters 端点 HTTP 500 的根因=插件把列表参数（sids/eventIds/counterIds/peerUids）发成逗号字符串，服务端按 JSON 数组反序列化直接崩溃（对照同事在用的 argus-mcp 源码+直连探针三重验证：字符串→500、数组→200）。附带发现 counters 的 peerUids 文档标可选、实际必填非空（400 'cannot be null/empty'）。修复=argus_call_search v1.1.2（hermes-deploy 319520c）：POST 分支四个列表参数统一转 JSON 数组（模型传逗号字符串或数组均可，数字元素转 int）；counters 的 peerUids 改必填并在描述注明填对方参与者 uid；GET 工具保持逗号查询串（已验证可用）。镜像 hermes-20260918-argus-arrays（62d4199a）+ td:31（克隆 :30 仅换镜像）。自然语言零提示探针通过：模型自主拉到 13582 首段会话真实事件流——启动期 xlaJoinChannelTimeout/xlaPublishAudioTimeout（5000/5002ms）→connectionStateChange 2→3→退出时显式客户端 quit 序列（rtcInvocation apiId=10→quit→3→1 reason=5），即本案首退并非网络掉线的直接证据。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "POST 列表参数发 JSON 数组（字符串/数组输入皆可，数字转 int）；counters peerUids 必填。",
+    "td:31 上线五容器 HEALTHY。",
+    "自然语言探针：模型自主完成 events 检索并回报真实事件名与序列（非 500）。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "v1.1.2 本地自检",
+      "command": "python3 冒烟：counters 逗号串→数组（sids=[..]/counterIds=[1,2]/peerUids=[727094004]、ISO 时间转 epoch）；缺 peerUids 显式报错；events 数组透传+eventIds 串转 [10,20]；GET 工具逗号查询串不回归；counters schema required 含 peerUids",
+      "details": "全过；镜像内 plugin.yaml=1.1.2、_body_list_value 存在、md5 与源一致。"
+    },
+    {
+      "type": "deployment",
+      "label": "直连解码 + 镜像 + td:31 + 自然语言探针",
+      "command": "zacBot curl 直连：events 逗号串 500 / 数组 200（真实事件行）；counters 缺 peerUids 400→带真实 peer uid 200；overlay 构建 push（digest 62d4199a）→ td:31 → rollout COMPLETED 五容器 HEALTHY；临时 SG 探针（用后已撤）POST /v1/runs enabled_toolsets=[common]",
+      "details": "探针=工程师原话（channel/UTC 窗口/双 UID+查首退事件与 counter），零格式提示。OUTPUT：定位首段 SID 后拉到真实事件流（vosdk.error 1035 / vocs ec=104 / vos ec=106 / xlaPublishAudioTimeout 5002 / xlaJoinChannelTimeout 5000 / connectionStateChange 2→3 reason=1 / 退出序列 rtcInvocation apiId=10→quit→3→1 reason=5），并正确声明该序列支持客户端主动退出但未命名 apiId=10。"
+    }
+  ],
+  "source_refs": [
+    "docs/deploy_hermes_investigator_ecs.md"
+  ],
+  "created_at": "2026-09-18",
+  "updated_at": "2026-09-18",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-18",
+      "event": "created",
+      "summary": "13582 第三轮与新案 13591 均 events/counters 500；只读直连探针+argus-mcp 源码对照解码根因（字符串 vs JSON 数组、peerUids 实际必填）。用户确认后实施 v1.1.2。"
+    },
+    {
+      "at": "2026-09-18",
+      "event": "done",
+      "summary": "v1.1.2+td:31 上线；自然语言探针拉到 13582 首退真实事件序列（显式客户端 quit，非网络掉线）。用户在 13582/13591 线程真实 @ 复验待做；该事件证据可直接支撑两案的客户回复（首退=客户端侧退出序列，UID 变化仍需客户端日志佐证）。"
+    }
+  ]
+}

@@ -253,6 +253,14 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 
 验证(决定性,自然语言零提示探针):输入=工程师原话风格报告(channel/UTC 窗口/双 UID)→ 模型自主检索到两段会话(callId/时长与直连复核一致)并继续下钻双 UID 用户会话(设备/SDK/网络/quitState)——调查链完全打通。**教训(叠加 p2-167):给模型的工具能力必须写在 description 层(渐进披露下模型默认看不到参数 schema)。** 回滚:`update-service --task-definition :29`。
 
+## 2026-09-18 Preproduction Hermes Argus events/counters 数组形态修复(p2-169,td:31)
+
+根因(13582 第三轮/新案 13591):events/counters 端点 HTTP 500=插件把列表参数(sids/eventIds/counterIds/peerUids)发成**逗号字符串**,服务端按 **JSON 数组**反序列化直接崩溃(直连探针三重验证:字符串→500/数组→events 立即 200 真实事件;对照同事在用的 argus-mcp 源码即数组形态——它 zod 定义 sids/eventIds 均 array)。附带服务端契约纠偏:**counters 的 peerUids 文档标可选、实际必填且非空**(400 "peerUids cannot be null/empty")。
+
+修复(argus_call_search v1.1.2,hermes-deploy `319520c`):POST 分支四个列表参数统一 `_body_list_value` 转 JSON 数组(模型传逗号串或数组皆可,数字元素转 int);counters `peerUids` 改必填并描述注明填对方参与者 uid;GET 工具保持逗号查询串(直连已证可用)。镜像 `hermes-20260918-argus-arrays`(digest `sha256:62d4199a…`)、td:31=克隆 :30 仅换 hermes 镜像,五容器 HEALTHY。
+
+验证(自然语言零提示探针):模型自主定位首段会话并**拉到 13582 真实事件流**——启动期 `xlaJoinChannelTimeout`/`xlaPublishAudioTimeout`(5000/5002ms)、`connectionStateChange 2→3 reason=1`,退出为显式客户端序列 `rtcInvocation apiId=10`→`quit`→`connectionStateChange 3→1 reason=5`——即首退非网络掉线的直接服务端证据(可支撑两案客户回复;UID 变化机制仍需客户端日志)。教训:**对接内部 API 时先用同事在用的客户端实现对照请求形态,文档(尤其"可选"标注)不可信。** 回滚:`update-service --task-definition :30`。
+
 ## 2026-09-14 Preproduction Hermes 装载 Agora Skills(p2-158,一次性 drop task)
 
 目的:给调查回合补充 Agora 内部排障/调查知识面(55 项技能:token/AVSync/静音/卡顿/首帧/codec/设备网络画像/QoE/回归调查等)。来源=agora-skills 私仓(`ssh://git@git.agoralab.co/ai/agora-skills.git`)的用户本地克隆(pull 至 `0deb0e2`);其 `.codex/INSTALL.md` 是 Codex symlink 流程,容器内 SSH clone 不可行 → 适配为「本地 pull → staging 剔除 → drop 镜像 → one-off run-task 拷入」。
