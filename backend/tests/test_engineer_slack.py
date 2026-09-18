@@ -1261,6 +1261,29 @@ class EngineerSlackWorkerTests(unittest.TestCase):
         self.assertEqual(value["environment"], "preproduction")
         self.assertEqual(value["zendesk_ticket_id"], "13424")
 
+    def test_hermes_draft_pending_carries_full_draft_content(self) -> None:
+        # Owner decision 2026-09-18: Slack is the primary approval surface, so
+        # the review message must carry the complete draft (case 13591 — the
+        # old 700-char preview read like a truncated/broken draft).
+        long_draft = "Hi Ziling,\n\n" + ("We verified the reported behavior. " * 60)
+        self.assertGreater(len(long_draft), 1500)
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.415"}),
+        ) as urlopen:
+            notify_hermes_draft_pending(
+                ticket_id="13591",
+                turn_id="turn-3",
+                draft_id="draft-3",
+                draft_content=long_draft,
+                guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
+                environment="preproduction",
+                thread_ts="100.000",
+            )
+        payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        normalized = " ".join(long_draft.split())
+        self.assertIn(f"Draft: {normalized}", payload["text"])
+
     def test_hermes_draft_blocked_root_has_reason_and_no_button(self) -> None:
         with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
             "backend.services.engineer_slack.urllib.request.urlopen",

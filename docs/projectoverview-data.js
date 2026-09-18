@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T15:19:35Z",
-  "source_base_commit": "270d05079f848adea38fb5055e523d9bb83df25c",
-  "registry_digest": "f2fc5e75c24b11bfea3bb2eb9997ff76870c7a1b02a76e3528aa2211fbba7117",
+  "generated_at": "2026-09-18T16:46:22Z",
+  "source_base_commit": "e7923e3afb18fffb8677afc8dffd0525beb2332e",
+  "registry_digest": "76d9881ae883ef7a70f7ae0904b74ba525810bf497b885b4e9a8b05624917470",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3549,6 +3549,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "探针=工程师原话（channel/UTC 窗口/双 UID+查首退事件与 counter），零格式提示。OUTPUT：定位首段 SID 后拉到真实事件流（vosdk.error 1035 / vocs ec=104 / vos ec=106 / xlaPublishAudioTimeout 5002 / xlaJoinChannelTimeout 5000 / connectionStateChange 2→3 reason=1 / 退出序列 rtcInvocation apiId=10→quit→3→1 reason=5），并正确声明该序列支持客户端主动退出但未命名 apiId=10。"
         },
         {
+          "type": "deployment",
+          "label": "发布 r20260918-e7923e3 + 真实用户验证",
+          "command": "release_automation_ecs_pipeline.sh --release-commit e7923e3a… --prompt-release-id pr-281f5ed8ad68 --through preproduction --automation-case-engine hermes --hermes-agent-enabled",
+          "details": "全阶段 passed（route/worker/api rollout/activation；prompt 复用 active 零变更）。真实用户验证代探针：13591 @bot 问「quitState=1 在 vos.uquit 里是什么含义」→ 回复 evidence 首条即 skill_view，正确引用 sts 枚举表（1=kClosedByPeer 正常关闭，排除 2/5/10），并纠 sts vs quitState 字段别名；随后 post_join_leave_rejoin 结论 + serviceId/installId 同安装证据 + reason 语义落定（LEAVE_CHANNEL）——枚举速查表可读缺口实证闭合。"
+        },
+        {
+          "type": "test",
+          "label": "全文显示用例 + 回归",
+          "command": "pytest -q backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_api.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_worker.py",
+          "details": "141 passed + 3 subtests；新增 test_hermes_draft_pending_carries_full_draft_content（>1500 字符全文出现在 message text，_clean_text 规范化后比对）。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -3892,8 +3904,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 36,
-      "done_count": 17,
+      "task_count": 38,
+      "done_count": 18,
       "blocked_count": 0
     },
     {
@@ -13700,17 +13712,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-170",
       "title": "Preprod Hermes 调查回合开放 skills 工具集（枚举速查表可读，case 13582/13591 收尾）",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "summary": "case 13582/13591 实证最后一环缺口：模型查到 Argus 原始遥测（事件序列/quitState）后卡在枚举语义（quitState=1、reason=5、apiId=10 无权威解释），而映射就躺在已装载的 argus skill 参考文档（error_codes.md 的 vos.uquit sts 表：1=S_QUIT 即 App 主动 leaveChannel 正常退出；counter_ids.md 含完整 counter 表与网络诊断阈值）里——case 调查回合未启用 skills 工具集，108 条技能目录可见不可读（p2-158 已知副作用）。修复=INVESTIGATION_WORK_TOOLSETS 增加 skills（与 adhoc 一致），平台侧 skills enabled+configured 已实证。需 preprod 发布。",
-      "next_action": "发布后功能探针（quitState 枚举查阅）+ 用户真实 @ 复验后收口 done",
+      "next_action": "",
       "acceptance_criteria": [
         "调查/反馈回合 work run 的 enabled_toolsets 含 skills；automation 方向不回归。",
         "回归全绿 + preprod 发布三检绿。",
         "功能探针：调查风格提问下模型经 skills_list/skill_view 引用枚举表作答（如 quitState=1=S_QUIT）。"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "deployment",
+          "label": "发布 r20260918-e7923e3 + 真实用户验证",
+          "command": "release_automation_ecs_pipeline.sh --release-commit e7923e3a… --prompt-release-id pr-281f5ed8ad68 --through preproduction --automation-case-engine hermes --hermes-agent-enabled",
+          "details": "全阶段 passed（route/worker/api rollout/activation；prompt 复用 active 零变更）。真实用户验证代探针：13591 @bot 问「quitState=1 在 vos.uquit 里是什么含义」→ 回复 evidence 首条即 skill_view，正确引用 sts 枚举表（1=kClosedByPeer 正常关闭，排除 2/5/10），并纠 sts vs quitState 字段别名；随后 post_join_leave_rejoin 结论 + serviceId/installId 同安装证据 + reason 语义落定（LEAVE_CHANNEL）——枚举速查表可读缺口实证闭合。"
+        }
+      ],
       "source_refs": [
         "backend/services/automation_hermes_agent.py"
       ],
@@ -13726,6 +13745,80 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "created",
           "summary": "用户复盘 13591 第二轮回复（events 已通、枚举语义缺口）后拍板实施②（此前已论证：一行改动收益最大）。"
+        },
+        {
+          "at": "2026-09-18",
+          "event": "done",
+          "summary": "发布+真实验证双收口（用户 quitState 提问回合为最终验收，超出原定功能探针）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-171",
+      "title": "Slack 草稿审批消息显示全文（去 700 字符预览截断）",
+      "status": "active",
+      "owner": "codex",
+      "summary": "case 13591 实证：draft-pending Slack 消息只渲染草稿前 700 字符（engineer_slack.py notify_hermes_draft_pending 的 [:700]）且无截断标记，用户误以为草稿不完整（实际库中全文、Zendesk 发布全文）。用户拍板：Slack 是主审批面，就要在 Slack 里看到完整内容。修复=去截断直发全文（persona 回复体量远低于 Slack 消息上限，guardrail 已约束长度）。新增 >1500 字符全文断言测试。待 preprod 发布后收口。",
+      "next_action": "preprod 发布 + 三检 + 下一单草稿观察后收口 done",
+      "acceptance_criteria": [
+        "draft-pending 消息包含草稿全文（>1500 字符用例锁定）。",
+        "回归全绿 + preprod 发布三检绿。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "全文显示用例 + 回归",
+          "command": "pytest -q backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_api.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_worker.py",
+          "details": "141 passed + 3 subtests；新增 test_hermes_draft_pending_carries_full_draft_content（>1500 字符全文出现在 message text，_clean_text 规范化后比对）。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/engineer_slack.py"
+      ],
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户审阅 13591 草稿时发现 Slack 预览 700 字符截断无标记；明确要求 Slack 内看全文（否决 dashboard 查看与截断标记方案）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-172",
+      "title": "观察：调查回复措辞偏好经 TencentDB AgentMemory 沉淀（合同修订暂缓）",
+      "status": "planned",
+      "owner": "codex",
+      "summary": "用户对 13591 草稿提出三点措辞调整（①SDK 状态码只表述为记录到的调用/状态变化、不得措辞成业务原因已判定②推断用证据条件句式 based on the available records / consistent with，禁绝对句式③指称精确 initial/subsequent sessions）+四段结构（归因事实→条件推断→边界→合并请求）。会话内学习已实证（feedback 回合一次吸收、重写到位，draft-6127d561）。用户决策：暂缓写入 hermes-reply-contract（避免把演进偏好固化为不变量），先观察 AgentMemory：L0 已捕获该反馈对话，看 L1/L2 蒸馏是否提炼出措辞偏好条目、后续同类调查单召回是否生效。观察后决策：召回不可靠且偏好稳定 → 仅将①遥测归因（现有'不得呈现未确立根因'的自然延伸）升格进合同。",
+      "next_action": "约 2026-09-22 检查：MemoryPanel 查 L1/L2 是否长出措辞偏好条目；新开同类调查单看草稿是否自发带证据条件句式/遥测归因",
+      "acceptance_criteria": [
+        "观察记录：L1/L2 蒸馏结果 + 至少一张新调查单的草稿措辞对照。",
+        "决策记录：走记忆即可 or 升格①进合同（附依据）。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [],
+      "created_at": "2026-09-18",
+      "updated_at": "2026-09-18",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-18",
+          "event": "created",
+          "summary": "用户裁定：反馈优化走记忆沉淀路线，合同修订作为后备（召回不可靠时仅升格遥测归因一条）；过几天复查。"
         }
       ]
     },
@@ -19061,7 +19154,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
-        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
+        "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

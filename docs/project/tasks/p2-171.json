@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-171",
+  "title": "Slack 草稿审批消息显示全文（去 700 字符预览截断）",
+  "status": "active",
+  "owner": "codex",
+  "summary": "case 13591 实证：draft-pending Slack 消息只渲染草稿前 700 字符（engineer_slack.py notify_hermes_draft_pending 的 [:700]）且无截断标记，用户误以为草稿不完整（实际库中全文、Zendesk 发布全文）。用户拍板：Slack 是主审批面，就要在 Slack 里看到完整内容。修复=去截断直发全文（persona 回复体量远低于 Slack 消息上限，guardrail 已约束长度）。新增 >1500 字符全文断言测试。待 preprod 发布后收口。",
+  "next_action": "preprod 发布 + 三检 + 下一单草稿观察后收口 done",
+  "acceptance_criteria": [
+    "draft-pending 消息包含草稿全文（>1500 字符用例锁定）。",
+    "回归全绿 + preprod 发布三检绿。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "全文显示用例 + 回归",
+      "command": "pytest -q backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_api.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_worker.py",
+      "details": "141 passed + 3 subtests；新增 test_hermes_draft_pending_carries_full_draft_content（>1500 字符全文出现在 message text，_clean_text 规范化后比对）。"
+    }
+  ],
+  "source_refs": ["backend/services/engineer_slack.py"],
+  "created_at": "2026-09-18",
+  "updated_at": "2026-09-18",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {"at": "2026-09-18", "event": "created", "summary": "用户审阅 13591 草稿时发现 Slack 预览 700 字符截断无标记；明确要求 Slack 内看全文（否决 dashboard 查看与截断标记方案）。"}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-172",
+  "title": "观察：调查回复措辞偏好经 TencentDB AgentMemory 沉淀（合同修订暂缓）",
+  "status": "planned",
+  "owner": "codex",
+  "summary": "用户对 13591 草稿提出三点措辞调整（①SDK 状态码只表述为记录到的调用/状态变化、不得措辞成业务原因已判定②推断用证据条件句式 based on the available records / consistent with，禁绝对句式③指称精确 initial/subsequent sessions）+四段结构（归因事实→条件推断→边界→合并请求）。会话内学习已实证（feedback 回合一次吸收、重写到位，draft-6127d561）。用户决策：暂缓写入 hermes-reply-contract（避免把演进偏好固化为不变量），先观察 AgentMemory：L0 已捕获该反馈对话，看 L1/L2 蒸馏是否提炼出措辞偏好条目、后续同类调查单召回是否生效。观察后决策：召回不可靠且偏好稳定 → 仅将①遥测归因（现有'不得呈现未确立根因'的自然延伸）升格进合同。",
+  "next_action": "约 2026-09-22 检查：MemoryPanel 查 L1/L2 是否长出措辞偏好条目；新开同类调查单看草稿是否自发带证据条件句式/遥测归因",
+  "acceptance_criteria": [
+    "观察记录：L1/L2 蒸馏结果 + 至少一张新调查单的草稿措辞对照。",
+    "决策记录：走记忆即可 or 升格①进合同（附依据）。"
+  ],
+  "blockers": [],
+  "evidence": [],
+  "source_refs": [],
+  "created_at": "2026-09-18",
+  "updated_at": "2026-09-18",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {"at": "2026-09-18", "event": "created", "summary": "用户裁定：反馈优化走记忆沉淀路线，合同修订作为后备（召回不可靠时仅升格遥测归因一条）；过几天复查。"}
+  ]
+}
