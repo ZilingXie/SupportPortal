@@ -1628,7 +1628,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")
 
         self.assertIn(
-            "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed'))",
+            "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed', 'cancelled'))",
             sql_source,
         )
         self.assertIn(
@@ -1636,6 +1636,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
             repo_source,
         )
         self.assertIn("ALTER TABLE {} DROP CONSTRAINT IF EXISTS", repo_source)
+        # PR-E: the cancelled status (ticket closed mid-round) is a first-class
+        # terminal delivery state in both implementations and the constraint.
+        self.assertIn(
+            '"delivered", "outcome_unknown", "failed", "cancelled"}',
+            repo_source,
+        )
 
     def test_workspace_account_upsert_qualifies_existing_account_columns(self) -> None:
         repo_source = Path("backend/repositories/ticket_repository.py").read_text(encoding="utf-8")

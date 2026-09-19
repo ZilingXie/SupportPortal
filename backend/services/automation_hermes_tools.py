@@ -443,6 +443,23 @@ async def tool_execute_automation_action(
             attempt.get("automation_context") or account_case.get("automation_context") or {}
         )
 
+        # Acceptance gap #3 (13601): re-check turn freshness at the business-write
+        # boundary — field extraction and the waits above may have raced a
+        # cancel or supersede; a dead turn must not create replies or
+        # applications.
+        boundary_turn = store.get_hermes_turn(turn_id) or {}
+        if str(boundary_turn.get("status") or "") in {"cancel_requested", "cancelled", "superseded"}:
+            boundary_result = {
+                "status": "human_review_required",
+                "reason": "turn_cancelled_before_execution",
+                "route": normalized_route,
+            }
+            try:
+                store.record_hermes_turn_work(turn_id, work_result=boundary_result)
+            except Exception:
+                pass
+            return boundary_result
+
         if requires_human_review:
             account_case["automation_status"] = "human_review_required"
             account_case["execution_reason_code"] = f"{automation_handler}_field_extraction_failed"

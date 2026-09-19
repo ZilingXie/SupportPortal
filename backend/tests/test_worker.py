@@ -192,6 +192,19 @@ def _build_ticket(
     }
 
 
+def _ownership_assigned_with_status(ticket_status: str = ""):
+    from backend.services.account_automation_ownership import OwnershipGateResult
+
+    return OwnershipGateResult(
+        eligible=True,
+        state="assigned",
+        assignee_id="48557297720084",
+        group_id="27216254064148",
+        updated_at="2026-08-19T00:00:00+00:00",
+        ticket_status=ticket_status,
+    )
+
+
 def _ownership_assigned():
     from backend.services.account_automation_ownership import OwnershipGateResult
 
@@ -856,6 +869,175 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(saved_job["payload"]["cancel_reason"], "zendesk_ticket_closed")
         event = repository.record_event.call_args
         self.assertEqual(event.args[1], "automation_reply_cancelled_ticket_closed")
+
+    def test_solved_ticket_cancel_uses_real_repository_contract(self) -> None:
+        """Acceptance gap #1: the cancelled ledger status must be accepted by
+        the real repository validation, not just by a Mock."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-REAL",
+                "billing_ticket_id": "AC-REAL",
+                "client_ticket_id": "13601",
+                "zendesk_ticket_id": "13601",
+                "processing_profile": "production",
+                "automation_status": "automation",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "route": "enablement",
+                "created_at": "2026-09-19T00:00:00+00:00",
+                "updated_at": "2026-09-19T00:00:00+00:00",
+            }
+        )
+        repository.create_account_zendesk_comment_delivery(
+            account_case_id="AC-REAL",
+            message_id="msg-real-1",
+            zendesk_ticket_id="13601",
+            idempotency_key="key-real-1",
+            created_at="2026-09-19T00:00:00+00:00",
+            is_public=True,
+            target_status=None,
+            source="account",
+        )
+        solved_ownership = _ownership_assigned_with_status("solved")
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=solved_ownership,
+        ), patch.object(
+            worker,
+            "deliver_account_ai_message_as_internal_comment",
+        ) as deliver:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="13601",
+                message_id="msg-real-1",
+                job_id="job-real-1",
+            )
+        deliver.assert_not_called()
+        deliveries = repository._account_zendesk_comment_deliveries.values()
+        target = [d for d in deliveries if d["message_id"] == "msg-real-1"]
+        self.assertEqual(len(target), 1)
+        self.assertEqual(target[0]["status"], "cancelled")
+        self.assertEqual(target[0]["failure_code"], "zendesk_ticket_closed")
+        events = repository.list_ticket_events("13601")
+        self.assertIn(
+            "automation_reply_cancelled_ticket_closed",
+            [e.get("event_type") for e in events],
+        )
+        # The InMemory validation now rejects invalid statuses like PG does.
+        with self.assertRaises(ValueError):
+            repository.complete_account_zendesk_comment_delivery(
+                account_case_id="AC-REAL",
+                message_id="msg-real-12",
+                status="bogus",
+                zendesk_comment_id=None,
+                failure_code=None,
+                completed_at="2026-09-19T00:01:00+00:00",
+            )
+
+    def test_hermes_delivery_cancelled_when_ticket_solved(self) -> None:
+        """Acceptance gap #2: the hermes draft sender honors the closed-ticket
+        termination and the human-takeover stop."""
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-HERMES",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "13602",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+        }
+        repository.get_account_case.return_value = None
+        repository.get_account_case_comment_sync.return_value = {"comments_revision": ""}
+        from types import SimpleNamespace as _SN
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=_ownership_assigned_with_status("solved"),
+        ), patch.object(
+            worker,
+            "read_ticket_ownership_snapshot",
+            return_value=_SN(comments_revision="", ticket_status=""),
+        ), patch.object(worker, "add_ticket_comment") as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                {
+                    "account_case_id": "AC-HERMES",
+                    "message_id": "draft-1",
+                    "status": "queued",
+                    "immutable_content": "draft body",
+                    "zendesk_ticket_id": "13602",
+                    "comments_revision": "",
+                }
+            )
+        add_comment.assert_not_called()
+        self.assertEqual(
+            repository.complete_account_zendesk_comment_delivery.call_count, 1
+        )
+        completed = repository.complete_account_zendesk_comment_delivery.call_args.kwargs
+        self.assertEqual(completed.get("status"), "cancelled")
+        self.assertEqual(completed.get("failure_code"), "zendesk_ticket_closed")
+        self.assertEqual(completed.get("message_id"), "draft-1")
+
+    def test_hermes_delivery_stopped_when_human_took_over(self) -> None:
+        from backend.services.account_automation_ownership import OwnershipGateResult
+
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-HERMES2",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "13603",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+        }
+        repository.get_account_case.return_value = None
+        repository.get_account_case_comment_sync.return_value = {"comments_revision": ""}
+        takeover = OwnershipGateResult(
+            eligible=True,
+            state="human_reassigned",
+            assignee_id="31116509485716",
+            failure_code="zendesk_ownership_human_reassigned",
+            failure_category="policy",
+            updated_at="2026-09-19T00:00:00+00:00",
+            ticket_status="open",
+        )
+        from types import SimpleNamespace as _SN
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=takeover,
+        ), patch.object(
+            worker,
+            "read_ticket_ownership_snapshot",
+            return_value=_SN(comments_revision="", ticket_status=""),
+        ), patch.object(worker, "add_ticket_comment") as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                {
+                    "account_case_id": "AC-HERMES2",
+                    "message_id": "draft-2",
+                    "status": "queued",
+                    "immutable_content": "draft body",
+                    "zendesk_ticket_id": "13603",
+                    "comments_revision": "",
+                }
+            )
+        add_comment.assert_not_called()
+        completed = repository.complete_account_zendesk_comment_delivery.call_args
+        self.assertEqual(completed.kwargs.get("status"), "failed")
+        self.assertEqual(
+            completed.kwargs.get("failure_code"), "zendesk_ownership_human_reassigned"
+        )
 
     def test_queued_delivery_is_claimed_once_and_written_as_public_comment(self) -> None:
         repository = Mock()

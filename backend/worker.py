@@ -2066,6 +2066,69 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                 message_id,
             )
             return
+
+        # Acceptance gap #2 (13601): the hermes path previously only fenced on
+        # revisions; a ticket a human took over or that was solved/closed must
+        # stop here exactly like the account-source path.
+        account_case_for_guard = ticket_repository.get_account_case_by_ticket_id(
+            zendesk_ticket_id
+        )
+        if isinstance(account_case_for_guard, dict):
+            guard_ownership = ensure_production_automation_ownership(
+                account_case_for_guard,
+                mode="verify",
+                updated_at=now_iso(),
+            )
+            guard_status = str(guard_ownership.ticket_status or "").strip().lower()
+            if guard_status in {"solved", "closed"}:
+                ticket_repository.complete_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    status="cancelled",
+                    zendesk_comment_id=None,
+                    failure_code="zendesk_ticket_closed",
+                    completed_at=now_iso(),
+                )
+                ticket_repository.record_event(
+                    zendesk_ticket_id or None,
+                    "automation_reply_cancelled_ticket_closed",
+                    {
+                        "account_case_id": account_case_id,
+                        "message_id": message_id,
+                        "source": "hermes",
+                        "ticket_status": guard_status,
+                        "attempted_at": now_iso(),
+                    },
+                )
+                LOGGER.warning(
+                    "hermes_zendesk_delivery_cancelled_ticket_closed ticket_id=%s "
+                    "account_case_id=%s message_id=%s ticket_status=%s",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    guard_status,
+                )
+                return
+            if guard_ownership.failure_category == "policy" or not guard_ownership.confirmed:
+                ticket_repository.complete_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    status="failed",
+                    zendesk_comment_id=None,
+                    failure_code=guard_ownership.failure_code
+                    or "zendesk_ownership_unverified",
+                    completed_at=now_iso(),
+                )
+                LOGGER.warning(
+                    "hermes_zendesk_delivery_stopped ticket_id=%s account_case_id=%s "
+                    "message_id=%s failure_code=%s ownership_state=%s",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    guard_ownership.failure_code or "unknown",
+                    guard_ownership.state,
+                )
+                return
         claimed = ticket_repository.claim_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
             message_id=message_id,
