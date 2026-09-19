@@ -102,8 +102,13 @@
      `task_id, event_id, message_id, turn_sequence, expected_task_version, idempotency_key,
      listener_instance_id, readiness_epoch` 全必填、拒绝未知字段；恰好一次（event→acked、
      message→delivered）。
-   - **通知类事件**（delivery_changed 等，无 message 绑定）：`POST /workers/{id}/events/{event_id}/ack`，
+   - **通知类事件**（delivery_changed 等）：`POST /workers/{id}/events/{event_id}/ack`，
      body 仅 `{idempotency_key, listener_instance_id, readiness_epoch}`。
+     ⚠ 2026-09-19 实测勘误（工单 13601）：`message.delivery_changed` 通知**可以携带
+     `message_id`**（指向自己出站的消息），且事件对象带 `can_transition_message=false`、
+     `can_transition_task=0`。对这类事件使用消息 ack 形态会被服务器 409 拒绝、ack 租约过期后
+     恢复队列每秒重投形成死循环——分类必须看 `event_type`/`can_transition_message`/消息的
+     `from_agent_id`，不能只看有无 `message_id`；出站回执一律走通知形态。
    - NACK：`POST .../messages/{id}/delivery-fail`，同消息 ack 字段 + `reason`，**reason 仅允许
      `listener_persistence_failed`**（效果=park）。
 3. **v0.6 没有 `/close`**（实测 410 "mutations are retired"）。终态只有 `/complete`（**仅 requester**，

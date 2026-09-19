@@ -277,6 +277,7 @@ class AgentRelayClient:
         readiness_epoch: int,
         turn_sequence: int | None = None,
         expected_task_version: int | None = None,
+        light: bool = False,
     ) -> None:
         """ACK one pulled event.
 
@@ -285,6 +286,12 @@ class AgentRelayClient:
         taken from a fresh ``GET /tasks/{id}`` — the server rejects stale
         versions and the ack itself advances the task version.  Notification
         events use the lighter ``/events/{event_id}/ack`` form.
+
+        ``light=True`` forces the notification form for an event that carries
+        a ``message_id`` but is a delivery/status notice, not a turn message
+        (the server stamps those ``can_transition_message=false``; ticket
+        13601: the fenced message ack for our own dispatch receipt 409'd
+        forever and redelivered every second).
         """
         event_id = str(event.get("event_id") or "").strip()
         if not event_id:
@@ -295,7 +302,7 @@ class AgentRelayClient:
             )
         message_id = str(event.get("message_id") or "").strip()
         task_id = str(event.get("task_id") or "").strip()
-        if message_id and task_id:
+        if message_id and task_id and not light:
             if turn_sequence is None or expected_task_version is None:
                 raise AgentRelayError(
                     "agentrelay_event_invalid",
