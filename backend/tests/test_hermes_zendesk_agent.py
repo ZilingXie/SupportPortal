@@ -346,6 +346,11 @@ class TestAgentTurnProcessor:
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="automation", route="enablement"
                 )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
         processor = HermesAgentTurnProcessor(
@@ -417,6 +422,11 @@ class TestAgentTurnProcessor:
                 store.record_hermes_turn_direction(
                     handoff2["turn_id"], direction="automation", route="enablement"
                 )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff2["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
 
         client2 = FakeHermesClient(on_run_completed=on_run_completed2)
         processor2 = HermesAgentTurnProcessor(
@@ -470,6 +480,11 @@ class TestAgentTurnProcessor:
                 store.record_hermes_turn_direction(
                     handoff3["turn_id"], direction="automation", route="enablement"
                 )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff3["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
 
         client3 = FakeHermesClient(on_run_completed=on_run_completed3)
         processor3 = HermesAgentTurnProcessor(
@@ -487,6 +502,255 @@ class TestAgentTurnProcessor:
                 body_counts[m["content"]] = body_counts.get(m["content"], 0) + 1
         assert all(count == 1 for count in body_counts.values()), body_counts
 
+    def _automation_repository(self):
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Enable Media Relay",
+                "status": "open",
+                "created_at": "2026-09-08T10:00:00Z",
+                "updated_at": "2026-09-08T10:00:00Z",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Please enable media relay for "
+                        "0123456789abcdef0123456789abcdef.",
+                        "created_at": "2026-09-08T10:00:00Z",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-123",
+                "billing_ticket_id": "AC-123",
+                "client_ticket_id": "123",
+                "zendesk_ticket_id": "123",
+                "processing_profile": "preproduction",
+                "automation_status": "automation",
+                "route": "enablement",
+                "collected_fields": {
+                    "app_id": "0123456789abcdef0123456789abcdef",
+                    "requested_feature": "media_relay",
+                },
+                "internal_email_payload": None,
+                "internal_email_send_status": "not_applicable",
+            }
+        )
+        return repository
+
+    def test_ownership_claim_runs_between_route_and_work(self) -> None:
+        """PR-B (13601): the worker claims the Zendesk ticket after the route
+        phase confirms automation and BEFORE the work run is submitted, so
+        the ~90s claim never sits on the engine's tool request (60s ALB)."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository = self._automation_repository()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        order: list[str] = []
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                order.append("route-submitted")
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                order.append("work-submitted")
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+
+        def claim_side_effect(case, **kwargs):
+            order.append("claim")
+            return gate_result
+
+        with patch.dict(
+            os.environ, {"AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED": "1"}, clear=False
+        ), patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            side_effect=claim_side_effect,
+        ) as ownership_mock:
+            outcome = processor.process(agent_job)
+
+        assert outcome["status"] == "completed"
+        ownership_mock.assert_called_once()
+        assert ownership_mock.call_args.kwargs.get("mode") == "gate"
+        # The claim happened after the route phase and before the work run
+        # was submitted to the engine.
+        assert order.index("claim") < order.index("work-submitted")
+        assert order.index("claim") > order.index("route-submitted")
+        # The claim journaled its event and saved the normalized family.
+        events = repository.list_ticket_events("123")
+        ownership_events = [
+            e for e in events if e.get("event_type") == "zendesk_ai_ownership"
+        ]
+        assert len(ownership_events) == 1
+        assert ownership_events[0]["payload"]["state"] == "assigned"
+        assert repository.get_account_case("AC-123")["route_family"] == "automated"
+
+    def test_work_connection_break_waits_for_late_terminal_result(self) -> None:
+        """PR-B (13601 504): the engine work run returned while the tool was
+        still executing server-side (running marker only); the worker waits
+        for the terminal result and consumes exactly one conclusion."""
+        import threading
+
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                # Tool started (running marker) but its connection broke; the
+                # api-side execution finishes shortly after.
+                store.record_hermes_turn_work(
+                    handoff["turn_id"], work_result={"status": "running", "route": "enablement"}
+                )
+                threading.Timer(
+                    0.05,
+                    lambda: store.record_hermes_turn_work(
+                        handoff["turn_id"],
+                        work_result={
+                            "status": "workflow_completed",
+                            "outcome": "review_requested",
+                            "skip_persona": True,
+                        },
+                    ),
+                ).start()
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=None,
+            poll_interval_seconds=0.01,
+            work_result_wait_seconds=5.0,
+        )
+        outcome = processor.process(agent_job)
+        assert outcome["status"] == "completed"
+        assert outcome["reason"] == "review_requested"
+        # route + work only: persona never ran (skip_persona honored).
+        assert len(client.submissions) == 2
+
+    def test_work_result_never_lands_fails_closed_without_persona(self) -> None:
+        """PR-B: a work run that ends with only a running marker and never
+        lands a terminal result must fail closed — no persona, no success."""
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        repository = self._automation_repository()
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"], work_result={"status": "running", "route": "enablement"}
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+            work_result_wait_seconds=0.05,
+        )
+        from types import SimpleNamespace as NS
+
+        escalate = NS(status="escalated")
+        notified: list[dict] = []
+        with patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=escalate,
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ):
+            outcome = processor.process(agent_job)
+
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "work_result_missing"
+        # Unified handoff ran; persona was never submitted.
+        escalate_mock.assert_called_once()
+        assert len(notified) == 1
+        assert len(client.submissions) == 2  # route + work only
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["work_result"]["status"] == "human_review_required"
+        assert turn["work_result"]["reason"] == "work_result_missing"
+
+    def test_work_phase_without_tool_invocation_fails_closed(self) -> None:
+        """PR-B: an automation work run that never invoked the tool (no
+        work_result at all) is not success either — fail fast."""
+        from types import SimpleNamespace
+
+        store = _store()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+        repository = self._automation_repository()
+
+        def on_run_completed(run_id, idempotency_key):
+            if idempotency_key.rsplit(":", 1)[-1] == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+            work_result_wait_seconds=5.0,
+        )
+        with patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=SimpleNamespace(status="escalated"),
+        ) as escalate_mock:
+            outcome = processor.process(agent_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "work_result_missing"
+        escalate_mock.assert_called_once()
+        assert len(client.submissions) == 2  # persona never ran
+
     def test_full_turn_runs_route_work_persona_with_phase_runs(self) -> None:
         store = _store()
         handoff, agent_job = self._hand_off_claim(store, _event())
@@ -498,6 +762,13 @@ class TestAgentTurnProcessor:
             if phase == "route":
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                # The real tool records its business conclusion (PR-B: the
+                # processor treats a missing work_result as failure).
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
                 )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
@@ -700,6 +971,11 @@ class TestAgentTurnProcessor:
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="automation", route="enablement"
                 )
+            elif phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
             elif phase == "persona":
                 store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
                 with patch(
@@ -852,9 +1128,15 @@ class TestAgentTurnProcessor:
         handoff, agent_job = self._hand_off_claim(store, _event())
 
         def on_run_completed(run_id, idempotency_key):
-            if idempotency_key.rsplit(":", 1)[-1] == "route":
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
                 store.record_hermes_turn_direction(
                     handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
                 )
 
         client = FakeHermesClient(on_run_completed=on_run_completed)
@@ -1349,6 +1631,11 @@ class TestWorkerAgentTurnLoop:
         def on_run_completed(run_id, idempotency_key):
             if idempotency_key.endswith(":route"):
                 store.record_hermes_turn_direction(handoff["turn_id"], direction="automation", route="enablement")
+            if idempotency_key.endswith(":work"):
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
 
         settings = _settings("worker")
         worker = AutomationWorker(

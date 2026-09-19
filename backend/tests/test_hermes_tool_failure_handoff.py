@@ -403,7 +403,9 @@ class ToolFailureHandoffTests(unittest.TestCase):
         # The gate ran (pre-fix it was skipped: eligibility saw an empty
         # route_family) and saw the normalized route family on the case.
         ownership_mock.assert_called_once()
-        self.assertEqual(ownership_mock.call_args.kwargs.get("mode"), "gate")
+        # PR-B: the worker claims (gate) before the work run; the tool only
+        # re-verifies read-only (the 60s ALB idle timeout kills longer calls).
+        self.assertEqual(ownership_mock.call_args.kwargs.get("mode"), "verify")
         gate_case = ownership_mock.call_args.args[0]
         self.assertEqual(gate_case.get("route_family"), "automated")
         # The claim result is journaled and the case saved with the family.
@@ -468,7 +470,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         ownership_mock.assert_called_once()
         self.assertEqual(result["status"], "human_review_required")
         self.assertIn(
-            "ownership_gate_zendesk_ownership_human_reassigned", result["reason"]
+            "ownership_verify_zendesk_ownership_human_reassigned", result["reason"]
         )
         escalate_mock.assert_called_once()
         notify_mock.assert_called_once()
@@ -489,6 +491,88 @@ class ToolFailureHandoffTests(unittest.TestCase):
         work_result = turn.get("work_result")
         self.assertIsInstance(work_result, dict)
         self.assertEqual(work_result["status"], "human_review_required")
+
+
+    def test_tool_replay_returns_recorded_result_without_reexecution(self) -> None:
+        """PR-B: a second invocation on the same turn replays the recorded
+        business result; external actions never run twice."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        complete = NS(
+            status="ok",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "0123456789abcdef0123456789abcdef",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "media relay",
+            },
+            requires_human_review=False,
+            audit_payload=lambda: {"status": "ok"},
+            follow_up=None,
+        )
+        workflow_calls: list[dict] = []
+
+        async def fake_workflow(**kwargs):
+            workflow_calls.append(kwargs)
+            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.automation_account_intake.extract_enablement_fields",
+            return_value=complete,
+        ), patch(
+            "backend.services.automation_account_intake._run_enablement_workflow",
+            side_effect=fake_workflow,
+        ) as workflow_mock, patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=NS(status="escalated"),
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            return_value={"status": "sent"},
+        ):
+            first = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+            second = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+
+        self.assertEqual(first["status"], "workflow_completed")
+        self.assertEqual(second, first)
+        workflow_mock.assert_called_once()
+        self.assertEqual(len(workflow_calls), 1)
 
 
 if __name__ == "__main__":

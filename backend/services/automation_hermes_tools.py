@@ -202,6 +202,17 @@ async def tool_execute_automation_action(
         )
     context = _resolve_turn_context(store, repository, turn_id)
     turn = context["turn"]
+    # Idempotent re-invocation FIRST: a terminal business result recorded for
+    # this turn replays without touching the direction state (the success
+    # path parks the binding, which would otherwise fail the direction check
+    # below) and without re-running external actions (ticket 13601).
+    prior_work = turn.get("work_result")
+    if (
+        isinstance(prior_work, dict)
+        and str(prior_work.get("status") or "").strip()
+        and str(prior_work.get("status") or "").strip() != "running"
+    ):
+        return dict(prior_work)
     binding = context["binding"]
     if str(binding["direction"]) != "automation":
         raise HermesToolError(
@@ -221,11 +232,22 @@ async def tool_execute_automation_action(
         or normalized_route
     )
 
-    # Ownership gate: claim the Zendesk ticket for the automation agent before
-    # any business execution. The legacy pipeline does this at intake
-    # (_apply_ownership_gate); without it the ticket stays unassigned and the
-    # delivery worker's ownership check rejects every reply
-    # (zendesk_assignment_unverified, ticket 13593).
+    # Mark the business execution as in-flight before any external action: a
+    # broken tool connection (ALB idle timeout, engine timeout) must leave an
+    # observable state for the worker to wait on, never silence. (The terminal
+    # replay check already ran above, before the direction gate.)
+    try:
+        store.record_hermes_turn_work(
+            turn_id, work_result={"status": "running", "route": normalized_route}
+        )
+    except Exception:
+        pass
+
+    # Ownership check: the worker claims the ticket before submitting the work
+    # run (legacy-parity 90s routing-window wait happens there, off the tool
+    # request path — the 60s ALB idle timeout killed longer calls, ticket
+    # 13601). This side only re-verifies read-only right before business
+    # execution; a fail-closed result escalates through the unified handoff.
     from backend.services.account_automation_ownership import (
         OWNERSHIP_EVENT_TYPE,
         ensure_production_automation_ownership,
@@ -240,13 +262,10 @@ async def tool_execute_automation_action(
         account_case["route_family"] = "automated"
 
     if zendesk_side_effects_enabled and ownership_gate_eligible(account_case):
-        # gate mode sleeps out the ~90s Zendesk omnichannel routing window with
-        # 422 retries before the assignment PUT (same as the legacy intake);
-        # keep that wait off the api event loop.
         ownership_result = await asyncio.to_thread(
             ensure_production_automation_ownership,
             account_case,
-            mode="gate",
+            mode="verify",
             updated_at=str(turn.get("created_at") or ""),
         )
         repository.record_event(
@@ -279,9 +298,25 @@ async def tool_execute_automation_action(
                 ticket_id=ticket_id,
                 turn_id=turn_id,
                 automation_handler=automation_handler,
-                reason_code=f"ownership_gate_{ownership_result.failure_code or 'failed'}",
-                detail=f"Zendesk ownership gate failed: {ownership_result.failure_detail or ownership_result.failure_code}",
+                reason_code=f"ownership_verify_{ownership_result.failure_code or 'failed'}",
+                detail=f"Zendesk ownership verification failed: {ownership_result.failure_detail or ownership_result.failure_code}",
             )
+
+    # Long waits (ownership verification, routing) must not let a cancelled or
+    # superseded turn create further external effects: re-read the turn and
+    # refuse to continue business execution for a dead turn.
+    current_turn = store.get_hermes_turn(turn_id) or {}
+    if str(current_turn.get("status") or "") in {"cancel_requested", "cancelled", "superseded"}:
+        stale_result = {
+            "status": "human_review_required",
+            "reason": "turn_cancelled_before_execution",
+            "route": normalized_route,
+        }
+        try:
+            store.record_hermes_turn_work(turn_id, work_result=stale_result)
+        except Exception:
+            pass
+        return stale_result
 
     messages = list(ticket.get("messages") or [])
     conversation_context = build_automation_context(
