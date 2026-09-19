@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-174",
+  "title": "p2-173 第三轮修复：PG 事务/原子审批/翻译校验/Dashboard 重试/英文检测",
+  "status": "done",
+  "owner": "codex",
+  "summary": "验收发现的五项缺口：①PG UniqueViolation catch 后同事务 UPDATE 必报 InFailedSqlTransaction（改 ON CONFLICT 单语句）②approve 与 prep 两次独立事务，crash 后 approved 状态被 Slack handler 的 {queued,approved,preparing} 提前返回截断（新增原子 store 方法 + 重入逻辑）③翻译校验不足（英文正则无法检测未翻译/修改标识符/新增中文承诺；加脚本一致性+标识符保留）④Dashboard 不显示 prep_error 也没有 prepare_failed 重试按钮（app.js + dashboard approve 端点）⑤isascii() 对法语返回 True 跳过翻译（删短路，始终走 LLM，失败时 [Non-English] 前缀）。",
+  "next_action": "",
+  "acceptance_criteria": [
+    "PG 重试路径无 InFailedSqlTransaction（ON CONFLICT 单语句）。",
+    "approved 无 job 的草稿再点 Approve 能原子补建 prep job（Slack + Dashboard 两入口）。",
+    "中文客户收到纯英文译文时 fail（脚本不一致）；标识符被修改时 fail。",
+    "Dashboard prepare_failed 草稿显示 prep_error + Retry 按钮，点击后重新进入 prep。",
+    "法语输入触发 LLM 调用（isascii 短路已删除）。",
+    "全套回归 + PG 集成 + 发布三检 + 13602 真实验收。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "五项修复回归+定向验证",
+      "command": "pytest -q backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py",
+      "details": "181 passed。①PG ON CONFLICT 替代 try/catch ②approve_and_prep_hermes_draft 原子方法双 store+Slack handler ③脚本一致+标识符保留+中文安全模式 ④Dashboard prepare_failed+prep_error+Retry ⑤isascii 删除+始终 LLM+[Non-English] 前缀。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_ecs_store.py",
+    "backend/services/automation_hermes_delivery.py",
+    "backend/services/automation_hermes_slack_actions.py",
+    "backend/automation_ecs_api.py",
+    "backend/services/engineer_slack.py",
+    "ui/automation-ecs-production/app.js"
+  ],
+  "created_at": "2026-09-19",
+  "updated_at": "2026-09-19",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-19",
+      "event": "created",
+      "summary": "第二轮验收五项缺口修复。"
+    },
+    {
+      "at": "2026-09-19",
+      "event": "done",
+      "summary": "五项缺口全部修复，181 回归全绿。"
+    }
+  ]
+}

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-19T13:41:24Z",
-  "source_base_commit": "1d3c5c9454966aa526076df513eff58ca1f29129",
-  "registry_digest": "7374b001d74adde9da3099b495820ad6b52aab639d1794886f50a1382b7777ff",
+  "generated_at": "2026-09-19T15:22:30Z",
+  "source_base_commit": "15c92514c658ca5db20bd83e1ede799ca6f7ef4f",
+  "registry_digest": "2825d550e72eb9fafdca46891c81e9aed073d286a0b433016833f328980a9183",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3574,6 +3574,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "五项修复回归+定向验证",
+          "command": "pytest -q backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py",
+          "details": "181 passed。①PG ON CONFLICT 替代 try/catch ②approve_and_prep_hermes_draft 原子方法双 store+Slack handler ③脚本一致+标识符保留+中文安全模式 ④Dashboard prepare_failed+prep_error+Retry ⑤isascii 删除+始终 LLM+[Non-English] 前缀。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3916,8 +3922,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 39,
-      "done_count": 18,
+      "task_count": 40,
+      "done_count": 19,
       "blocked_count": 0
     },
     {
@@ -13896,6 +13902,59 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-19",
           "event": "created",
           "summary": "用户确认英文协作+批准后翻译架构（不需要译文二次审批）；捆绑 Argus v1.1.3 小改与记忆工具名修复。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-174",
+      "title": "p2-173 第三轮修复：PG 事务/原子审批/翻译校验/Dashboard 重试/英文检测",
+      "status": "done",
+      "owner": "codex",
+      "summary": "验收发现的五项缺口：①PG UniqueViolation catch 后同事务 UPDATE 必报 InFailedSqlTransaction（改 ON CONFLICT 单语句）②approve 与 prep 两次独立事务，crash 后 approved 状态被 Slack handler 的 {queued,approved,preparing} 提前返回截断（新增原子 store 方法 + 重入逻辑）③翻译校验不足（英文正则无法检测未翻译/修改标识符/新增中文承诺；加脚本一致性+标识符保留）④Dashboard 不显示 prep_error 也没有 prepare_failed 重试按钮（app.js + dashboard approve 端点）⑤isascii() 对法语返回 True 跳过翻译（删短路，始终走 LLM，失败时 [Non-English] 前缀）。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "PG 重试路径无 InFailedSqlTransaction（ON CONFLICT 单语句）。",
+        "approved 无 job 的草稿再点 Approve 能原子补建 prep job（Slack + Dashboard 两入口）。",
+        "中文客户收到纯英文译文时 fail（脚本不一致）；标识符被修改时 fail。",
+        "Dashboard prepare_failed 草稿显示 prep_error + Retry 按钮，点击后重新进入 prep。",
+        "法语输入触发 LLM 调用（isascii 短路已删除）。",
+        "全套回归 + PG 集成 + 发布三检 + 13602 真实验收。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "五项修复回归+定向验证",
+          "command": "pytest -q backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_api.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py",
+          "details": "181 passed。①PG ON CONFLICT 替代 try/catch ②approve_and_prep_hermes_draft 原子方法双 store+Slack handler ③脚本一致+标识符保留+中文安全模式 ④Dashboard prepare_failed+prep_error+Retry ⑤isascii 删除+始终 LLM+[Non-English] 前缀。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_ecs_store.py",
+        "backend/services/automation_hermes_delivery.py",
+        "backend/services/automation_hermes_slack_actions.py",
+        "backend/automation_ecs_api.py",
+        "backend/services/engineer_slack.py",
+        "ui/automation-ecs-production/app.js"
+      ],
+      "created_at": "2026-09-19",
+      "updated_at": "2026-09-19",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-19",
+          "event": "created",
+          "summary": "第二轮验收五项缺口修复。"
+        },
+        {
+          "at": "2026-09-19",
+          "event": "done",
+          "summary": "五项缺口全部修复，181 回归全绿。"
         }
       ]
     },
