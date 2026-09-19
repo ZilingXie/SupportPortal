@@ -4,6 +4,12 @@ Drafts are delivered through the existing immutable delivery ledger
 (``support_account_zendesk_comment_deliveries`` with ``source='hermes'``),
 which keeps the pre-send comment-revision fence, the readback reconciliation,
 and the delivered/failed/outcome_unknown trail used by every other surface.
+
+Since schema-009, approved drafts pass through an async delivery-preparation
+step: a worker determines the customer's language from the latest public
+customer message (falling back to the ticket description), translates the
+approved English content via the persona-model LLM, and queues the immutable
+translated text onto the same ledger.
 """
 
 from __future__ import annotations
@@ -15,6 +21,170 @@ from typing import Any
 from backend.services.automation_ecs_store import AutomationEcsStore, HermesDraftStateError
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_delivery")
+
+_CUSTOMER_ROLES = frozenset({"end-user", "end_user", "customer", "requester", "user"})
+
+
+def _is_customer_author(author: Any) -> bool:
+    if not isinstance(author, dict):
+        return False
+    role = str(author.get("role") or "").strip().lower()
+    if role in _CUSTOMER_ROLES:
+        return author.get("is_agent") is not False
+    if role in {"agent", "staff", "admin", "support"} or author.get("is_agent") is True:
+        return False
+    return author.get("is_agent") is False
+
+
+def determine_delivery_language_reference(
+    store: AutomationEcsStore, zendesk_ticket_id: str
+) -> str | None:
+    """The customer-language reference text for one ticket.
+
+    Latest public customer-authored comment first (Slack engineer feedback,
+    internal notes, and pure-name bodies excluded); the ticket description
+    when no customer comment exists. None when no reference is available —
+    the caller must stop the send and notify a human.
+    """
+    snapshot_comments = store.list_case_comments(zendesk_ticket_id)
+    customer_bodies: list[str] = []
+    for item in snapshot_comments:
+        comment = item.get("comment") or {}
+        if not comment.get("public"):
+            continue
+        body = str(comment.get("body") or "").strip()
+        if not body or len(body) < 3:
+            continue
+        if not _is_customer_author(comment.get("author")):
+            continue
+        customer_bodies.append(body)
+    if customer_bodies:
+        return customer_bodies[-1]
+    mirror = store.get_case_mirror(zendesk_ticket_id)
+    description = str(((mirror or {}).get("ticket") or {}).get("description") or "").strip()
+    if description:
+        return description
+    return None
+
+
+_TRANSLATION_SYSTEM_PROMPT = """You translate an approved English customer-support reply into the language of a reference message written by that customer.
+
+Rules:
+- Translate ONLY the language. Do not add facts, promises, conclusions, or new paragraphs; do not omit content.
+- Keep names, product names, code, identifiers, numbers, URLs, and email addresses exactly as they appear.
+- Match the reference message's language (including its script and register). When the reference is mixed-language, use its dominant language.
+- Keep the salutation on its own first line, translated to match the reference language (e.g. Chinese: "Ziling，您好。"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
+- Return ONLY the translated reply text. No preamble, no explanations, no code fences."""
+
+
+class HermesDeliveryPrepError(RuntimeError):
+    """The delivery-preparation step failed; no send must occur."""
+
+
+def translate_draft_for_delivery(
+    *, english_content: str, language_reference: str
+) -> str:
+    """Translate the approved English draft to the customer's language."""
+    from backend.services.llm_factory import invoke_responses_text
+    from backend.services.llm_profiles import (
+        AUTOMATION_PERSONA_SCENARIO,
+        resolve_model_profile,
+    )
+
+    profile = resolve_model_profile(AUTOMATION_PERSONA_SCENARIO)
+    result = invoke_responses_text(
+        profile=profile,
+        system_prompt=_TRANSLATION_SYSTEM_PROMPT,
+        user_prompt=(
+            f"Reference message from the customer:\n---\n{language_reference[:4000]}\n---\n\n"
+            f"Approved English reply to translate:\n---\n{english_content}\n---\n\n"
+            "Return the translated reply only."
+        ),
+        extra_payload=None,
+    )
+    translated = str(result.text or "").strip()
+    if not translated:
+        raise HermesDeliveryPrepError("translation model returned empty output")
+    # Strip accidental code fences some models wrap around plain text.
+    if translated.startswith("```"):
+        translated = translated.strip("`").strip()
+        if translated.lower().startswith("text\n"):
+            translated = translated[5:].strip()
+    return translated
+
+
+def prepare_hermes_draft_delivery(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    draft_id: str,
+    environment: str,
+) -> dict[str, Any]:
+    """Worker-side delivery preparation for one approved draft.
+
+    Determines the customer language, translates, validates the revision
+    fence, stores the translation on the draft row, and queues the immutable
+    translated content onto the Zendesk delivery ledger. Failures mark the
+    draft prepare_failed (no ledger row, no Zendesk call) so a human can
+    retry from the approval surface.
+    """
+    draft = store.get_hermes_draft(draft_id)
+    if draft is None:
+        raise HermesDraftStateError(draft_id, "draft not found")
+    ticket_id = str(draft["zendesk_ticket_id"])
+
+    # Already prepared (crash after store, before job completion): reuse.
+    prepared = str(draft.get("delivery_content") or "").strip()
+    if prepared and str(draft.get("status")) in {"approved", "queued"}:
+        queue_hermes_draft_delivery(store, repository, draft_id=draft_id, environment=environment)
+        return {"draft_id": draft_id, "status": "queued", "reused_prepared": True}
+
+    language_reference = determine_delivery_language_reference(store, ticket_id)
+    if not language_reference:
+        error = "no customer language reference (no public customer comment, no ticket description)"
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
+
+    # Revision fence before translating: a newer customer input invalidates
+    # the approval before any model cost is spent.
+    mirror = store.get_case_mirror(ticket_id)
+    expected_revision = int((mirror or {}).get("case_revision") or 0)
+    draft_revision = int(draft.get("case_revision") or draft.get("conversation_version") or 0)
+    if expected_revision and draft_revision and draft_revision != expected_revision:
+        error = f"stale_case_revision: draft {draft_revision} != case {expected_revision}"
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
+
+    english_content = str(draft.get("content") or "").strip()
+    try:
+        translated = translate_draft_for_delivery(
+            english_content=english_content,
+            language_reference=language_reference,
+        )
+    except Exception as exc:  # translation failures park the draft for human retry
+        error = f"translation failure: {exc}"
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
+
+    prepared_draft = store.complete_hermes_draft_prep(
+        draft_id,
+        delivery_content=translated,
+        delivery_language_ref=language_reference[:2000],
+        source_revision=draft_revision,
+        prompt_version=None,
+    )
+    LOGGER.info(
+        "hermes_draft_prepared draft_id=%s ticket_id=%s translated_len=%s",
+        draft_id,
+        ticket_id,
+        len(translated),
+    )
+    queue_hermes_draft_delivery(store, repository, draft_id=draft_id, environment=environment)
+    return {"draft_id": draft_id, "status": "queued", "prepared": bool(prepared_draft)}
+
 
 
 def _now_iso() -> str:
@@ -39,7 +209,12 @@ def queue_hermes_draft_delivery(
     draft_id: str,
     environment: str,
 ) -> dict[str, Any]:
-    """Queue one approved auto-publish draft onto the Zendesk delivery ledger."""
+    """Queue one approved draft onto the Zendesk delivery ledger.
+
+    Uses the prepared (translated) delivery content when present, falling
+    back to the raw English content only when no translation was produced
+    (pre schema-009 drafts).
+    """
     draft = store.get_hermes_draft(draft_id)
     if draft is None:
         raise HermesDraftStateError(draft_id, "draft not found")
@@ -67,6 +242,7 @@ def queue_hermes_draft_delivery(
     comments_revision = _current_comments_revision(repository, client_ticket_id, zendesk_ticket_id)
     if not comments_revision:
         raise HermesDraftStateError(draft_id, "could not determine the current Zendesk comments revision")
+    delivery_content = str(draft.get("delivery_content") or "").strip() or str(draft["content"])
     repository.create_account_zendesk_comment_delivery(
         account_case_id=account_case_id,
         message_id=draft_id,
@@ -84,15 +260,16 @@ def queue_hermes_draft_delivery(
         # be falsely rejected as stale by the sender.
         draft_version=int(draft.get("case_revision") or draft.get("conversation_version") or 0),
         comments_revision=comments_revision,
-        immutable_content=str(draft["content"]),
+        immutable_content=delivery_content,
     )
     queued = store.mark_hermes_draft_queued(draft_id, delivery_message_id=draft_id)
     LOGGER.info(
-        "hermes_draft_queued draft_id=%s ticket_id=%s account_case_id=%s comments_revision=%s",
+        "hermes_draft_queued draft_id=%s ticket_id=%s account_case_id=%s comments_revision=%s translated=%s",
         draft_id,
         ticket_id,
         account_case_id,
         comments_revision,
+        bool(str(draft.get("delivery_content") or "").strip()),
     )
     return dict(queued)
 
@@ -105,7 +282,15 @@ def approve_and_queue_hermes_draft(
     approver: str,
     environment: str,
 ) -> dict[str, Any]:
-    """Human approval path: approve, then queue the immutable draft content."""
+    """Human approval path: approve, then start async delivery preparation.
+
+    The draft enters `preparing`; a worker claims the prep job, determines
+    the customer language, translates the approved English content, and
+    queues the immutable translated text onto the Zendesk delivery ledger.
+    """
     approved = store.approve_hermes_case_draft(draft_id, approver=approver)
-    queued = queue_hermes_draft_delivery(store, repository, draft_id=draft_id, environment=environment)
-    return {"approved": dict(approved), "queued": dict(queued)}
+    prep = store.create_hermes_delivery_prep_job(
+        draft_id,
+        base_event={"provenance": {"service_role": "slack", "approver": approver, "environment": environment}},
+    )
+    return {"approved": dict(approved), "prep": dict(prep)}

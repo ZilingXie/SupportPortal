@@ -1044,9 +1044,13 @@ def test_hermes_slack_action_endpoint_approves_draft(monkeypatch) -> None:
         assert approved.status_code == 200, approved.text
         body = approved.json()
         assert body["ok"] is True and body["approved"] is True
-        assert repository.delivery["source"] == "hermes"
-        assert repository.delivery["message_id"] == draft["draft_id"]
-        assert store.get_hermes_draft(draft["draft_id"])["status"] == "queued"
+        # Post schema-009: approval starts delivery preparation (preparing);
+        # the delivery ledger row appears after the worker translates.
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
+        prep_job = store.claim_job(
+            JobKind.HERMES_DELIVERY_PREP, worker_id="worker-1", lease_seconds=30
+        )
+        assert prep_job is not None and prep_job.payload["draft_id"] == draft["draft_id"]
 
         repeated = client.post(
             path,
@@ -1060,6 +1064,7 @@ def test_hermes_slack_action_endpoint_approves_draft(monkeypatch) -> None:
             },
         )
         assert repeated.status_code == 200
+        # preparing/approved/queued all report as already-queued to Slack
         assert repeated.json()["already"] == "queued"
 
 

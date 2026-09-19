@@ -1281,8 +1281,10 @@ class EngineerSlackWorkerTests(unittest.TestCase):
                 thread_ts="100.000",
             )
         payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
-        normalized = " ".join(long_draft.split())
-        self.assertIn(f"Draft: {normalized}", payload["text"])
+        # Line breaks are preserved (email paragraph structure stays reviewable);
+        # only edge whitespace is trimmed by the display normalization.
+        expected = long_draft.strip()
+        self.assertIn(f"Draft: {expected}", payload["text"])
 
     def test_hermes_draft_blocked_root_has_reason_and_no_button(self) -> None:
         with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(

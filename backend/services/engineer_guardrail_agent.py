@@ -101,6 +101,7 @@ def run_engineer_guardrail_final(
     requester: str | None = None,
     customer_id: str | None = None,
     language_hint: str | None = None,
+    preformatted: bool = False,
 ) -> dict[str, Any]:
     """Deterministic guardrail final agent.
 
@@ -138,14 +139,21 @@ def run_engineer_guardrail_final(
             "created_at": "",
         }
 
-    # Apply email style normalization
-    customer_reply = ensure_customer_reply_email_style(
-        body=normalized_draft,
-        reply_kind="engineer_follow_up",
-        requester=requester,
-        customer_id=customer_id,
-        language=language_hint,
-    )
+    # Apply email style normalization. The preformatted path (Hermes) passes
+    # the application-projected final content — the greeting was already
+    # applied deterministically by the caller — so the guardrail validates it
+    # as-is: no rewriting, no name-based language guessing. This keeps the
+    # saved, validated, Slack-displayed, approved, and sent text identical.
+    if preformatted:
+        customer_reply = normalized_draft
+    else:
+        customer_reply = ensure_customer_reply_email_style(
+            body=normalized_draft,
+            reply_kind="engineer_follow_up",
+            requester=requester,
+            customer_id=customer_id,
+            language=language_hint,
+        )
 
     citation_check = _run_citation_check(customer_reply, evidence_packet)
     leak_check = _run_internal_leak_check(customer_reply)

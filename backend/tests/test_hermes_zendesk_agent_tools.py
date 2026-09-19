@@ -309,8 +309,14 @@ class TestDraftTools:
         result = approve_and_queue_hermes_draft(
             store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
         )
-        assert result["queued"]["status"] == "queued"
-        assert repository.deliveries[0]["message_id"] == draft["draft_id"]
+        # Post schema-009: approval starts async delivery preparation; the
+        # ledger row is written by the worker after translation. With no
+        # customer-language reference available here the prep stops safely.
+        assert result["approved"]["status"] == "approved"
+        prep = result["prep"]
+        assert prep.get("status") == "preparing"
+        draft_row = store.get_hermes_draft(draft["draft_id"])
+        assert draft_row["status"] == "preparing"
 
 
 class TestDeliveryQueue:
@@ -339,9 +345,26 @@ class TestDeliveryQueue:
             )
         store.request_hermes_draft_publish(draft["draft_id"])
         repository.account_cases.pop("123")
+        # The prep worker's queue step (after translation) still fails closed
+        # on the missing account mirror; approval itself only enqueues the
+        # prep job, so drive the preparation path directly.
+        from backend.services.automation_hermes_delivery import (
+            prepare_hermes_draft_delivery,
+        )
+
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
+        )
+        store.complete_hermes_draft_prep(
+            draft["draft_id"],
+            delivery_content="Translated",
+            delivery_language_ref="参考",
+            source_revision=1,
+            prompt_version=None,
+        )
         with pytest.raises(Exception):
-            approve_and_queue_hermes_draft(
-                store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
+            prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
             )
         assert repository.deliveries == []
 
@@ -371,7 +394,189 @@ class TestDeliveryQueue:
         approve_and_queue_hermes_draft(
             store, repository, draft_id=draft["draft_id"], approver="admin", environment="preproduction"
         )
+        # Simulate the prep completion path (translation already done).
+        store.complete_hermes_draft_prep(
+            draft["draft_id"],
+            delivery_content="Translated",
+            delivery_language_ref="参考",
+            source_revision=int(draft_row["case_revision"]),
+            prompt_version=None,
+        )
+        queue_hermes_draft_delivery(
+            store, repository, draft_id=draft["draft_id"], environment="preproduction"
+        )
         delivery = repository.deliveries[0]
         mirror_revision = int(store.get_case_mirror("123")["case_revision"])
         assert delivery["draft_version"] == mirror_revision
         assert delivery["draft_version"] == int(draft_row["case_revision"])
+        assert delivery["immutable_content"] == "Translated"
+
+
+class TestDeliveryPreparation:
+    """p2-173: post-approval translation preparation for Hermes drafts."""
+
+    def _approved_draft(self, store, repository, turn_id, content="Hi Ziling,\n\nWe checked."):
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content=content, basis={})
+        store.request_hermes_draft_publish(draft["draft_id"])
+        return draft
+
+    def test_chinese_customer_prep_translates_and_queues(self) -> None:
+        from backend.services.automation_hermes_delivery import (
+            determine_delivery_language_reference,
+            prepare_hermes_draft_delivery,
+        )
+
+        store, repository, turn_id = _setup_case()
+        draft = self._approved_draft(store, repository, turn_id)
+        # Add a Chinese customer comment → the language reference comes from it.
+        from backend.services.automation_ecs_contracts import AutomationIntakeEvent
+
+        store._comments[("123", "88")] = {
+            "zendesk_ticket_id": "123",
+            "zendesk_comment_id": "88",
+            "comment": {
+                "id": "88",
+                "public": True,
+                "author": {"email": "cx@example.com", "name": "客户", "role": "end-user"},
+                "body": "请帮我看一下这个问题",
+                "created_at": "2026-09-19T10:00:00Z",
+            },
+            "updated_at": "2026-09-19T10:00:00Z",
+        }
+        ref = determine_delivery_language_reference(store, "123")
+        assert ref == "请帮我看一下这个问题"
+
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="slack-engineer", environment="preproduction"
+        )
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
+
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value="Ziling，您好。\n\n我们查过了。",
+        ) as mock_translate:
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "queued"
+        mock_translate.assert_called_once()
+        call = mock_translate.call_args.kwargs
+        assert call["language_reference"] == "请帮我看一下这个问题"
+        assert "Hi " in call["english_content"] and "We checked" in call["english_content"]
+
+        delivery = repository.deliveries[0]
+        assert delivery["immutable_content"] == "Ziling，您好。\n\n我们查过了。"
+        final = store.get_hermes_draft(draft["draft_id"])
+        assert final["status"] == "queued"
+        assert final["delivery_language_ref"] == "请帮我看一下这个问题"
+
+    def test_no_language_reference_parks_safely(self) -> None:
+        from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery
+
+        store, repository, turn_id = _setup_case()
+        draft = self._approved_draft(store, repository, turn_id)
+        # Remove the ticket description so no reference is available.
+        store._cases["123"]["ticket"]["description"] = ""
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="slack-engineer", environment="preproduction"
+        )
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery"
+        ) as mock_translate:
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "prepare_failed"
+        assert "no customer language reference" in result["error"]
+        mock_translate.assert_not_called()
+        assert repository.deliveries == []
+        failed = store.get_hermes_draft(draft["draft_id"])
+        assert failed["status"] == "prepare_failed"
+        assert failed["prep_error"]
+
+    def test_description_fallback_when_no_customer_comments(self) -> None:
+        from backend.services.automation_hermes_delivery import (
+            determine_delivery_language_reference,
+        )
+
+        store, repository, turn_id = _setup_case()
+        description = str(store.get_case_mirror("123")["ticket"].get("description") or "")
+        ref = determine_delivery_language_reference(store, "123")
+        assert ref == description
+
+    def test_translation_failure_parks_and_retry_works(self) -> None:
+        from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery
+
+        store, repository, turn_id = _setup_case()
+        draft = self._approved_draft(store, repository, turn_id)
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="slack-engineer", environment="preproduction"
+        )
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            side_effect=RuntimeError("model down"),
+        ):
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "prepare_failed"
+        assert "model down" in result["error"]
+        assert repository.deliveries == []
+        # A retry approve re-enqueues prep (prepare_failed → preparing).
+        retry = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={"provenance": {}})
+        assert retry.get("status") == "preparing"
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value="Ziling，您好。",
+        ):
+            result2 = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result2["status"] == "queued"
+        assert repository.deliveries[0]["immutable_content"] == "Ziling，您好。"
+
+    def test_new_customer_input_stops_prep_before_translation(self) -> None:
+        from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery
+
+        store, repository, turn_id = _setup_case()
+        draft = self._approved_draft(store, repository, turn_id)
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="slack-engineer", environment="preproduction"
+        )
+        # Bump the case revision (a new customer comment arrived).
+        store._cases["123"]["case_revision"] = int(store.get_case_mirror("123")["case_revision"]) + 1
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery"
+        ) as mock_translate:
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "prepare_failed"
+        assert "stale_case_revision" in result["error"]
+        mock_translate.assert_not_called()
+        assert repository.deliveries == []
+
+    def test_preformatted_guardrail_accepts_app_greeting(self) -> None:
+        # The guardrail no longer rewrites a Hermes draft: the app-projected
+        # English greeting is validated as-is (case 13602 root fix).
+        from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
+
+        packet = run_engineer_guardrail_final(
+            draft_customer_reply="Hi Ziling,\n\n中文正文也应通过，因为校验原样进行。",
+            reply_readiness={"ready_for_customer_reply": True},
+            preformatted=True,
+        )
+        assert packet["decision"] == "approved_for_final_engineer_review"
+        assert packet["normalized_customer_reply"].startswith("Hi Ziling,")
+        # Missing greeting still blocks.
+        packet2 = run_engineer_guardrail_final(
+            draft_customer_reply="No greeting here.",
+            reply_readiness={"ready_for_customer_reply": True},
+            preformatted=True,
+        )
+        assert packet2["decision"] == "blocked"

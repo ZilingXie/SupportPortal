@@ -271,6 +271,24 @@ class AutomationEcsStore(Protocol):
             )
         )
 
+    def _apply_schema_009_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 008→009 evolution: post-approval delivery preparation columns."""
+        for column, definition in (
+            ("delivery_content", "TEXT"),
+            ("delivery_language_ref", "TEXT"),
+            ("delivery_source_revision", "INTEGER"),
+            ("delivery_prompt_version", "TEXT"),
+            ("delivery_prepared_at", "TIMESTAMPTZ"),
+            ("prep_error", "TEXT"),
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    self._table("automation_hermes_case_drafts"),
+                    sql.Identifier(column),
+                    sql.SQL(definition),
+                )
+            )
+
     def check_schema(self) -> None: ...
     def accept_intake(self, event: AutomationIntakeEvent, provenance: RuntimeProvenance) -> IntakeReceipt: ...
     def get_execution(self, execution_id: str) -> dict[str, Any] | None: ...
@@ -297,6 +315,19 @@ class AutomationEcsStore(Protocol):
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def create_hermes_delivery_prep_job(
+        self, draft_id: str, *, base_event: dict[str, Any]
+    ) -> dict[str, Any]: ...
+    def complete_hermes_draft_prep(
+        self,
+        draft_id: str,
+        *,
+        delivery_content: str,
+        delivery_language_ref: str,
+        source_revision: int,
+        prompt_version: str | None,
+    ) -> dict[str, Any]: ...
+    def fail_hermes_draft_prep(self, draft_id: str, *, error: str) -> dict[str, Any]: ...
     def create_investigation_feedback_turn(
         self,
         zendesk_ticket_id: str,
@@ -2051,6 +2082,99 @@ class InMemoryAutomationEcsStore:
             draft["updated_at"] = _iso()
             return copy.deepcopy(draft)
 
+    def create_hermes_delivery_prep_job(
+        self, draft_id: str, *, base_event: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Transition an approved draft to preparing and enqueue its prep job.
+
+        Idempotent: a draft already preparing or queued returns
+        already=<state> without creating a second job; a prepare_failed draft
+        is retried (the previous error is replaced on the next outcome).
+        """
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            status = str(draft.get("status") or "")
+            if status in {"queued", "preparing"}:
+                return {"already": status, "draft_id": draft_id, "job_id": None}
+            if status not in {"approved", "prepare_failed"}:
+                raise HermesDraftStateError(draft_id, f"draft is {status}")
+            now_value = _iso()
+            draft.update(
+                status="preparing",
+                prep_error=None,
+                delivery_content=None,
+                delivery_language_ref=None,
+                delivery_source_revision=None,
+                delivery_prompt_version=None,
+                delivery_prepared_at=None,
+                updated_at=now_value,
+            )
+            job_id = _new_id("job")
+            turn = self._hermes_turns.get(str(draft["turn_id"]))
+            execution_id = str(turn["execution_id"]) if turn else str(draft["turn_id"])
+            self._jobs[job_id] = {
+                "job_id": job_id,
+                "execution_id": execution_id,
+                "kind": JobKind.HERMES_DELIVERY_PREP.value,
+                "status": JobStatus.PENDING.value,
+                "namespace": draft["namespace"],
+                "payload": {
+                    "contract_version": "automation-agent-turn-v1",
+                    "execution_id": execution_id,
+                    "turn_id": str(draft["turn_id"]),
+                    "draft_id": draft_id,
+                    "base_event": base_event,
+                },
+                "attempt": 0,
+                "claim_token": None,
+                "claimed_by": None,
+                "lease_expires_at": None,
+                "external_started_at": None,
+                "available_at": now_value,
+                "created_at": now_value,
+                "updated_at": now_value,
+            }
+            return {"draft_id": draft_id, "job_id": job_id, "status": "preparing"}
+
+    def complete_hermes_draft_prep(
+        self,
+        draft_id: str,
+        *,
+        delivery_content: str,
+        delivery_language_ref: str,
+        source_revision: int,
+        prompt_version: str | None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            if str(draft.get("status")) != "preparing":
+                raise HermesDraftStateError(draft_id, f"draft is {draft.get('status')}")
+            draft.update(
+                status="approved",
+                delivery_content=delivery_content,
+                delivery_language_ref=delivery_language_ref,
+                delivery_source_revision=int(source_revision),
+                delivery_prompt_version=prompt_version,
+                delivery_prepared_at=_iso(),
+                prep_error=None,
+                updated_at=_iso(),
+            )
+            return copy.deepcopy(draft)
+
+    def fail_hermes_draft_prep(self, draft_id: str, *, error: str) -> dict[str, Any]:
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            if str(draft.get("status")) != "preparing":
+                raise HermesDraftStateError(draft_id, f"draft is {draft.get('status')}")
+            draft.update(status="prepare_failed", prep_error=str(error)[:2000], updated_at=_iso())
+            return copy.deepcopy(draft)
+
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._lock:
             binding = self._binding_row(zendesk_ticket_id)
@@ -2080,6 +2204,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-005",
             "automation-ecs-006",
             "automation-ecs-007",
+            "automation-ecs-008",
         }
     )
 
@@ -2358,6 +2483,7 @@ class PostgresAutomationEcsStore:
         self._apply_schema_006_migrations(cursor)
         self._apply_schema_007_migrations(cursor)
         self._apply_schema_008_migrations(cursor)
+        self._apply_schema_009_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2534,13 +2660,7 @@ class PostgresAutomationEcsStore:
             )
 
     def _apply_schema_008_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
-        """Idempotent 007→008 evolution: ad-hoc Slack thread sessions.
-
-        session_kind separates Zendesk-case bindings from Slack ad-hoc
-        sessions (synthetic tickets); the unique thread index makes the
-        thread→ticket claim race-free. Bindings are one-root-thread-per-case
-        by construction, so existing data satisfies the uniqueness.
-        """
+        """Idempotent 007→008 evolution: ad-hoc Slack thread sessions."""
         cursor.execute(
             sql.SQL(
                 "ALTER TABLE {} ADD COLUMN IF NOT EXISTS session_kind TEXT NOT NULL DEFAULT 'case'"
@@ -2555,6 +2675,29 @@ class PostgresAutomationEcsStore:
                 self._table("automation_hermes_case_bindings"),
             )
         )
+
+    def _apply_schema_009_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 008→009 evolution: post-approval delivery preparation.
+
+        Approved English drafts are translated to the customer's language by
+        an async prep job before entering the Zendesk delivery ledger; the
+        translation and its provenance live on the draft row.
+        """
+        for column, definition in (
+            ("delivery_content", "TEXT"),
+            ("delivery_language_ref", "TEXT"),
+            ("delivery_source_revision", "INTEGER"),
+            ("delivery_prompt_version", "TEXT"),
+            ("delivery_prepared_at", "TIMESTAMPTZ"),
+            ("prep_error", "TEXT"),
+        ):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    self._table("automation_hermes_case_drafts"),
+                    sql.Identifier(column),
+                    sql.SQL(definition),
+                )
+            )
 
     def check_schema(self) -> None:
         with self._connect() as connection:
@@ -4551,6 +4694,125 @@ class PostgresAutomationEcsStore:
                         "WHERE draft_id=%s RETURNING *"
                     ).format(self._table("automation_hermes_case_drafts")),
                     (delivery_message_id, draft_id),
+                )
+                updated = cursor.fetchone()
+                return dict(updated)
+
+    def create_hermes_delivery_prep_job(
+        self, draft_id: str, *, base_event: dict[str, Any]
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                draft = cursor.fetchone()
+                if draft is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                status = str(draft["status"])
+                if status in {"queued", "preparing"}:
+                    return {"already": status, "draft_id": draft_id, "job_id": None}
+                if status not in {"approved", "prepare_failed"}:
+                    raise HermesDraftStateError(draft_id, f"draft is {status}")
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='preparing',prep_error=NULL,delivery_content=NULL,"
+                        "delivery_language_ref=NULL,delivery_source_revision=NULL,"
+                        "delivery_prompt_version=NULL,delivery_prepared_at=NULL,updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (draft_id,),
+                )
+                updated = cursor.fetchone()
+                turn_execution_id = self._draft_execution_id(cursor, draft_id)
+                job_id = _new_id("job")
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)"
+                    ).format(self._table("automation_jobs")),
+                    (
+                        job_id,
+                        updated["namespace"],
+                        turn_execution_id,
+                        JobKind.HERMES_DELIVERY_PREP.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(
+                            {
+                                "contract_version": "automation-agent-turn-v1",
+                                "execution_id": turn_execution_id,
+                                "turn_id": str(updated["turn_id"]),
+                                "draft_id": draft_id,
+                                "base_event": base_event,
+                            }
+                        ),
+                    ),
+                )
+                return {"draft_id": draft_id, "job_id": job_id, "status": "preparing"}
+
+    def complete_hermes_draft_prep(
+        self,
+        draft_id: str,
+        *,
+        delivery_content: str,
+        delivery_language_ref: str,
+        source_revision: int,
+        prompt_version: str | None,
+    ) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                if str(row["status"]) != "preparing":
+                    raise HermesDraftStateError(draft_id, f"draft is {row['status']}")
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='approved',delivery_content=%s,delivery_language_ref=%s,"
+                        "delivery_source_revision=%s,delivery_prompt_version=%s,"
+                        "delivery_prepared_at=NOW(),prep_error=NULL,updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (
+                        delivery_content,
+                        delivery_language_ref,
+                        int(source_revision),
+                        prompt_version,
+                        draft_id,
+                    ),
+                )
+                updated = cursor.fetchone()
+                return dict(updated)
+
+    def fail_hermes_draft_prep(self, draft_id: str, *, error: str) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                if str(row["status"]) != "preparing":
+                    raise HermesDraftStateError(draft_id, f"draft is {row['status']}")
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='prepare_failed',prep_error=%s,updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (str(error)[:2000], draft_id),
                 )
                 updated = cursor.fetchone()
                 return dict(updated)

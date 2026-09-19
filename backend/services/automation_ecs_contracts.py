@@ -21,7 +21,7 @@ HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-008"
+SCHEMA_REVISION = "automation-ecs-009"
 
 DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 
@@ -59,6 +59,7 @@ class JobKind(StrEnum):
     ROUTE = "route"
     PROCESSING = "processing"
     AGENT_TURN = "agent_turn"
+    HERMES_DELIVERY_PREP = "hermes_delivery_prep"
 
 
 class AgentTurnStatus(StrEnum):
@@ -111,6 +112,8 @@ class HermesDraftStatus(StrEnum):
     DRAFT = "draft"
     AWAITING_APPROVAL = "awaiting_approval"
     APPROVED = "approved"
+    PREPARING = "preparing"
+    PREPARE_FAILED = "prepare_failed"
     QUEUED = "queued"
     STALE = "stale"
     SUPERSEDED = "superseded"

@@ -129,8 +129,28 @@ def _approve_draft(
     if not isinstance(draft, dict) or str(draft.get("zendesk_ticket_id") or "") != ticket_id:
         return _invalid("draft not found for this case")
     status = str(draft.get("status") or "")
-    if status in {"queued", "approved"}:
+    if status in {"queued", "approved", "preparing"}:
         return _already("queued", f"draft is {status}")
+    if status == "prepare_failed":
+        # Retry path: the preparation failed and nothing was sent. A new
+        # approve click re-enqueues the prep job (idempotent — the store's
+        # create_hermes_delivery_prep_job handles the transition).
+        try:
+            store.create_hermes_delivery_prep_job(
+                draft_id,
+                base_event={
+                    "provenance": {
+                        "service_role": "slack",
+                        "approver": "slack-engineer",
+                        "environment": environment,
+                        "retry": True,
+                    }
+                },
+            )
+        except HermesDraftStateError as exc:
+            return _invalid(str(exc))
+        LOGGER.info("hermes_slack_approve_draft_retry draft_id=%s", draft_id)
+        return {"ok": True, "approved": True, "draft_id": draft_id, "status": "preparing"}
     if status != "awaiting_approval":
         return _invalid(f"draft is {status}; only awaiting_approval drafts can be approved")
     try:
@@ -146,12 +166,13 @@ def _approve_draft(
         if "stale" in message:
             return _already("stale", message)
         return _invalid(message)
-    LOGGER.info("hermes_slack_approve_draft draft_id=%s status=queued", draft_id)
+    prep = result.get("prep") or {}
+    LOGGER.info("hermes_slack_approve_draft draft_id=%s status=%s", draft_id, prep.get("status") or "preparing")
     return {
         "ok": True,
         "approved": True,
         "draft_id": draft_id,
-        "status": str((result.get("queued") or {}).get("status") or "queued"),
+        "status": str(prep.get("status") or "preparing"),
     }
 
 

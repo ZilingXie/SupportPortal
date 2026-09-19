@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-18T17:03:32Z",
-  "source_base_commit": "80b63e1fba0f2e130e594e5cf962b74ecbc732d6",
-  "registry_digest": "7906193bfd3427766fe2399e5b7e12cc5f289d833485700b887b3b7625842f14",
+  "generated_at": "2026-09-19T12:16:08Z",
+  "source_base_commit": "661215841317ec211b59f28cd5019facd9932ad2",
+  "registry_digest": "fb933c42071b7bb4a0b6f01457d0c800193a8f7b7a05e84b76013fec9e2f9098",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3910,7 +3910,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 38,
+      "task_count": 39,
       "done_count": 18,
       "blocked_count": 0
     },
@@ -13836,6 +13836,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-18",
           "event": "created",
           "summary": "用户裁定：反馈优化走记忆沉淀路线，合同修订作为后备（召回不可靠时仅升格遥测归因一条）；过几天复查。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-173",
+      "title": "Hermes 英文协作与批准后客户语言翻译发送（13602 根修 + 捆绑小改）",
+      "status": "active",
+      "owner": "codex",
+      "summary": "case 13602 根因（两轮独立探查+本地复现）：中文正文草稿被 guardrail 确定性误杀——composer 先剥英文问候再前置无名字的「您好：」（tool_save_reply_draft 不传 requester），_run_style_check 英文-only 正则必拦；且发送腿直发草稿原文无翻译步骤。修复架构（用户确认）：Slack 协作面/审稿全英文 → 一次人工批准 → 异步翻译为客户语言 → Zendesk 发送。实现：①guardrail 预格式化路径（Hermes 传入应用投影后的最终正文，原样校验不重写；旧调用兼容）②审批流改造（approve → JobKind.HERMES_DELIVERY_PREP 同事务创建，draft→preparing；worker 翻译分支：语言依据=客户公开消息→工单描述回退→均无停止；LLM factory+persona 模型翻译只译不改；译文元数据落 draft 行 schema-009 加列；入 delivery ledger immutable_content；重复批准幂等；revision 双查防过期稿）③Slack 通知 best-effort 英文展示+draft 换行保持 ④manuals 英文合同+真实记忆工具名（prompt release）⑤Argus 插件 v1.1.3（宽窗重试+~30 天保留期提示）。",
+      "next_action": "实施中",
+      "acceptance_criteria": [
+        "13602 型场景（中文工单无客户评论）：Slack 全英文调查+英文全文草稿→一次批准→Zendesk 收到中文回复，guardrail 零误杀。",
+        "英文客户/中文姓名/日法中英混合：语言随依据文本，标识符不变；无依据→停止+英文提示，Zendesk 零调用。",
+        "重复审批/并发/重启/翻译期间新消息：不重发不发过期稿不重译；状态区分 preparing/queued/prepare_failed。",
+        "安全检查零放宽；ad-hoc 不入客户链。",
+        "全套回归+PG 集成（schema-009）+发布三检+live 重验全过。",
+        "Argus v1.1.3 上线；p2-171 顺带收口；registry/overview/prompt_change_log 收口。"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/engineer_guardrail_agent.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/automation_hermes_delivery.py",
+        "backend/services/automation_ecs_store.py",
+        "backend/services/automation_ecs_contracts.py",
+        "backend/automation_ecs_worker.py",
+        "backend/services/engineer_slack.py",
+        "backend/services/prompts/hermes_support_agent.py"
+      ],
+      "created_at": "2026-09-19",
+      "updated_at": "2026-09-19",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-19",
+          "event": "created",
+          "summary": "用户确认英文协作+批准后翻译架构（不需要译文二次审批）；捆绑 Argus v1.1.3 小改与记忆工具名修复。"
         }
       ]
     },
