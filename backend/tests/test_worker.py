@@ -795,6 +795,68 @@ class WorkerResilienceTests(unittest.TestCase):
             solve_ticket=False,
         )
 
+    def test_solved_ticket_cancels_reply_without_sending(self) -> None:
+        # PR-D (13601): a manually solved/closed ticket terminates the round —
+        # the reply is cancelled (not retried, not requeued) and never sent.
+        from backend.services.account_automation_ownership import OwnershipGateResult
+
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-CLOSED",
+            "processing_profile": "production",
+            "zendesk_ticket_id": "13601",
+            "route_family": "automated",
+            "execution_action": "enablement",
+        }
+        repository.claim_account_zendesk_comment_delivery.return_value = {
+            "claimed": True,
+            "status": "pending",
+            "is_public": True,
+            "target_status": None,
+        }
+        repository.get_account_reply_job.return_value = {
+            "job_id": "reply-closed",
+            "ticket_id": "PRD-13601",
+            "status": "persona_v8_publishing",
+            "payload": {},
+        }
+        solved_ownership = OwnershipGateResult(
+            eligible=True,
+            state="assigned",
+            assignee_id="48557297720084",
+            group_id="27216254064148",
+            updated_at="2026-09-19T00:00:00+00:00",
+            ticket_status="solved",
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=solved_ownership,
+        ), patch.object(
+            worker,
+            "deliver_account_ai_message_as_internal_comment",
+        ) as deliver:
+            worker._deliver_production_account_reply_to_zendesk(
+                ticket_id="PRD-13601",
+                message_id="32",
+                job_id="reply-closed",
+            )
+
+        deliver.assert_not_called()
+        repository.complete_account_zendesk_comment_delivery.assert_called_once_with(
+            account_case_id="AC-CLOSED",
+            message_id="32",
+            status="cancelled",
+            zendesk_comment_id=None,
+            failure_code="zendesk_ticket_closed",
+            completed_at=unittest.mock.ANY,
+        )
+        saved_job = repository.save_account_reply_job.call_args.args[0]
+        self.assertEqual(saved_job["status"], "cancelled")
+        self.assertEqual(saved_job["payload"]["cancel_reason"], "zendesk_ticket_closed")
+        event = repository.record_event.call_args
+        self.assertEqual(event.args[1], "automation_reply_cancelled_ticket_closed")
+
     def test_queued_delivery_is_claimed_once_and_written_as_public_comment(self) -> None:
         repository = Mock()
         repository.get_account_case_by_ticket_id.return_value = {

@@ -278,6 +278,27 @@ class RelayDispatchTests(unittest.TestCase):
         events = [item["event_type"] for item in self.repository._events]
         self.assertIn("enablement_relay_dispatched", events)
 
+    def test_solved_ticket_cancels_dispatch_without_task(self):
+        """PR-D (13601): a solved/closed ticket cancels the application before
+        any relay task is created — no dispatch, evidence event recorded."""
+        from types import SimpleNamespace as _NS
+
+        client = _FakeRelayClient()
+        solved_snapshot = _NS(ticket_status="solved")
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=solved_snapshot,
+        ):
+            WORKER._drain_enablement_relay_dispatches(limit=5)
+        self.assertEqual(client.create_calls, [])
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "cancelled")
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_dispatch_cancelled_ticket_closed", events)
+        self.assertNotIn("enablement_relay_dispatched", events)
+
     def test_outcome_unknown_create_replays_without_double_task(self):
         client = _FakeRelayClient()
         client.create_side_effect = AgentRelayError(
@@ -418,6 +439,32 @@ class RelayInboxTests(unittest.TestCase):
         self.assertEqual(
             case["automation_context"]["enablement_auto_workflow"]["state"], "completed"
         )
+
+    def test_closed_ticket_result_is_evidence_only(self):
+        """PR-D: a result arriving after the ticket closed is recorded as
+        evidence but never creates a completion reply or reopens anything."""
+        from types import SimpleNamespace as _NS
+
+        client, _payload = self._client_with_result()
+        closed_snapshot = _NS(ticket_status="closed")
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=closed_snapshot,
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        result = self.repository.get_enablement_relay_result(self.request_id)
+        self.assertEqual(result["outcome"], "enabled")
+        self.assertNotEqual(result.get("applied_status"), "applied")
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(jobs, [])
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_result_not_applied_ticket_closed", events)
 
     def test_duplicate_result_is_evidence_only(self):
         client, _payload = self._client_with_result()

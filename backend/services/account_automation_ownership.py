@@ -57,6 +57,9 @@ class OwnershipGateResult:
     failure_detail: str | None = None
     blocking_comment_id: str | None = None
     updated_at: str | None = None
+    # Live ticket status from the verify-time snapshot; callers use it to
+    # stop late actions on solved/closed tickets (13601).
+    ticket_status: str = ""
 
     @property
     def confirmed(self) -> bool:
@@ -160,6 +163,7 @@ def _ownership_result(
     failure_detail: str | None = None,
     source_assignee_id: str | None = None,
     source_group_id: str | None = None,
+    ticket_status: str = "",
 ) -> OwnershipGateResult:
     _persist_ownership_state(
         account_case,
@@ -186,6 +190,7 @@ def _ownership_result(
         failure_detail=failure_detail,
         blocking_comment_id=blocking_comment_id,
         updated_at=updated_at,
+        ticket_status=ticket_status,
     )
 
 
@@ -377,6 +382,7 @@ def ensure_production_automation_ownership(
             assignee_id=snapshot.assignee_id,
             group_id=snapshot.group_id,
             updated_at=updated_at,
+            ticket_status=snapshot.ticket_status,
         )
 
     if previous_state == OWNERSHIP_STATE_ASSIGNED or mode == "verify":
