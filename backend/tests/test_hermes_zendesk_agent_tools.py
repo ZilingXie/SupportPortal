@@ -310,7 +310,7 @@ class TestDraftTools:
         # Post schema-009: approval starts async delivery preparation; the
         # ledger row is written by the worker after translation. With no
         # customer-language reference available here the prep stops safely.
-        assert result["approved"]["status"] == "approved"
+        assert result["approved"]["status"] == "preparing"  # atomically approved→preparing
         prep = result["prep"]
         assert prep.get("status") == "preparing"
         draft_row = store.get_hermes_draft(draft["draft_id"])
@@ -530,13 +530,13 @@ class TestDeliveryPreparation:
         assert retry.get("status") == "preparing"
         with patch(
             "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
-            return_value="Ziling，您好。",
+            return_value="Hello Ziling, we checked.",
         ):
             result2 = prepare_hermes_draft_delivery(
                 store, repository, draft_id=draft["draft_id"], environment="preproduction"
             )
         assert result2["status"] == "queued"
-        assert repository.deliveries[0]["immutable_content"] == "Ziling，您好。"
+        assert repository.deliveries[0]["immutable_content"] == "Hello Ziling, we checked."
 
     def test_new_customer_input_stops_prep_before_translation(self) -> None:
         from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery

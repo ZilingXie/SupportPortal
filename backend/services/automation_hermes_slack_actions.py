@@ -129,50 +129,40 @@ def _approve_draft(
     if not isinstance(draft, dict) or str(draft.get("zendesk_ticket_id") or "") != ticket_id:
         return _invalid("draft not found for this case")
     status = str(draft.get("status") or "")
-    if status in {"queued", "approved", "preparing"}:
+    if status == "queued":
         return _already("queued", f"draft is {status}")
-    if status == "prepare_failed":
-        # Retry path: the preparation failed and nothing was sent. A new
-        # approve click re-enqueues the prep job (idempotent — the store's
-        # create_hermes_delivery_prep_job handles the transition).
-        try:
-            store.create_hermes_delivery_prep_job(
-                draft_id,
-                base_event={
-                    "provenance": {
-                        "service_role": "slack",
-                        "approver": "slack-engineer",
-                        "environment": environment,
-                        "retry": True,
-                    }
-                },
-            )
-        except HermesDraftStateError as exc:
-            return _invalid(str(exc))
-        LOGGER.info("hermes_slack_approve_draft_retry draft_id=%s", draft_id)
-        return {"ok": True, "approved": True, "draft_id": draft_id, "status": "preparing"}
-    if status != "awaiting_approval":
+    if status not in {"awaiting_approval", "approved", "preparing", "prepare_failed"}:
         return _invalid(f"draft is {status}; only awaiting_approval drafts can be approved")
+    # The atomic store method handles all three prep-entry states:
+    # awaiting_approval (fresh approve), approved (crash recovery — a prior
+    # approve succeeded but the prep job was never created), and
+    # prepare_failed (explicit retry). 'preparing' returns already=preparing.
     try:
-        result = approve_and_queue_hermes_draft(
-            store,
-            repository,
-            draft_id=draft_id,
+        result = store.approve_and_prep_hermes_draft(
+            draft_id,
             approver="slack-engineer",
-            environment=environment,
+            base_event={
+                "provenance": {
+                    "service_role": "slack",
+                    "approver": "slack-engineer",
+                    "environment": environment,
+                }
+            },
         )
     except HermesDraftStateError as exc:
         message = str(exc)
         if "stale" in message:
             return _already("stale", message)
         return _invalid(message)
-    prep = result.get("prep") or {}
-    LOGGER.info("hermes_slack_approve_draft draft_id=%s status=%s", draft_id, prep.get("status") or "preparing")
+    prep_status = str(result.get("status") or "")
+    if result.get("already"):
+        return _already("queued", f"draft is {prep_status}")
+    LOGGER.info("hermes_slack_approve_draft draft_id=%s status=%s", draft_id, prep_status)
     return {
         "ok": True,
         "approved": True,
         "draft_id": draft_id,
-        "status": str(prep.get("status") or "preparing"),
+        "status": prep_status or "preparing",
     }
 
 
