@@ -1165,6 +1165,8 @@ class EngineerSlackWorkerTests(unittest.TestCase):
 
     def test_hermes_case_opened_root_uses_route_result_label(self) -> None:
         with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack._to_english_display", side_effect=lambda t: t,
+        ), patch(
             "backend.services.engineer_slack.urllib.request.urlopen",
             return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.430"}),
         ) as urlopen:

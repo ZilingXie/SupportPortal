@@ -152,9 +152,9 @@ function statusLabel(value) {
 
 function statusTone(value) {
   const normalized = String(value || "unknown").toLowerCase();
-  if (["completed", "ready", "solved", "closed", "confirmed", "published", "delivered"].includes(normalized)) return "success";
-  if (["failed", "error"].includes(normalized)) return "danger";
-  if (["human_review", "pending", "hold", "manual_attention"].includes(normalized)) return "warning";
+  if (["completed", "ready", "solved", "closed", "confirmed", "published", "delivered", "queued"].includes(normalized)) return "success";
+  if (["failed", "error", "prepare_failed"].includes(normalized)) return "danger";
+  if (["human_review", "pending", "hold", "manual_attention", "awaiting_approval", "approved"].includes(normalized)) return "warning";
   if (normalized === "outcome_unknown" || normalized === "unknown") return "unknown";
   if (["processing", "routing", "claimed", "preparing", "scheduled", "in_progress"].some((part) => normalized.includes(part))) return "active";
   return "neutral";
@@ -636,14 +636,21 @@ function renderHermesReview() {
         const approveButton = canAct && draft.status === "awaiting_approval"
           ? `<button class="button button-secondary" data-hermes-approve-draft-id="${escapeHtml(draft.draft_id)}" type="button">Approve &amp; send</button>`
           : "";
+        const retryButton = canAct && draft.status === "prepare_failed"
+          ? `<button class="button button-secondary" data-hermes-approve-draft-id="${escapeHtml(draft.draft_id)}" type="button">Retry Prepare &amp; Send</button>`
+          : "";
         const changesButton = canAct && draft.status === "awaiting_approval" && draft.publish_policy === "manual"
           ? `<button class="button button-quiet" data-hermes-changes-draft-id="${escapeHtml(draft.draft_id)}" type="button">Request changes</button>`
+          : "";
+        const prepError = draft.status === "prepare_failed" && draft.prep_error
+          ? `<p class="hermes-prep-error">Preparation error: ${escapeHtml(draft.prep_error)}</p>`
           : "";
         return `<article class="message message-support hermes-draft">
           <header><strong>Draft ${escapeHtml(String(draft.draft_id).slice(0, 18))}</strong><span>${escapeHtml(draft.publish_policy)}</span>${statusMarkup(draft.status)}</header>
           <p class="message-body">${escapeHtml(draft.content)}</p>
+          ${prepError}
           <footer>Guardrail: ${escapeHtml(String(guardrail.decision || "not run"))}${guardrail.blockers?.length ? ` — ${escapeHtml(guardrail.blockers.join("; "))}` : ""}${draft.approved_by ? ` / approved by ${escapeHtml(draft.approved_by)}` : ""}</footer>
-          ${approveButton}${changesButton}
+          ${approveButton}${retryButton}${changesButton}
         </article>`;
       }).join("")
     : `<p class="section-empty">No reviewable drafts.</p>`;

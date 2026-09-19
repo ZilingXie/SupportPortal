@@ -122,20 +122,75 @@ def translate_draft_for_delivery(
     return translated
 
 
-def _validate_translated_content(translated: str, english_original: str) -> str | None:
+import re
+
+_CJK_SCRIPT_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_URL_RE = re.compile(r"https?://\S+")
+
+
+def _validate_translated_content(
+    translated: str, english_original: str, language_reference: str = ""
+) -> str | None:
     """Pre-send safety validation on the translated delivery content.
 
     Returns an error string when the translation must NOT enter the ledger;
-    None when safe. Checks: non-empty, no internal leakage markers, no
-    unsupported claims, no trailing signature, and length sanity (the
-    translation should be within ~3x of the English original — wildly longer
-    suggests the model added content).
+    None when safe. Checks:
+    1. Non-empty
+    2. Script consistency: when the customer's reference uses CJK, the
+       translation must also use CJK (an untranslated English response is
+       the most common failure); when the reference is non-CJK, the
+       translation must not switch to CJK.
+    3. Identifier preservation: numbers ≥3 digits and URLs from the English
+       original must appear verbatim in the translation.
+    4. Safety patterns (leakage, unsupported claims) — the English-only
+       regexes are supplemented by script-aware CJK translations of the
+       same concepts (e.g. "保证" for guarantee, "内部" for internal).
+    5. Length sanity (3x max / 20% min).
     """
     if not translated or not translated.strip():
         return "translation is empty"
+
+    # Script consistency (p2-174 review issue #3)
+    reference_has_cjk = bool(_CJK_SCRIPT_RE.search(language_reference))
+    translated_has_cjk = bool(_CJK_SCRIPT_RE.search(translated))
+    if reference_has_cjk and not translated_has_cjk:
+        return (
+            "translation did not switch to the customer's script: the "
+            "reference uses CJK characters but the translation does not — "
+            "the model likely returned the English original untranslated"
+        )
+    if not reference_has_cjk and translated_has_cjk:
+        return (
+            "translation switched to a CJK script but the customer's "
+            "reference does not use CJK — the model translated to the "
+            "wrong language"
+        )
+
+    # Identifier preservation (p2-174 review issue #3)
+    import re as _re
+
+    for number in _re.findall(r"\d{3,}", english_original):
+        if number not in translated:
+            return (
+                f"identifier '{number}' from the English original is "
+                f"missing in the translation — the model may have altered "
+                f"or dropped session/UID/channel identifiers"
+            )
+    for url in _URL_RE.findall(english_original):
+        if url not in translated:
+            return f"URL '{url}' from the English original is missing in the translation"
+
+    # Safety patterns
     from backend.services.engineer_guardrail_agent import (
         _INTERNAL_LEAK_PATTERNS,
         _UNSUPPORTED_CLAIM_PATTERNS,
+    )
+
+    _CJK_SAFETY_PATTERNS = (
+        (re.compile(r"保证.{0,10}(修复|解决|退款|赔偿)"), "unsupported Chinese guarantee/promise"),
+        (re.compile(r"绝对.{0,6}(没有|不会|一定)"), "absolute Chinese claim"),
+        (re.compile(r"内部.{0,4}(使用|专用|不要分享)"), "internal-only Chinese marker"),
+        (re.compile(r"100%.{0,8}(修复|解决)"), "100% guarantee claim"),
     )
 
     for pattern in _INTERNAL_LEAK_PATTERNS:
@@ -144,6 +199,11 @@ def _validate_translated_content(translated: str, english_original: str) -> str 
     for pattern in _UNSUPPORTED_CLAIM_PATTERNS:
         if pattern.search(translated):
             return f"unsupported claim detected: {pattern.pattern}"
+    for pattern, description in _CJK_SAFETY_PATTERNS:
+        if pattern.search(translated):
+            return f"unsupported claim detected: {description} ({pattern.pattern})"
+
+    # Length sanity
     original_len = len(english_original.strip())
     if original_len > 100 and len(translated.strip()) > original_len * 3:
         return (
@@ -232,7 +292,7 @@ def prepare_hermes_draft_delivery(
 
     # Safety validation: the translation must not introduce internal leakage,
     # unsupported claims, or drop the content (p2-173 review issue #4).
-    safety_error = _validate_translated_content(translated, english_content)
+    safety_error = _validate_translated_content(translated, english_content, language_reference)
     if safety_error:
         error = f"translation safety validation failed: {safety_error}"
         store.fail_hermes_draft_prep(draft_id, error=error)
@@ -352,25 +412,24 @@ def approve_and_queue_hermes_draft(
     approver: str,
     environment: str,
 ) -> dict[str, Any]:
-    """Human approval path: approve and start delivery preparation atomically.
+    """Human approval path: atomically approve and start delivery preparation.
 
-    The draft enters `preparing` and a prep job is created in the same store
-    transaction; a worker claims the prep job, determines the customer
-    language, translates the approved English content, and queues the
+    The store's approve_and_prep_hermes_draft handles both the approval and
+    the prep-job creation in one transaction — including recovery from a
+    crash between the two (draft stuck at 'approved' with no job) and
+    prepare_failed retries. The draft enters 'preparing'; a worker claims
+    the prep job, translates to the customer's language, and queues the
     immutable translated text onto the Zendesk delivery ledger.
     """
-    # If the draft is already approved but not preparing (a prior crash
-    # between approve and job creation), the prep-job creation is retried —
-    # the store's create_hermes_delivery_prep_job accepts approved status.
-    draft = store.get_hermes_draft(draft_id)
-    if draft is not None and str(draft.get("status")) == "awaiting_approval":
-        approved = store.approve_hermes_case_draft(draft_id, approver=approver)
-    else:
-        approved = store.get_hermes_draft(draft_id)
-        if approved is None:
-            raise HermesDraftStateError(draft_id, "draft not found")
-    prep = store.create_hermes_delivery_prep_job(
+    result = store.approve_and_prep_hermes_draft(
         draft_id,
-        base_event={"provenance": {"service_role": "slack", "approver": approver, "environment": environment}},
+        approver=approver,
+        base_event={
+            "provenance": {
+                "service_role": "slack",
+                "approver": approver,
+                "environment": environment,
+            }
+        },
     )
-    return {"approved": dict(approved), "prep": dict(prep)}
+    return {"approved": dict(result.get("approved") or {}), "prep": dict(result)}

@@ -535,12 +535,12 @@ def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> 
 def _to_english_display(text: str) -> str:
     """Best-effort English display conversion for the Slack root message.
 
-    Uses the persona-model LLM with a short timeout; returns the original
-    text on any failure (the Slack surface is English-first but never blocks
-    on translation). Pure-ASCII text is returned as-is (already English).
+    Always calls the LLM — isascii() cannot detect French/German/etc. which
+    use mostly-ASCII characters. On failure, returns a visible "[Non-English]"
+    prefix so the engineer knows the text was not converted.
     """
     normalized = _clean_text(text)
-    if not normalized or normalized.isascii():
+    if not normalized:
         return normalized
     try:
         from backend.services.automation_hermes_delivery import (
@@ -549,11 +549,15 @@ def _to_english_display(text: str) -> str:
 
         return translate_draft_for_delivery(
             english_content=normalized,
-            language_reference="Translate this to English. Keep names, product terms, and identifiers as-is.",
+            language_reference=(
+                "Translate the following text to English. If it is already "
+                "in English, return it unchanged. Keep names, product terms, "
+                "identifiers, and code as-is."
+            ),
         ).strip()
     except Exception:  # noqa: BLE001 - display-only, never block the root post
         LOGGER.warning("slack_english_display_conversion_failed", exc_info=True)
-        return normalized
+        return f"[Non-English] {normalized}"
 
 
 def notify_hermes_case_opened(

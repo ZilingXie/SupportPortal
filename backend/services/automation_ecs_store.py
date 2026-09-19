@@ -315,6 +315,9 @@ class AutomationEcsStore(Protocol):
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def approve_and_prep_hermes_draft(
+        self, draft_id: str, *, approver: str, base_event: dict[str, Any]
+    ) -> dict[str, Any]: ...
     def create_hermes_delivery_prep_job(
         self, draft_id: str, *, base_event: dict[str, Any]
     ) -> dict[str, Any]: ...
@@ -2101,15 +2104,102 @@ class InMemoryAutomationEcsStore:
             draft["updated_at"] = _iso()
             return copy.deepcopy(draft)
 
+    def approve_and_prep_hermes_draft(
+        self, draft_id: str, *, approver: str, base_event: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Atomically approve a draft and create its delivery-prep job.
+
+        Handles three entry states in one lock/transaction:
+        - awaiting_approval → approve → preparing + job
+        - approved (crash between approve and job creation) → preparing + job
+        - prepare_failed (retry) → preparing + job (reuse/reset)
+        A draft already preparing or queued returns already=<state>.
+        """
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id)
+            if draft is None:
+                raise HermesDraftStateError(draft_id, "draft not found")
+            status = str(draft.get("status") or "")
+            if status in {"queued", "preparing"}:
+                return {"already": status, "draft_id": draft_id, "job_id": None}
+            if status not in {"awaiting_approval", "approved", "prepare_failed"}:
+                raise HermesDraftStateError(draft_id, f"draft is {status}")
+            now_value = _iso()
+            if status == "awaiting_approval":
+                binding = self._hermes_bindings.get((draft["namespace"], draft["zendesk_ticket_id"]))
+                if binding is None:
+                    raise HermesDraftStateError(draft_id, "case binding disappeared")
+                if int(binding["conversation_version"]) > int(draft["conversation_version"]) + 1:
+                    draft.update(status="stale", updated_at=now_value)
+                    raise HermesDraftStaleError(draft_id)
+                draft.update(approved_by=approver, approved_at=now_value)
+            draft.update(
+                status="preparing",
+                prep_error=None,
+                delivery_content=None,
+                delivery_language_ref=None,
+                delivery_source_revision=None,
+                delivery_prompt_version=None,
+                delivery_prepared_at=None,
+                updated_at=now_value,
+            )
+            turn = self._hermes_turns.get(str(draft["turn_id"]))
+            execution_id = str(turn["execution_id"]) if turn else str(draft["turn_id"])
+            # Idempotent job creation: no duplicate if one already exists.
+            existing_job = next(
+                (
+                    j for j in self._jobs.values()
+                    if j["namespace"] == draft["namespace"]
+                    and j["execution_id"] == execution_id
+                    and j["kind"] == JobKind.HERMES_DELIVERY_PREP.value
+                    and j["status"] != "completed"
+                ),
+                None,
+            )
+            if existing_job is not None:
+                existing_job.update(
+                    status=JobStatus.PENDING.value,
+                    claim_token=None,
+                    claimed_by=None,
+                    lease_expires_at=None,
+                    available_at=now_value,
+                    updated_at=now_value,
+                )
+                job_id = str(existing_job["job_id"])
+            else:
+                job_id = _new_id("job")
+                self._jobs[job_id] = {
+                    "job_id": job_id,
+                    "execution_id": execution_id,
+                    "kind": JobKind.HERMES_DELIVERY_PREP.value,
+                    "status": JobStatus.PENDING.value,
+                    "namespace": draft["namespace"],
+                    "payload": {
+                        "contract_version": "automation-agent-turn-v1",
+                        "execution_id": execution_id,
+                        "turn_id": str(draft["turn_id"]),
+                        "draft_id": draft_id,
+                        "base_event": base_event,
+                    },
+                    "attempt": 0,
+                    "claim_token": None,
+                    "claimed_by": None,
+                    "lease_expires_at": None,
+                    "external_started_at": None,
+                    "available_at": now_value,
+                    "created_at": now_value,
+                    "updated_at": now_value,
+                }
+            return {
+                "draft_id": draft_id,
+                "job_id": job_id,
+                "status": "preparing",
+                "approved": copy.deepcopy(draft),
+            }
+
     def create_hermes_delivery_prep_job(
         self, draft_id: str, *, base_event: dict[str, Any]
     ) -> dict[str, Any]:
-        """Transition an approved draft to preparing and enqueue its prep job.
-
-        Idempotent: a draft already preparing or queued returns
-        already=<state> without creating a second job; a prepare_failed draft
-        is retried (the previous error is replaced on the next outcome).
-        """
         with self._lock:
             draft = self._hermes_drafts.get(draft_id)
             if draft is None:
@@ -4726,6 +4816,106 @@ class PostgresAutomationEcsStore:
                 )
                 return dict(updated)
 
+    def approve_and_prep_hermes_draft(
+        self, draft_id: str, *, approver: str, base_event: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Atomically approve a draft and create its delivery-prep job (PG).
+
+        Handles awaiting_approval → approve → preparing + job, plus recovery
+        from approved (crash before job creation) and prepare_failed (retry)
+        — all in one transaction with row-level locking.
+        """
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(
+                        self._table("automation_hermes_case_drafts")
+                    ),
+                    (draft_id,),
+                )
+                draft = cursor.fetchone()
+                if draft is None:
+                    raise HermesDraftStateError(draft_id, "draft not found")
+                status = str(draft["status"])
+                if status in {"queued", "preparing"}:
+                    return {"already": status, "draft_id": draft_id, "job_id": None}
+                if status not in {"awaiting_approval", "approved", "prepare_failed"}:
+                    raise HermesDraftStateError(draft_id, f"draft is {status}")
+                if status == "awaiting_approval":
+                    cursor.execute(
+                        sql.SQL(
+                            "SELECT conversation_version FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s"
+                        ).format(self._table("automation_hermes_case_bindings")),
+                        (draft["namespace"], draft["zendesk_ticket_id"]),
+                    )
+                    binding = cursor.fetchone()
+                    if binding is None:
+                        raise HermesDraftStateError(draft_id, "case binding disappeared")
+                    if int(binding["conversation_version"]) > int(draft["conversation_version"]) + 1:
+                        cursor.execute(
+                            sql.SQL("UPDATE {} SET status='stale',updated_at=NOW() WHERE draft_id=%s").format(
+                                self._table("automation_hermes_case_drafts")
+                            ),
+                            (draft_id,),
+                        )
+                        raise HermesDraftStaleError(draft_id)
+                turn_execution_id = self._draft_execution_id(cursor, draft_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='preparing',"
+                        "approved_by=COALESCE(approved_by,%s),"
+                        "approved_at=COALESCE(approved_at,NOW()),"
+                        "prep_error=NULL,delivery_content=NULL,delivery_language_ref=NULL,"
+                        "delivery_source_revision=NULL,delivery_prompt_version=NULL,"
+                        "delivery_prepared_at=NULL,updated_at=NOW() "
+                        "WHERE draft_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_drafts")),
+                    (approver, draft_id),
+                )
+                updated = cursor.fetchone()
+                job_id = _new_id("job")
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
+                        "VALUES (%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (namespace, execution_id, kind) DO UPDATE SET "
+                        "status='pending',claim_token=NULL,claimed_by=NULL,"
+                        "lease_expires_at=NULL,updated_at=NOW() "
+                        "WHERE {}.status NOT IN ('completed')"
+                    ).format(
+                        self._table("automation_jobs"),
+                        self._table("automation_jobs"),
+                    ),
+                    (
+                        job_id,
+                        updated["namespace"],
+                        turn_execution_id,
+                        JobKind.HERMES_DELIVERY_PREP.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(
+                            {
+                                "contract_version": "automation-agent-turn-v1",
+                                "execution_id": turn_execution_id,
+                                "turn_id": str(updated["turn_id"]),
+                                "draft_id": draft_id,
+                                "base_event": base_event,
+                            }
+                        ),
+                    ),
+                )
+                self._insert_timeline(
+                    cursor,
+                    turn_execution_id,
+                    "agent_turn.draft_approved",
+                    {"draft_id": draft_id, "approver": approver},
+                )
+                return {
+                    "draft_id": draft_id,
+                    "job_id": job_id,
+                    "status": "preparing",
+                    "approved": dict(updated),
+                }
+
     def mark_hermes_draft_queued(self, draft_id: str, *, delivery_message_id: str) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
@@ -4781,47 +4971,42 @@ class PostgresAutomationEcsStore:
                 updated = cursor.fetchone()
                 turn_execution_id = self._draft_execution_id(cursor, draft_id)
                 job_id = _new_id("job")
-                try:
-                    cursor.execute(
-                        sql.SQL(
-                            "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
-                            "VALUES (%s,%s,%s,%s,%s,%s)"
-                        ).format(self._table("automation_jobs")),
-                        (
-                            job_id,
-                            updated["namespace"],
-                            turn_execution_id,
-                            JobKind.HERMES_DELIVERY_PREP.value,
-                            JobStatus.PENDING.value,
-                            Jsonb(
-                                {
-                                    "contract_version": "automation-agent-turn-v1",
-                                    "execution_id": turn_execution_id,
-                                    "turn_id": str(updated["turn_id"]),
-                                    "draft_id": draft_id,
-                                    "base_event": base_event,
-                                }
-                            ),
+                # ON CONFLICT handles the UNIQUE(namespace, execution_id, kind)
+                # constraint atomically: a prior prep job for this execution is
+                # reset to pending (unless already completed) instead of
+                # inserting a duplicate. try/catch UniqueViolation cannot be
+                # used here — the transaction is already aborted after the
+                # failed INSERT, so the recovery UPDATE would get
+                # InFailedSqlTransaction (p2-174 review issue #1).
+                cursor.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
+                        "VALUES (%s,%s,%s,%s,%s,%s) "
+                        "ON CONFLICT (namespace, execution_id, kind) DO UPDATE SET "
+                        "status='pending',claim_token=NULL,claimed_by=NULL,"
+                        "lease_expires_at=NULL,updated_at=NOW() "
+                        "WHERE {}.status NOT IN ('completed')"
+                    ).format(
+                        self._table("automation_jobs"),
+                        self._table("automation_jobs"),
+                    ),
+                    (
+                        job_id,
+                        updated["namespace"],
+                        turn_execution_id,
+                        JobKind.HERMES_DELIVERY_PREP.value,
+                        JobStatus.PENDING.value,
+                        Jsonb(
+                            {
+                                "contract_version": "automation-agent-turn-v1",
+                                "execution_id": turn_execution_id,
+                                "turn_id": str(updated["turn_id"]),
+                                "draft_id": draft_id,
+                                "base_event": base_event,
+                            }
                         ),
-                    )
-                except psycopg.errors.UniqueViolation:
-                    # A prior prep job for this draft's execution still exists
-                    # (UNIQUE(namespace, execution_id, kind)); reset it to
-                    # pending so the worker re-claims it instead of creating
-                    # a duplicate.
-                    cursor.execute(
-                        sql.SQL(
-                            "UPDATE {} SET status='pending',claim_token=NULL,claimed_by=NULL,"
-                            "lease_expires_at=NULL,updated_at=NOW() "
-                            "WHERE namespace=%s AND execution_id=%s AND kind=%s "
-                            "AND status NOT IN ('completed')"
-                        ).format(self._table("automation_jobs")),
-                        (
-                            updated["namespace"],
-                            turn_execution_id,
-                            JobKind.HERMES_DELIVERY_PREP.value,
-                        ),
-                    )
+                    ),
+                )
                 return {"draft_id": draft_id, "job_id": job_id, "status": "preparing"}
 
     def complete_hermes_draft_prep(
