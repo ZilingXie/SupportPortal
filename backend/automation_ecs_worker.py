@@ -30,6 +30,7 @@ from backend.services.automation_ecs_contracts import (
     ExecutionStatus,
     IntakeEventType,
     JobKind,
+    JobStatus,
     ProcessingJobPayload,
 )
 from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerHeartbeat
@@ -213,6 +214,7 @@ class AutomationWorker:
     lease_seconds: int = 300
     background_cycle: Callable[[], None] | None = None
     agent_processor: HermesAgentTurnProcessor | None = None
+    repository: Any = None  # ticket repository; used by delivery prep
 
     def _run_background_cycle(self) -> None:
         if self.background_cycle is None:
@@ -540,6 +542,7 @@ def run_automation_worker() -> int:
             environment=settings.environment,
             repository=repository,
         ),
+        repository=repository,
     )
     stopping = Event()
     heartbeat = WorkerHeartbeat(
