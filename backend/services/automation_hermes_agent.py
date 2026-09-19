@@ -267,6 +267,7 @@ class HermesAgentTurnProcessor:
         defer_seconds: int = 20,
         poll_interval_seconds: float = 2.0,
         turn_timeout_seconds: float = 900.0,
+        work_result_wait_seconds: float | None = None,
         sleeper: Any = time.sleep,
     ) -> None:
         self.store = store
@@ -276,6 +277,11 @@ class HermesAgentTurnProcessor:
         self.defer_seconds = max(1, defer_seconds)
         self.poll_interval_seconds = max(0.5, poll_interval_seconds)
         self.turn_timeout_seconds = turn_timeout_seconds
+        self.work_result_wait_seconds = (
+            float(work_result_wait_seconds)
+            if work_result_wait_seconds is not None
+            else float(os.getenv("HERMES_AGENT_WORK_RESULT_WAIT_SECONDS") or 120.0)
+        )
         self._sleep = sleeper
 
     # ------------------------------------------------------------------ entry
@@ -381,7 +387,23 @@ class HermesAgentTurnProcessor:
                 }
             if phase == HermesTurnPhase.WORK and outcome == _PHASE_COMPLETED:
                 after_work = self.store.get_hermes_turn(payload.turn_id) or {}
-                work_result = after_work.get("work_result")
+                if str(refreshed.get("direction") or "") == "automation":
+                    work_result = self._await_terminal_work_result(
+                        payload.turn_id, after_work.get("work_result")
+                    )
+                    if work_result is None:
+                        # The engine returned without a persisted business
+                        # conclusion: the tool was never invoked, or its
+                        # connection broke mid-execution (ALB idle timeout,
+                        # ticket 13601) and no terminal result landed inside
+                        # the wait budget. Silence must never be treated as
+                        # success: run the unified handoff and park.
+                        return self._fail_missing_work_result(payload, after_work)
+                else:
+                    # Investigation-direction turns carry their business
+                    # conclusion through the investigation gate, not
+                    # work_result; keep the historical passthrough.
+                    work_result = after_work.get("work_result")
                 work_status = (
                     str(work_result.get("status") or "")
                     if isinstance(work_result, dict)
@@ -469,6 +491,18 @@ class HermesAgentTurnProcessor:
                     # bind the case's Slack thread before investigating, so
                     # every later notification lands in one thread
                     self._ensure_case_thread(payload, refreshed)
+                if direction == "automation":
+                    # Legacy parity: claim the Zendesk ticket before the work
+                    # phase can execute any business action. The ~90s
+                    # routing-window wait belongs in this worker context, not
+                    # on the engine's tool request (ticket 13601).
+                    if not self._claim_automation_ownership_before_work(payload, refreshed):
+                        return {
+                            "engine": "hermes",
+                            "turn_id": payload.turn_id,
+                            "status": "human_review",
+                            "reason": "ownership_gate_failed",
+                        }
 
         publication = publication_decision_for_turn(
             self.store,
@@ -767,6 +801,186 @@ class HermesAgentTurnProcessor:
         self.store.complete_hermes_agent_turn(turn_id, result=result)
         self._notify_investigation_result(payload, investigation)
         return result
+
+    # ------------------------------------------------------- automation claim
+
+    def _claim_automation_ownership_before_work(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> bool:
+        """Claim the Zendesk ticket before submitting the work run.
+
+        Legacy parity: the intake pipeline runs the ~90s routing-window gate
+        before any business execution. Doing it here (worker context, lease
+        heartbeat keeps the job alive) keeps the claim off the engine's tool
+        request, which crosses the public ALB and dies at its 60s idle
+        timeout (ticket 13601: the engine saw a 504, persona published a
+        false timeout narrative while the api-side claim was still running).
+        Returns True to continue with the work phase.
+        """
+        if self.repository is None:
+            return True
+        if str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() != "1":
+            return True
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_EVENT_TYPE,
+            ensure_production_automation_ownership,
+            ownership_gate_eligible,
+        )
+
+        ticket_id = str(turn["zendesk_ticket_id"])
+        account_case = self.repository.get_account_case_by_ticket_id(ticket_id)
+        if not isinstance(account_case, dict):
+            return True
+        if not str(account_case.get("route_family") or "").strip():
+            account_case["route_family"] = "automated"
+        if not ownership_gate_eligible(account_case):
+            return True
+        updated_at = str(turn.get("created_at") or "")
+        ownership_result = ensure_production_automation_ownership(
+            account_case, mode="gate", updated_at=updated_at
+        )
+        try:
+            self.repository.record_event(
+                ticket_id or None,
+                OWNERSHIP_EVENT_TYPE,
+                {
+                    "account_case_id": str(
+                        account_case.get("account_case_id")
+                        or account_case.get("billing_ticket_id")
+                        or ""
+                    ),
+                    "state": ownership_result.state,
+                    "assignee_id": ownership_result.assignee_id,
+                    "group_id": ownership_result.group_id,
+                    "failure_code": ownership_result.failure_code,
+                    "failure_category": ownership_result.failure_category,
+                    "zendesk_status_code": ownership_result.zendesk_status_code,
+                    "failure_detail": ownership_result.failure_detail,
+                    "blocking_comment_id": ownership_result.blocking_comment_id,
+                    "created_at": updated_at,
+                },
+            )
+        except Exception:
+            LOGGER.exception("ownership gate event recording failed for %s", ticket_id)
+        if not ownership_result.fail_closed:
+            self.repository.save_account_case(account_case)
+            return True
+        self._escalate_automation_failure(
+            payload,
+            account_case,
+            reason_code=f"ownership_gate_{ownership_result.failure_code or 'failed'}",
+            detail=(
+                "Zendesk ownership gate failed: "
+                f"{ownership_result.failure_detail or ownership_result.failure_code}"
+            ),
+        )
+        return False
+
+    def _await_terminal_work_result(
+        self, turn_id: str, current: Any
+    ) -> dict[str, Any] | None:
+        """Wait for the persisted business result when the work run returned
+        with only the tool's ``running`` marker (its connection broke
+        mid-execution). Returns the terminal dict, or None when the tool was
+        never invoked (no marker at all) or the wait budget ran out."""
+        if isinstance(current, dict):
+            status = str(current.get("status") or "")
+            if status and status != "running":
+                return current
+            if status != "running":
+                # Empty/non-dict marker: the tool never started. Do not
+                # burn the wait budget on a business action that cannot
+                # still land — fail fast (silence is not success).
+                return None
+        else:
+            return None
+        deadline = time.monotonic() + max(0.0, self.work_result_wait_seconds)
+        while time.monotonic() < deadline:
+            self._sleep(min(self.poll_interval_seconds, max(0.0, deadline - time.monotonic())))
+            refreshed = self.store.get_hermes_turn(turn_id) or {}
+            candidate = refreshed.get("work_result")
+            if isinstance(candidate, dict):
+                status = str(candidate.get("status") or "")
+                if status and status != "running":
+                    return candidate
+            if str(refreshed.get("status") or "") in {"cancel_requested", "cancelled", "superseded"}:
+                return None
+        return None
+
+    def _fail_missing_work_result(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> dict[str, Any]:
+        ticket_id = str(turn.get("zendesk_ticket_id") or "")
+        account_case = (
+            self.repository.get_account_case_by_ticket_id(ticket_id)
+            if self.repository is not None and ticket_id
+            else None
+        )
+        reason = "work_result_missing"
+        if account_case is not None:
+            self._escalate_automation_failure(
+                payload,
+                account_case,
+                reason_code=reason,
+                detail=(
+                    "The work phase returned without a persisted business "
+                    "conclusion within the wait budget (tool connection broke "
+                    "or the tool was never invoked); silence is not success."
+                ),
+            )
+        else:
+            self.store.record_hermes_turn_work(
+                payload.turn_id,
+                work_result={"status": "human_review_required", "reason": reason},
+            )
+            self.store.complete_hermes_agent_turn(
+                payload.turn_id,
+                result={
+                    "engine": "hermes",
+                    "turn_id": payload.turn_id,
+                    "status": "human_review",
+                    "reason": reason,
+                },
+            )
+        return {
+            "engine": "hermes",
+            "turn_id": payload.turn_id,
+            "status": "human_review",
+            "reason": reason,
+        }
+
+    def _escalate_automation_failure(
+        self,
+        payload: AgentTurnJobPayload,
+        account_case: dict[str, Any],
+        *,
+        reason_code: str,
+        detail: str,
+    ) -> None:
+        from backend.services.automation_hermes_tools import (
+            _escalate_uncompleted_automation,
+        )
+        from backend.services.account_route_pipeline import account_route_metadata
+
+        turn = self.store.get_hermes_turn(payload.turn_id) or {}
+        ticket_id = str(turn.get("zendesk_ticket_id") or payload.event.ticket.id)
+        normalized_route = str(turn.get("route") or account_case.get("route") or "")
+        automation_handler = str(
+            (account_route_metadata(classification={}, route_family="", execution_action=normalized_route) or {}).get(
+                "automation_handler"
+            )
+            or normalized_route
+        )
+        _escalate_uncompleted_automation(
+            store=self.store,
+            repository=self.repository,
+            account_case=account_case,
+            ticket_id=ticket_id,
+            turn_id=payload.turn_id,
+            automation_handler=automation_handler,
+            reason_code=reason_code,
+            detail=detail,
+        )
 
     # ----------------------------------------------------------------- phases
 
