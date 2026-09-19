@@ -736,6 +736,10 @@ def tool_save_reply_draft(
             # stay blocked.
             "ready_for_customer_reply": bool(investigation) or bool(work_result),
         },
+        # The greeting was applied above by the application (English, from
+        # the snapshot's greeting_name); the guardrail validates as-is so
+        # save/validate/approve/send all reference the same text.
+        preformatted=True,
     )
     draft = store.save_hermes_case_draft(
         turn_id,

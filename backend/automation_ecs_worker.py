@@ -311,12 +311,108 @@ class AutomationWorker:
             self._run_background_cycle()
             return True
 
+    def process_hermes_delivery_prep_once(self) -> bool:
+        """Claim and run one post-approval delivery-preparation job.
+
+        Translates the approved English draft to the customer's language and
+        queues the immutable translated content onto the Zendesk ledger. A
+        preparation failure is a business outcome (draft prepare_failed, no
+        ledger row), not a job-infrastructure failure — the job completes
+        normally so it is not retried blindly.
+        """
+        job = self.store.claim_job(
+            JobKind.HERMES_DELIVERY_PREP,
+            worker_id=self.settings.runtime_identity,
+            lease_seconds=self.lease_seconds,
+        )
+        if job is None:
+            return False
+        lease = JobLeaseHeartbeat(self.store, job=job, lease_seconds=self.lease_seconds)
+        lease.start()
+        try:
+            from backend.services.automation_hermes_delivery import (
+                prepare_hermes_draft_delivery,
+            )
+
+            draft_id = str((job.payload or {}).get("draft_id") or "")
+            if not draft_id:
+                raise ValueError("hermes delivery prep job payload has no draft_id")
+            result = prepare_hermes_draft_delivery(
+                self.store,
+                self.repository,
+                draft_id=draft_id,
+                environment=self.settings.environment,
+            )
+            normalized = jsonable_encoder(result)
+            lease.stop()
+            job_status = (
+                JobStatus.FAILED
+                if str(result.get("status")) == "prepare_failed"
+                else JobStatus.COMPLETED
+            )
+            if job_status is JobStatus.COMPLETED:
+                self.store.complete_processing(
+                    job,
+                    outcome=normalized,
+                    status=ExecutionStatus.COMPLETED,
+                )
+            else:
+                self.store.fail_job(
+                    job,
+                    failure_stage="hermes.delivery_prep",
+                    failure_code="hermes_delivery_prep_failed",
+                    error_message=str(result.get("error") or "delivery preparation failed"),
+                )
+            self._notify_delivery_prep_result(draft_id, result)
+            self._run_background_cycle()
+            return True
+        except Exception as exc:
+            lease.stop()
+            LOGGER.exception(
+                "Hermes delivery prep failed execution_id=%s", job.execution_id
+            )
+            self.store.fail_job(
+                job,
+                failure_stage="hermes.delivery_prep",
+                failure_code=f"hermes_prep_{type(exc).__name__}",
+                error_message=str(exc),
+                outcome_unknown=True,
+            )
+            self._run_background_cycle()
+            return True
+
+    def _notify_delivery_prep_result(self, draft_id: str, result: dict[str, Any]) -> None:
+        """Best-effort Slack notice when delivery preparation fails."""
+        status = str(result.get("status") or "")
+        if status != "prepare_failed":
+            return
+        from backend.services.engineer_slack import notify_hermes_prep_failed
+
+        try:
+            draft = self.store.get_hermes_draft(draft_id)
+            if not isinstance(draft, dict):
+                return
+            binding = self.store.get_hermes_case_binding(str(draft["zendesk_ticket_id"])) or {}
+            notify_hermes_prep_failed(
+                ticket_id=str(draft["zendesk_ticket_id"]),
+                draft_id=draft_id,
+                reason=str(result.get("error") or "delivery preparation failed"),
+                environment=self.settings.environment,
+                thread_ts=str(binding.get("slack_thread_ts") or "").strip(),
+            )
+        except Exception:  # noqa: BLE001 - best-effort channel ping
+            LOGGER.warning(
+                "hermes_prep_failed_notify_failed draft_id=%s", draft_id, exc_info=True
+            )
+
     def process_once(self) -> bool:
         self.store.heartbeat(
             worker_id=self.settings.runtime_identity,
             provenance=self.settings.provenance(),
         )
         if self.process_agent_turn_once():
+            return True
+        if self.process_hermes_delivery_prep_once():
             return True
         job = self.store.claim_job(
             JobKind.PROCESSING,

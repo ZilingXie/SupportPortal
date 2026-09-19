@@ -23,6 +23,7 @@ HERMES_INVESTIGATION_RESULT_EVENT_TYPE = "hermes_investigation_result"
 HERMES_ADHOC_RESULT_EVENT_TYPE = "hermes_adhoc_result"
 HERMES_DRAFT_PENDING_EVENT_TYPE = "hermes_draft_pending"
 HERMES_DRAFT_BLOCKED_EVENT_TYPE = "hermes_draft_blocked"
+HERMES_PREP_FAILED_EVENT_TYPE = "hermes_prep_failed"
 PUBLIC_DASHBOARD_BASE_URL = "https://supportcenter.stellarix.space"
 _ROOT_EVENT_TYPES = frozenset(
     {
@@ -39,6 +40,7 @@ _HERMES_THREAD_EVENT_TYPES = frozenset(
         HERMES_ADHOC_RESULT_EVENT_TYPE,
         HERMES_DRAFT_PENDING_EVENT_TYPE,
         HERMES_DRAFT_BLOCKED_EVENT_TYPE,
+        HERMES_PREP_FAILED_EVENT_TYPE,
     }
 )
 _SLACK_ACTIONS = frozenset({
@@ -687,9 +689,10 @@ def notify_hermes_draft_pending(
         )
     # Full draft content on purpose: the Slack review message is the primary
     # approval surface, and a truncated preview reads like a broken draft
-    # (owner decision 2026-09-18, case 13591). Persona replies are far below
-    # Slack's message limit.
-    body_lines.append(f"Draft: {_clean_text(draft_content)}")
+    # (owner decision 2026-09-18, case 13591). Line breaks are preserved so
+    # the email paragraph structure stays reviewable.
+    draft_display = str(draft_content or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+    body_lines.append(f"Draft: {draft_display}")
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-draft-pending:{draft_id}",
@@ -728,6 +731,36 @@ def notify_hermes_draft_blocked(
         {
             "event_id": f"hermes-draft-blocked:{turn_id}",
             "event_type": HERMES_DRAFT_BLOCKED_EVENT_TYPE,
+            "message_text": "\n".join(body_lines),
+        },
+        thread_ts=thread_ts,
+    )
+
+
+def notify_hermes_prep_failed(
+    *,
+    thread_ts: str,
+    ticket_id: str,
+    draft_id: str,
+    reason: str,
+    environment: str,
+) -> dict[str, Any]:
+    """Best-effort notice when post-approval delivery preparation fails.
+
+    The draft stays prepare_failed: nothing was sent to Zendesk. A human can
+    retry from the approval surface (a new approve click re-enqueues prep).
+    """
+    if not engineer_slack_configured():
+        LOGGER.info("hermes_prep_failed_skipped reason=engineer_slack_not_configured")
+        return {"status": "skipped_not_configured"}
+    body_lines = [f"Hermes delivery preparation failed — Zendesk #{ticket_id}"]
+    body_lines.append(f"Draft: {draft_id}")
+    body_lines.append(f"Reason: {_clean_text(reason) or 'unknown'}")
+    body_lines.append("Nothing was sent to Zendesk. Re-approve the draft to retry preparation.")
+    return post_engineer_slack_event(
+        {
+            "event_id": f"hermes-prep-failed:{draft_id}",
+            "event_type": HERMES_PREP_FAILED_EVENT_TYPE,
             "message_text": "\n".join(body_lines),
         },
         thread_ts=thread_ts,
