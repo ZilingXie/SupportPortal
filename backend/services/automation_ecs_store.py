@@ -1957,6 +1957,25 @@ class InMemoryAutomationEcsStore:
             )
             return copy.deepcopy(binding)
 
+    def pause_hermes_case(self, turn_id: str, *, reason: str) -> dict[str, Any]:
+        """Neutral park: waiting on an external continuation (e.g. the
+        enablement relay result) is normal business waiting, not a human
+        escalation — the direction stays and no escalation trace is written
+        (ticket 13601: review_requested parked through the escalation
+        primitive and read as a failure handoff)."""
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if turn is None:
+                raise HermesTurnStateError(turn_id, "turn not found")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
+            if binding is None:
+                raise HermesTurnStateError(turn_id, "case binding disappeared")
+            binding.update(status="paused", updated_at=_iso())
+            self._append_event(
+                turn["execution_id"], "agent_turn.paused", {"turn_id": turn_id, "reason": reason}
+            )
+            return copy.deepcopy(binding)
+
     def save_hermes_case_draft(
         self,
         turn_id: str,
@@ -4525,6 +4544,32 @@ class PostgresAutomationEcsStore:
                     cursor,
                     str(turn["execution_id"]),
                     "agent_turn.escalated",
+                    {"turn_id": turn_id, "reason": reason},
+                )
+                return dict(binding)
+
+    def pause_hermes_case(self, turn_id: str, *, reason: str) -> dict[str, Any]:
+        """Neutral park (memory-twin semantics, see the InMemory twin)."""
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                turn = self._lock_turn(cursor, turn_id)
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET status='paused',updated_at=NOW() "
+                        "WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *"
+                    ).format(self._table("automation_hermes_case_bindings")),
+                    (
+                        turn["namespace"],
+                        turn["zendesk_ticket_id"],
+                    ),
+                )
+                binding = cursor.fetchone()
+                if binding is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
+                self._insert_timeline(
+                    cursor,
+                    str(turn["execution_id"]),
+                    "agent_turn.paused",
                     {"turn_id": turn_id, "reason": reason},
                 )
                 return dict(binding)
