@@ -878,12 +878,14 @@ def publication_decision_for_turn(
         return {"status": "awaiting_approval", "queued": False, "draft_id": draft["draft_id"]}
     if not zendesk_side_effects_enabled:
         return {"status": "approved", "queued": False, "reason": "zendesk_side_effects_disabled"}
-    from backend.services.automation_hermes_delivery import queue_hermes_draft_delivery
-
-    queue_hermes_draft_delivery(
-        store, repository, draft_id=updated["draft_id"], environment=environment
+    # Auto-approved drafts enter the same async delivery-preparation flow as
+    # human-approved ones: the worker translates to the customer's language
+    # before the ledger entry (p2-173 review issue #3).
+    store.create_hermes_delivery_prep_job(
+        updated["draft_id"],
+        base_event={"provenance": {"service_role": "orchestrator", "environment": environment}},
     )
-    return {"status": "queued", "queued": True, "draft_id": draft["draft_id"]}
+    return {"status": "preparing", "queued": False, "draft_id": draft["draft_id"]}
 
 
 def resolve_awaiting_investigation_turn(

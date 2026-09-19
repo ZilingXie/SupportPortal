@@ -26,14 +26,23 @@ _CUSTOMER_ROLES = frozenset({"end-user", "end_user", "customer", "requester", "u
 
 
 def _is_customer_author(author: Any) -> bool:
+    """True when the author is unambiguously the customer, not an agent.
+
+    ``is_agent=False`` with a customer-role (or no role) is a real customer;
+    ``is_agent=True`` or an agent-role is staff. ``is_agent=None`` with a
+    customer-role defaults to customer (Zendesk often omits the flag).
+    """
     if not isinstance(author, dict):
         return False
+    is_agent = author.get("is_agent")
     role = str(author.get("role") or "").strip().lower()
-    if role in _CUSTOMER_ROLES:
-        return author.get("is_agent") is not False
-    if role in {"agent", "staff", "admin", "support"} or author.get("is_agent") is True:
+    if is_agent is True:
         return False
-    return author.get("is_agent") is False
+    if role in {"agent", "staff", "admin", "support"}:
+        return False
+    if role in _CUSTOMER_ROLES:
+        return True
+    return is_agent is False
 
 
 def determine_delivery_language_reference(
@@ -113,6 +122,42 @@ def translate_draft_for_delivery(
     return translated
 
 
+def _validate_translated_content(translated: str, english_original: str) -> str | None:
+    """Pre-send safety validation on the translated delivery content.
+
+    Returns an error string when the translation must NOT enter the ledger;
+    None when safe. Checks: non-empty, no internal leakage markers, no
+    unsupported claims, no trailing signature, and length sanity (the
+    translation should be within ~3x of the English original — wildly longer
+    suggests the model added content).
+    """
+    if not translated or not translated.strip():
+        return "translation is empty"
+    from backend.services.engineer_guardrail_agent import (
+        _INTERNAL_LEAK_PATTERNS,
+        _UNSUPPORTED_CLAIM_PATTERNS,
+    )
+
+    for pattern in _INTERNAL_LEAK_PATTERNS:
+        if pattern.search(translated):
+            return f"internal leakage marker detected: {pattern.pattern}"
+    for pattern in _UNSUPPORTED_CLAIM_PATTERNS:
+        if pattern.search(translated):
+            return f"unsupported claim detected: {pattern.pattern}"
+    original_len = len(english_original.strip())
+    if original_len > 100 and len(translated.strip()) > original_len * 3:
+        return (
+            f"translated length {len(translated.strip())} exceeds 3x the "
+            f"English original {original_len}; likely content injection"
+        )
+    if original_len > 100 and len(translated.strip()) < original_len * 0.2:
+        return (
+            f"translated length {len(translated.strip())} is less than 20% of "
+            f"the English original {original_len}; likely content truncation"
+        )
+    return None
+
+
 def prepare_hermes_draft_delivery(
     store: AutomationEcsStore,
     repository: Any,
@@ -133,11 +178,27 @@ def prepare_hermes_draft_delivery(
         raise HermesDraftStateError(draft_id, "draft not found")
     ticket_id = str(draft["zendesk_ticket_id"])
 
-    # Already prepared (crash after store, before job completion): reuse.
+    # Already queued with a delivery ledger entry (crash after the send-side
+    # queue, before the job completed): the ledger row exists and the drain
+    # worker handles it — nothing to redo here.
+    current_status = str(draft.get("status") or "")
     prepared = str(draft.get("delivery_content") or "").strip()
-    if prepared and str(draft.get("status")) in {"approved", "queued"}:
+    if current_status == "queued":
+        return {"draft_id": draft_id, "status": "queued", "reused_ledger": True}
+
+    # Already prepared (crash after store, before ledger entry): the draft is
+    # "approved" with delivery_content set — queue the prepared text without
+    # re-translating.
+    if prepared and current_status == "approved":
         queue_hermes_draft_delivery(store, repository, draft_id=draft_id, environment=environment)
         return {"draft_id": draft_id, "status": "queued", "reused_prepared": True}
+
+    if current_status not in {"preparing"}:
+        # A prepare_failed draft should not silently re-enter via this path;
+        # the retry flow (a new approve click) re-enqueues it.
+        error = f"draft is {current_status}; expected preparing"
+        LOGGER.warning("hermes_draft_prep_skipped draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": current_status, "error": error}
 
     language_reference = determine_delivery_language_reference(store, ticket_id)
     if not language_reference:
@@ -165,6 +226,15 @@ def prepare_hermes_draft_delivery(
         )
     except Exception as exc:  # translation failures park the draft for human retry
         error = f"translation failure: {exc}"
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
+
+    # Safety validation: the translation must not introduce internal leakage,
+    # unsupported claims, or drop the content (p2-173 review issue #4).
+    safety_error = _validate_translated_content(translated, english_content)
+    if safety_error:
+        error = f"translation safety validation failed: {safety_error}"
         store.fail_hermes_draft_prep(draft_id, error=error)
         LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
         return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
@@ -282,13 +352,23 @@ def approve_and_queue_hermes_draft(
     approver: str,
     environment: str,
 ) -> dict[str, Any]:
-    """Human approval path: approve, then start async delivery preparation.
+    """Human approval path: approve and start delivery preparation atomically.
 
-    The draft enters `preparing`; a worker claims the prep job, determines
-    the customer language, translates the approved English content, and
-    queues the immutable translated text onto the Zendesk delivery ledger.
+    The draft enters `preparing` and a prep job is created in the same store
+    transaction; a worker claims the prep job, determines the customer
+    language, translates the approved English content, and queues the
+    immutable translated text onto the Zendesk delivery ledger.
     """
-    approved = store.approve_hermes_case_draft(draft_id, approver=approver)
+    # If the draft is already approved but not preparing (a prior crash
+    # between approve and job creation), the prep-job creation is retried —
+    # the store's create_hermes_delivery_prep_job accepts approved status.
+    draft = store.get_hermes_draft(draft_id)
+    if draft is not None and str(draft.get("status")) == "awaiting_approval":
+        approved = store.approve_hermes_case_draft(draft_id, approver=approver)
+    else:
+        approved = store.get_hermes_draft(draft_id)
+        if approved is None:
+            raise HermesDraftStateError(draft_id, "draft not found")
     prep = store.create_hermes_delivery_prep_job(
         draft_id,
         base_event={"provenance": {"service_role": "slack", "approver": approver, "environment": environment}},
