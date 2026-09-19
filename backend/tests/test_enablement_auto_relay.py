@@ -117,9 +117,11 @@ class _FakeRelayClient:
         return self.events.pop(0) if self.events else None
 
     def ack_event(
-        self, event, *, listener_instance_id, readiness_epoch, **fencing
+        self, event, *, listener_instance_id, readiness_epoch, light=False, **fencing
     ):
-        self.acked.append({"event": event, "fencing": dict(fencing)})
+        self.acked.append(
+            {"event": event, "fencing": dict(fencing), "light": bool(light)}
+        )
 
     def complete_task(self, task_id, **kwargs):
         self.completed_tasks.append(task_id)
@@ -567,6 +569,107 @@ class RelayInboxTests(unittest.TestCase):
         request = self.repository.get_enablement_relay_request(self.request_id)
         self.assertEqual(request["status"], "dispatched")
         self.assertEqual(client.completed_tasks, [])
+
+    def test_delivery_receipt_with_message_id_is_light_acked(self):
+        """13601 regression: message.delivery_changed receipts carry the
+        outbound message_id; treating them as turn messages 409-looped the
+        fenced ack and redelivered the event every second."""
+        client, _payload = self._client_with_result()
+        client.task_details["task-1"]["messages"][0]["from_agent_id"] = (
+            "supportportal-preproduction"
+        )
+        client.events.clear()
+        client.events.append(
+            {
+                "event_id": "ev-receipt-1",
+                "task_id": "task-1",
+                "message_id": "msg-1",
+                "event_type": "message.delivery_changed",
+                "can_transition_message": False,
+            }
+        )
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        # Exactly one light ack (no task fencing), nothing parsed or recorded.
+        self.assertEqual(len(client.acked), 1)
+        self.assertTrue(client.acked[0]["light"])
+        self.assertNotIn("expected_task_version", client.acked[0]["fencing"])
+        reject_events = [
+            e
+            for e in self.repository._events
+            if e.get("event_type") == "enablement_relay_result_rejected"
+        ]
+        self.assertEqual(reject_events, [])
+        self.assertIsNone(self.repository.get_enablement_relay_result(self.request_id))
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "dispatched")
+        self.assertEqual(client.completed_tasks, [])
+
+    def test_outbound_message_receipt_by_direction_is_light_acked(self):
+        """Direction fallback: an event without event_type whose referenced
+        message is our own outbound dispatch is a receipt, not a result."""
+        client, _payload = self._client_with_result()
+        client.task_details["task-1"]["messages"][0]["from_agent_id"] = (
+            "supportportal-preproduction"
+        )
+        client.events.clear()
+        client.events.append(
+            {"event_id": "ev-receipt-2", "task_id": "task-1", "message_id": "msg-1"}
+        )
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        self.assertEqual(len(client.acked), 1)
+        self.assertTrue(client.acked[0]["light"])
+        self.assertNotIn("expected_task_version", client.acked[0]["fencing"])
+        reject_events = [
+            e
+            for e in self.repository._events
+            if e.get("event_type") == "enablement_relay_result_rejected"
+        ]
+        self.assertEqual(reject_events, [])
+
+    def test_inbound_counterparty_message_still_uses_fenced_ack(self):
+        """A real result message from the counterparty keeps the heavy path."""
+        client, _payload = self._client_with_result()
+        client.task_details["task-1"]["messages"][1]["from_agent_id"] = "zac-agent"
+        client.events.clear()
+        client.events.append(
+            {
+                "event_id": "ev-inbound-1",
+                "task_id": "task-1",
+                "message_id": "msg-9",
+                "event_type": "message.created",
+            }
+        )
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        self.assertEqual(len(client.acked), 1)
+        self.assertEqual(client.acked[0]["fencing"]["expected_task_version"], 3)
+        result = self.repository.get_enablement_relay_result(self.request_id)
+        self.assertEqual(result["outcome"], "enabled")
+        self.assertEqual(client.completed_tasks, ["task-1"])
+
+    def test_orphan_message_event_is_consumed_as_noise(self):
+        """A message event for a task with no local application must not enter
+        the fenced-ack path (foreign fencing state would 409-loop)."""
+        client, _payload = self._client_with_result()
+        client.events.clear()
+        client.events.append(
+            {"event_id": "ev-orph-1", "task_id": "task-unknown", "message_id": "msg-x"}
+        )
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        self.assertEqual(len(client.acked), 1)
+        self.assertTrue(client.acked[0]["light"])
+        self.assertNotIn("expected_task_version", client.acked[0]["fencing"])
 
     def test_expiry_sweep_fails_closed(self):
         request = self.repository.get_enablement_relay_request(self.request_id)

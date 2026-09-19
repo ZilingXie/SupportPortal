@@ -4512,26 +4512,76 @@ def _apply_enablement_relay_result(
     _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
 
 
+def _enablement_relay_event_is_notification(
+    event: dict[str, Any],
+    *,
+    task_detail: dict[str, Any],
+    own_agent_id: str,
+    message_id: str,
+) -> bool:
+    """Classify a pulled relay event as a delivery/status notice.
+
+    Turn-message events carry the counterparty's reply; every other event —
+    including the ``message.delivery_changed`` receipts for our own outbound
+    dispatch message — must take the light ack form. The server states this
+    directly via ``can_transition_message=false``, but that field is not in
+    the published contract, so the classification also falls back to the
+    event type and to the direction of the referenced message.
+    """
+    event_type = str(event.get("event_type") or "")
+    if event_type.endswith("delivery_changed"):
+        return True
+    if event.get("can_transition_message") is False:
+        return True
+    if task_detail and message_id:
+        for message in task_detail.get("messages") or []:
+            if not isinstance(message, dict):
+                continue
+            if str(message.get("message_id") or "") != message_id:
+                continue
+            return str(message.get("from_agent_id") or "") == own_agent_id
+    return False
+
+
+def _ack_enablement_relay_notification(
+    client: AgentRelayClient,
+    event: dict[str, Any],
+    *,
+    listener_instance_id: str,
+    readiness_epoch: int,
+    context: str,
+) -> None:
+    try:
+        client.ack_event(
+            event,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+            light=True,
+        )
+    except AgentRelayError as exc:
+        LOGGER.warning("enablement relay %s ack failed: %s", context, exc)
+
+
 def _consume_enablement_relay_event(
     client: AgentRelayClient,
     event: dict[str, Any],
     *,
     listener_instance_id: str,
     readiness_epoch: int,
+    own_agent_id: str = "",
 ) -> None:
     task_id = str(event.get("task_id") or "")
     message_id = str(event.get("message_id") or "")
     if not message_id:
         # Notification-class event (delivery/status notices): never touches
         # application state; ACK with the light event form and move on.
-        try:
-            client.ack_event(
-                event,
-                listener_instance_id=listener_instance_id,
-                readiness_epoch=readiness_epoch,
-            )
-        except AgentRelayError as exc:
-            LOGGER.warning("enablement relay notification ack failed: %s", exc)
+        _ack_enablement_relay_notification(
+            client,
+            event,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+            context="notification",
+        )
         return
     request = (
         ticket_repository.find_enablement_relay_request_by_task(task_id)
@@ -4540,6 +4590,17 @@ def _consume_enablement_relay_event(
     )
     recorded: dict[str, Any] | None = None
     task_detail: dict[str, Any] = {}
+    if request is None:
+        # No local application owns this task: a fenced message ack would
+        # 409-loop against foreign fencing state. Consume it as noise.
+        _ack_enablement_relay_notification(
+            client,
+            event,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+            context="orphan message event",
+        )
+        return
     if request is not None:
         try:
             task_detail = client.get_task(task_id)
@@ -4548,6 +4609,23 @@ def _consume_enablement_relay_event(
                 "enablement relay task detail fetch failed for %s: %s", task_id, exc
             )
             # Do not ACK: the event redelivers after the ack lease.
+            return
+        if _enablement_relay_event_is_notification(
+            event,
+            task_detail=task_detail,
+            own_agent_id=own_agent_id,
+            message_id=message_id,
+        ):
+            # Receipt for our own outbound message or a delivery notice: the
+            # fenced message-ack form is rejected by the server (409) and the
+            # event would redeliver forever (ticket 13601).
+            _ack_enablement_relay_notification(
+                client,
+                event,
+                listener_instance_id=listener_instance_id,
+                readiness_epoch=readiness_epoch,
+                context="delivery notice",
+            )
             return
         payload = _parse_enablement_relay_result(task_detail)
         request_id = str(request.get("request_id") or "")
@@ -4655,6 +4733,7 @@ def _cycle_enablement_relay_inbox(*, max_events: int = 10) -> None:
                 event,
                 listener_instance_id=listener_instance_id,
                 readiness_epoch=readiness_epoch,
+                own_agent_id=str(config.agent_id or ""),
             )
         except Exception:
             LOGGER.exception(
