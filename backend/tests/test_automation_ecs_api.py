@@ -8,6 +8,8 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+import unittest
+
 from fastapi.testclient import TestClient
 
 from backend.automation_ecs_api import _safe_execution_detail, create_app
@@ -121,6 +123,64 @@ def _client(
         ),
         base_url="https://supportcenter.stellarix.space",
     ), store
+
+
+class EnablementRelayRequestStateTests(unittest.TestCase):
+    def test_relay_request_state_endpoint_returns_live_fields(self) -> None:
+        from unittest.mock import Mock
+
+        client, _store = _client()
+        repository = Mock()
+        repository.get_enablement_relay_request.return_value = {
+            "request_id": "enr-AC-1-v1",
+            "status": "dispatched",
+            "dispatch_status": "created",
+            "relay_task_id": "task-1",
+            "zendesk_ticket_id": "13601",
+            "request_version": 1,
+            "updated_at": "2026-09-19T00:00:00+00:00",
+        }
+        token = _settings("api").intake_shared_token
+        with patch.object(
+            __import__(
+                "backend.automation_ecs_api", fromlist=["_TICKET_REPOSITORY"]
+            ),
+            "_TICKET_REPOSITORY",
+            repository,
+        ):
+            response = client.get(
+                "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "dispatched")
+        self.assertEqual(payload["relay_task_id"], "task-1")
+        self.assertEqual(payload["request_version"], 1)
+
+    def test_relay_request_state_endpoint_404_and_auth(self) -> None:
+        from unittest.mock import Mock
+
+        client, _store = _client()
+        repository = Mock()
+        repository.get_enablement_relay_request.return_value = None
+        token = _settings("api").intake_shared_token
+        with patch.object(
+            __import__(
+                "backend.automation_ecs_api", fromlist=["_TICKET_REPOSITORY"]
+            ),
+            "_TICKET_REPOSITORY",
+            repository,
+        ):
+            missing = client.get(
+                "/automation/production/v1/enablement-relay/requests/enr-none",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+            unauth = client.get(
+                "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
+            )
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(unauth.status_code, 401)
 
 
 def _dashboard_login(client: TestClient) -> None:

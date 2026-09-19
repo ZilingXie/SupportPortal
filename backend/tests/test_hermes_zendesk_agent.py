@@ -754,6 +754,51 @@ class TestAgentTurnProcessor:
         escalate_mock.assert_called_once()
         assert len(client.submissions) == 2  # persona never ran
 
+    def test_unknown_work_status_escalates_through_unified_chain(self) -> None:
+        """Acceptance gap #5: blocking persona is not a handoff — the unified
+        chain runs when the account case is available."""
+        from types import SimpleNamespace
+
+        store = _store()
+        repository = self._automation_repository()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "failed_timeout", "route": "enablement"},
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+        with patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=SimpleNamespace(status="completed"),
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            return_value={"status": "sent"},
+        ) as notify_mock:
+            outcome = processor.process(agent_job)
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "work_result_not_publishable:failed_timeout"
+        escalate_mock.assert_called_once()
+        notify_mock.assert_called_once()
+        saved = repository.get_account_case("AC-123")
+        assert saved["automation_status"] == "human_review_required"
+
     def test_unknown_work_status_never_reaches_persona(self) -> None:
         """PR-C: persona may only consume explicitly publishable business
         conclusions; an unknown terminal status parks the turn instead."""

@@ -461,22 +461,23 @@ async def tool_execute_automation_action(
             return boundary_result
 
         if requires_human_review:
-            account_case["automation_status"] = "human_review_required"
-            account_case["execution_reason_code"] = f"{automation_handler}_field_extraction_failed"
-            repository.save_account_case(account_case)
-            human_review_work_result = {
-                "status": "human_review_required",
-                "reason": "field_extraction_requires_human_review",
-                "missing_fields": missing_fields,
-                "collected_fields": collected_fields,
-                "executed_actions": [],
-            }
-            try:
-                store.record_hermes_turn_work(turn_id, work_result=human_review_work_result)
-            except Exception:
-                pass
-            store.escalate_hermes_case(turn_id, reason="field_extraction_requires_human_review")
-            return human_review_work_result
+            # Acceptance gap #5: parking the binding alone is not a handoff —
+            # route the branch through the unified chain (internal note, queue
+            # return, owner email, per-step records).
+            return _escalate_uncompleted_automation(
+                store=store,
+                repository=repository,
+                account_case=account_case,
+                ticket_id=ticket_id,
+                turn_id=turn_id,
+                automation_handler=automation_handler,
+                reason_code="field_extraction_requires_human_review",
+                detail=(
+                    "Field extraction for the "
+                    f"{automation_handler or normalized_route} route could not "
+                    "produce a reliable business conclusion; human review required."
+                ),
+            )
 
         suspension_handoff_payload = dict(attempt.get("internal_email_payload") or {}) or None
         if (
@@ -677,7 +678,7 @@ def _escalate_uncompleted_automation(
     # partial handoff must be visible as partial (never reported as success).
     handoff_steps: dict[str, str] = {}
     try:
-        escalate_account_case_to_human_review(
+        escalation = escalate_account_case_to_human_review(
             account_case=account_case,
             ticket_id=ticket_id,
             handler=automation_handler or "enablement",
@@ -686,7 +687,19 @@ def _escalate_uncompleted_automation(
             reason=detail,
             repository=repository,
         )
-        handoff_steps["internal_note_queue_ownership"] = "ok"
+        # Acceptance gap #8: record the real outcome, not just the absence of
+        # an exception — a degraded escalation (note or queue failed) must
+        # never read as a clean "ok".
+        if str(getattr(escalation, "status", "") or "") == "completed":
+            handoff_steps["internal_note_queue_ownership"] = "ok"
+        elif str(getattr(escalation, "status", "") or ""):
+            handoff_steps["internal_note_queue_ownership"] = (
+                f"{getattr(escalation, 'status', 'unknown')}:"
+                f"note={getattr(escalation, 'internal_note_status', 'unknown')},"
+                f"queue={getattr(escalation, 'route_back_status', 'unknown')}"
+            )
+        else:
+            handoff_steps["internal_note_queue_ownership"] = "unknown_return"
     except Exception as exc:
         handoff_steps["internal_note_queue_ownership"] = f"failed:{type(exc).__name__}"
     account_case_id = str(
@@ -695,7 +708,7 @@ def _escalate_uncompleted_automation(
     from backend.services.automation_account_intake import _now_iso
 
     try:
-        notify_account_failure(
+        notify_result = notify_account_failure(
             repository=repository,
             incident_id=f"account-automation:{account_case_id}:hermes_tool:{reason_code}",
             stage="hermes_tool",
@@ -705,7 +718,15 @@ def _escalate_uncompleted_automation(
             detail=detail[:500],
             now=str(account_case.get("updated_at") or _now_iso()),
         )
-        handoff_steps["owner_email"] = "ok"
+        notify_status = str((notify_result or {}).get("status") or "").strip()
+        if notify_status in {"sent", "sent_unpersisted"}:
+            handoff_steps["owner_email"] = "ok"
+        elif notify_status == "already_claimed":
+            handoff_steps["owner_email"] = "ok:dedup"
+        elif notify_status:
+            handoff_steps["owner_email"] = notify_status
+        else:
+            handoff_steps["owner_email"] = "unknown_return"
     except Exception as exc:
         handoff_steps["owner_email"] = f"failed:{type(exc).__name__}"
     try:

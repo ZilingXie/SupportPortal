@@ -118,3 +118,16 @@ pilot archer open    --appid '<appid>' --type 6 --region 2 --max-subscribe-load 
   汇总入口均可）；Listener 保持持续接收并持久化后及时 ACK，不等到 10:00。
 - 有未完成的汇总任务时优先继续，避免重复领取；恢复连接后补收。
 - Relay Task 有效期 14 个自然日（覆盖周末与审批等待），到期由 ECS 侧按失败收尾，本地不再执行。
+
+## Execute-time request validity check (required)
+
+Before the pilot write, the executor verifies the relay request is still
+active server-side (`status == "dispatched"`). Configure on this Mac:
+
+- `SUPPORTPORTAL_RELAY_API_BASE` — the SupportPortal api base, e.g.
+  `https://supportcenter.stellarix.space/automation/preproduction`
+- `SUPPORTPORTAL_RELAY_TOKEN` — the environment's intake Bearer token
+
+Without both variables the executor refuses to run (fail closed). A request
+cancelled after dispatch (e.g. the Zendesk ticket was solved) is never
+executed on a stale approval, because an Archer write cannot be undone.

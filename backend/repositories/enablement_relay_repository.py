@@ -142,6 +142,10 @@ class EnablementRelayRepositoryMixin:
     ) -> dict[str, Any] | None: ...
     def get_enablement_relay_result(self, request_id: str) -> dict[str, Any] | None: ...
 
+    def list_enablement_relay_deferred_applies(
+        self, *, limit: int = 10
+    ) -> list[dict[str, Any]]: ...
+
 
 def _normalize_relay_request(row: dict[str, Any]) -> dict[str, Any]:
     request = dict(row)
@@ -485,6 +489,29 @@ class InMemoryEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
         with self._assignment_lock:
             result = self._enablement_relay_results.get(normalized)
             return copy.deepcopy(result) if result else None
+
+    def list_enablement_relay_deferred_applies(
+        self, *, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        """Results still pending application on dispatched requests — the
+        re-drive cycle retries them after a deferred status read recovers."""
+        found: list[dict[str, Any]] = []
+        with self._assignment_lock:
+            request_ids = sorted(self._enablement_relay_results.keys())
+            for request_id in request_ids:
+                request = self._enablement_relay_requests.get(request_id)
+                if not request or str(request.get("status") or "") not in {
+                    "dispatched",
+                    "result_received",
+                }:
+                    continue
+                result = self._enablement_relay_results.get(request_id)
+                if not result or str(result.get("applied_status") or "") != "pending":
+                    continue
+                found.append({"request": copy.deepcopy(request), "result": copy.deepcopy(result)})
+                if len(found) >= max(1, int(limit)):
+                    break
+        return found
 
     # -- InMemory helpers -------------------------------------------------
 
@@ -1040,6 +1067,36 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                 return {"result": result, "winner": winner, "request": request}
 
         return self._run_with_connection_retry("record_enablement_relay_result", _operation)
+
+    def list_enablement_relay_deferred_applies(
+        self, *, limit: int = 10
+    ) -> list[dict[str, Any]]:
+        def _operation(conn: Any) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT r.request_id FROM {} r "
+                        "JOIN {} q ON q.request_id = r.request_id "
+                        "WHERE r.applied_status = 'pending' AND q.status IN ('dispatched', 'result_received') "
+                        "ORDER BY r.created_at LIMIT %s"
+                    ).format(
+                        self._table("support_enablement_relay_results"),
+                        self._table("support_enablement_relay_requests"),
+                    ),
+                    (max(1, int(limit)),),
+                )
+                ids = [str(row[0]) for row in cur.fetchall()]
+                found: list[dict[str, Any]] = []
+                for request_id in ids:
+                    request = self.get_enablement_relay_request(request_id)
+                    result = self.get_enablement_relay_result(request_id)
+                    if request and result:
+                        found.append({"request": request, "result": result})
+                return found
+
+        return self._run_with_connection_retry(
+            "list_enablement_relay_deferred_applies", _operation
+        )
 
     def mark_enablement_relay_result_applied(
         self, *, request_id: str, applied_status: str, now: str

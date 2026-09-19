@@ -459,6 +459,28 @@ def create_app(    *,
             "executions": coordination_store.list_case_executions(zendesk_ticket_id),
         }
 
+    @app.get(f"{base}/v1/enablement-relay/requests/{{request_id}}")
+    async def enablement_relay_request_state(request_id: str) -> dict[str, Any]:
+        """Read-only live state for the Mac-side executor (13601 gap #7).
+
+        The local skill re-reads this right before the pilot write: a request
+        cancelled or completed after dispatch (e.g. the ticket was solved)
+        must never be executed on a stale approval.
+        """
+        repository = _engineer_ticket_repository()
+        request = repository.get_enablement_relay_request(str(request_id or "").strip())
+        if not isinstance(request, dict) or not request:
+            raise HTTPException(status_code=404, detail="relay request not found")
+        return {
+            "request_id": str(request.get("request_id") or ""),
+            "status": str(request.get("status") or ""),
+            "dispatch_status": str(request.get("dispatch_status") or ""),
+            "relay_task_id": str(request.get("relay_task_id") or ""),
+            "zendesk_ticket_id": str(request.get("zendesk_ticket_id") or ""),
+            "request_version": int(request.get("request_version") or 1),
+            "updated_at": str(request.get("updated_at") or ""),
+        }
+
     @app.post(f"{base}/dashboard/auth/login")
     async def dashboard_login(credentials: DashboardLoginRequest) -> JSONResponse:
         if not auth.verify_credentials(credentials.username, credentials.password):

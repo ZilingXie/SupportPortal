@@ -3206,6 +3206,7 @@ def process_account_automation_once() -> None:
     _drain_enablement_manual_review_emails(limit=25, processing_profile=processing_profile)
     _drain_enablement_relay_dispatches(limit=10)
     _cycle_enablement_relay_inbox(max_events=10)
+    _recheck_enablement_relay_deferred_results(limit=5)
     _sweep_enablement_relay_expiry(limit=10)
     _drain_account_slack_deliveries(limit=20)
     _drain_engineer_slack_events(limit=20)
@@ -4132,18 +4133,29 @@ def _dispatch_enablement_relay_request(
 
     request_id = str(request.get("request_id") or "")
     ticket_id = str(request.get("ticket_id") or "")
+    # Test-only controllable barrier for close-acceptance: hold dispatching so
+    # the ticket can be solved in the window between the delivered reply and
+    # the relay task creation (13601 acceptance). Never set in normal runs.
+    if str(os.getenv("AUTOMATION_ENABLEMENT_RELAY_DISPATCH_HOLD") or "").strip() == "1":
+        LOGGER.info(
+            "enablement relay dispatch held by test barrier: request=%s", request_id
+        )
+        return
     # A solved/closed ticket terminates the round before any task is created
     # (13601: the dispatch fired ten minutes after the manual solve). Read
     # the live Zendesk state, not the possibly-stale local mirror.
     if ticket_id:
         try:
             snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id)
-        except ZendeskCommentError as exc:
+        except Exception as exc:
+            # Acceptance gap #6: an unreadable status must block the dispatch
+            # (retry next cycle) rather than silently proceed.
             LOGGER.warning(
                 "enablement relay dispatch status read failed request=%s: %s",
                 request_id,
                 exc,
             )
+            return
         else:
             if str(snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
                 timestamp = now_iso()
@@ -4459,14 +4471,24 @@ def _enablement_relay_approval_bound(
     return True
 
 
+_RELAY_APPLY_APPLIED = "applied"
+_RELAY_APPLY_MISSING_CASE = "missing_case"
+_RELAY_APPLY_HUMAN_REVIEW = "human_review"
+_RELAY_APPLY_TICKET_CLOSED = "ticket_closed"
+_RELAY_APPLY_STATUS_UNREADABLE = "status_unreadable"
+_RELAY_APPLY_MODE_SWITCHED = "mode_switched"
+
+
 def _apply_enablement_relay_success(
     request: dict[str, Any], result: dict[str, Any]
-) -> bool:
+) -> str:
     """Apply a winning successful relay result as the single completion reply.
 
-    The completion job uses a deterministic job id and trigger timestamp, so a
-    crash between job creation and the applied marker can never produce two
-    completion replies.
+    Returns a classification instead of a bare bool so the caller can tell a
+    closed-ticket cancellation apart from a genuine failure handoff (13601
+    acceptance gap #9). The completion job uses a deterministic job id and
+    trigger timestamp, so a crash between job creation and the applied marker
+    can never produce two completion replies.
     """
     request_id = str(request.get("request_id") or "")
     ticket_id = str(request.get("ticket_id") or "")
@@ -4474,10 +4496,10 @@ def _apply_enablement_relay_success(
     timestamp = str(result.get("created_at") or now_iso())
     account_case = ticket_repository.get_account_case(account_case_id)
     if account_case is None:
-        return False
+        return _RELAY_APPLY_MISSING_CASE
     if str(account_case.get("automation_status") or "") == "human_review_required":
         # Taken over by a human: the result stays as evidence only.
-        return False
+        return _RELAY_APPLY_HUMAN_REVIEW
     ticket_id_for_status = str(request.get("ticket_id") or "")
     if ticket_id_for_status:
         from backend.services.zendesk_ticket_assignment import (
@@ -4487,14 +4509,25 @@ def _apply_enablement_relay_success(
 
         try:
             live_snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id_for_status)
-        except Exception as exc:  # best-effort termination check
+        except Exception as exc:
+            # Acceptance gap #6: an unreadable status must not silently let
+            # the completion through — classify and defer for re-verification.
             LOGGER.warning(
                 "enablement relay result status read failed request=%s: %s",
                 str(request.get("request_id") or ""),
                 exc,
             )
-            live_snapshot = None
-        if live_snapshot is not None and str(live_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+            ticket_repository.record_event(
+                ticket_id_for_status or None,
+                "enablement_relay_result_apply_deferred_status_unreadable",
+                {
+                    "request_id": str(request.get("request_id") or ""),
+                    "error": str(exc)[:300],
+                    "attempted_at": now_iso(),
+                },
+            )
+            return _RELAY_APPLY_STATUS_UNREADABLE
+        if str(live_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
             # Ticket closed before the result applied: keep the result as
             # evidence, never create a completion reply or reopen (13601).
             ticket_repository.record_event(
@@ -4506,10 +4539,10 @@ def _apply_enablement_relay_success(
                     "attempted_at": now_iso(),
                 },
             )
-            return False
+            return _RELAY_APPLY_TICKET_CLOSED
     if enablement_workflow_mode() != "archer":
         # Mode switched after dispatch: keep the result as evidence.
-        return False
+        return _RELAY_APPLY_MODE_SWITCHED
     canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
     known_information = {
         "requested_feature": "media_relay",
@@ -4594,7 +4627,7 @@ def _apply_enablement_relay_success(
             "attempted_at": now_iso(),
         },
     )
-    return True
+    return _RELAY_APPLY_APPLIED
 
 
 def _apply_enablement_relay_result(
@@ -4645,20 +4678,39 @@ def _apply_enablement_relay_result(
             )
             _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
             return
-        applied = False
+        apply_class = _RELAY_APPLY_STATUS_UNREADABLE
         try:
-            applied = _apply_enablement_relay_success(request, result)
+            apply_class = _apply_enablement_relay_success(request, result)
         except Exception:
             LOGGER.exception(
                 "enablement relay success apply failed for %s", request_id
             )
-        if applied:
+            apply_class = _RELAY_APPLY_STATUS_UNREADABLE
+        if apply_class == _RELAY_APPLY_APPLIED:
             ticket_repository.mark_enablement_relay_result_applied(
                 request_id=request_id, applied_status="applied", now=now_iso()
             )
+        elif apply_class == _RELAY_APPLY_TICKET_CLOSED:
+            # Acceptance gap #9: a closed ticket is a cancellation, not a
+            # failure — the result stays as evidence, the request ends
+            # cancelled, and no failure handoff fires.
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="superseded", now=now_iso()
+            )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="cancelled",
+                now=now_iso(),
+                reason="zendesk_ticket_closed",
+            )
+        elif apply_class == _RELAY_APPLY_STATUS_UNREADABLE:
+            # Deferred: the result stays pending and the re-drive cycle
+            # retries after the status read recovers (gap #6).
+            pass
         else:
-            # Evidence only (human takeover or mode switch): keep the result,
-            # do not send a customer completion automatically.
+            # Evidence only (missing case, human takeover, or mode switch):
+            # keep the result, do not send a customer completion
+            # automatically.
             ticket_repository.mark_enablement_relay_result_applied(
                 request_id=request_id, applied_status="superseded", now=now_iso()
             )
@@ -4924,6 +4976,51 @@ def _cycle_enablement_relay_inbox(*, max_events: int = 10) -> None:
             LOGGER.exception(
                 "enablement relay event consumption failed for task %s",
                 event.get("task_id"),
+            )
+
+
+def _recheck_enablement_relay_deferred_results(*, limit: int = 10) -> None:
+    """Re-drive results whose apply was deferred by an unreadable ticket
+    status (acceptance gap #6): retry after the status read recovers."""
+    if ticket_repository is None:
+        return
+    try:
+        deferred = ticket_repository.list_enablement_relay_deferred_applies(limit=limit)
+        if not isinstance(deferred, list) or not deferred:
+            return
+    except Exception:
+        LOGGER.exception("enablement relay deferred-apply scan failed")
+        return
+    config = agentrelay_config()
+    if config is None:
+        return
+    client = AgentRelayClient(config)
+    for item in deferred:
+        request = dict(item.get("request") or {})
+        result = dict(item.get("result") or {})
+        request_id = str(request.get("request_id") or "")
+        task_id = str(request.get("relay_task_id") or "")
+        if not request_id or not task_id:
+            continue
+        try:
+            task_detail = client.get_task(task_id)
+        except AgentRelayError as exc:
+            LOGGER.warning(
+                "enablement relay deferred-apply task fetch failed request=%s: %s",
+                request_id,
+                exc,
+            )
+            continue
+        try:
+            _apply_enablement_relay_result(
+                request=request,
+                result=result,
+                client=client,
+                task_detail=task_detail,
+            )
+        except Exception:
+            LOGGER.exception(
+                "enablement relay deferred-apply retry failed for %s", request_id
             )
 
 
