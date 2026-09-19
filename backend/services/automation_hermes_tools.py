@@ -533,7 +533,11 @@ async def tool_execute_automation_action(
                     store.record_hermes_turn_work(turn_id, work_result=skip_persona_result)
                 except Exception:
                     pass
-                store.escalate_hermes_case(turn_id, reason=f"enablement_{workflow_outcome}_pipeline_reply")
+                # Normal business waiting on the relay result: a neutral park,
+                # not an escalation trace (ticket 13601 review #2).
+                store.pause_hermes_case(
+                    turn_id, reason=f"enablement_{workflow_outcome}_awaiting_relay_result"
+                )
                 return skip_persona_result
             else:
                 sender = (
@@ -652,6 +656,9 @@ def _escalate_uncompleted_automation(
     # steps (the binding park is the last safety line). The previous
     # missing `now` kwarg raised a TypeError that silently killed the
     # email AND skipped the park (ticket 13580).
+    # Per-step outcomes: one failing step must never mask the others, and a
+    # partial handoff must be visible as partial (never reported as success).
+    handoff_steps: dict[str, str] = {}
     try:
         escalate_account_case_to_human_review(
             account_case=account_case,
@@ -662,8 +669,9 @@ def _escalate_uncompleted_automation(
             reason=detail,
             repository=repository,
         )
-    except Exception:
-        pass
+        handoff_steps["internal_note_queue_ownership"] = "ok"
+    except Exception as exc:
+        handoff_steps["internal_note_queue_ownership"] = f"failed:{type(exc).__name__}"
     account_case_id = str(
         account_case.get("account_case_id") or account_case.get("billing_ticket_id") or ticket_id
     )
@@ -680,14 +688,47 @@ def _escalate_uncompleted_automation(
             detail=detail[:500],
             now=str(account_case.get("updated_at") or _now_iso()),
         )
+        handoff_steps["owner_email"] = "ok"
+    except Exception as exc:
+        handoff_steps["owner_email"] = f"failed:{type(exc).__name__}"
+    try:
+        store.escalate_hermes_case(turn_id, reason=reason_code)
+        handoff_steps["binding_park"] = "ok"
+    except Exception as exc:
+        handoff_steps["binding_park"] = f"failed:{type(exc).__name__}"
+    try:
+        repository.record_event(
+            ticket_id or None,
+            "automation_failure_handoff",
+            {
+                "account_case_id": account_case_id,
+                "turn_id": turn_id,
+                "reason_code": reason_code,
+                "steps": handoff_steps,
+                "attempted_at": _now_iso(),
+            },
+        )
     except Exception:
         pass
-    store.escalate_hermes_case(turn_id, reason=reason_code)
+    try:
+        store.record_hermes_turn_work(
+            turn_id,
+            work_result={
+                "status": "human_review_required",
+                "reason": reason_code,
+                "route": automation_handler,
+                "executed_actions": [],
+                "handoff_steps": handoff_steps,
+            },
+        )
+    except Exception:
+        pass
     return {
         "status": "human_review_required",
         "reason": reason_code,
         "route": automation_handler,
         "executed_actions": [],
+        "handoff_steps": handoff_steps,
     }
 
 
@@ -712,10 +753,10 @@ def tool_save_investigation_progress(
         blockers=[str(item) for item in (blockers or [])],
         next_steps=[str(item) for item in (next_steps or [])],
     )
-    if str(binding["direction"]) not in {"investigation", "human"}:
-        store.record_hermes_case_direction(
-            turn_id, direction="investigation", reason="investigation progress saved"
-        )
+    # Saving investigation progress never flips the case direction: an
+    # automation-direction turn that merely records findings stays automation
+    # (ticket 13601: the implicit flip let a failure narrative publish under
+    # automation semantics). Direction changes must be explicit.
     return {"saved": True, "summary": normalized_summary}
 
 

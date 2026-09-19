@@ -575,5 +575,130 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(len(workflow_calls), 1)
 
 
+    def test_enablement_success_parks_neutrally_with_direction_kept(self) -> None:
+        """PR-C: the review_requested wait parks the binding neutrally —
+        status paused, direction still automation, no escalation trace."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        complete = NS(
+            status="ok",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "0123456789abcdef0123456789abcdef",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "media relay",
+            },
+            requires_human_review=False,
+            audit_payload=lambda: {"status": "ok"},
+            follow_up=None,
+        )
+
+        async def fake_workflow(**kwargs):
+            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.automation_account_intake.extract_enablement_fields",
+            return_value=complete,
+        ), patch(
+            "backend.services.automation_account_intake._run_enablement_workflow",
+            side_effect=fake_workflow,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertEqual(result["status"], "workflow_completed")
+        binding = store.get_hermes_case_binding("123")
+        self.assertEqual(str(binding.get("status") or ""), "paused")
+        self.assertEqual(str(binding.get("direction") or ""), "automation")
+        self.assertIsNone(binding.get("escalation"))
+
+    def test_failure_handoff_records_each_step_outcome(self) -> None:
+        """PR-C: the note/queue step failing alone must not skip the email or
+        the park, and every step outcome is recorded visibly."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_FAILED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_FAILED,
+            failure_code="zendesk_assignment_unverified",
+            failure_category="policy",
+        )
+        notified: list[dict] = []
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            side_effect=RuntimeError("note endpoint down"),
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+
+        self.assertEqual(result["status"], "human_review_required")
+        # The email still ran despite the note failing; both outcomes recorded.
+        self.assertEqual(len(notified), 1)
+        steps = result.get("handoff_steps") or {}
+        self.assertEqual(steps.get("internal_note_queue_ownership"), "failed:RuntimeError")
+        self.assertEqual(steps.get("owner_email"), "ok")
+        self.assertEqual(steps.get("binding_park"), "ok")
+        # The journaled work_result carries the same step outcomes.
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        self.assertEqual(
+            turn["work_result"].get("handoff_steps", {}).get("owner_email"), "ok"
+        )
+        # And a dedicated visibility event exists with the step map.
+        events = repository.list_ticket_events("123")
+        handoff_events = [
+            e for e in events if e.get("event_type") == "automation_failure_handoff"
+        ]
+        self.assertEqual(len(handoff_events), 1)
+        self.assertIn("steps", handoff_events[0]["payload"])
+
+
 if __name__ == "__main__":
     unittest.main()
