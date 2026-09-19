@@ -166,7 +166,9 @@ class TestDirectionTools:
 
 
 class TestInvestigationTool:
-    def test_save_investigation_sets_direction(self) -> None:
+    def test_save_investigation_does_not_flip_direction(self) -> None:
+        # PR-C (13601): saving investigation progress must never implicitly
+        # change the case direction; direction changes are explicit only.
         store, repository, turn_id = _setup_case()
         result = tool_save_investigation_progress(
             store,
@@ -180,7 +182,7 @@ class TestInvestigationTool:
         assert result["saved"] is True
         binding = store.get_hermes_case_binding("123")
         assert binding["investigation"]["summary"].startswith("Reproduced")
-        assert binding["direction"] == "investigation"
+        assert binding["direction"] != "investigation"
 
     def test_empty_summary_rejected(self) -> None:
         store, repository, turn_id = _setup_case()

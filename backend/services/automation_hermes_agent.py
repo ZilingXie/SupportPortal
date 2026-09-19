@@ -252,6 +252,10 @@ class HermesTurnDeferred(RuntimeError):
 
 
 _PHASE_COMPLETED = "completed"
+# Only explicitly publishable business conclusions may reach persona; an
+# unknown/failed status must never produce a customer reply (13601 review #2).
+_PERSONA_ALLOWED_WORK_STATUSES = ("executed", "missing_fields")
+
 _PHASE_FAILED = "failed"
 _PHASE_SUPERSEDED = "superseded"
 
@@ -450,6 +454,31 @@ class HermesAgentTurnProcessor:
                         "status": "completed",
                         "reason": str(work_result.get("outcome") or "workflow_completed"),
                         "work_result": work_result,
+                    }
+                if (
+                    str(refreshed.get("direction") or "") == "automation"
+                    and isinstance(work_result, dict)
+                    and work_result.get("skip_persona") is not True
+                    and work_status not in _PERSONA_ALLOWED_WORK_STATUSES
+                ):
+                    # Neither the failure handoff status nor skip_persona
+                    # matched, and the status is not a publishable business
+                    # conclusion: persona must not draft from it.
+                    park_reason = f"work_result_not_publishable:{work_status or 'empty'}"
+                    self.store.complete_hermes_agent_turn(
+                        payload.turn_id,
+                        result={
+                            "engine": "hermes",
+                            "turn_id": payload.turn_id,
+                            "status": "human_review",
+                            "reason": park_reason,
+                        },
+                    )
+                    return {
+                        "engine": "hermes",
+                        "turn_id": payload.turn_id,
+                        "status": "human_review",
+                        "reason": park_reason,
                     }
             if outcome == _PHASE_SUPERSEDED:
                 final = self.store.get_hermes_turn(payload.turn_id) or {}
