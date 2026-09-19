@@ -465,6 +465,27 @@ class HermesAgentTurnProcessor:
                     # matched, and the status is not a publishable business
                     # conclusion: persona must not draft from it.
                     park_reason = f"work_result_not_publishable:{work_status or 'empty'}"
+                    # Acceptance gap #5: blocking persona is not a handoff —
+                    # run the unified chain when the case is available.
+                    account_case_for_park = (
+                        self.repository.get_account_case_by_ticket_id(
+                            str(turn.get("zendesk_ticket_id") or payload.event.ticket.id)
+                        )
+                        if self.repository is not None
+                        else None
+                    )
+                    if account_case_for_park is not None:
+                        self._escalate_automation_failure(
+                            payload,
+                            account_case_for_park,
+                            reason_code=park_reason,
+                            detail=(
+                                "The work phase produced a business result that is "
+                                "not a publishable conclusion "
+                                f"({work_status or 'empty'}); escalated instead of "
+                                "letting persona draft from it."
+                            ),
+                        )
                     self.store.complete_hermes_agent_turn(
                         payload.turn_id,
                         result={

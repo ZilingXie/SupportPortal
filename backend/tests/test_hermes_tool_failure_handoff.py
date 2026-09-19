@@ -560,6 +560,68 @@ class ToolFailureHandoffTests(unittest.TestCase):
         ]
         self.assertEqual(dispatched, [])
 
+    def test_field_extraction_requires_human_review_runs_unified_chain(self) -> None:
+        """Acceptance gap #5: the field-extraction human branch goes through
+        the unified handoff (note + queue + email), not a bare binding park."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        complete = NS(
+            status="ok",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "0123456789abcdef0123456789abcdef",
+                "requested_feature": "media_relay",
+            },
+            requires_human_review=True,
+            audit_payload=lambda: {"status": "needs_human"},
+            follow_up=None,
+        )
+        notified: list[dict] = []
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.automation_account_intake.extract_enablement_fields",
+            return_value=complete,
+        ), patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=NS(status="completed"),
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ) as notify_mock:
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertEqual(result["status"], "human_review_required")
+        self.assertEqual(result["reason"], "field_extraction_requires_human_review")
+        escalate_mock.assert_called_once()
+        notify_mock.assert_called_once()
+        self.assertIn("handoff_steps", result)
+
     def test_tool_replay_returns_recorded_result_without_reexecution(self) -> None:
         """PR-B: a second invocation on the same turn replays the recorded
         business result; external actions never run twice."""
@@ -702,6 +764,57 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(str(binding.get("status") or ""), "paused")
         self.assertEqual(str(binding.get("direction") or ""), "automation")
         self.assertIsNone(binding.get("escalation"))
+
+    def test_failure_handoff_step_records_use_real_return_values(self) -> None:
+        """Acceptance gap #8: degraded escalation and delivery-failed email
+        must be recorded as such, never as plain ok."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_FAILED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_FAILED,
+            failure_code="zendesk_assignment_unverified",
+            failure_category="policy",
+        )
+
+        import asyncio
+
+        degraded = NS(
+            status="degraded",
+            internal_note_status="failed:zendesk_http_error",
+            route_back_status="queued",
+        )
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=degraded,
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            return_value={"status": "delivery_failed"},
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        steps = result.get("handoff_steps") or {}
+        self.assertIn("degraded", steps.get("internal_note_queue_ownership", ""))
+        self.assertIn("failed:zendesk_http_error", steps.get("internal_note_queue_ownership", ""))
+        self.assertEqual(steps.get("owner_email"), "delivery_failed")
 
     def test_failure_handoff_records_each_step_outcome(self) -> None:
         """PR-C: the note/queue step failing alone must not skip the email or

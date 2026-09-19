@@ -462,6 +462,40 @@ def _validate_approval(request: dict[str, Any], approval: Any) -> None:
         raise SystemExit("approval.report_digest is required (take it from the current precheck report)")
 
 
+def _fetch_request_status(request: dict[str, Any]) -> dict[str, Any]:
+    """Live server-side request state (13601 gap #7).
+
+    Reads GET {SUPPORTPORTAL_RELAY_API_BASE}/v1/enablement-relay/requests/{id}
+    with the SUPPORTPORTAL_RELAY_TOKEN bearer. Fail closed on any missing
+    configuration or unreadable response.
+    """
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+
+    base = str(os.environ.get("SUPPORTPORTAL_RELAY_API_BASE") or "").strip().rstrip("/")
+    token = str(os.environ.get("SUPPORTPORTAL_RELAY_TOKEN") or "").strip()
+    if not base or not token:
+        raise SystemExit(
+            "SUPPORTPORTAL_RELAY_API_BASE / SUPPORTPORTAL_RELAY_TOKEN are required "
+            "to verify the request is still active before executing; refusing to run"
+        )
+    request_id = str(request.get("request_id") or "")
+    url = f"{base}/v1/enablement-relay/requests/{urllib.parse.quote(request_id, safe='')}"
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "supportportal-relay-skill/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+        raise SystemExit(f"could not verify request status from the server ({exc}); refusing to run")
+    if not isinstance(payload, dict) or not payload.get("status"):
+        raise SystemExit("server returned an unreadable request status; refusing to run")
+    return payload
+
+
 def cmd_execute(args: argparse.Namespace) -> int:
     request = _load_request(args.request)
     approval_ref = args.approval_ref
@@ -500,6 +534,16 @@ def cmd_execute(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"precheck no longer recommends execution: {precheck.get('recommendation')}/"
             f"{precheck.get('outcome')}"
+        )
+
+    # Server-side freshness gate: the request may have been cancelled after
+    # dispatch (e.g. the ticket was solved) — a stale approval must never
+    # reach the pilot write, and an Archer write cannot be undone.
+    live_status = _fetch_request_status(request)
+    if str(live_status.get("status") or "") != "dispatched":
+        raise SystemExit(
+            f"relay request {request.get('request_id')} is no longer active "
+            f"(status={live_status.get('status')}); refusing to execute"
         )
 
     result = {
