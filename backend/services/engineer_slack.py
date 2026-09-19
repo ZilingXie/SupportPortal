@@ -532,6 +532,30 @@ def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> 
     return lines
 
 
+def _to_english_display(text: str) -> str:
+    """Best-effort English display conversion for the Slack root message.
+
+    Uses the persona-model LLM with a short timeout; returns the original
+    text on any failure (the Slack surface is English-first but never blocks
+    on translation). Pure-ASCII text is returned as-is (already English).
+    """
+    normalized = _clean_text(text)
+    if not normalized or normalized.isascii():
+        return normalized
+    try:
+        from backend.services.automation_hermes_delivery import (
+            translate_draft_for_delivery,
+        )
+
+        return translate_draft_for_delivery(
+            english_content=normalized,
+            language_reference="Translate this to English. Keep names, product terms, and identifiers as-is.",
+        ).strip()
+    except Exception:  # noqa: BLE001 - display-only, never block the root post
+        LOGGER.warning("slack_english_display_conversion_failed", exc_info=True)
+        return normalized
+
+
 def notify_hermes_case_opened(
     *,
     ticket_id: str,
@@ -544,17 +568,22 @@ def notify_hermes_case_opened(
     """Post the case's single root message; its ts becomes the thread anchor.
 
     Best-effort: the caller binds the returned slack_message_ts once and
-    every later notification for the case replies in that thread.
+    every later notification for the case replies in that thread. The title
+    and question are displayed in English (converted from the customer's
+    language when needed, p2-173 review issue #9).
     """
     if not engineer_slack_configured():
         LOGGER.info("hermes_case_opened_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
     normalized_title = _clean_text(title) or f"Zendesk #{ticket_id}"
     normalized_question = _clean_text(question) or normalized_title
+    # English display conversion (best-effort; falls back to the original)
+    display_title = _to_english_display(normalized_title)
+    display_question = _to_english_display(normalized_question)
 
     root_lines = [
-        _escape_slack_untrusted_text(normalized_title),
-        _escape_slack_untrusted_text(normalized_question),
+        _escape_slack_untrusted_text(display_title),
+        _escape_slack_untrusted_text(display_question),
     ]
     if ticket_id:
         quoted_ticket_id = urllib.parse.quote(ticket_id, safe="")

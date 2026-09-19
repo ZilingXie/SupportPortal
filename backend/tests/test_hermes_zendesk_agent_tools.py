@@ -284,14 +284,10 @@ class TestDraftTools:
         result = publication_decision_for_turn(
             store, repository, turn_id=turn_id, environment="preproduction"
         )
-        assert result["queued"] is True
-        assert len(repository.deliveries) == 1
-        delivery = repository.deliveries[0]
-        assert delivery["source"] == "hermes"
-        assert delivery["is_public"] is True
-        assert delivery["immutable_content"].startswith("Hi Customer,")
-        assert delivery["comments_revision"] == "rev-1"
-        assert store.get_hermes_draft(draft["draft_id"])["status"] == "queued"
+        # Auto-publish now enters async delivery preparation (p2-173 fix #3):
+        # the worker translates before the ledger entry.
+        assert result["status"] == "preparing"
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
 
     def test_publication_gate_manual_waits_for_approval(self) -> None:
         store, repository, turn_id = _setup_case()
@@ -580,3 +576,81 @@ class TestDeliveryPreparation:
             preformatted=True,
         )
         assert packet2["decision"] == "blocked"
+
+
+class TestDeliveryPreparationFixes:
+    """p2-173 review fixes: customer identity, safety validation, recovery."""
+
+    def test_is_agent_false_end_user_is_customer(self) -> None:
+        from backend.services.automation_hermes_delivery import _is_customer_author
+        assert _is_customer_author({"role": "end-user", "is_agent": False}) is True
+        assert _is_customer_author({"role": "end-user", "is_agent": True}) is False
+        assert _is_customer_author({"role": "end-user"}) is True
+        assert _is_customer_author({"role": "agent", "is_agent": False}) is False
+
+    def test_safety_validation_blocks_unsafe_translations(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        assert _validate_translated_content("", "original") is not None
+        assert _validate_translated_content("internal use only", "normal") is not None
+        assert _validate_translated_content("We guarantee 100% fix", "normal") is not None
+        assert _validate_translated_content("A" * 5000, "N" * 200) is not None
+        assert _validate_translated_content("Normal.", "Normal original.") is None
+
+    def test_queued_draft_recovery_does_not_requeue(self) -> None:
+        from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content="D", basis={})
+        store.request_hermes_draft_publish(draft["draft_id"])
+        store.approve_hermes_case_draft(draft["draft_id"], approver="a")
+        store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        store.complete_hermes_draft_prep(
+            draft["draft_id"], delivery_content="T", delivery_language_ref="ref",
+            source_revision=1, prompt_version=None,
+        )
+        # Manually set to queued (simulate post-ledger crash)
+        store._hermes_drafts[draft["draft_id"]]["status"] = "queued"
+        result = prepare_hermes_draft_delivery(
+            store, repository, draft_id=draft["draft_id"], environment="preproduction"
+        )
+        assert result["status"] == "queued"
+        assert result.get("reused_ledger") is True
+
+    def test_review_includes_preparing_and_prepare_failed(self) -> None:
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content="D", basis={})
+        store._hermes_drafts[draft["draft_id"]]["status"] = "preparing"
+        review = store.get_hermes_case_review("123")
+        assert any(d["status"] == "preparing" for d in review["drafts"])
+        store._hermes_drafts[draft["draft_id"]]["status"] = "prepare_failed"
+        review2 = store.get_hermes_case_review("123")
+        assert any(d["status"] == "prepare_failed" for d in review2["drafts"])
+
+    def test_auto_publish_draft_creates_prep_job(self) -> None:
+        """Auto-approve path enters the same prep flow (issue #3)."""
+        from backend.services.automation_hermes_tools import publication_decision_for_turn
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content="D", basis={})
+        store._hermes_drafts[draft["draft_id"]]["publish_policy"] = "auto"
+        # Simulate the publication gate on a completed turn
+        store.start_hermes_agent_turn(turn_id, run_id="r1")
+        result = publication_decision_for_turn(
+            store, repository, turn_id=turn_id, environment="preproduction",
+            zendesk_side_effects_enabled=True,
+        )
+        assert result["status"] == "preparing", result
+        assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"

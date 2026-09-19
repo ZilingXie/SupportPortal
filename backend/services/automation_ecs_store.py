@@ -2188,7 +2188,14 @@ class InMemoryAutomationEcsStore:
                 for draft in self._hermes_drafts.values()
                 if draft["namespace"] == namespace
                 and draft["zendesk_ticket_id"] == zendesk_ticket_id
-                and draft["status"] in {"draft", "awaiting_approval", "approved", "queued"}
+                and draft["status"] in {
+                    "draft",
+                    "awaiting_approval",
+                    "approved",
+                    "preparing",
+                    "prepare_failed",
+                    "queued",
+                }
             ]
             drafts.sort(key=lambda row: row["created_at"], reverse=True)
             return {"binding": binding, "active_turn": active_turn, "turns": turns, "drafts": drafts[:10]}
@@ -4729,28 +4736,47 @@ class PostgresAutomationEcsStore:
                 updated = cursor.fetchone()
                 turn_execution_id = self._draft_execution_id(cursor, draft_id)
                 job_id = _new_id("job")
-                cursor.execute(
-                    sql.SQL(
-                        "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
-                        "VALUES (%s,%s,%s,%s,%s,%s)"
-                    ).format(self._table("automation_jobs")),
-                    (
-                        job_id,
-                        updated["namespace"],
-                        turn_execution_id,
-                        JobKind.HERMES_DELIVERY_PREP.value,
-                        JobStatus.PENDING.value,
-                        Jsonb(
-                            {
-                                "contract_version": "automation-agent-turn-v1",
-                                "execution_id": turn_execution_id,
-                                "turn_id": str(updated["turn_id"]),
-                                "draft_id": draft_id,
-                                "base_event": base_event,
-                            }
+                try:
+                    cursor.execute(
+                        sql.SQL(
+                            "INSERT INTO {} (job_id,namespace,execution_id,kind,status,payload) "
+                            "VALUES (%s,%s,%s,%s,%s,%s)"
+                        ).format(self._table("automation_jobs")),
+                        (
+                            job_id,
+                            updated["namespace"],
+                            turn_execution_id,
+                            JobKind.HERMES_DELIVERY_PREP.value,
+                            JobStatus.PENDING.value,
+                            Jsonb(
+                                {
+                                    "contract_version": "automation-agent-turn-v1",
+                                    "execution_id": turn_execution_id,
+                                    "turn_id": str(updated["turn_id"]),
+                                    "draft_id": draft_id,
+                                    "base_event": base_event,
+                                }
+                            ),
                         ),
-                    ),
-                )
+                    )
+                except psycopg.errors.UniqueViolation:
+                    # A prior prep job for this draft's execution still exists
+                    # (UNIQUE(namespace, execution_id, kind)); reset it to
+                    # pending so the worker re-claims it instead of creating
+                    # a duplicate.
+                    cursor.execute(
+                        sql.SQL(
+                            "UPDATE {} SET status='pending',claim_token=NULL,claimed_by=NULL,"
+                            "lease_expires_at=NULL,updated_at=NOW() "
+                            "WHERE namespace=%s AND execution_id=%s AND kind=%s "
+                            "AND status NOT IN ('completed')"
+                        ).format(self._table("automation_jobs")),
+                        (
+                            updated["namespace"],
+                            turn_execution_id,
+                            JobKind.HERMES_DELIVERY_PREP.value,
+                        ),
+                    )
                 return {"draft_id": draft_id, "job_id": job_id, "status": "preparing"}
 
     def complete_hermes_draft_prep(
@@ -4828,7 +4854,7 @@ class PostgresAutomationEcsStore:
                 cursor.execute(
                     sql.SQL(
                         "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
-                        "AND status IN ('draft','awaiting_approval','approved','queued') "
+                        "AND status IN ('draft','awaiting_approval','approved','preparing','prepare_failed','queued') "
                         "ORDER BY created_at DESC LIMIT 10"
                     ).format(self._table("automation_hermes_case_drafts")),
                     (self.settings.job_namespace, zendesk_ticket_id),
