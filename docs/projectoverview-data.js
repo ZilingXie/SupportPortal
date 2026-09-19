@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-19T13:39:55Z",
-  "source_base_commit": "c7c935e02a1c2c09e4df8c3b1b5143a56e963fd8",
-  "registry_digest": "fb933c42071b7bb4a0b6f01457d0c800193a8f7b7a05e84b76013fec9e2f9098",
+  "generated_at": "2026-09-19T13:41:24Z",
+  "source_base_commit": "1d3c5c9454966aa526076df513eff58ca1f29129",
+  "registry_digest": "7374b001d74adde9da3099b495820ad6b52aab639d1794886f50a1382b7777ff",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1231,6 +1231,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Ownership gate ordering + offload regression (13595)",
           "command": "pytest -q backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_account_automation_ownership.py backend/tests/test_automation_account_intake.py; pytest -q backend/tests/test_worker.py backend/tests/test_account_automation_delivery.py backend/tests/test_automation_ecs_worker.py",
           "details": "108 passed + 154 passed（+33 subtests）。新增两用例：①播种线上真实形状（无 route_family 的 hermes case）断言门禁被调、见到归一后的 route_family=automated、zendesk_ai_ownership 事件 state=assigned 落库、case 保存、业务走完 skip_persona（修复前该用例必红）；②fail-closed（human_reassigned）走统一失败交接（事件照记+binding parked+转人工+通知），与 legacy 语义一致。线上证据（13595）：support_ticket_events 无 zendesk_ai_ownership、worker 日志 production_zendesk_delivery_stopped failure_code=zendesk_ownership_human_reassigned assignee=mark（路由指派）。"
+        },
+        {
+          "type": "test",
+          "label": "13601 four-PR remediation regression",
+          "command": "pytest -q test_enablement_auto_relay test_worker test_automation_ecs_worker test_account_automation_ownership test_automation_account_intake test_account_automation_delivery test_hermes_zendesk_agent test_hermes_tool_failure_handoff test_hermes_zendesk_agent_tools test_automation_ecs_store",
+          "details": "四 PR 合计 226+ 用例全绿：#1242 通知事件轻量 ack（13601 回归用例+方向回退+孤儿事件）；#1243 认领在 route 后 work 前（顺序断言）、504 模拟等待消费迟到终态、等待超时/未调用工具统一失败零 persona、工具幂等重放；#1244 persona 白名单矩阵、investigation 去隐式翻转、review_requested 中性停车（direction 保持 automation）、失败链分步记录（note 失败不影响邮件/停车）；#1245 solved 取消回复零发送、关闭取消派发零任务、迟到结果证据化、快照携带 ticket_status。"
         },
         {
           "type": "test",
@@ -13192,7 +13198,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "修复 7（13595）已实施：ownership gate 对齐 legacy——route_family 在 eligibility 前归一（hermes 建的 case 此前为空致门禁静默跳过，工单留在路由人类客服手里被 delivery worker 正确拒发）+ 门禁调用 asyncio.to_thread 卸载（90s 认领等待不冻结 api 事件循环）。剩：合码部署 preprod（archer）后用户新开工单复测（13595 的 relay 门禁绑定已停滞的单不会自愈，手动关闭）。",
+      "next_action": "13601 四阶段修复全部合码（#1242 事件分类/#1243 认领前移+running+worker 等待/#1244 persona 白名单+中性停车+分步交接/#1245 关闭终止），13601 relay 收尾完成（本地 cancelled、服务器任务惰性待 TTL）。剩：preprod 部署（archer）+四段受控验收（正常单/注入失败/等待期手动关闭/Mac 审批执行）+Mac 侧 10:00 触发配置+Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13273,6 +13279,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Ownership gate ordering + offload regression (13595)",
           "command": "pytest -q backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_account_automation_ownership.py backend/tests/test_automation_account_intake.py; pytest -q backend/tests/test_worker.py backend/tests/test_account_automation_delivery.py backend/tests/test_automation_ecs_worker.py",
           "details": "108 passed + 154 passed（+33 subtests）。新增两用例：①播种线上真实形状（无 route_family 的 hermes case）断言门禁被调、见到归一后的 route_family=automated、zendesk_ai_ownership 事件 state=assigned 落库、case 保存、业务走完 skip_persona（修复前该用例必红）；②fail-closed（human_reassigned）走统一失败交接（事件照记+binding parked+转人工+通知），与 legacy 语义一致。线上证据（13595）：support_ticket_events 无 zendesk_ai_ownership、worker 日志 production_zendesk_delivery_stopped failure_code=zendesk_ownership_human_reassigned assignee=mark（路由指派）。"
+        },
+        {
+          "type": "test",
+          "label": "13601 four-PR remediation regression",
+          "command": "pytest -q test_enablement_auto_relay test_worker test_automation_ecs_worker test_account_automation_ownership test_automation_account_intake test_account_automation_delivery test_hermes_zendesk_agent test_hermes_tool_failure_handoff test_hermes_zendesk_agent_tools test_automation_ecs_store",
+          "details": "四 PR 合计 226+ 用例全绿：#1242 通知事件轻量 ack（13601 回归用例+方向回退+孤儿事件）；#1243 认领在 route 后 work 前（顺序断言）、504 模拟等待消费迟到终态、等待超时/未调用工具统一失败零 persona、工具幂等重放；#1244 persona 白名单矩阵、investigation 去隐式翻转、review_requested 中性停车（direction 保持 automation）、失败链分步记录（note 失败不影响邮件/停车）；#1245 solved 取消回复零发送、关闭取消派发零任务、迟到结果证据化、快照携带 ticket_status。"
         }
       ],
       "source_refs": [
@@ -13390,6 +13402,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-19",
           "event": "ownership_gate_ordering_fix",
           "summary": "13595 受控验收暴露第 7 个 hermes×legacy 断点：门禁 eligibility 在 route_family 归一化（业务段 392 行）之前评估（234 行），hermes 建的 case 无 route_family → is_registered_automation 为假 → 认领静默跳过；工单留在全渠道路由指派的人类客服（mark）手里，delivery worker verify 模式正确拒发（human_reassigned），relay 门禁不释放。修复=归一化前移+asyncio.to_thread 卸载 90s 认领等待，镜像 legacy intake 的 _apply_ownership_gate 语义。"
+        },
+        {
+          "at": "2026-09-19",
+          "event": "four_pr_remediation",
+          "summary": "13601 复测暴露的断点 8/9 及发布/交接缺口按用户批准的四阶段计划全修：A=#1242 relay 通知事件分类（delivery_changed 带 message_id 误走重型 ack 致每秒 409 死循环）；B=#1243 认领移入 worker（route 后 work 前，租约心跳保障）+工具降级只读 verify+running 标记+processor 等待迟到终态/缺失即失败；C=#1244 persona 仅消费明确可发布结论+investigation 进度不再隐式翻方向+review_requested 中性停车原语 pause_hermes_case+失败交接分步可见；D=#1245 快照携带工单状态，solved/closed 在发送/派发/迟到结果三处终止该轮自动化。运维收尾：enr-AC-13601-v1 本地 cancelled+事件，服务器任务 v0.6 无取消留 TTL 惰性。"
         }
       ]
     },
