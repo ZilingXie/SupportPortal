@@ -715,6 +715,9 @@ class TestAgentTurnProcessor:
         turn = store.get_hermes_turn(handoff["turn_id"])
         assert turn["work_result"]["status"] == "human_review_required"
         assert turn["work_result"]["reason"] == "work_result_missing"
+        # Acceptance gap #4: the turn must be terminal, not left running to
+        # accept late work_result writes.
+        assert turn["status"] != "running"
 
     def test_work_phase_without_tool_invocation_fails_closed(self) -> None:
         """PR-B: an automation work run that never invoked the tool (no

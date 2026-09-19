@@ -29,6 +29,71 @@ from backend.services.automation_account_intake import _run_internal_email_deliv
     "set RUN_POSTGRES_INTEGRATION=1 to run PostgreSQL Account Case round-trip tests",
 )
 class AccountCasePostgresRoundTripTests(unittest.TestCase):
+
+    def test_zendesk_delivery_cancelled_status_accepted_by_contract(self) -> None:
+        """PR-E acceptance gap #1: the cancelled terminal delivery status is a
+        first-class state in the real PostgreSQL contract."""
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": "T-CANCEL",
+                    "customer_id": "customer@example.com",
+                    "requester": "customer@example.com",
+                    "subject": "Enable media relay",
+                    "status": "open",
+                    "created_at": "2026-09-19T00:00:00+00:00",
+                    "updated_at": "2026-09-19T00:00:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": "AC-CANCEL",
+                    "billing_ticket_id": "AC-CANCEL",
+                    "client_ticket_id": "T-CANCEL",
+                    "zendesk_ticket_id": "T-CANCEL",
+                    "processing_profile": "production",
+                    "automation_status": "automation",
+                    "route": "enablement",
+                    "route_family": "automated",
+                    "execution_action": "enablement",
+                    "updated_at": "2026-09-19T00:00:00+00:00",
+                }
+            )
+            repository.create_account_zendesk_comment_delivery(
+                account_case_id="AC-CANCEL",
+                message_id="msg-cancel-1",
+                zendesk_ticket_id="T-CANCEL",
+                idempotency_key="zd-cancel-1",
+                created_at="2026-09-19T00:00:00+00:00",
+                is_public=True,
+            )
+            completed = repository.complete_account_zendesk_comment_delivery(
+                account_case_id="AC-CANCEL",
+                message_id="msg-cancel-1",
+                status="cancelled",
+                zendesk_comment_id=None,
+                failure_code="zendesk_ticket_closed",
+                completed_at="2026-09-19T00:01:00+00:00",
+            )
+            self.assertIsNotNone(completed)
+            self.assertEqual(completed["status"], "cancelled")
+            self.assertEqual(completed["failure_code"], "zendesk_ticket_closed")
+            with self.assertRaises(ValueError):
+                repository.complete_account_zendesk_comment_delivery(
+                    account_case_id="AC-CANCEL",
+                    message_id="msg-cancel-1b",
+                    status="bogus",
+                    zendesk_comment_id=None,
+                    failure_code=None,
+                    completed_at="2026-09-19T00:01:00+00:00",
+                )
+        finally:
+            self._drop_schema(dsn, schema)
+
     def _temporary_repository(self) -> tuple[str, PostgresTicketRepository]:
         dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
         if not dsn:

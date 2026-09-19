@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     zendesk_ticket_id TEXT NOT NULL,
     idempotency_key TEXT NOT NULL UNIQUE,
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
-    status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')),
+    status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed', 'cancelled')),
     zendesk_comment_id TEXT,
     failure_code TEXT,
     confirmed_at TIMESTAMPTZ,

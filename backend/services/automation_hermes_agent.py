@@ -957,6 +957,24 @@ class HermesAgentTurnProcessor:
                     "or the tool was never invoked); silence is not success."
                 ),
             )
+            # Acceptance gap #4: the escalation parks the binding but does not
+            # terminate the turn — a live turn would keep accepting late
+            # work_result writes. Complete it as human review (tolerate a
+            # raced terminal state).
+            try:
+                self.store.complete_hermes_agent_turn(
+                    payload.turn_id,
+                    result={
+                        "engine": "hermes",
+                        "turn_id": payload.turn_id,
+                        "status": "human_review",
+                        "reason": reason,
+                    },
+                )
+            except Exception:
+                LOGGER.exception(
+                    "work-result-missing turn completion failed for %s", payload.turn_id
+                )
         else:
             self.store.record_hermes_turn_work(
                 payload.turn_id,

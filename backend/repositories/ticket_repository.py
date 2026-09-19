@@ -1272,8 +1272,9 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v10-enablement-relay"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v11-delivery-cancelled"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v10-enablement-relay",
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v9-product-selection-state",
     "2026-single-ai-managed-v3",
@@ -3499,6 +3500,9 @@ class InMemoryTicketRepository(
         self, *, account_case_id: str, message_id: str, status: str,
         zendesk_comment_id: str | None, failure_code: str | None, completed_at: str,
     ) -> dict[str, Any] | None:
+        normalized_status = str(status or "").strip().lower()
+        if normalized_status not in {"delivered", "outcome_unknown", "failed", "cancelled"}:
+            raise ValueError("invalid Zendesk comment delivery status")
         key = (str(account_case_id).strip(), str(message_id).strip())
         with self._assignment_lock:
             delivery = self._account_zendesk_comment_deliveries.get(key)
@@ -8778,7 +8782,7 @@ class PostgresTicketRepository(
         completed_at: str,
     ) -> dict[str, Any] | None:
         normalized_status = str(status or "").strip().lower()
-        if normalized_status not in {"delivered", "outcome_unknown", "failed"}:
+        if normalized_status not in {"delivered", "outcome_unknown", "failed", "cancelled"}:
             raise ValueError("invalid Zendesk comment delivery status")
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
@@ -12284,7 +12288,7 @@ class PostgresTicketRepository(
                         "account_case_id TEXT NOT NULL REFERENCES {}(account_case_id) ON DELETE CASCADE, "
                         "message_id TEXT NOT NULL, zendesk_ticket_id TEXT NOT NULL, "
                         "idempotency_key TEXT NOT NULL UNIQUE, is_public BOOLEAN NOT NULL DEFAULT FALSE, "
-                        "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed')), "
+                        "status TEXT NOT NULL CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed', 'cancelled')), "
                         "zendesk_comment_id TEXT, failure_code TEXT, confirmed_at TIMESTAMPTZ, "
                         "target_status TEXT, "
                         "created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
@@ -12308,7 +12312,7 @@ class PostgresTicketRepository(
                     sql.SQL(
                         "ALTER TABLE {} ADD CONSTRAINT "
                         "support_account_zendesk_comment_deliveries_status_check "
-                        "CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed'))"
+                        "CHECK (status IN ('queued', 'pending', 'delivered', 'outcome_unknown', 'failed', 'cancelled'))"
                     ).format(zendesk_delivery_table)
                 )
                 # Production automated replies became public Zendesk comments; the

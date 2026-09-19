@@ -493,6 +493,73 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(work_result["status"], "human_review_required")
 
 
+    def test_turn_superseded_during_extraction_stops_before_workflow(self) -> None:
+        """Acceptance gap #3: a turn that dies during field extraction must
+        not reach the business-write boundary (no workflow, no relay request,
+        no reply job)."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+
+        def supersede_mid_extraction(**kwargs):
+            # The turn is superseded while the (slow) extraction runs.
+            store._hermes_turns[handoff["turn_id"]]["status"] = "superseded"
+            return {
+                "customer_reply": "",
+                "missing_fields": [],
+                "collected_fields": {
+                    "app_id": "0123456789abcdef0123456789abcdef",
+                    "requested_feature": "media_relay",
+                    "requested_feature_label": "media relay",
+                },
+                "internal_email_payload": {"to": ["ops@example.com"], "body": "x"},
+                "internal_email_to_send": {"to": ["ops@example.com"], "body": "x"},
+                "internal_email_send_status": "pending",
+                "internal_email_send_reason": "",
+                "requires_human_review": False,
+            }
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.automation_account_intake._build_enablement_attempt",
+            side_effect=supersede_mid_extraction,
+        ), patch(
+            "backend.services.automation_account_intake._run_enablement_workflow"
+        ) as workflow_mock:
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertEqual(result["status"], "human_review_required")
+        self.assertEqual(result["reason"], "turn_cancelled_before_execution")
+        workflow_mock.assert_not_called()
+        events = repository.list_ticket_events("123")
+        dispatched = [
+            e for e in events if e.get("event_type") == "enablement_auto_dispatch"
+        ]
+        self.assertEqual(dispatched, [])
+
     def test_tool_replay_returns_recorded_result_without_reexecution(self) -> None:
         """PR-B: a second invocation on the same turn replays the recorded
         business result; external actions never run twice."""
