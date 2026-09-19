@@ -1416,6 +1416,57 @@ def _deliver_production_account_reply_to_zendesk(
         mode="verify",
         updated_at=now_iso(),
     )
+    if str(ownership.ticket_status or "").strip().lower() in {"solved", "closed"}:
+        # A manually solved/closed ticket terminates this automation round
+        # (13601): stop the send as a cancellation, not a failure — no
+        # requeue, no queue return, the late reply simply never goes out.
+        ticket_repository.complete_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=effective_message_id,
+            status="cancelled",
+            zendesk_comment_id=None,
+            failure_code="zendesk_ticket_closed",
+            completed_at=now_iso(),
+        )
+        try:
+            current_job = ticket_repository.get_account_reply_job(str(effective_job_id or ""))
+            if current_job is not None and str(current_job.get("status") or "") not in {
+                "published",
+                "cancelled",
+                "failed",
+            }:
+                current_job["status"] = "cancelled"
+                current_job["payload"] = {
+                    **dict(current_job.get("payload") or {}),
+                    "cancel_reason": "zendesk_ticket_closed",
+                }
+                current_job["updated_at"] = now_iso()
+                ticket_repository.save_account_reply_job(current_job)
+        except Exception:
+            LOGGER.exception(
+                "ticket-closed reply job cancel failed job_id=%s", effective_job_id
+            )
+        ticket_repository.record_event(
+            ticket_id or None,
+            "automation_reply_cancelled_ticket_closed",
+            {
+                "account_case_id": account_case_id,
+                "job_id": effective_job_id,
+                "message_id": effective_message_id,
+                "ticket_status": str(ownership.ticket_status or ""),
+                "attempted_at": now_iso(),
+            },
+        )
+        LOGGER.warning(
+            "production_zendesk_delivery_cancelled_ticket_closed job_id=%s ticket_id=%s "
+            "account_case_id=%s message_id=%s ticket_status=%s",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            ownership.ticket_status,
+        )
+        return
     if ownership.failure_category == "policy":
         failure_code = ownership.failure_code or "zendesk_ownership_policy_blocked"
         ticket_repository.complete_account_zendesk_comment_delivery(
@@ -4011,7 +4062,49 @@ def _dispatch_enablement_relay_request(
     import json as _json
     from datetime import datetime as _datetime
 
+    from backend.services.zendesk_ticket_assignment import (
+        ZendeskCommentError,
+        read_ticket_ownership_snapshot,
+    )
+
     request_id = str(request.get("request_id") or "")
+    ticket_id = str(request.get("ticket_id") or "")
+    # A solved/closed ticket terminates the round before any task is created
+    # (13601: the dispatch fired ten minutes after the manual solve). Read
+    # the live Zendesk state, not the possibly-stale local mirror.
+    if ticket_id:
+        try:
+            snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id)
+        except ZendeskCommentError as exc:
+            LOGGER.warning(
+                "enablement relay dispatch status read failed request=%s: %s",
+                request_id,
+                exc,
+            )
+        else:
+            if str(snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+                timestamp = now_iso()
+                ticket_repository.finish_enablement_relay_request(
+                    request_id=request_id,
+                    status="cancelled",
+                    now=timestamp,
+                    reason="zendesk_ticket_closed",
+                )
+                ticket_repository.record_event(
+                    ticket_id or None,
+                    "enablement_relay_dispatch_cancelled_ticket_closed",
+                    {
+                        "request_id": request_id,
+                        "ticket_status": str(snapshot.ticket_status or ""),
+                        "attempted_at": timestamp,
+                    },
+                )
+                LOGGER.warning(
+                    "enablement relay dispatch cancelled (ticket closed): request=%s status=%s",
+                    request_id,
+                    snapshot.ticket_status,
+                )
+                return
     expires_at = str(request.get("relay_task_expires_at") or "")
     try:
         expires_epoch = int(
@@ -4322,6 +4415,35 @@ def _apply_enablement_relay_success(
     if str(account_case.get("automation_status") or "") == "human_review_required":
         # Taken over by a human: the result stays as evidence only.
         return False
+    ticket_id_for_status = str(request.get("ticket_id") or "")
+    if ticket_id_for_status:
+        from backend.services.zendesk_ticket_assignment import (
+            ZendeskCommentError,
+            read_ticket_ownership_snapshot,
+        )
+
+        try:
+            live_snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id_for_status)
+        except Exception as exc:  # best-effort termination check
+            LOGGER.warning(
+                "enablement relay result status read failed request=%s: %s",
+                str(request.get("request_id") or ""),
+                exc,
+            )
+            live_snapshot = None
+        if live_snapshot is not None and str(live_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+            # Ticket closed before the result applied: keep the result as
+            # evidence, never create a completion reply or reopen (13601).
+            ticket_repository.record_event(
+                ticket_id_for_status or None,
+                "enablement_relay_result_not_applied_ticket_closed",
+                {
+                    "request_id": str(request.get("request_id") or ""),
+                    "ticket_status": str(live_snapshot.ticket_status or ""),
+                    "attempted_at": now_iso(),
+                },
+            )
+            return False
     if enablement_workflow_mode() != "archer":
         # Mode switched after dispatch: keep the result as evidence.
         return False

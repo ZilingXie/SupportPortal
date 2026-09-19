@@ -70,6 +70,10 @@ class ZendeskOwnershipSnapshot:
     unresolved_public_comment_id: str | None
     required_field_missing: bool = True
     comments_revision: str = ""
+    # Live Zendesk ticket status (open/pending/solved/closed...): the GET
+    # response already carries it; senders must refuse to act on closed
+    # tickets (13601: a manual solve did not stop the late reply/dispatch).
+    ticket_status: str = ""
 
 
 def _assignment_required_field_missing(ticket: dict[str, Any]) -> bool:
@@ -463,6 +467,7 @@ def read_ticket_ownership_snapshot(
         blocking_comment_id=blocking_comment_id,
         unresolved_public_comment_id=unresolved_public_comment_id,
         required_field_missing=_assignment_required_field_missing(ticket),
+        ticket_status=str(ticket.get("status") or ""),
         comments_revision=snapshot.comments_revision,
     )
 
