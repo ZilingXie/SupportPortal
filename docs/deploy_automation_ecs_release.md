@@ -2,6 +2,12 @@
 
 本文描述 CodeBuild build、Preproduction publish/deploy、同 digest promotion 和正式 Production deploy。发布记录必须明确镜像来自 Preproduction 或获批的历史本地 OCI bootstrap，不得混淆来源。
 
+## 实施与验收入口
+
+规则核对日期：2026-09-20。按 [AGENTS.md](../AGENTS.md#execution-modes)，ECS 运行时改动的 `实施计划` 包含正常 Preproduction 发布；`实施计划，需要验收` 包含同样的后续发布范围，但必须先停在任务分支，收到针对当前实现的独立验收通过结果后才能合码及发布。通过后继续执行，不重复请求同一范围的部署确认。仅修改文档或开发工具不触发应用部署。
+
+独立审查与源码同步的时序见 [工作流细则](./agent_workflow_details.md#implementation-handoff-and-independent-acceptance)。代码验收不替代本 Runbook 的发布门禁和运行核验；普通 Production 晋级仍需 Preproduction 验证和单独明确授权，紧急 Production 热修复仍遵循既有例外条件。
+
 ## Normal CodeBuild Release Path
 
 常规 release 固定一个可从 `origin/main` 到达的完整 40 位 commit。CodeBuild 使用
