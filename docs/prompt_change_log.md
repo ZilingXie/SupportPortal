@@ -1,5 +1,15 @@
 # Prompt Change Log
 
+## 2026-09-20 - Low-thinking handoffs and opt-in independent acceptance
+
+- Area/version: Developer agent workflow instructions; no application model, prompt release, or runtime configuration change.
+- Reason: Plans need to settle key design decisions for low-thinking execution, while requested independent acceptance must happen before merge/deployment instead of after automatic finalization.
+- Behavior: Local Codex and ZCode planning instructions default to low-thinking handoffs with observable contracts and focused plan amendments. Repository `实施计划` retains direct verification/finalization and normal Preproduction deployment for ECS runtime changes; `实施计划，需要验收` retains that authorization but stops on the task branch until an independent passing review applies to the current changes.
+- Review: Separate defects, verification gaps, and optional improvements; re-review unresolved findings, new changes, and affected paths. Preserve pending review across follow-ups. Guard gated finalization against a source refresh invalidating the review. Cleanup remains a separate root-workspace step.
+- Files: `AGENTS.md`, `docs/agent_workflow_details.md`, `.codex/skills/review-implemented-plan/SKILL.md`, `docs/operations/testing.md`, and `docs/deploy_automation_ecs_release.md`; the two local global instruction files are updated outside the repository.
+- Boundaries: Production and real business side effects retain their separate authorization requirements. Documentation and developer-tooling-only work does not deploy the application. No automatic model setting changes or mandatory extra reviewer for ordinary implementation.
+- Verification: Direct static review covered ordinary implementation, gated handoff, self-test/quoted-pass rejection, gate persistence, accepted continuation, changed-source re-review, and unchanged Production authorization. Skill validation passed with the existing project Python environment; all 35 local Markdown link targets exist; the two global Planning/Execution sections match; `git diff --check` passed. Codex refreshed its global instruction context in this task; ZCode runtime loading and model compliance were not exercised. No application deployment is required.
+
 ## 2026-09-17 - Solved Cases KB excludes Media Relay enablement (p2-164)
 
 - Area or subsystem: n8n `[kb]Build|Solved Cases` AI eligibility classifier.
