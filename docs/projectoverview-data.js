@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T07:17:11Z",
-  "source_base_commit": "6c72777816c930df3deb98799f5e3081c89d5f43",
-  "registry_digest": "c035fcb62f7ce95599f3fde459d1d1e82a161c659f859f3cac4c90296675697b",
+  "generated_at": "2026-09-20T07:23:07Z",
+  "source_base_commit": "b1aeab23a7a4fd91c42b878f4a8cb39a9d7e9224",
+  "registry_digest": "1ae3589c2d92393241ef93c71c43500c5b5afd32b0afbc9a374213354ac81075",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3594,7 +3594,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "PG 真库（隔离本地实例，三场景补证）",
           "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
-          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知 1 次/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
+          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准（直接调用 Slack handler 所用的同一 store 方法，未经 Slack HTTP handler）→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知≥1 次（断言存在且指向该 draft，未锁定恰好一次）/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
         },
         {
           "type": "test",
@@ -14035,7 +14035,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
-      "next_action": "等待独立验收（PG 三场景已补：原子批准+Worker 失败收尾+同 job 重试/并发批准/事务回滚）",
+      "next_action": "验收已通过（ec1c8001）：finalize→PR→preprod 发布（新 prompt release id）→#13602 部署后验收",
       "acceptance_criteria": [
         "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
         "英文 café 场景不误拦",
@@ -14054,7 +14054,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "PG 真库（隔离本地实例，三场景补证）",
           "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
-          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知 1 次/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
+          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准（直接调用 Slack handler 所用的同一 store 方法，未经 Slack HTTP handler）→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知≥1 次（断言存在且指向该 draft，未锁定恰好一次）/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
         },
         {
           "type": "test",
