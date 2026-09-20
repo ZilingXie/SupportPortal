@@ -4688,3 +4688,4 @@ For each new entry, record:
   - `_TRANSLATION_SYSTEM_PROMPT` 改为「正文应转换为参考消息的语言，已是目标语言时原样返回」——消除与 Slack `_to_english_display` 的合同冲突。
   - `_strip_trailing_punct` 改逐字符处理+配对括号保护（含全角`）`配对映射与外围 `>`/全角`）` 剥离）。
 - Verification: 211 单测（7 套件）+ 16 PG 真库（PostgreSQL 14.19 Homebrew 隔离实例 port 54399，含原子批准/Worker 失败收尾/并发批准/事务回滚场景）。
+  - 部署说明：本条 prompt 为代码内嵌（automation_hermes_delivery.py），不在 prompt release catalog 内；r20260920-e11abda 复用 active release pr-3627c96a2160，无需新 prompt release id。
