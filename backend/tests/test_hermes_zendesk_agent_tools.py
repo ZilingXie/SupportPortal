@@ -454,9 +454,11 @@ class TestDeliveryPreparation:
         )
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
 
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
         with patch(
             "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
-            return_value="Ziling，您好。\n\n我们查过了。",
+            return_value=_TranslationResult(reference_language="non_english", translated_text="Ziling，您好。\n\n我们查过了。"),
         ) as mock_translate:
             result = prepare_hermes_draft_delivery(
                 store, repository, draft_id=draft["draft_id"], environment="preproduction"
@@ -523,20 +525,23 @@ class TestDeliveryPreparation:
                 store, repository, draft_id=draft["draft_id"], environment="preproduction"
             )
         assert result["status"] == "prepare_failed"
-        assert "model down" in result["error"]
+        assert "unexpected_RuntimeError" in result["error"]
         assert repository.deliveries == []
         # A retry approve re-enqueues prep (prepare_failed → preparing).
         retry = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={"provenance": {}})
         assert retry.get("status") == "preparing"
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
         with patch(
             "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
-            return_value="Hello Ziling, we checked.",
+            return_value=_TranslationResult(reference_language="english", translated_text="Hello Ziling, we checked."),
         ):
             result2 = prepare_hermes_draft_delivery(
                 store, repository, draft_id=draft["draft_id"], environment="preproduction"
             )
         assert result2["status"] == "queued"
-        assert repository.deliveries[0]["immutable_content"] == "Hello Ziling, we checked."
+        # English reference: delivery content is the approved English original
+        assert "Hi Customer," in repository.deliveries[0]["immutable_content"]
 
     def test_new_customer_input_stops_prep_before_translation(self) -> None:
         from backend.services.automation_hermes_delivery import prepare_hermes_draft_delivery
@@ -687,7 +692,7 @@ class TestTranslationValidationRound4:
         from backend.services.automation_hermes_delivery import _validate_translated_content
         french_ref = "Bonjour, mon téléphone ne fonctionne pas avec l'application à distance."
         untranslated_english = "Hello, we have checked the session and found no issues."
-        result = _validate_translated_content(untranslated_english, untranslated_english, french_ref)
+        result = _validate_translated_content(untranslated_english, untranslated_english, french_ref, reference_language="non_english")
         assert result is not None
         assert "identical" in result.lower() or "untranslated" in result.lower()
 
@@ -713,7 +718,7 @@ class TestTranslationValidationRound5:
         from backend.services.automation_hermes_delivery import _validate_translated_content
         # French customer + untranslated English that happens to contain "André"
         english = "Hello André, we have checked and found no issues."
-        result = _validate_translated_content(english, english, "Bonjour André")
+        result = _validate_translated_content(english, english, "Bonjour André", reference_language="non_english")
         assert result is not None
         assert "identical" in result.lower()
 
@@ -757,3 +762,102 @@ class TestTranslationValidationRound5:
         english = "Hello, we checked the session."
         translated = "Hello, we have checked the session."  # Slightly different (greeting removed)
         assert _validate_translated_content(translated, english, "Bonjour") is None
+
+
+class TestDeliveryPrepBaselineRegressions:
+    """p2-176 round 6 baseline regressions: must FAIL on 54ec242, pass after fix.
+
+    These drive the real approval entry point and the prep flow end-to-end
+    with an isolated store, verifying persisted state, delivery content,
+    and ledger count — not just the validation function's return value.
+    """
+
+    def _approved_draft_with_ref(self, store, repository, turn_id, content, customer_comment=None):
+        from backend.services.automation_hermes_tools import tool_save_reply_draft
+
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content=content, basis={})
+        store.request_hermes_draft_publish(draft["draft_id"])
+        if customer_comment:
+            store._comments[("123", "ref-comment")] = {
+                "zendesk_ticket_id": "123",
+                "zendesk_comment_id": "ref-comment",
+                "comment": {
+                    "id": "ref-comment",
+                    "public": True,
+                    "author": {"email": "cx@example.com", "name": "CX", "role": "end-user", "is_agent": False},
+                    "body": customer_comment,
+                    "created_at": "2026-09-20T10:00:00Z",
+                },
+                "updated_at": "2026-09-20T10:00:00Z",
+            }
+        else:
+            # Use ticket description as language reference (English default)
+            pass
+        return draft
+
+    def test_english_customer_translated_identical_queues(self) -> None:
+        """English customer: model returns English original → should queue."""
+        from backend.services.automation_hermes_delivery import (
+            approve_and_queue_hermes_draft,
+            prepare_hermes_draft_delivery,
+        )
+
+        store, repository, turn_id = _setup_case()
+        english_content = "Hi Customer,\n\nWe have checked the session and found no issues."
+        draft = self._approved_draft_with_ref(store, repository, turn_id, english_content)
+
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="test", environment="preproduction"
+        )
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value=_TranslationResult(reference_language="english", translated_text=english_content),
+        ):
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "queued", f"English customer should queue, got {result}"
+        assert len(repository.deliveries) == 1
+        # Delivery content is the approved English original (possibly with
+        # greeting projection applied by the save tool).
+        assert repository.deliveries[0]["immutable_content"].strip().startswith("Hi Customer,")
+
+    def test_url_with_parens_and_period_queues(self) -> None:
+        """URL Guide_(RTC). in English + Chinese translation with 。 → should queue."""
+        from backend.services.automation_hermes_delivery import (
+            approve_and_queue_hermes_draft,
+            prepare_hermes_draft_delivery,
+        )
+
+        store, repository, turn_id = _setup_case()
+        english_content = (
+            "Hi Customer,\n\nPlease see https://example.com/Guide_(RTC). for details about session 123456."
+        )
+        draft = self._approved_draft_with_ref(
+            store, repository, turn_id, english_content,
+            customer_comment="请帮我看一下这个问题",
+        )
+        chinese_translation = "您好，请查看 https://example.com/Guide_(RTC)。\n关于会话 123456 的详情。"
+
+        approve_and_queue_hermes_draft(
+            store, repository, draft_id=draft["draft_id"], approver="test", environment="preproduction"
+        )
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value=_TranslationResult(reference_language="non_english", translated_text=chinese_translation),
+        ):
+            result = prepare_hermes_draft_delivery(
+                store, repository, draft_id=draft["draft_id"], environment="preproduction"
+            )
+        assert result["status"] == "queued", f"Valid translation with URL should queue, got {result}"
+        assert len(repository.deliveries) == 1
+        assert repository.deliveries[0]["immutable_content"] == chinese_translation

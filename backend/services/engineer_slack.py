@@ -535,9 +535,12 @@ def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> 
 def _to_english_display(text: str) -> str:
     """Best-effort English display conversion for the Slack root message.
 
-    Always calls the LLM — isascii() cannot detect French/German/etc. which
-    use mostly-ASCII characters. On failure, returns a visible "[Non-English]"
-    prefix so the engineer knows the text was not converted.
+    Always calls the LLM (isascii() cannot detect French/German/etc.).
+    Reads the structured result's translated_text — the translation function
+    returns {reference_language, translated_text}. The language classification
+    is NOT used here: this is display conversion, not customer delivery, so
+    a non-English reference always gets translated regardless of its
+    classification. On failure, returns a visible "[Non-English]" prefix.
     """
     normalized = _clean_text(text)
     if not normalized:
@@ -547,14 +550,18 @@ def _to_english_display(text: str) -> str:
             translate_draft_for_delivery,
         )
 
-        return translate_draft_for_delivery(
+        result = translate_draft_for_delivery(
             english_content=normalized,
             language_reference=(
-                "Translate the following text to English. If it is already "
-                "in English, return it unchanged. Keep names, product terms, "
-                "identifiers, and code as-is."
+                "The following text is from a customer support ticket. "
+                "Translate it to English if it is not already in English. "
+                "If it is already in English, return it unchanged. Keep "
+                "names, product terms, identifiers, and code as-is."
             ),
-        ).strip()
+        )
+        # Display conversion: always use translated_text regardless of
+        # reference_language — this is NOT the customer delivery path.
+        return result.translated_text
     except Exception:  # noqa: BLE001 - display-only, never block the root post
         LOGGER.warning("slack_english_display_conversion_failed", exc_info=True)
         return f"[Non-English] {normalized}"

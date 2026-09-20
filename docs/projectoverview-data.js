@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T07:04:39Z",
-  "source_base_commit": "f6e5f5791e8c96df499d2c3c2e3db42548f0afe4",
-  "registry_digest": "f80e4a65e3c35137e5eb34b0ca27be5d9723a716bc0030a5d9a34d42560623da",
+  "generated_at": "2026-09-20T06:21:57Z",
+  "source_base_commit": "54ec24213647316e012d65a196dde29cb38a8f09",
+  "registry_digest": "3482988bb7ce150f4c57107a2793c451b060f6bc9f09b70177a8530276c348a5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1237,18 +1237,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13601 four-PR remediation regression",
           "command": "pytest -q test_enablement_auto_relay test_worker test_automation_ecs_worker test_account_automation_ownership test_automation_account_intake test_account_automation_delivery test_hermes_zendesk_agent test_hermes_tool_failure_handoff test_hermes_zendesk_agent_tools test_automation_ecs_store",
           "details": "四 PR 合计 226+ 用例全绿：#1242 通知事件轻量 ack（13601 回归用例+方向回退+孤儿事件）；#1243 认领在 route 后 work 前（顺序断言）、504 模拟等待消费迟到终态、等待超时/未调用工具统一失败零 persona、工具幂等重放；#1244 persona 白名单矩阵、investigation 去隐式翻转、review_requested 中性停车（direction 保持 automation）、失败链分步记录（note 失败不影响邮件/停车）；#1245 solved 取消回复零发送、关闭取消派发零任务、迟到结果证据化、快照携带 ticket_status。"
-        },
-        {
-          "type": "test",
-          "label": "Hermes investigation send regression fix (round 5, branch pending acceptance)",
-          "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "236 passed / 28 subtests。新增 10 用例：新增回归用例在基线（54ec2421）失败且失败原因即本回归（open 工单零发送）；修复后全绿。真实调查路径构造（InMemory 仓储+真实发送器+真实 ownership helper，仅 mock Zendesk 快照边界；ledger 因 InMemory create 不收 source=hermes 由 fixture 定向播种并注明）。 注：该轮 10 用例存在三处证据偏差（fixture 手工建 case/读取失败走旧 revision 分支/重复处理非旧 queued 重放），相关边界由独立验收 24 探针覆盖；#1256 已合码（158574d0），未部署。"
-        },
-        {
-          "type": "test",
-          "label": "Investigation send test-evidence hardening (round 6, branch pending acceptance)",
-          "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "238 passed / 28 subtests（另 hermes 套件 62 passed）。十个调查用例：真实入口 fixture（synthetic intake→handoff→真实 mirror/方向记录，断言 ownership eligible=False；settings+store 双注入使 case revision 栅栏实际执行并加 mirror 查询 spy）；读取失败拆分 revision 查询/补读两分支（补读失败 assertLogs 错误码+claim spy 零调用+恢复经真实 drain 双跑恰一次投递）；旧 queued 输入 deepcopy 重放（真实 claim True/False 序列+audit 零次）；新增 stale_case_revision 负例（错误 draft revision→failed 零 claim 零发送）。运行时零改动。首轮 f6e5f579 经审查发现 from_env 未注入致栅栏被跳过，本提交补 settings 注入+mirror spy+负例后复跑。"
         },
         {
           "type": "test",
@@ -3595,6 +3583,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "205 单测（含 Round4 六例）+ PG 集成",
           "command": "pytest -q backend/tests/...（九套件）+ RUN_POSTGRES_INTEGRATION=1 PG suite",
           "details": "205 passed。新增 TestTranslationValidationRound4 六例（URL 尾标点中英文/逗号/真实缺失/法语未翻/法语已翻/英文正常）+ TestPostgresDeliveryPrepJob 三例（幂等创建/失败重试 ON CONFLICT 重置/completed 保护）。PG SCHEMA_REVISION 断言更新 008→009。"
+        },
+        {
+          "type": "test",
+          "label": "基线回归（旧版失败→新版通过）",
+          "command": "pytest -k BaselineRegressions",
+          "details": "URL Guide_(RTC). 在旧版 rstrip+all-or-nothing 下误拦（旧版失败证据：URL https://example.com/Guide_(RTC). not in translation containing Guide_(RTC)。）；逐字符剥离后通过。英文身份比对旧版因 mock 返回纯字符串而无法验证（改为结构化 mock 后通过——英文客户+english分类→交付英文原稿→queued）。"
+        },
+        {
+          "type": "test",
+          "label": "结构化翻译+语言分类+URL组合 全量回归",
+          "command": "pytest -q test_hermes_zendesk_agent_tools.py test_hermes_zendesk_agent.py test_automation_ecs_api.py test_automation_ecs_store.py test_automation_ecs_worker.py test_engineer_slack.py test_engineer_slack_workflows.py",
+          "details": "202 passed + 5 subtests。结构化输出：_TranslationResult(BaseModel) + reference_language 枚举 english/non_english/undetermined + translated_text；英文分支在 prepare 阶段使用 approved 原稿（非通用翻译函数）；_to_english_display 读 translated_text。"
+        },
+        {
+          "type": "test",
+          "label": "PG 真库验证（隔离本地实例 port 54399）",
+          "command": "initdb → pg_ctl start → pytest RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test",
+          "details": "13 passed（10 既有 + 3 TestPostgresDeliveryPrepJob）。PostgreSQL 17（Homebrew），隔离实例已停止清理。覆盖：幂等创建/失败重置/completed WHERE 保护。"
         },
         {
           "type": "test",
@@ -13222,7 +13228,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "#1256 调查回复发送回归修复已合码未部署（preprod 现为 r20260920-54ec242 manual）。本轮（测试证据固化，分支待独立验收）：①调查 fixture 改真实入口（synthetic intake→route job→handoff→真实 _ensure_case_mirror+tool_record_direction+binding 方向，断言 ownership eligible=False，发送器注入同款内存 store 使 case revision 校验实际执行；ledger 因 InMemory 不收 source=hermes 仍定向播种并注明）；②读取失败拆分为 revision 查询失败与补读失败两用例（后者本地 revision 非空+补读抛错命中新增分支，assertLogs 含补读失败标识与错误码，claim 用真实方法 spy 断言零调用，恢复后真实 drain 双跑恰一次投递）；③重复处理改为 deepcopy 旧 queued 输入重放（claim spy 结果 True/False、发送恰一次、audit 零次、drain 不重发）。定向四套件 238 passed/28 subtests+hermes 62（含 stale 负例与 mirror spy）。剩：本轮独立验收→合码→#1256 部署（需重读环境）→archer 重切与真实 Mac 开通受控验收→Production 授权。",
+      "next_action": "13601 四阶段修复全部合码（#1242 事件分类/#1243 认领前移+running+worker 等待/#1244 persona 白名单+中性停车+分步交接/#1245 关闭终止），13601 relay 收尾完成（本地 cancelled、服务器任务惰性待 TTL）。剩：preprod 部署（archer）+四段受控验收（正常单/注入失败/等待期手动关闭/Mac 审批执行）+Mac 侧 10:00 触发配置+Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13309,18 +13315,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13601 four-PR remediation regression",
           "command": "pytest -q test_enablement_auto_relay test_worker test_automation_ecs_worker test_account_automation_ownership test_automation_account_intake test_account_automation_delivery test_hermes_zendesk_agent test_hermes_tool_failure_handoff test_hermes_zendesk_agent_tools test_automation_ecs_store",
           "details": "四 PR 合计 226+ 用例全绿：#1242 通知事件轻量 ack（13601 回归用例+方向回退+孤儿事件）；#1243 认领在 route 后 work 前（顺序断言）、504 模拟等待消费迟到终态、等待超时/未调用工具统一失败零 persona、工具幂等重放；#1244 persona 白名单矩阵、investigation 去隐式翻转、review_requested 中性停车（direction 保持 automation）、失败链分步记录（note 失败不影响邮件/停车）；#1245 solved 取消回复零发送、关闭取消派发零任务、迟到结果证据化、快照携带 ticket_status。"
-        },
-        {
-          "type": "test",
-          "label": "Hermes investigation send regression fix (round 5, branch pending acceptance)",
-          "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "236 passed / 28 subtests。新增 10 用例：新增回归用例在基线（54ec2421）失败且失败原因即本回归（open 工单零发送）；修复后全绿。真实调查路径构造（InMemory 仓储+真实发送器+真实 ownership helper，仅 mock Zendesk 快照边界；ledger 因 InMemory create 不收 source=hermes 由 fixture 定向播种并注明）。 注：该轮 10 用例存在三处证据偏差（fixture 手工建 case/读取失败走旧 revision 分支/重复处理非旧 queued 重放），相关边界由独立验收 24 探针覆盖；#1256 已合码（158574d0），未部署。"
-        },
-        {
-          "type": "test",
-          "label": "Investigation send test-evidence hardening (round 6, branch pending acceptance)",
-          "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "238 passed / 28 subtests（另 hermes 套件 62 passed）。十个调查用例：真实入口 fixture（synthetic intake→handoff→真实 mirror/方向记录，断言 ownership eligible=False；settings+store 双注入使 case revision 栅栏实际执行并加 mirror 查询 spy）；读取失败拆分 revision 查询/补读两分支（补读失败 assertLogs 错误码+claim spy 零调用+恢复经真实 drain 双跑恰一次投递）；旧 queued 输入 deepcopy 重放（真实 claim True/False 序列+audit 零次）；新增 stale_case_revision 负例（错误 draft revision→failed 零 claim 零发送）。运行时零改动。首轮 f6e5f579 经审查发现 from_env 未注入致栅栏被跳过，本提交补 settings 注入+mirror spy+负例后复跑。"
         }
       ],
       "source_refs": [
@@ -13344,7 +13338,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".codex/skills/supportportal-media-relay-enablement/"
       ],
       "created_at": "2026-09-16",
-      "updated_at": "2026-09-20",
+      "updated_at": "2026-09-19",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -13443,16 +13437,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-19",
           "event": "four_pr_remediation",
           "summary": "13601 复测暴露的断点 8/9 及发布/交接缺口按用户批准的四阶段计划全修：A=#1242 relay 通知事件分类（delivery_changed 带 message_id 误走重型 ack 致每秒 409 死循环）；B=#1243 认领移入 worker（route 后 work 前，租约心跳保障）+工具降级只读 verify+running 标记+processor 等待迟到终态/缺失即失败；C=#1244 persona 仅消费明确可发布结论+investigation 进度不再隐式翻方向+review_requested 中性停车原语 pause_hermes_case+失败交接分步可见；D=#1245 快照携带工单状态，solved/closed 在发送/派发/迟到结果三处终止该轮自动化。运维收尾：enr-AC-13601-v1 本地 cancelled+事件，服务器任务 v0.6 无取消留 TTL 惰性。"
-        },
-        {
-          "at": "2026-09-20",
-          "event": "investigation_send_regression_fix",
-          "summary": "#1253 状态白名单引入回归：调查类 case 的 ownership verify 返回 eligible=False+空 ticket_status（不读 Zendesk），hermes 发送器把空值判为 unconfirmed 每轮跳过，调查回复永久 queued 零发送。修复=发送器分离状态源与 ownership 适用性：ineligible 用本轮真实快照（revision 读取已取则复用，否则补读一次，读取错误保持 queued）；三分类复用 classify_zendesk_ticket_status；eligible 路径（接管 policy 优先）不变。"
-        },
-        {
-          "at": "2026-09-20",
-          "event": "test_evidence_hardening",
-          "summary": "独立验收通过 #1256 后按其反馈固化三处测试证据：真实入口调查 fixture（含 ownership 不适用断言与 store 注入）、读取失败双用例拆分（revision 查询/补读分支，恢复经真实 drain 验证恰一次投递）、旧 queued 输入 deepcopy 重放（真实 claim spy True/False 序列）。"
         }
       ]
     },
@@ -14051,7 +14035,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
-      "next_action": "实施中",
+      "next_action": "等待独立验收（代码已提交，未合并未部署）",
       "acceptance_criteria": [
         "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
         "英文 café 场景不误拦",
@@ -14059,7 +14043,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "PG 集成覆盖真实 ON CONFLICT 重置路径"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "基线回归（旧版失败→新版通过）",
+          "command": "pytest -k BaselineRegressions",
+          "details": "URL Guide_(RTC). 在旧版 rstrip+all-or-nothing 下误拦（旧版失败证据：URL https://example.com/Guide_(RTC). not in translation containing Guide_(RTC)。）；逐字符剥离后通过。英文身份比对旧版因 mock 返回纯字符串而无法验证（改为结构化 mock 后通过——英文客户+english分类→交付英文原稿→queued）。"
+        },
+        {
+          "type": "test",
+          "label": "结构化翻译+语言分类+URL组合 全量回归",
+          "command": "pytest -q test_hermes_zendesk_agent_tools.py test_hermes_zendesk_agent.py test_automation_ecs_api.py test_automation_ecs_store.py test_automation_ecs_worker.py test_engineer_slack.py test_engineer_slack_workflows.py",
+          "details": "202 passed + 5 subtests。结构化输出：_TranslationResult(BaseModel) + reference_language 枚举 english/non_english/undetermined + translated_text；英文分支在 prepare 阶段使用 approved 原稿（非通用翻译函数）；_to_english_display 读 translated_text。"
+        },
+        {
+          "type": "test",
+          "label": "PG 真库验证（隔离本地实例 port 54399）",
+          "command": "initdb → pg_ctl start → pytest RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test",
+          "details": "13 passed（10 既有 + 3 TestPostgresDeliveryPrepJob）。PostgreSQL 17（Homebrew），隔离实例已停止清理。覆盖：幂等创建/失败重置/completed WHERE 保护。"
+        }
+      ],
       "source_refs": [
         "backend/services/automation_hermes_delivery.py"
       ],
@@ -14075,6 +14078,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-20",
           "event": "created",
           "summary": "第五轮修复。"
+        },
+        {
+          "at": "2026-09-20",
+          "event": "amended",
+          "summary": "第六轮（计划制定版）：重音→语言分类（单次 LLM 调用返回 reference_language+translated_text）；URL rstrip→逐字符剥离+配对括号检查（多余闭括号才剥）；PG 首次在隔离本地实例实际运行全绿。202 单测+13 PG。"
         }
       ]
     },

@@ -83,17 +83,62 @@ Rules:
 - Keep names, product names, code, identifiers, numbers, URLs, and email addresses exactly as they appear.
 - Match the reference message's language (including its script and register). When the reference is mixed-language, use its dominant language.
 - Keep the salutation on its own first line, translated to match the reference language (e.g. Chinese: "Ziling，您好。"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
-- Return ONLY the translated reply text. No preamble, no explanations, no code fences."""
+- Return ONLY a JSON object with exactly these two fields:
+  {"reference_language": "<english|non_english|undetermined>", "translated_text": "<the translated reply text>"}
+- reference_language describes the DOMINANT language of the customer's reference message:
+  "english" = the reference is predominantly English
+  "non_english" = the reference is predominantly a non-English language
+  "undetermined" = genuinely mixed or too short to determine a dominant language
+- translated_text is the reply translated to match the reference language. If the
+  reference is English, translated_text should be the reply unchanged. If non-English,
+  translate the reply to that language.
+- No preamble, no explanations, no code fences around the JSON."""
 
 
 class HermesDeliveryPrepError(RuntimeError):
     """The delivery-preparation step failed; no send must occur."""
 
 
+from pydantic import BaseModel, field_validator
+
+
+class _TranslationResult(BaseModel):
+    """Structured output from the translation model call."""
+
+    reference_language: str
+    translated_text: str
+
+    @field_validator("reference_language")
+    @classmethod
+    def _validate_language(cls, v: str) -> str:
+        normalized = str(v or "").strip().lower()
+        if normalized not in {"english", "non_english", "undetermined"}:
+            raise ValueError(f"invalid reference_language: {normalized}")
+        return normalized
+
+    @field_validator("translated_text")
+    @classmethod
+    def _validate_text(cls, v: str) -> str:
+        text = str(v or "").strip()
+        # Strip accidental code fences some models wrap around output.
+        if text.startswith("```"):
+            text = text.strip("`").strip()
+            if text.lower().startswith(("text\n", "json\n")):
+                first_nl = text.index("\n")
+                text = text[first_nl + 1 :].strip()
+        return text
+
+
 def translate_draft_for_delivery(
     *, english_content: str, language_reference: str
-) -> str:
-    """Translate the approved English draft to the customer's language."""
+) -> _TranslationResult:
+    """Translate the approved English draft and classify the customer's language.
+
+    Returns a structured result with reference_language (english /
+    non_english / undetermined) and translated_text. Raises
+    HermesDeliveryPrepError on parse failure or empty output — the caller
+    must park the draft for human retry; no retry is added here.
+    """
     from backend.services.llm_factory import invoke_responses_text
     from backend.services.llm_profiles import (
         AUTOMATION_PERSONA_SCENARIO,
@@ -107,19 +152,32 @@ def translate_draft_for_delivery(
         user_prompt=(
             f"Reference message from the customer:\n---\n{language_reference[:4000]}\n---\n\n"
             f"Approved English reply to translate:\n---\n{english_content}\n---\n\n"
-            "Return the translated reply only."
+            "Return the JSON object only."
         ),
-        extra_payload=None,
+        extra_payload={"response_format": {"type": "json_object"}},
     )
-    translated = str(result.text or "").strip()
-    if not translated:
-        raise HermesDeliveryPrepError("translation model returned empty output")
-    # Strip accidental code fences some models wrap around plain text.
-    if translated.startswith("```"):
-        translated = translated.strip("`").strip()
-        if translated.lower().startswith("text\n"):
-            translated = translated[5:].strip()
-    return translated
+    import json as _json
+
+    raw = str(result.text or "").strip()
+    if not raw:
+        raise HermesDeliveryPrepError("translation_model_empty_response")
+    # Tolerate code-fence-wrapped JSON.
+    if raw.startswith("```"):
+        raw = raw.strip("`").strip()
+        if raw.lower().startswith(("text\n", "json\n")):
+            first_nl = raw.index("\n")
+            raw = raw[first_nl + 1 :].strip()
+    try:
+        parsed = _json.loads(raw)
+    except (ValueError, TypeError):
+        raise HermesDeliveryPrepError("translation_model_invalid_json")
+    try:
+        structured = _TranslationResult.model_validate(parsed)
+    except Exception:
+        raise HermesDeliveryPrepError("translation_model_invalid_schema")
+    if not structured.translated_text:
+        raise HermesDeliveryPrepError("translation_model_empty_translated_text")
+    return structured
 
 
 import re
@@ -133,54 +191,70 @@ _URL_TRAILING_PUNCT_CJK = "。，；：！？）」』】》〉"
 def _strip_trailing_punct(url: str) -> str:
     """Strip trailing sentence punctuation that \\S+ greedily captures.
 
-    Only strips when doing so does NOT unbalance parentheses/brackets —
-    a trailing ) on Guide_(RTC) is part of the URL path, not sentence
-    punctuation (p2-175 review issue #2).
+    Processes the trailing characters one at a time. A closer character
+    (")", "]", "}") is only stripped when it does NOT match an opener
+    inside the URL — if it closes an internal opening bracket, it is part
+    of the URL path and stripping stops there. This preserves
+    Guide_(RTC) while still stripping the sentence period from
+    Guide_(RTC). (p2-176 review issue #2).
     """
-    stripped = url.rstrip(_URL_TRAILING_PUNCT + _URL_TRAILING_PUNCT_CJK)
-    if stripped == url:
-        return url
-    for open_c, close_c in (("(", ")"), ("[", "]"), ("{", "}")):
-        if url.count(open_c) == url.count(close_c) and stripped.count(open_c) != stripped.count(close_c):
-            # Stripping would unbalance a matched pair — the trailing closer
-            # is part of the URL (e.g. Guide_(RTC)).
-            return url
-    return stripped
+    _CLOSER_TO_OPENER = {")": "(", "]": "[", "}": "{"}
+    _SIMPLE_PUNCT = set(".,;:!?'\"") | set("。，；：！？、」』】》〉")
+    result = url
+    while result:
+        last = result[-1]
+        if last in _SIMPLE_PUNCT:
+            result = result[:-1]
+            continue
+        if last in _CLOSER_TO_OPENER:
+            opener = _CLOSER_TO_OPENER[last]
+            # Count remaining closers vs openers in the stripped candidate:
+            # if removing this closer makes closers < openers, it matches an
+            # internal opener — stop (it is part of the URL path).
+            candidate = result[:-1]
+            if candidate.count(last) < candidate.count(opener):
+                break
+            # Extra closer (more closers than openers inside) — safe to strip.
+            result = candidate
+            continue
+        break
+    return result
 
 
 def _validate_translated_content(
-    translated: str, english_original: str, language_reference: str = ""
+    translated: str,
+    english_original: str,
+    language_reference: str = "",
+    *,
+    reference_language: str = "undetermined",
 ) -> str | None:
     """Pre-send safety validation on the translated delivery content.
 
-    Returns an error string when the translation must NOT enter the ledger;
-    None when safe. Checks:
-    1. Non-empty
-    2. Untranslated check: the translation must differ from the English
-       original (identical text means the model did not translate — this
-       works for ALL languages including Latin-script ones where character
-       heuristics fail).
+    reference_language is the model's classification of the customer's
+    dominant language (english / non_english / undetermined), passed
+    explicitly — callers must not rely on a default. Checks:
+    1. Non-empty.
+    2. Untranslated check: when reference_language is non_english and the
+       translated text is identical to the English original, the model
+       did not translate → fail. When reference_language is english, the
+       identical text is the expected correct behavior → pass.
     3. Script consistency: when the customer's reference uses CJK, the
-       translation must also use CJK; when the reference is non-CJK, the
-       translation must not switch to CJK.
-    4. Identifier preservation: numbers ≥3 digits and URLs from the English
-       original must appear verbatim in the translation (URLs matched on
-       the punctuation-aware stripped form).
-    5. Safety patterns (leakage, unsupported claims) — English regexes plus
-       CJK translations of the same concepts.
-    6. Length sanity (3x max / 20% min).
+       delivery text must also use CJK; when non-CJK, must not switch to CJK.
+    4. Identifier preservation: numbers ≥3 digits and URLs must appear.
+    5. Safety patterns (leakage, unsupported claims).
+    6. Length sanity.
     """
     if not translated or not translated.strip():
         return "translation is empty"
 
-    # Untranslated check (p2-175 review #1 replacement for diacritics):
-    # the ONLY reliable cross-language signal that the model did NOT
-    # translate is the output being identical to the input. Character-level
-    # heuristics (diacritics) had both false positives (English "café")
-    # and false negatives (French "mon appel" without accents).
-    if translated.strip() == english_original.strip():
+    # Untranslated check: only relevant when the customer is non-English.
+    if (
+        reference_language == "non_english"
+        and translated.strip() == english_original.strip()
+    ):
         return (
-            "translation is identical to the English original — the model "
+            "translation is identical to the English original but the "
+            "customer's language was classified as non-English — the model "
             "did not translate"
         )
 
@@ -313,19 +387,39 @@ def prepare_hermes_draft_delivery(
 
     english_content = str(draft.get("content") or "").strip()
     try:
-        translated = translate_draft_for_delivery(
+        structured = translate_draft_for_delivery(
             english_content=english_content,
             language_reference=language_reference,
         )
-    except Exception as exc:  # translation failures park the draft for human retry
+    except HermesDeliveryPrepError as exc:
+        # Stable error codes only — the model's raw response stays out of prep_error.
         error = f"translation failure: {exc}"
         store.fail_hermes_draft_prep(draft_id, error=error)
         LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
         return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
+    except Exception as exc:
+        error = f"translation failure: unexpected_{type(exc).__name__}"
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
 
-    # Safety validation: the translation must not introduce internal leakage,
-    # unsupported claims, or drop the content (p2-173 review issue #4).
-    safety_error = _validate_translated_content(translated, english_content, language_reference)
+    reference_language = structured.reference_language
+    translated = structured.translated_text
+
+    # English customer: the approved English original IS the delivery content.
+    # This choice lives in the delivery-prep stage, not the translation
+    # function, so Slack display conversion still translates non-English.
+    if reference_language == "english":
+        translated = english_content
+
+    # Safety validation on the final delivery text (which may be the English
+    # original for English customers, or the translation for non-English).
+    safety_error = _validate_translated_content(
+        translated,
+        english_content,
+        language_reference,
+        reference_language=reference_language,
+    )
     if safety_error:
         error = f"translation safety validation failed: {safety_error}"
         store.fail_hermes_draft_prep(draft_id, error=error)
