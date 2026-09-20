@@ -940,6 +940,401 @@ class WorkerResilienceTests(unittest.TestCase):
                 completed_at="2026-09-19T00:01:00+00:00",
             )
 
+    def _seed_investigation_delivery(
+        self,
+        repository,
+        *,
+        ticket_status: str = "open",
+        comments_revision: str = "",
+        ledger_status: str = "queued",
+    ):
+        """Real investigation-path fixture: a hermes-source queued delivery on
+        an investigation-direction case. The InMemory create() interface does
+        not accept source="hermes" (production writers only), so the ledger
+        row is seeded directly in the fixture - noted per the handoff."""
+        from types import SimpleNamespace as _SN
+
+        repository.save_ticket(
+            {
+                "ticket_id": "1361X",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Investigate call failure",
+                "status": "open",
+                "created_at": "2026-09-20T00:00:00+00:00",
+                "updated_at": "2026-09-20T00:00:00+00:00",
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-INV",
+                "billing_ticket_id": "AC-INV",
+                "client_ticket_id": "1361X",
+                "zendesk_ticket_id": "1361X",
+                "processing_profile": "production",
+                "automation_status": "automation",
+                # investigation direction: not a registered automation route,
+                # so the ownership gate is NOT applicable (eligible=False).
+                "route": "investigation",
+                "created_at": "2026-09-20T00:00:00+00:00",
+                "updated_at": "2026-09-20T00:00:00+00:00",
+            }
+        )
+        repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")] = {
+            "account_case_id": "AC-INV",
+            "message_id": "draft-inv-1",
+            "zendesk_ticket_id": "1361X",
+            "idempotency_key": "zd-inv-1",
+            "is_public": True,
+            "status": ledger_status,
+            "zendesk_comment_id": None,
+            "failure_code": None,
+            "confirmed_at": None,
+            "target_status": None,
+            "source": "hermes",
+            "engineer_case_id": None,
+            "investigation_id": None,
+            "draft_version": 1,
+            "comments_revision": comments_revision,
+            "immutable_content": "investigation reply body",
+            "created_at": "2026-09-20T00:01:00+00:00",
+            "updated_at": "2026-09-20T00:01:00+00:00",
+        }
+        effective_revision = comments_revision or "rev-live"
+        snapshot = _SN(
+            comments_revision=effective_revision,
+            ticket_status=ticket_status,
+        )
+        repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")][
+            "comments_revision"
+        ] = effective_revision
+        return snapshot
+
+    def test_investigation_delivery_with_open_ticket_sends(self) -> None:
+        """Regression (#1253 fallout): an investigation-direction case makes
+        the ownership verify return eligible=False with an empty status; the
+        sender must source the status from a real snapshot instead of reading
+        the empty field as unconfirmed and skipping forever."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        snapshot = self._seed_investigation_delivery(
+            repository, ticket_status="open", comments_revision="rev-live"
+        )
+        with patch.object(worker, "ticket_repository", repository), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot", return_value=snapshot
+        ) as snapshot_mock, patch.object(
+            worker,
+            "add_ticket_comment",
+            return_value=_SN(comment_id="zc-inv-1"),
+        ) as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+            )
+        add_comment.assert_called_once()
+        self.assertEqual(add_comment.call_args.kwargs.get("solve"), False)
+        self.assertEqual(add_comment.call_args.kwargs.get("public"), True)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+        self.assertEqual(delivery["status"], "delivered")
+        self.assertEqual(delivery["zendesk_comment_id"], "zc-inv-1")
+        # The status source is a real snapshot read this invocation.
+        self.assertEqual(snapshot_mock.call_count, 1)
+
+    def _run_investigation_sender(self, repository, snapshot=None, snapshot_error=None):
+        from types import SimpleNamespace as _SN
+        from backend.services.zendesk_ticket_assignment import ZendeskCommentError
+
+        kwargs = {}
+        if snapshot_error is not None:
+            kwargs["side_effect"] = ZendeskCommentError(
+                "permanent", error_code=snapshot_error, detail="probe"
+            )
+        else:
+            kwargs["return_value"] = snapshot or _SN(
+                comments_revision="rev-live", ticket_status="open"
+            )
+        with patch.object(worker, "ticket_repository", repository), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            **kwargs,
+        ), patch.object(worker, "read_ticket_ownership_snapshot", **kwargs) as snap_mock, patch.object(
+            worker,
+            "add_ticket_comment",
+            return_value=_SN(comment_id="zc-inv-x"),
+        ) as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+            )
+        return add_comment, snap_mock
+
+    def test_investigation_delivery_sends_for_each_actionable_status(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        for ticket_status in ("new", "open", "pending", "hold"):
+            with self.subTest(status=ticket_status):
+                repository = InMemoryTicketRepository()
+                repository.initialize()
+                snapshot = self._seed_investigation_delivery(
+                    repository,
+                    ticket_status=ticket_status,
+                    comments_revision="rev-live",
+                )
+                add_comment, _ = self._run_investigation_sender(repository, snapshot)
+                self.assertEqual(add_comment.call_count, 1)
+                self.assertEqual(add_comment.call_args.kwargs.get("solve"), False)
+                self.assertEqual(add_comment.call_args.kwargs.get("public"), True)
+                delivery = repository._account_zendesk_comment_deliveries[
+                    ("AC-INV", "draft-inv-1")
+                ]
+                self.assertEqual(delivery["status"], "delivered")
+
+    def test_investigation_local_revision_solved_reads_live_and_cancels(self) -> None:
+        """Local comments revision exists (no revision read): the live status
+        must still be queried this invocation before any send."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        snapshot = self._seed_investigation_delivery(
+            repository, ticket_status="solved", comments_revision="rev-local"
+        )
+        repository._account_case_comment_sync["1361X"] = {"comments_revision": "rev-local"}
+        add_comment, snap_mock = self._run_investigation_sender(repository, snapshot)
+        add_comment.assert_not_called()
+        self.assertEqual(snap_mock.call_count, 1)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+        self.assertEqual(delivery["status"], "cancelled")
+        self.assertEqual(delivery.get("failure_code"), "zendesk_ticket_closed")
+        self.assertIn(
+            "automation_reply_cancelled_ticket_closed",
+            [e.get("event_type") for e in repository.list_ticket_events("1361X")],
+        )
+        # Zero ledger claim happened: no claimed_at was written.
+        self.assertIsNone(delivery.get("claimed_at", None) if "claimed_at" in delivery else None)
+
+    def test_investigation_unconfirmed_status_keeps_queued(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        for ticket_status in ("", None, "unexpected"):
+            with self.subTest(status=ticket_status):
+                repository = InMemoryTicketRepository()
+                repository.initialize()
+                snapshot = self._seed_investigation_delivery(
+                    repository,
+                    ticket_status=ticket_status or "",
+                    comments_revision="rev-live",
+                )
+                add_comment, _ = self._run_investigation_sender(repository, snapshot)
+                add_comment.assert_not_called()
+                delivery = repository._account_zendesk_comment_deliveries[
+                    ("AC-INV", "draft-inv-1")
+                ]
+                self.assertEqual(delivery["status"], "queued")
+
+    def test_investigation_snapshot_read_error_keeps_queued(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_investigation_delivery(repository, comments_revision="rev-live")
+        add_comment, _ = self._run_investigation_sender(
+            repository, snapshot_error="zendesk_http_error"
+        )
+        add_comment.assert_not_called()
+        delivery = repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+        self.assertEqual(delivery["status"], "queued")
+
+    def test_investigation_unconfirmed_recovers_via_real_drain(self) -> None:
+        """Unconfirmed then recovered to open: the real drain reprocesses the
+        still-queued delivery and the public write happens exactly once."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        snapshot = self._seed_investigation_delivery(repository, ticket_status="")
+        add_comment, _ = self._run_investigation_sender(repository, snapshot)
+        add_comment.assert_not_called()
+        # The recovered snapshot's comments_revision must match the queued
+        # delivery's recorded revision — otherwise the revision fence (not
+        # the status gate) would reject it.
+        recovered = _SN(comments_revision="rev-live", ticket_status="open")
+        with patch.object(worker, "ticket_repository", repository), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=recovered,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot", return_value=recovered
+        ), patch.object(
+            worker, "add_ticket_comment", return_value=_SN(comment_id="zc-recover")
+        ) as add_comment2:
+            worker._drain_production_zendesk_comment_deliveries(limit=5)
+        self.assertEqual(add_comment2.call_count, 1)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-INV", "draft-inv-1")]
+        self.assertEqual(delivery["status"], "delivered")
+        self.assertEqual(delivery["zendesk_comment_id"], "zc-recover")
+
+    def test_investigation_duplicate_processing_writes_once(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        snapshot = self._seed_investigation_delivery(
+            repository, comments_revision="rev-live"
+        )
+        add_comment, _ = self._run_investigation_sender(repository, snapshot)
+        self.assertEqual(add_comment.call_count, 1)
+        # Re-submitting the same stale queued input cannot double-send: the
+        # ledger claim/idempotency prevents a second public write.
+        add_comment2, _ = self._run_investigation_sender(repository, snapshot)
+        self.assertEqual(add_comment2.call_count, 0)
+
+    def _seed_automation_delivery(self, repository):
+        """Automation-direction case (registered route family) with a
+        hermes-source queued delivery."""
+        repository.save_ticket(
+            {
+                "ticket_id": "1362A",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Enable media relay",
+                "status": "open",
+                "created_at": "2026-09-20T00:00:00+00:00",
+                "updated_at": "2026-09-20T00:00:00+00:00",
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-AUTO",
+                "billing_ticket_id": "AC-AUTO",
+                "client_ticket_id": "1362A",
+                "zendesk_ticket_id": "1362A",
+                "processing_profile": "production",
+                "automation_status": "automation",
+                "route": "enablement",
+                "route_family": "automated",
+                "execution_action": "enablement",
+                "created_at": "2026-09-20T00:00:00+00:00",
+                "updated_at": "2026-09-20T00:00:00+00:00",
+            }
+        )
+        repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")] = {
+            "account_case_id": "AC-AUTO",
+            "message_id": "draft-auto-1",
+            "zendesk_ticket_id": "1362A",
+            "idempotency_key": "zd-auto-1",
+            "is_public": True,
+            "status": "queued",
+            "zendesk_comment_id": None,
+            "failure_code": None,
+            "confirmed_at": None,
+            "target_status": None,
+            "source": "hermes",
+            "engineer_case_id": None,
+            "investigation_id": None,
+            "draft_version": 1,
+            "comments_revision": "rev-auto",
+            "immutable_content": "automation reply body",
+            "created_at": "2026-09-20T00:01:00+00:00",
+            "updated_at": "2026-09-20T00:01:00+00:00",
+        }
+
+    def _ownership_snapshot(
+        self, *, ticket_status: str, assignee_id: str, ai_assignee_id: str = "48557297720084"
+    ):
+        from backend.services.zendesk_ticket_assignment import (
+            ZendeskOwnershipSnapshot,
+        )
+
+        return ZendeskOwnershipSnapshot(
+            ticket_id="1362A",
+            assignee_id=assignee_id,
+            group_id="29388501432596",
+            ticket_updated_at="2026-09-20T00:05:00Z",
+            ai_assignee_id=ai_assignee_id,
+            ai_group_id="29388501432596",
+            human_replied=False,
+            blocking_comment_id=None,
+            unresolved_public_comment_id=None,
+            required_field_missing=False,
+            comments_revision="rev-auto",
+            ticket_status=ticket_status,
+        )
+
+    def test_automation_delivery_with_valid_ownership_sends(self) -> None:
+        """Automation case, AI-owned open ticket: the eligible ownership path
+        is unaffected by the new ineligible branch (real helper, only the
+        Zendesk snapshot boundary mocked)."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_automation_delivery(repository)
+        snapshot = self._ownership_snapshot(
+            ticket_status="open", assignee_id="48557297720084"
+        )
+        # The standalone worker loader can bind a second instance of the
+        # ownership module; patch the exact globals the bound function uses.
+        ownership_globals = worker.ensure_production_automation_ownership.__globals__
+        with patch.object(worker, "ticket_repository", repository), patch.dict(
+            ownership_globals, {"read_ticket_ownership_snapshot": lambda **_kw: snapshot}
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot", return_value=snapshot
+        ), patch.object(
+            worker, "add_ticket_comment", return_value=_SN(comment_id="zc-auto-1")
+        ) as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+            )
+        self.assertEqual(add_comment.call_count, 1)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+        self.assertEqual(delivery["status"], "delivered")
+
+    def test_automation_takeover_with_empty_status_keeps_original_failure(self) -> None:
+        """Human takeover with an empty ticket status: the definitive policy
+        outcome terminates with the original failure code — never a永久
+        queued wait."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_automation_delivery(repository)
+        snapshot = self._ownership_snapshot(
+            ticket_status="", assignee_id="31116509485716"
+        )
+        # The standalone worker loader can bind a second instance of the
+        # ownership module; patch the exact globals the bound function uses.
+        ownership_globals = worker.ensure_production_automation_ownership.__globals__
+        with patch.object(worker, "ticket_repository", repository), patch.dict(
+            ownership_globals, {"read_ticket_ownership_snapshot": lambda **_kw: snapshot}
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot", return_value=snapshot
+        ), patch.object(worker, "add_ticket_comment") as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+            )
+        add_comment.assert_not_called()
+        delivery = repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+        self.assertEqual(delivery["status"], "failed")
+        self.assertEqual(
+            delivery.get("failure_code"), "zendesk_ownership_human_reassigned"
+        )
+
     def test_hermes_delivery_cancelled_when_ticket_solved(self) -> None:
         """Acceptance gap #2: the hermes draft sender honors the closed-ticket
         termination and the human-takeover stop."""
