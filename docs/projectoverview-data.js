@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T07:04:39Z",
-  "source_base_commit": "f6e5f5791e8c96df499d2c3c2e3db42548f0afe4",
-  "registry_digest": "f80e4a65e3c35137e5eb34b0ca27be5d9723a716bc0030a5d9a34d42560623da",
+  "generated_at": "2026-09-20T07:24:48Z",
+  "source_base_commit": "20da557e056247e27a15f302153b76fc9cddafb0",
+  "registry_digest": "37065927cd86d33a249cceaed837aa10025095cec4b963beea7fbd76590f18c1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3595,6 +3595,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "205 单测（含 Round4 六例）+ PG 集成",
           "command": "pytest -q backend/tests/...（九套件）+ RUN_POSTGRES_INTEGRATION=1 PG suite",
           "details": "205 passed。新增 TestTranslationValidationRound4 六例（URL 尾标点中英文/逗号/真实缺失/法语未翻/法语已翻/英文正常）+ TestPostgresDeliveryPrepJob 三例（幂等创建/失败重试 ON CONFLICT 重置/completed 保护）。PG SCHEMA_REVISION 断言更新 008→009。"
+        },
+        {
+          "type": "test",
+          "label": "全套回归+review 修复测试",
+          "command": "pytest -q 7 套件（tools/agent/api/store/worker/slack/workflows）",
+          "details": "211 passed + 5 subtests。TestRound6ReviewFixes 九例：undetermined 停车、URL 句尾 > 与全角）非对称剥离、全角配对保护、text.format 参数（函数级：mock invoke_responses_text 捕获 extra_payload 断言；实际 /responses 请求构造由独立验收方另行验证）、Slack 中英文标题转换；英文基线为 store 实际 draft content 精确匹配。"
+        },
+        {
+          "type": "test",
+          "label": "PG 真库（隔离本地实例，三场景补证）",
+          "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
+          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准（直接调用 Slack handler 所用的同一 store 方法，未经 Slack HTTP handler）→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知≥1 次（断言存在且指向该 draft，未锁定恰好一次）/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
+        },
+        {
+          "type": "test",
+          "label": "旧版失败演示（b20d4399 vs 修复版）",
+          "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
+          "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。"
         },
         {
           "type": "test",
@@ -14051,7 +14069,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
-      "next_action": "实施中",
+      "next_action": "验收已通过（ec1c8001）：finalize→PR→preprod 发布（新 prompt release id）→#13602 部署后验收",
       "acceptance_criteria": [
         "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
         "英文 café 场景不误拦",
@@ -14059,7 +14077,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "PG 集成覆盖真实 ON CONFLICT 重置路径"
       ],
       "blockers": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "全套回归+review 修复测试",
+          "command": "pytest -q 7 套件（tools/agent/api/store/worker/slack/workflows）",
+          "details": "211 passed + 5 subtests。TestRound6ReviewFixes 九例：undetermined 停车、URL 句尾 > 与全角）非对称剥离、全角配对保护、text.format 参数（函数级：mock invoke_responses_text 捕获 extra_payload 断言；实际 /responses 请求构造由独立验收方另行验证）、Slack 中英文标题转换；英文基线为 store 实际 draft content 精确匹配。"
+        },
+        {
+          "type": "test",
+          "label": "PG 真库（隔离本地实例，三场景补证）",
+          "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
+          "details": "PostgreSQL 14.19（Homebrew 独立 datadir，测后停止删除）。16 passed：①原子批准（直接调用 Slack handler 所用的同一 store 方法，未经 Slack HTTP handler）→Worker 真实失败收尾（claim+fail_job）→draft=prepare_failed/job=human_review/通知≥1 次（断言存在且指向该 draft，未锁定恰好一次）/ledger 0→再批准→同一 job_id 重置 pending 且 claim 字段清空、ledger 仍 0；②双连接 Barrier 并发批准→一胜一 already:preparing、仅 1 个 job、无约束异常；③_insert_timeline 注入异常→draft 保持 awaiting_approval、approved_by/at NULL、0 job、0 timeline 事件。"
+        },
+        {
+          "type": "test",
+          "label": "旧版失败演示（b20d4399 vs 修复版）",
+          "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
+          "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。"
+        }
+      ],
       "source_refs": [
         "backend/services/automation_hermes_delivery.py"
       ],
@@ -14075,6 +14112,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-20",
           "event": "created",
           "summary": "第五轮修复。"
+        },
+        {
+          "at": "2026-09-20",
+          "event": "amended",
+          "summary": "第六轮（计划制定版）：重音→语言分类（单次 LLM 调用返回 reference_language+translated_text）；URL rstrip→逐字符剥离+配对括号检查（多余闭括号才剥）；PG 首次在隔离本地实例实际运行全绿。202 单测+13 PG。"
         }
       ]
     },

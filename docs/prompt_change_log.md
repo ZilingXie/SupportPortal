@@ -4677,3 +4677,14 @@ For each new entry, record:
 - Reason: case 13582/13591 实证——模型查到 Argus 原始遥测后卡在枚举语义（quitState=1/reason=5/apiId=10 无权威解释），而这些映射就躺在已装载的 argus skill 参考文档（error_codes.md 的 vos.uquit sts 表等）里；case 调查回合未启用 skills 工具集导致 108 条技能目录可见而不可读（p2-158 装载时的已知副作用）。
 - Tooling and behavior changes: INVESTIGATION_WORK_TOOLSETS 增加 "skills"（与 adhoc 会话一致）——调查/反馈回合可 skills_list/skill_view 读取技能全文（枚举速查表、counter ID 表、排障流程）。平台侧 skills 工具集 enabled+configured 已实证，请求级子集校验通过。
 - Verification: 新增单测锁定 case/adhoc 调查 toolsets 均含 skills、automation 方向不回归；全量回归 + 发布后功能探针（quitState 枚举查阅）。
+## 2026-09-20 - Hermes 结构化翻译输出与语言分类（p2-176 第六轮）
+
+- Area or subsystem: Preproduction Hermes delivery-preparation (translation → language classification → customer delivery).
+- Prompt or model versions: `_TRANSLATION_SYSTEM_PROMPT` 重写；模型不变（AUTOMATION_PERSONA 场景）。
+- Reason: 重音字符检测双向失效（无重音法语误拦、英文café误拦、含André英文通过）；身份比对误拦英文客户原稿。
+- Tooling and behavior changes:
+  - `translate_draft_for_delivery` 返回 `_TranslationResult{reference_language, translated_text}`（Pydantic 校验，JSON 输出经 `text.format` 参数传给 Responses API）。
+  - `prepare_hermes_draft_delivery` 按分类分支：english→用已批准英文原稿；non_english→现有安全校验；undetermined→prepare_failed（保守停车）。
+  - `_TRANSLATION_SYSTEM_PROMPT` 改为「正文应转换为参考消息的语言，已是目标语言时原样返回」——消除与 Slack `_to_english_display` 的合同冲突。
+  - `_strip_trailing_punct` 改逐字符处理+配对括号保护（含全角`）`配对映射与外围 `>`/全角`）` 剥离）。
+- Verification: 211 单测（7 套件）+ 16 PG 真库（PostgreSQL 14.19 Homebrew 隔离实例 port 54399，含原子批准/Worker 失败收尾/并发批准/事务回滚场景）。
