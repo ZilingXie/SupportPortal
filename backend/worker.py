@@ -122,6 +122,7 @@ from backend.services.zendesk_comments import (
     read_ticket_comment_audit,
 )
 from backend.services.zendesk_ticket_assignment import (
+    classify_zendesk_ticket_status,
     ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID_ENV,
     assign_ticket_to_reviewer,
     read_ticket_ownership_snapshot,
@@ -1416,7 +1417,7 @@ def _deliver_production_account_reply_to_zendesk(
         mode="verify",
         updated_at=now_iso(),
     )
-    if str(ownership.ticket_status or "").strip().lower() in {"solved", "closed"}:
+    if classify_zendesk_ticket_status(ownership.ticket_status) == "terminal":
         # A manually solved/closed ticket terminates this automation round
         # (13601): stop the send as a cancellation, not a failure — no
         # requeue, no queue return, the late reply simply never goes out.
@@ -1507,6 +1508,25 @@ def _deliver_production_account_reply_to_zendesk(
             account_case_id,
             effective_message_id,
             ownership.failure_code or "unknown",
+        )
+        return
+
+    if classify_zendesk_ticket_status(ownership.ticket_status) == "unconfirmed":
+        # Cannot confirm the live ticket state: retry instead of sending
+        # (checked after the definitive policy/verified outcomes).
+        ticket_repository.requeue_account_zendesk_comment_delivery(
+            account_case_id=account_case_id,
+            message_id=effective_message_id,
+            requeued_at=now_iso(),
+        )
+        LOGGER.warning(
+            "production_zendesk_delivery_status_unconfirmed job_id=%s ticket_id=%s "
+            "account_case_id=%s message_id=%s ticket_status=%r",
+            effective_job_id,
+            ticket_id,
+            account_case_id,
+            effective_message_id,
+            str(ownership.ticket_status or ""),
         )
         return
 
@@ -2079,8 +2099,8 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                 mode="verify",
                 updated_at=now_iso(),
             )
-            guard_status = str(guard_ownership.ticket_status or "").strip().lower()
-            if guard_status in {"solved", "closed"}:
+            guard_status_class = classify_zendesk_ticket_status(guard_ownership.ticket_status)
+            if guard_status_class == "terminal":
                 ticket_repository.complete_account_zendesk_comment_delivery(
                     account_case_id=account_case_id,
                     message_id=message_id,
@@ -2096,7 +2116,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                         "account_case_id": account_case_id,
                         "message_id": message_id,
                         "source": "hermes",
-                        "ticket_status": guard_status,
+                        "ticket_status": str(guard_ownership.ticket_status or ""),
                         "attempted_at": now_iso(),
                     },
                 )
@@ -2106,7 +2126,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                     zendesk_ticket_id,
                     account_case_id,
                     message_id,
-                    guard_status,
+                    str(guard_ownership.ticket_status or ""),
                 )
                 return
             if guard_ownership.failure_category == "policy" or not guard_ownership.confirmed:
@@ -2127,6 +2147,20 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                     message_id,
                     guard_ownership.failure_code or "unknown",
                     guard_ownership.state,
+                )
+                return
+
+            if guard_status_class == "unconfirmed":
+                # Cannot confirm the live ticket state: leave the delivery
+                # pending for a later drain instead of sending (checked
+                # after the definitive takeover/verification outcomes).
+                LOGGER.warning(
+                    "hermes_zendesk_delivery_status_unconfirmed ticket_id=%s "
+                    "account_case_id=%s message_id=%s ticket_status=%r",
+                    zendesk_ticket_id,
+                    account_case_id,
+                    message_id,
+                    str(guard_ownership.ticket_status or ""),
                 )
                 return
         claimed = ticket_repository.claim_account_zendesk_comment_delivery(
@@ -4002,6 +4036,9 @@ def handle_billing_request_reply(reply: Any) -> str:
 # Expiry: dispatched applications whose relay deadline passed without a
 # trusted result fail closed with an explicit "local may have executed" note.
 
+# Rotating cursor for the dispatched-request sweep (starvation-free).
+_ENABLEMENT_RELAY_SWEEP_OFFSET = 0
+
 _ENABLEMENT_RELAY_LISTENER: dict[str, Any] = {
     "instance_id": "",
     "epoch": 0,
@@ -4157,7 +4194,7 @@ def _dispatch_enablement_relay_request(
             )
             return
         else:
-            if str(snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+            if classify_zendesk_ticket_status(snapshot.ticket_status) == "terminal":
                 timestamp = now_iso()
                 ticket_repository.finish_enablement_relay_request(
                     request_id=request_id,
@@ -4178,6 +4215,14 @@ def _dispatch_enablement_relay_request(
                     "enablement relay dispatch cancelled (ticket closed): request=%s status=%s",
                     request_id,
                     snapshot.ticket_status,
+                )
+                return
+            if classify_zendesk_ticket_status(snapshot.ticket_status) == "unconfirmed":
+                LOGGER.warning(
+                    "enablement relay dispatch status unconfirmed request=%s status=%r; "
+                    "deferring to next cycle",
+                    request_id,
+                    str(snapshot.ticket_status or ""),
                 )
                 return
     expires_at = str(request.get("relay_task_expires_at") or "")
@@ -4632,7 +4677,21 @@ def _apply_enablement_relay_result(
                 },
             )
             return
-        if str(entry_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+        entry_class = classify_zendesk_ticket_status(entry_snapshot.ticket_status)
+        if entry_class == "unconfirmed":
+            # Cannot confirm the ticket state: defer regardless of outcome.
+            ticket_repository.record_event(
+                ticket_id_entry or None,
+                "enablement_relay_result_apply_deferred_status_unconfirmed",
+                {
+                    "request_id": request_id,
+                    "ticket_status": str(entry_snapshot.ticket_status or ""),
+                    "outcome": outcome,
+                    "attempted_at": now_iso(),
+                },
+            )
+            return
+        if entry_class == "terminal":
             ticket_repository.mark_enablement_relay_result_applied(
                 request_id=request_id, applied_status="superseded", now=now_iso()
             )
@@ -5050,15 +5109,24 @@ def _sweep_enablement_relay_expiry(*, limit: int = 10) -> None:
         now_epoch = _datetime.fromisoformat(now.replace("Z", "+00:00")).timestamp()
     except ValueError:
         return
+    global _ENABLEMENT_RELAY_SWEEP_OFFSET
+    page = max(1, limit)
     try:
         dispatched = ticket_repository.list_enablement_relay_requests(
-            statuses=("dispatched",), limit=max(1, limit)
+            statuses=("dispatched",), limit=page, offset=_ENABLEMENT_RELAY_SWEEP_OFFSET
         )
         if not isinstance(dispatched, list):
             return
     except Exception:
         LOGGER.exception("enablement relay expiry scan failed")
         return
+    # Rotating window (acceptance round 4): a fixed first-page scan starves
+    # later requests — advance the cursor and wrap at the tail so every
+    # dispatched application is checked within ceil(N/page) cycles.
+    if len(dispatched) < page:
+        _ENABLEMENT_RELAY_SWEEP_OFFSET = 0
+    else:
+        _ENABLEMENT_RELAY_SWEEP_OFFSET += page
     from backend.services.zendesk_ticket_assignment import (
         read_ticket_ownership_snapshot,
     )
@@ -5078,15 +5146,26 @@ def _sweep_enablement_relay_expiry(*, limit: int = 10) -> None:
                     ticket_id=ticket_id_sweep
                 )
             except Exception as exc:
+                # Defer the whole request this cycle: an expired application
+                # whose status cannot be read must not fall into the expiry
+                # failure chain before the closed/expire split is knowable.
                 LOGGER.warning(
                     "enablement relay sweep status read failed request=%s: %s",
                     request_id_sweep,
                     exc,
                 )
-                sweep_snapshot = None
-            if sweep_snapshot is not None and str(
-                sweep_snapshot.ticket_status or ""
-            ).strip().lower() in {"solved", "closed"}:
+                continue
+            sweep_class = classify_zendesk_ticket_status(
+                sweep_snapshot.ticket_status if sweep_snapshot is not None else ""
+            )
+            if sweep_class == "unconfirmed":
+                LOGGER.warning(
+                    "enablement relay sweep status unconfirmed request=%s status=%r",
+                    request_id_sweep,
+                    str(sweep_snapshot.ticket_status if sweep_snapshot is not None else ""),
+                )
+                continue
+            if sweep_class == "terminal":
                 ticket_repository.finish_enablement_relay_request(
                     request_id=request_id_sweep,
                     status="cancelled",

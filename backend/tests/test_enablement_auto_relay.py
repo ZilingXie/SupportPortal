@@ -777,6 +777,7 @@ class RelayInboxTests(unittest.TestCase):
         self.assertNotIn(request["status"], ("failed", "cancelled", "completed"))
 
     def test_expiry_sweep_cancels_dispatched_when_ticket_solved(self):
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
         """Dispatched applications converge to cancelled once the ticket is
         solved — the request row itself becomes authoritative."""
         from types import SimpleNamespace as _NS
@@ -798,6 +799,90 @@ class RelayInboxTests(unittest.TestCase):
         )
         events = [item["event_type"] for item in self.repository._events]
         self.assertIn("enablement_relay_sweep_cancelled_ticket_closed", events)
+
+    def test_unconfirmed_status_success_result_defers(self):
+        """Round 4: an empty/unknown ticket status must defer a SUCCESS
+        result too — it may never be applied as completed."""
+        from types import SimpleNamespace as _NS
+
+        client, _payload = self._client_with_result()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_NS(ticket_status=""),
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        result = self.repository.get_enablement_relay_result(self.request_id)
+        self.assertEqual(result["applied_status"], "pending")
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertNotIn(request["status"], ("failed", "cancelled", "completed"))
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_result_apply_deferred_status_unconfirmed", events)
+
+    def test_sweep_rotation_reaches_beyond_first_page(self):
+        """Round 4: 11 dispatched requests, the 11th (solved) must be reached
+        within two sweep cycles — the fixed first page used to starve it."""
+        from types import SimpleNamespace as _NS
+
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
+        # Seed 10 additional older dispatched requests ahead of self.request_id.
+        for index in range(10):
+            extra_id = f"enr-EXTRA-{index:02d}-v1"
+            self.repository._enablement_relay_requests[extra_id] = {
+                **self.repository._enablement_relay_requests[self.request_id],
+                "request_id": extra_id,
+                "ticket_id": f"1360{index}",
+                "zendesk_ticket_id": f"1360{index}",
+                "created_at": f"2026-09-15T00:00:{index:02d}+00:00",
+                "relay_task_id": f"task-extra-{index}",
+                "relay_task_expires_at": "2026-10-30T00:00:00+00:00",
+            }
+        # The newest (11th) request's ticket is solved.
+        solved_snapshots = {"9001": _NS(ticket_status="solved")}
+        from unittest.mock import Mock as _Mock
+
+        def snapshot_by_ticket(*, ticket_id, **_kwargs):
+            if ticket_id in solved_snapshots:
+                return solved_snapshots[ticket_id]
+            return _NS(ticket_status="open")
+
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            side_effect=snapshot_by_ticket,
+        ):
+            WORKER._sweep_enablement_relay_expiry(limit=10)
+            request = self.repository.get_enablement_relay_request(self.request_id)
+            if request["status"] != "cancelled":
+                WORKER._sweep_enablement_relay_expiry(limit=10)
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "cancelled")
+        self.assertEqual(
+            request.get("suppression_reason") or "", "zendesk_ticket_closed"
+        )
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
+
+    def test_sweep_read_failure_defers_expiry(self):
+        """Round 4: an expired application whose status read fails must stay
+        dispatched — no expiry failure chain before the closed/expire split
+        is knowable."""
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
+        stored = self.repository._enablement_relay_requests[self.request_id]
+        stored["relay_task_expires_at"] = "2026-09-15T23:59:00+00:00"
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "_record_execution_failure", failure), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            side_effect=RuntimeError("zendesk read timeout"),
+        ):
+            WORKER._sweep_enablement_relay_expiry(limit=10)
+        failure.assert_not_awaited()
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "dispatched")
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
 
     def test_notification_event_acked_and_never_applied(self):
         client, _payload = self._client_with_result()
@@ -921,13 +1006,17 @@ class RelayInboxTests(unittest.TestCase):
         self.assertNotIn("expected_task_version", client.acked[0]["fencing"])
 
     def test_expiry_sweep_fails_closed(self):
+        WORKER._ENABLEMENT_RELAY_SWEEP_OFFSET = 0
         request = self.repository.get_enablement_relay_request(self.request_id)
         stored = self.repository._enablement_relay_requests[self.request_id]
         stored["relay_task_expires_at"] = "2026-09-15T23:59:00+00:00"
         failure = AsyncMock()
         with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
             WORKER, "ticket_repository", self.repository
-        ), patch.object(WORKER, "_record_execution_failure", failure):
+        ), patch.object(WORKER, "_record_execution_failure", failure), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
+        ):
             WORKER._sweep_enablement_relay_expiry(limit=5)
         request = self.repository.get_enablement_relay_request(self.request_id)
         self.assertEqual(request["status"], "expired")

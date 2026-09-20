@@ -214,6 +214,8 @@ def _ownership_assigned():
         assignee_id="48557297720084",
         group_id="27216254064148",
         updated_at="2026-08-19T00:00:00+00:00",
+        # Round 4: only an explicit actionable status lets delivery proceed.
+        ticket_status="open",
     )
 
 
