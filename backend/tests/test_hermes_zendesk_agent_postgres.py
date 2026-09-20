@@ -115,6 +115,23 @@ def _hand_off(store: PostgresAutomationEcsStore, event: Any) -> dict[str, Any]:
     return store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
 
 
+def _prep_job_rows(store: PostgresAutomationEcsStore, draft_id: str, *, exclude_completed: bool = True) -> list[dict[str, Any]]:
+    from psycopg import sql as _sql
+
+    predicate = "AND status NOT IN ('completed') " if exclude_completed else ""
+    with store._connect() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                _sql.SQL(
+                    "SELECT job_id,status,claim_token,claimed_by,lease_expires_at FROM {} "
+                    f"WHERE namespace=%s AND kind='hermes_delivery_prep' AND payload->>'draft_id'=%s {predicate}"
+                    "ORDER BY created_at"
+                ).format(store._table("automation_jobs")),
+                (store.settings.job_namespace, draft_id),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+
 class TestPostgresHandOff:
     def test_hand_off_creates_binding_turn_and_job_atomically(self, store) -> None:
         handoff = _hand_off(store, _event("zendesk:ticket:123:created"))
@@ -486,3 +503,165 @@ class TestPostgresDeliveryPrepJob:
                 completed = cursor.fetchall()
         # The original completed job is still completed; a new job was inserted
         assert len(completed) >= 1
+
+    def _awaiting_prep_draft(self, store) -> dict[str, Any]:
+        """Draft at awaiting_approval — the state Slack's approve action starts from."""
+        handoff = _hand_off(store, _event("zendesk:ticket:123:created"))
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        store.start_hermes_agent_turn(handoff["turn_id"], run_id="r1")
+        draft = store.save_hermes_case_draft(
+            handoff["turn_id"],
+            content="Hi Customer,\n\nDraft text.",
+            basis={},
+            guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
+            publish_policy="manual",
+        )
+        store.request_hermes_draft_publish(draft["draft_id"])
+        assert str(store.get_hermes_draft(draft["draft_id"])["status"]) == "awaiting_approval"
+        return draft
+
+    def test_atomic_approve_worker_failure_retry_reuses_job(self, store) -> None:
+        """Slack path: atomic approve → worker translation failure (real
+        finishing: fail_job → human_review) → human re-approve reuses the
+        SAME job row, resets it to pending with cleared claim fields, and
+        the ledger stays empty throughout."""
+        from backend.automation_ecs_worker import AutomationWorker
+
+        draft = self._awaiting_prep_draft(store)
+        approved = store.approve_and_prep_hermes_draft(
+            draft["draft_id"], approver="slack-approver", base_event={"provenance": {}}
+        )
+        assert approved["status"] == "preparing"
+        first_job_id = approved["job_id"]
+
+        class _Recorder:
+            deliveries: list[dict[str, Any]] = []
+
+        recorder = _Recorder()
+        worker = AutomationWorker(
+            settings=store.settings,
+            store=store,
+            processor=None,
+            agent_processor=None,
+            repository=recorder,
+        )
+        notified: list[dict[str, Any]] = []
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            side_effect=RuntimeError("model down"),
+        ), patch(
+            "backend.services.engineer_slack.notify_hermes_prep_failed",
+            side_effect=lambda **kwargs: notified.append(kwargs),
+        ):
+            assert worker.process_hermes_delivery_prep_once() is True
+
+        failed_draft = store.get_hermes_draft(draft["draft_id"])
+        assert str(failed_draft["status"]) == "prepare_failed"
+        assert "unexpected_RuntimeError" in str(failed_draft["prep_error"])
+        rows = _prep_job_rows(store, draft["draft_id"], exclude_completed=False)
+        assert len(rows) == 1
+        assert str(rows[0]["job_id"]) == str(first_job_id)
+        assert str(rows[0]["status"]) == "human_review", (
+            f"worker failure finishing must park the job for human review, got {rows[0]['status']}"
+        )
+        assert notified and notified[0]["draft_id"] == draft["draft_id"]
+        assert recorder.deliveries == []
+
+        # Human re-approves from the Slack surface: the SAME job row is reset
+        # (the returned job_id is a fresh candidate id; ON CONFLICT keeps the
+        # existing row), claim fields cleared, still no ledger row.
+        retry = store.approve_and_prep_hermes_draft(
+            draft["draft_id"], approver="slack-approver", base_event={"provenance": {}}
+        )
+        assert retry["status"] == "preparing"
+        assert str(store.get_hermes_draft(draft["draft_id"])["status"]) == "preparing"
+        rows = _prep_job_rows(store, draft["draft_id"], exclude_completed=False)
+        assert len(rows) == 1, f"retry must reuse the single job row, got {len(rows)}"
+        assert str(rows[0]["job_id"]) == str(first_job_id), "job_id must be unchanged across the retry"
+        assert str(rows[0]["status"]) == "pending"
+        assert rows[0]["claim_token"] is None
+        assert rows[0]["claimed_by"] is None
+        assert rows[0]["lease_expires_at"] is None
+        assert recorder.deliveries == []
+
+    def test_concurrent_atomic_approve_creates_single_job(self, store) -> None:
+        """Two database connections approve the same draft at the same
+        time: row locking serializes them, exactly one prep job exists, and
+        no unique-constraint error escapes."""
+        import threading
+
+        draft = self._awaiting_prep_draft(store)
+        second_store = PostgresAutomationEcsStore(store.settings)
+        barrier = threading.Barrier(2)
+        results: dict[str, Any] = {}
+        errors: list[BaseException] = []
+
+        def approve(name: str, target_store: Any) -> None:
+            try:
+                barrier.wait(timeout=15)
+                results[name] = target_store.approve_and_prep_hermes_draft(
+                    draft["draft_id"], approver=f"user-{name}", base_event={"provenance": {}}
+                )
+            except BaseException as exc:  # noqa: BLE001 - recorded and asserted below
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=approve, args=("a", store)),
+            threading.Thread(target=approve, args=("b", second_store)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        assert not errors, f"concurrent approve must not raise, got {errors!r}"
+
+        statuses = sorted(
+            str(result.get("status") or f"already:{result.get('already')}")
+            for result in results.values()
+        )
+        assert statuses == ["already:preparing", "preparing"], (
+            f"one approve wins, the other sees already-preparing, got {statuses}"
+        )
+        rows = _prep_job_rows(store, draft["draft_id"], exclude_completed=False)
+        assert len(rows) == 1, f"exactly one prep job after concurrent approve, got {len(rows)}"
+        assert str(rows[0]["status"]) == "pending"
+        final_draft = store.get_hermes_draft(draft["draft_id"])
+        assert str(final_draft["status"]) == "preparing"
+        assert str(final_draft["approved_by"]) in {"user-a", "user-b"}
+
+    def test_atomic_approve_midway_exception_rolls_back(self, store) -> None:
+        """An exception between the draft update and the job insert must
+        roll the whole transaction back: no approval fields, no prep job,
+        no draft_approved timeline event."""
+        draft = self._awaiting_prep_draft(store)
+
+        def _timeline_boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("timeline write failed")
+
+        with patch.object(store, "_insert_timeline", _timeline_boom):
+            with pytest.raises(RuntimeError, match="timeline write failed"):
+                store.approve_and_prep_hermes_draft(
+                    draft["draft_id"], approver="slack-approver", base_event={"provenance": {}}
+                )
+
+        rolled_back = store.get_hermes_draft(draft["draft_id"])
+        assert str(rolled_back["status"]) == "awaiting_approval", (
+            f"draft must remain awaiting_approval after rollback, got {rolled_back['status']}"
+        )
+        assert rolled_back["approved_by"] is None
+        assert rolled_back["approved_at"] is None
+        assert _prep_job_rows(store, draft["draft_id"], exclude_completed=False) == []
+
+        from psycopg import sql as _sql
+
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "SELECT count(*) AS n FROM {} WHERE event_type='agent_turn.draft_approved' "
+                        "AND payload->>'draft_id'=%s"
+                    ).format(store._table("automation_execution_events")),
+                    (draft["draft_id"],),
+                )
+                timeline_count = int(cursor.fetchone()["n"])
+        assert timeline_count == 0

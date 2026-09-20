@@ -4686,5 +4686,5 @@ For each new entry, record:
   - `translate_draft_for_delivery` 返回 `_TranslationResult{reference_language, translated_text}`（Pydantic 校验，JSON 输出经 `text.format` 参数传给 Responses API）。
   - `prepare_hermes_draft_delivery` 按分类分支：english→用已批准英文原稿；non_english→现有安全校验；undetermined→prepare_failed（保守停车）。
   - `_TRANSLATION_SYSTEM_PROMPT` 改为「正文应转换为参考消息的语言，已是目标语言时原样返回」——消除与 Slack `_to_english_display` 的合同冲突。
-  - `_strip_trailing_punct` 改逐字符处理+配对括号保护。
-- Verification: 208 单测 + 13 PG 真库（隔离本地 PostgreSQL 17）。
+  - `_strip_trailing_punct` 改逐字符处理+配对括号保护（含全角`）`配对映射与外围 `>`/全角`）` 剥离）。
+- Verification: 211 单测（7 套件）+ 16 PG 真库（PostgreSQL 14.19 Homebrew 隔离实例 port 54399，含原子批准/Worker 失败收尾/并发批准/事务回滚场景）。
