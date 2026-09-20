@@ -2052,14 +2052,13 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
             str((account_case or {}).get("client_ticket_id") or "")
         )
         current_revision = str((sync_state or {}).get("comments_revision") or "").strip()
+        revision_snapshot = None
         if not current_revision:
             try:
-                current_revision = str(
-                    read_ticket_ownership_snapshot(
-                        ticket_id=zendesk_ticket_id,
-                    ).comments_revision
-                    or ""
-                ).strip()
+                revision_snapshot = read_ticket_ownership_snapshot(
+                    ticket_id=zendesk_ticket_id,
+                )
+                current_revision = str(revision_snapshot.comments_revision or "").strip()
             except ZendeskCommentError as exc:
                 LOGGER.warning(
                     "hermes_zendesk_revision_verify_failed ticket_id=%s account_case_id=%s "
@@ -2099,7 +2098,77 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                 mode="verify",
                 updated_at=now_iso(),
             )
-            guard_status_class = classify_zendesk_ticket_status(guard_ownership.ticket_status)
+            if not guard_ownership.eligible:
+                # The ownership gate does not apply to this case (e.g. an
+                # investigation-direction case): the empty ticket_status on
+                # the ineligible result is NOT a live reading. Source the
+                # status from a real snapshot taken in THIS invocation —
+                # reuse the revision-read snapshot when one exists, otherwise
+                # read one now even if a local comments revision was known.
+                status_snapshot = revision_snapshot
+                if status_snapshot is None:
+                    try:
+                        status_snapshot = read_ticket_ownership_snapshot(
+                            ticket_id=zendesk_ticket_id,
+                        )
+                    except ZendeskCommentError as exc:
+                        LOGGER.warning(
+                            "hermes_zendesk_delivery_status_read_failed ticket_id=%s "
+                            "account_case_id=%s message_id=%s failure_code=%s",
+                            zendesk_ticket_id,
+                            account_case_id,
+                            message_id,
+                            exc.error_code,
+                        )
+                        return
+                guard_ticket_status = str(
+                    status_snapshot.ticket_status if status_snapshot is not None else ""
+                )
+                guard_status_class = classify_zendesk_ticket_status(guard_ticket_status)
+                if guard_status_class == "terminal":
+                    ticket_repository.complete_account_zendesk_comment_delivery(
+                        account_case_id=account_case_id,
+                        message_id=message_id,
+                        status="cancelled",
+                        zendesk_comment_id=None,
+                        failure_code="zendesk_ticket_closed",
+                        completed_at=now_iso(),
+                    )
+                    ticket_repository.record_event(
+                        zendesk_ticket_id or None,
+                        "automation_reply_cancelled_ticket_closed",
+                        {
+                            "account_case_id": account_case_id,
+                            "message_id": message_id,
+                            "source": "hermes",
+                            "ticket_status": guard_ticket_status,
+                            "attempted_at": now_iso(),
+                        },
+                    )
+                    LOGGER.warning(
+                        "hermes_zendesk_delivery_cancelled_ticket_closed ticket_id=%s "
+                        "account_case_id=%s message_id=%s ticket_status=%s",
+                        zendesk_ticket_id,
+                        account_case_id,
+                        message_id,
+                        guard_ticket_status,
+                    )
+                    return
+                if guard_status_class == "unconfirmed":
+                    LOGGER.warning(
+                        "hermes_zendesk_delivery_status_unconfirmed ticket_id=%s "
+                        "account_case_id=%s message_id=%s ticket_status=%r",
+                        zendesk_ticket_id,
+                        account_case_id,
+                        message_id,
+                        guard_ticket_status,
+                    )
+                    return
+                # actionable: fall through to the ledger claim and the send.
+            else:
+                guard_status_class = classify_zendesk_ticket_status(
+                    guard_ownership.ticket_status
+                )
             if guard_status_class == "terminal":
                 ticket_repository.complete_account_zendesk_comment_delivery(
                     account_case_id=account_case_id,

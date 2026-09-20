@@ -1,5 +1,9 @@
 # Prompt Change Log
 
+## 2026-09-20 — Hermes 调查回复发送修复（发布行为）
+
+`#1253` 的状态白名单使调查类工单（ownership 门禁不适用、结果携带空 `ticket_status`）的 Hermes 回复在发送器处被永久判为"实时状态未知"，发布许可后仍停在 `queued`、零发送。修复（分支待验收）：发送器在 ownership `eligible=False` 时改用本轮真实 Zendesk 快照作为状态源（revision 读取已获取则复用、否则补读一次；读取错误保持 `queued` 重试），沿用三分类：终态=取消+事件，未确认=保持 `queued`，可操作=发送；`eligible=True` 路径与人工接管优先序不变。
+
 ## 2026-09-20 - Low-thinking handoffs and opt-in independent acceptance
 
 - Area/version: Developer agent workflow instructions; no application model, prompt release, or runtime configuration change.
