@@ -816,18 +816,21 @@ class TestDeliveryPrepBaselineRegressions:
         )
         from backend.services.automation_hermes_delivery import _TranslationResult
 
+        # Use the actual approved draft content — the save tool may have applied
+        # greeting projection, so read from the store to get the persisted text.
+        approved_draft = store.get_hermes_draft(draft["draft_id"])
+        actual_content = str(approved_draft["content"])
         with patch(
             "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
-            return_value=_TranslationResult(reference_language="english", translated_text=english_content),
+            return_value=_TranslationResult(reference_language="english", translated_text=actual_content),
         ):
             result = prepare_hermes_draft_delivery(
                 store, repository, draft_id=draft["draft_id"], environment="preproduction"
             )
         assert result["status"] == "queued", f"English customer should queue, got {result}"
         assert len(repository.deliveries) == 1
-        # Delivery content is the approved English original (possibly with
-        # greeting projection applied by the save tool).
-        assert repository.deliveries[0]["immutable_content"].strip().startswith("Hi Customer,")
+        # Delivery content must be exactly the approved English original
+        assert repository.deliveries[0]["immutable_content"] == actual_content
 
     def test_url_with_parens_and_period_queues(self) -> None:
         """URL Guide_(RTC). in English + Chinese translation with 。 → should queue."""
@@ -861,3 +864,128 @@ class TestDeliveryPrepBaselineRegressions:
         assert result["status"] == "queued", f"Valid translation with URL should queue, got {result}"
         assert len(repository.deliveries) == 1
         assert repository.deliveries[0]["immutable_content"] == chinese_translation
+
+
+class TestRound6ReviewFixes:
+    """p2-176 round 6 review fixes: undetermined stop, URL peripheral punct, HTTP-level API param."""
+
+    def _prep_with_mock(self, store, repository, turn_id, content, structured_result, customer_comment=None):
+        from backend.services.automation_hermes_delivery import (
+            approve_and_queue_hermes_draft,
+            prepare_hermes_draft_delivery,
+        )
+        from backend.services.automation_hermes_tools import tool_save_reply_draft
+
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(store, repository, turn_id=turn_id, content=content, basis={})
+        store.request_hermes_draft_publish(draft["draft_id"])
+        if customer_comment:
+            store._comments[("123", "ref-c")] = {
+                "zendesk_ticket_id": "123", "zendesk_comment_id": "ref-c",
+                "comment": {"id": "ref-c", "public": True,
+                    "author": {"email": "cx@e.com", "name": "CX", "role": "end-user", "is_agent": False},
+                    "body": customer_comment, "created_at": "2026-09-20T10:00:00Z"},
+                "updated_at": "2026-09-20T10:00:00Z",
+            }
+        approve_and_queue_hermes_draft(store, repository, draft_id=draft["draft_id"], approver="t", environment="preproduction")
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value=structured_result,
+        ):
+            return prepare_hermes_draft_delivery(store, repository, draft_id=draft["draft_id"], environment="preproduction")
+
+    def test_undetermined_language_parks_safely(self) -> None:
+        from backend.services.automation_hermes_delivery import _TranslationResult
+        store, repository, turn_id = _setup_case()
+        result = self._prep_with_mock(
+            store, repository, turn_id, "Hi Customer,\n\nChecked.",
+            _TranslationResult(reference_language="undetermined", translated_text="Hi Customer,\n\nChecked."),
+        )
+        assert result["status"] == "prepare_failed"
+        assert "undetermined" in result["error"]
+        assert len(repository.deliveries) == 0
+
+    def test_url_angle_bracket_peripheral_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See <https://example.com/help> for details."
+        chinese = "请查看 <https://example.com/help> 的详情。"
+        assert _validate_translated_content(chinese, english, "中文", reference_language="non_english") is None
+
+    def test_url_fullwidth_paren_peripheral_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See （https://example.com/help） for details."
+        chinese = "请查看 （https://example.com/help） 的详情。"
+        assert _validate_translated_content(chinese, english, "中文", reference_language="non_english") is None
+
+    def test_url_angle_sentence_end_unwrapped_translation_passes(self) -> None:
+        # English autolink at sentence end; the translation drops the angle
+        # brackets — the trailing ">." must be stripped for containment.
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See <https://example.com/help>."
+        chinese = "详见 https://example.com/help。"
+        assert _validate_translated_content(chinese, english, "中文", reference_language="non_english") is None
+
+    def test_url_fullwidth_paren_sentence_end_stripped(self) -> None:
+        # Full-width ） wrapping the URL is sentence punctuation, not part of
+        # the URL (the pre-round-6 _URL_TRAILING_PUNCT_CJK had it; restore it).
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See the guide（https://example.com/help）."
+        chinese = "详见 https://example.com/help。"
+        assert _validate_translated_content(chinese, english, "中文", reference_language="non_english") is None
+
+    def test_strip_trailing_punct_fullwidth_pair_protection(self) -> None:
+        from backend.services.automation_hermes_delivery import _strip_trailing_punct
+        # Extra full-width closer is stripped; a matched pair stays intact.
+        assert _strip_trailing_punct("https://example.com/help）") == "https://example.com/help"
+        assert (
+            _strip_trailing_punct("https://example.com/wiki/腾讯（游戏）")
+            == "https://example.com/wiki/腾讯（游戏）"
+        )
+
+    def test_translation_api_uses_text_format_not_response_format(self) -> None:
+        """HTTP-level check: the request payload must use text.format, not response_format."""
+        from backend.services.automation_hermes_delivery import translate_draft_for_delivery
+
+        captured_payload = {}
+        class FakeResult:
+            text = '{"reference_language": "english", "translated_text": "Hello."}'
+        def fake_invoke(*, profile, system_prompt, user_prompt, extra_payload=None):
+            captured_payload.update(extra_payload or {})
+            return FakeResult()
+
+        with patch("backend.services.llm_factory.invoke_responses_text", side_effect=fake_invoke):
+            result = translate_draft_for_delivery(english_content="Hello.", language_reference="Hello")
+        assert result.reference_language == "english"
+        # The correct Responses API parameter is text.format, NOT response_format
+        assert "text" in captured_payload, f"text.format not in payload: {captured_payload}"
+        assert captured_payload["text"]["format"]["type"] == "json_object"
+        assert "response_format" not in captured_payload, f"response_format should NOT be in payload: {captured_payload}"
+
+    def test_slack_chinese_title_converts_to_english(self) -> None:
+        """Slack display: Chinese title must be converted to English via translated_text."""
+        from backend.services.engineer_slack import _to_english_display
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value=_TranslationResult(reference_language="non_english", translated_text="Zac Test"),
+        ):
+            result = _to_english_display("客户测试标题")
+        assert result == "Zac Test"
+        assert isinstance(result, str)
+
+    def test_slack_english_title_unchanged(self) -> None:
+        from backend.services.engineer_slack import _to_english_display
+        from backend.services.automation_hermes_delivery import _TranslationResult
+
+        with patch(
+            "backend.services.automation_hermes_delivery.translate_draft_for_delivery",
+            return_value=_TranslationResult(reference_language="english", translated_text="Zac Test"),
+        ):
+            result = _to_english_display("Zac Test")
+        assert result == "Zac Test"
+        assert isinstance(result, str)

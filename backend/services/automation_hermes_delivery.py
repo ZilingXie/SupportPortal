@@ -76,22 +76,24 @@ def determine_delivery_language_reference(
     return None
 
 
-_TRANSLATION_SYSTEM_PROMPT = """You translate an approved English customer-support reply into the language of a reference message written by that customer.
+_TRANSLATION_SYSTEM_PROMPT = """You translate a customer-support text into the language of a reference message.
 
 Rules:
 - Translate ONLY the language. Do not add facts, promises, conclusions, or new paragraphs; do not omit content.
 - Keep names, product names, code, identifiers, numbers, URLs, and email addresses exactly as they appear.
-- Match the reference message's language (including its script and register). When the reference is mixed-language, use its dominant language.
-- Keep the salutation on its own first line, translated to match the reference language (e.g. Chinese: "Ziling，您好。"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
+- The translated_text MUST be in the SAME language as the reference message. If the
+  reference message is in English, translated_text must be in English. If the reference
+  is in Chinese, translated_text must be in Chinese. If the text to translate is already
+  in the same language as the reference, return it unchanged.
+- Match the reference message's script and register.
+- Keep the salutation on its own first line, translated to match the reference language
+  (e.g. Chinese: "Ziling，您好。"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
 - Return ONLY a JSON object with exactly these two fields:
-  {"reference_language": "<english|non_english|undetermined>", "translated_text": "<the translated reply text>"}
-- reference_language describes the DOMINANT language of the customer's reference message:
+  {"reference_language": "<english|non_english|undetermined>", "translated_text": "<the translated text>"}
+- reference_language describes the DOMINANT language of the reference message:
   "english" = the reference is predominantly English
   "non_english" = the reference is predominantly a non-English language
   "undetermined" = genuinely mixed or too short to determine a dominant language
-- translated_text is the reply translated to match the reference language. If the
-  reference is English, translated_text should be the reply unchanged. If non-English,
-  translate the reply to that language.
 - No preamble, no explanations, no code fences around the JSON."""
 
 
@@ -154,7 +156,7 @@ def translate_draft_for_delivery(
             f"Approved English reply to translate:\n---\n{english_content}\n---\n\n"
             "Return the JSON object only."
         ),
-        extra_payload={"response_format": {"type": "json_object"}},
+        extra_payload={"text": {"format": {"type": "json_object"}}},
     )
     import json as _json
 
@@ -192,14 +194,14 @@ def _strip_trailing_punct(url: str) -> str:
     """Strip trailing sentence punctuation that \\S+ greedily captures.
 
     Processes the trailing characters one at a time. A closer character
-    (")", "]", "}") is only stripped when it does NOT match an opener
-    inside the URL — if it closes an internal opening bracket, it is part
-    of the URL path and stripping stops there. This preserves
+    (")", "]", "}", full-width "）") is only stripped when it does NOT match
+    an opener inside the URL — if it closes an internal opening bracket, it
+    is part of the URL path and stripping stops there. This preserves
     Guide_(RTC) while still stripping the sentence period from
     Guide_(RTC). (p2-176 review issue #2).
     """
-    _CLOSER_TO_OPENER = {")": "(", "]": "[", "}": "{"}
-    _SIMPLE_PUNCT = set(".,;:!?'\"") | set("。，；：！？、」』】》〉")
+    _CLOSER_TO_OPENER = {")": "(", "]": "[", "}": "{", "）": "（"}
+    _SIMPLE_PUNCT = set(".,;:!?'\"") | set("。，；：！？、」』】》〉>")
     result = url
     while result:
         last = result[-1]
@@ -405,6 +407,19 @@ def prepare_hermes_draft_delivery(
 
     reference_language = structured.reference_language
     translated = structured.translated_text
+
+    # Undetermined language is a conservative stop: we cannot confidently
+    # pick between "send English" and "send translation", so park for human
+    # retry instead of guessing (p2-176 review issue #2).
+    if reference_language == "undetermined":
+        error = (
+            "customer language classification was undetermined — cannot "
+            "confidently determine whether to send English or a translation; "
+            "parking for human retry"
+        )
+        store.fail_hermes_draft_prep(draft_id, error=error)
+        LOGGER.warning("hermes_draft_prep_failed draft_id=%s reason=%s", draft_id, error)
+        return {"draft_id": draft_id, "status": "prepare_failed", "error": error}
 
     # English customer: the approved English original IS the delivery content.
     # This choice lives in the delivery-prep stage, not the translation

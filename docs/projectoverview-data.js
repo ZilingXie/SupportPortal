@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T06:21:57Z",
-  "source_base_commit": "54ec24213647316e012d65a196dde29cb38a8f09",
-  "registry_digest": "3482988bb7ce150f4c57107a2793c451b060f6bc9f09b70177a8530276c348a5",
+  "generated_at": "2026-09-20T07:00:10Z",
+  "source_base_commit": "89677742540ca5537810595cfa0ae0756f49273a",
+  "registry_digest": "94e2b409d2e4860d85bbffee31834bdb6497575b4aa681bad7c4024ed5777509",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3586,21 +3586,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "基线回归（旧版失败→新版通过）",
-          "command": "pytest -k BaselineRegressions",
-          "details": "URL Guide_(RTC). 在旧版 rstrip+all-or-nothing 下误拦（旧版失败证据：URL https://example.com/Guide_(RTC). not in translation containing Guide_(RTC)。）；逐字符剥离后通过。英文身份比对旧版因 mock 返回纯字符串而无法验证（改为结构化 mock 后通过——英文客户+english分类→交付英文原稿→queued）。"
+          "label": "全套回归+review 修复测试",
+          "command": "pytest -q 7 套件（tools/agent/api/store/worker/slack/workflows）",
+          "details": "211 passed + 5 subtests。TestRound6ReviewFixes 九例：undetermined 停车、URL 句尾 > 与全角）非对称剥离、全角配对保护、HTTP 层 text.format 参数验证、Slack 中英文标题转换；英文基线修正为 store 实际 draft content 精确匹配。"
         },
         {
           "type": "test",
-          "label": "结构化翻译+语言分类+URL组合 全量回归",
-          "command": "pytest -q test_hermes_zendesk_agent_tools.py test_hermes_zendesk_agent.py test_automation_ecs_api.py test_automation_ecs_store.py test_automation_ecs_worker.py test_engineer_slack.py test_engineer_slack_workflows.py",
-          "details": "202 passed + 5 subtests。结构化输出：_TranslationResult(BaseModel) + reference_language 枚举 english/non_english/undetermined + translated_text；英文分支在 prepare 阶段使用 approved 原稿（非通用翻译函数）；_to_english_display 读 translated_text。"
+          "label": "PG 真库（隔离本地实例）",
+          "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
+          "details": "PostgreSQL 14.19（Homebrew，独立 datadir，测试后已停止删除）。13 passed。test_retry_after_failure_resets_claimed_job：claim_job 先置 claimed+填 claim_token/claimed_by/lease，fail 后 retry，ON CONFLICT 将同一 job 重置 pending 且三字段清空。"
         },
         {
           "type": "test",
-          "label": "PG 真库验证（隔离本地实例 port 54399）",
-          "command": "initdb → pg_ctl start → pytest RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test",
-          "details": "13 passed（10 既有 + 3 TestPostgresDeliveryPrepJob）。PostgreSQL 17（Homebrew），隔离实例已停止清理。覆盖：幂等创建/失败重置/completed WHERE 保护。"
+          "label": "旧版失败演示（b20d4399 vs 修复版）",
+          "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
+          "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。5 个失败精确对应五项 review 修复中的行为变更项。"
         },
         {
           "type": "test",
@@ -14035,7 +14035,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
-      "next_action": "等待独立验收（代码已提交，未合并未部署）",
+      "next_action": "等待独立验收（review 修复提交已含④全角）补漏；验收通过后 finalize→PR→preprod 发布）",
       "acceptance_criteria": [
         "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
         "英文 café 场景不误拦",
@@ -14046,21 +14046,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "基线回归（旧版失败→新版通过）",
-          "command": "pytest -k BaselineRegressions",
-          "details": "URL Guide_(RTC). 在旧版 rstrip+all-or-nothing 下误拦（旧版失败证据：URL https://example.com/Guide_(RTC). not in translation containing Guide_(RTC)。）；逐字符剥离后通过。英文身份比对旧版因 mock 返回纯字符串而无法验证（改为结构化 mock 后通过——英文客户+english分类→交付英文原稿→queued）。"
+          "label": "全套回归+review 修复测试",
+          "command": "pytest -q 7 套件（tools/agent/api/store/worker/slack/workflows）",
+          "details": "211 passed + 5 subtests。TestRound6ReviewFixes 九例：undetermined 停车、URL 句尾 > 与全角）非对称剥离、全角配对保护、HTTP 层 text.format 参数验证、Slack 中英文标题转换；英文基线修正为 store 实际 draft content 精确匹配。"
         },
         {
           "type": "test",
-          "label": "结构化翻译+语言分类+URL组合 全量回归",
-          "command": "pytest -q test_hermes_zendesk_agent_tools.py test_hermes_zendesk_agent.py test_automation_ecs_api.py test_automation_ecs_store.py test_automation_ecs_worker.py test_engineer_slack.py test_engineer_slack_workflows.py",
-          "details": "202 passed + 5 subtests。结构化输出：_TranslationResult(BaseModel) + reference_language 枚举 english/non_english/undetermined + translated_text；英文分支在 prepare 阶段使用 approved 原稿（非通用翻译函数）；_to_english_display 读 translated_text。"
+          "label": "PG 真库（隔离本地实例）",
+          "command": "initdb → pg_ctl -p 54399 → RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test pytest test_hermes_zendesk_agent_postgres.py",
+          "details": "PostgreSQL 14.19（Homebrew，独立 datadir，测试后已停止删除）。13 passed。test_retry_after_failure_resets_claimed_job：claim_job 先置 claimed+填 claim_token/claimed_by/lease，fail 后 retry，ON CONFLICT 将同一 job 重置 pending 且三字段清空。"
         },
         {
           "type": "test",
-          "label": "PG 真库验证（隔离本地实例 port 54399）",
-          "command": "initdb → pg_ctl start → pytest RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://testuser@localhost:54399/hermes_test",
-          "details": "13 passed（10 既有 + 3 TestPostgresDeliveryPrepJob）。PostgreSQL 17（Homebrew），隔离实例已停止清理。覆盖：幂等创建/失败重置/completed WHERE 保护。"
+          "label": "旧版失败演示（b20d4399 vs 修复版）",
+          "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
+          "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。5 个失败精确对应五项 review 修复中的行为变更项。"
         }
       ],
       "source_refs": [

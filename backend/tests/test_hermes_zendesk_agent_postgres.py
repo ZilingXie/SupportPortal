@@ -380,28 +380,66 @@ class TestPostgresDeliveryPrepJob:
         result2 = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
         assert result2.get("already") == "preparing"
 
-    def test_retry_after_failure_resets_existing_job(self, store) -> None:
+    def test_retry_after_failure_resets_claimed_job(self, store) -> None:
+        """Real ON CONFLICT path: job must be in a NON-pending state before retry.
+
+        The previous version left the job in 'pending' (create → fail → retry
+        → still pending), so the assertion passed even if ON CONFLICT did
+        nothing. This version: creates the job, CLAIMS it (simulating a
+        worker picking it up), fails the draft, then retries — the ON
+        CONFLICT must reset the CLAIMED job back to 'pending' with cleared
+        claim fields, proving the DO UPDATE actually fired.
+        """
         draft = self._approved_prep_draft(store)
         store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
-        store.fail_hermes_draft_prep(draft["draft_id"], error="test failure")
-        # Retry: resets the existing job to pending (ON CONFLICT path)
-        result = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
-        assert result["status"] == "preparing"
-        # Direct SQL: exactly one non-completed prep job exists for this draft
+
+        # Claim the job to put it in 'claimed' state (worker picked it up)
+        claimed = store.claim_job(
+            JobKind.HERMES_DELIVERY_PREP, worker_id="test-worker", lease_seconds=300
+        )
+        assert claimed is not None, "prep job should be claimable"
+
+        # Verify the job is actually in 'claimed' state in the database
         from psycopg import sql as _sql
 
         with store._connect() as connection:
             with connection.cursor() as cursor:
                 cursor.execute(
                     _sql.SQL(
-                        "SELECT job_id,status FROM {} WHERE namespace=%s AND kind=%s "
+                        "SELECT status, claim_token, claimed_by FROM {} WHERE namespace=%s AND kind=%s "
+                        "AND payload->>'draft_id'=%s"
+                    ).format(store._table("automation_jobs")),
+                    (store.settings.job_namespace, "hermes_delivery_prep", draft["draft_id"]),
+                )
+                before = cursor.fetchone()
+        assert str(before["status"]) == "claimed", f"job should be claimed, got {before['status']}"
+        assert before["claim_token"] is not None
+        assert str(before["claimed_by"]) == "test-worker"
+
+        # Worker's prep fails → draft goes to prepare_failed
+        store.fail_hermes_draft_prep(draft["draft_id"], error="translation model down")
+
+        # Human retries: approve_and_prep → ON CONFLICT resets the CLAIMED job
+        result = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        assert result["status"] == "preparing"
+
+        # Verify the SAME job was reset to pending with cleared claim fields
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "SELECT job_id, status, claim_token, claimed_by, lease_expires_at "
+                        "FROM {} WHERE namespace=%s AND kind=%s "
                         "AND payload->>'draft_id'=%s AND status NOT IN ('completed')"
                     ).format(store._table("automation_jobs")),
                     (store.settings.job_namespace, "hermes_delivery_prep", draft["draft_id"]),
                 )
-                rows = cursor.fetchall()
-        assert len(rows) == 1
-        assert str(rows[0]["status"]) == "pending"
+                after = cursor.fetchall()
+        assert len(after) == 1, f"exactly 1 non-completed prep job expected, got {len(after)}"
+        assert str(after[0]["status"]) == "pending", f"job should be reset to pending, got {after[0]['status']}"
+        assert after[0]["claim_token"] is None, f"claim_token should be cleared, got {after[0]['claim_token']}"
+        assert after[0]["claimed_by"] is None, f"claimed_by should be cleared, got {after[0]['claimed_by']}"
+        assert after[0]["lease_expires_at"] is None, f"lease should be cleared, got {after[0]['lease_expires_at']}"
 
     def test_completed_job_is_not_reset_on_retry(self, store) -> None:
         draft = self._approved_prep_draft(store)
