@@ -125,18 +125,27 @@ def translate_draft_for_delivery(
 import re
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
-# Latin-1 Supplement + Latin Extended-A: covers é è à ç ü ö ñ å æ ø ß etc.
-# Used to detect French/German/Spanish/Portuguese references so an
-# untranslated English response fails the soft script check.
-_DIACRITIC_RE = re.compile(r"[\u00c0-\u024f]")
 _URL_RE = re.compile(r"https?://\S+")
 _URL_TRAILING_PUNCT = ".,;:!?)'\"}]>"
 _URL_TRAILING_PUNCT_CJK = "。，；：！？）」』】》〉"
 
 
 def _strip_trailing_punct(url: str) -> str:
-    """Strip trailing sentence punctuation that \\S+ greedily captures."""
-    return url.rstrip(_URL_TRAILING_PUNCT + _URL_TRAILING_PUNCT_CJK)
+    """Strip trailing sentence punctuation that \\S+ greedily captures.
+
+    Only strips when doing so does NOT unbalance parentheses/brackets —
+    a trailing ) on Guide_(RTC) is part of the URL path, not sentence
+    punctuation (p2-175 review issue #2).
+    """
+    stripped = url.rstrip(_URL_TRAILING_PUNCT + _URL_TRAILING_PUNCT_CJK)
+    if stripped == url:
+        return url
+    for open_c, close_c in (("(", ")"), ("[", "]"), ("{", "}")):
+        if url.count(open_c) == url.count(close_c) and stripped.count(open_c) != stripped.count(close_c):
+            # Stripping would unbalance a matched pair — the trailing closer
+            # is part of the URL (e.g. Guide_(RTC)).
+            return url
+    return stripped
 
 
 def _validate_translated_content(
@@ -147,19 +156,33 @@ def _validate_translated_content(
     Returns an error string when the translation must NOT enter the ledger;
     None when safe. Checks:
     1. Non-empty
-    2. Script consistency: when the customer's reference uses CJK, the
-       translation must also use CJK (an untranslated English response is
-       the most common failure); when the reference is non-CJK, the
+    2. Untranslated check: the translation must differ from the English
+       original (identical text means the model did not translate — this
+       works for ALL languages including Latin-script ones where character
+       heuristics fail).
+    3. Script consistency: when the customer's reference uses CJK, the
+       translation must also use CJK; when the reference is non-CJK, the
        translation must not switch to CJK.
-    3. Identifier preservation: numbers ≥3 digits and URLs from the English
-       original must appear verbatim in the translation.
-    4. Safety patterns (leakage, unsupported claims) — the English-only
-       regexes are supplemented by script-aware CJK translations of the
-       same concepts (e.g. "保证" for guarantee, "内部" for internal).
-    5. Length sanity (3x max / 20% min).
+    4. Identifier preservation: numbers ≥3 digits and URLs from the English
+       original must appear verbatim in the translation (URLs matched on
+       the punctuation-aware stripped form).
+    5. Safety patterns (leakage, unsupported claims) — English regexes plus
+       CJK translations of the same concepts.
+    6. Length sanity (3x max / 20% min).
     """
     if not translated or not translated.strip():
         return "translation is empty"
+
+    # Untranslated check (p2-175 review #1 replacement for diacritics):
+    # the ONLY reliable cross-language signal that the model did NOT
+    # translate is the output being identical to the input. Character-level
+    # heuristics (diacritics) had both false positives (English "café")
+    # and false negatives (French "mon appel" without accents).
+    if translated.strip() == english_original.strip():
+        return (
+            "translation is identical to the English original — the model "
+            "did not translate"
+        )
 
     # Script consistency (p2-174 review issue #3)
     reference_has_cjk = bool(_CJK_SCRIPT_RE.search(language_reference))
@@ -177,21 +200,7 @@ def _validate_translated_content(
             "wrong language"
         )
 
-    # Latin-script languages (p2-175 review issue #2): when the customer's
-    # reference uses accented characters (é, ü, ñ, ...) but the translation
-    # is pure ASCII, the model likely returned the English original
-    # untranslated. Soft check — worst case is a prepare_failed retry, which
-    # is safer than sending English to a French/German/Spanish customer.
-    reference_has_diacritics = bool(_DIACRITIC_RE.search(language_reference))
-    translated_has_diacritics = bool(_DIACRITIC_RE.search(translated))
-    if reference_has_diacritics and not translated_has_diacritics and not translated_has_cjk:
-        return (
-            "translation may be untranslated: the customer's reference uses "
-            "accented Latin characters but the translation is pure ASCII — "
-            "the model likely returned the English original"
-        )
-
-    # Identifier preservation (p2-174 review issue #3; URL fix p2-175 #1)
+    # Identifier preservation (URL fix: balanced-paren-aware strip)
     for number in re.findall(r"\d{3,}", english_original):
         if number not in translated:
             return (
@@ -200,9 +209,6 @@ def _validate_translated_content(
                 f"or dropped session/UID/channel identifiers"
             )
     for url in _URL_RE.findall(english_original):
-        # \\S+ greedily captures trailing sentence punctuation; strip it from
-        # both sides so an English URL followed by a Chinese full stop (。)
-        # in the translation does not fail the containment check.
         clean_url = _strip_trailing_punct(url)
         if clean_url and clean_url not in translated:
             return f"URL '{clean_url}' from the English original is missing in the translation"

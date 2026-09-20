@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T03:23:31Z",
-  "source_base_commit": "f23aee4ed75de65b5f80d20038b3f461b98588c0",
-  "registry_digest": "2e252700af302c5109c2f8fb00ac512a8101131043a6b68eb0c3f3e9212edc63",
+  "generated_at": "2026-09-20T04:16:51Z",
+  "source_base_commit": "6b5b8565487a128fa136a37ec65220003d34ad8b",
+  "registry_digest": "b882be23fa4b7c3dbe3899f3cc4e646b778c0c080d0be884c5e41113e4196565",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3928,7 +3928,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 41,
+      "task_count": 42,
       "done_count": 20,
       "blocked_count": 0
     },
@@ -14007,6 +14007,40 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-20",
           "event": "done",
           "summary": "三项残留修复完成，205 单测全绿。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-176",
+      "title": "第五轮修复：重音检测→身份比对 + URL 括号平衡 + PG 集成真实路径",
+      "status": "active",
+      "owner": "codex",
+      "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
+      "next_action": "实施中",
+      "acceptance_criteria": [
+        "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
+        "英文 café 场景不误拦",
+        "Guide_(RTC) 保留路径括号（丢) 被拦）",
+        "PG 集成覆盖真实 ON CONFLICT 重置路径"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "source_refs": [
+        "backend/services/automation_hermes_delivery.py"
+      ],
+      "created_at": "2026-09-20",
+      "updated_at": "2026-09-20",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-20",
+          "event": "created",
+          "summary": "第五轮修复。"
         }
       ]
     },

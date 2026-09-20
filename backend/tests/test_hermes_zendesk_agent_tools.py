@@ -689,7 +689,7 @@ class TestTranslationValidationRound4:
         untranslated_english = "Hello, we have checked the session and found no issues."
         result = _validate_translated_content(untranslated_english, untranslated_english, french_ref)
         assert result is not None
-        assert "accented" in result.lower() or "untranslated" in result.lower()
+        assert "identical" in result.lower() or "untranslated" in result.lower()
 
     def test_french_reference_french_translation_passes(self) -> None:
         from backend.services.automation_hermes_delivery import _validate_translated_content
@@ -701,5 +701,59 @@ class TestTranslationValidationRound4:
     def test_english_reference_pure_ascii_translation_passes(self) -> None:
         from backend.services.automation_hermes_delivery import _validate_translated_content
         english_ref = "Hello, my call is not working."
+        english_original = "We have checked and found no issues."
         english_translation = "Hi Customer, we have checked and found no issues."
-        assert _validate_translated_content(english_translation, english_translation, english_ref) is None
+        assert _validate_translated_content(english_translation, english_original, english_ref) is None
+
+
+class TestTranslationValidationRound5:
+    """p2-175 round 5: identity check replaces diacritics; URL balanced-paren strip."""
+
+    def test_identical_to_english_fails(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        # French customer + untranslated English that happens to contain "André"
+        english = "Hello André, we have checked and found no issues."
+        result = _validate_translated_content(english, english, "Bonjour André")
+        assert result is not None
+        assert "identical" in result.lower()
+
+    def test_french_without_accents_translated_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "Hello, we have checked and found no issues."
+        french = "Bonjour, nous avons vérifié et n'avons trouvé aucun problème."
+        assert _validate_translated_content(french, english, "Bonjour, mon appel ne fonctionne pas.") is None
+
+    def test_english_customer_with_cafe_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        # English reference contains "café" — old diacritics check would block
+        # because ref has é but translation (being English) has no other é.
+        translated = "Hi Customer, we checked the café order and found no issues."
+        english = "We checked the café order and found no issues."
+        ref = "Hello, my café order has an issue."
+        assert _validate_translated_content(translated, english, ref) is None
+
+    def test_url_with_parentheses_preserved(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See https://example.com/Guide_(RTC) for details."
+        # Translation drops the closing paren — should FAIL
+        chinese_bad = "请查看 https://example.com/Guide_(RTC 的详情。"
+        result = _validate_translated_content(chinese_bad, english, "中文")
+        assert result is not None, "dropped ) should fail"
+
+    def test_url_with_parentheses_intact_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See https://example.com/Guide_(RTC) for details."
+        chinese_good = "请查看 https://example.com/Guide_(RTC) 的详情。"
+        assert _validate_translated_content(chinese_good, english, "中文") is None
+
+    def test_url_sentence_period_still_handled(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See https://example.com/help. for details."
+        chinese = "请查看 https://example.com/help 。详情。"
+        assert _validate_translated_content(chinese, english, "中文") is None
+
+    def test_slightly_different_from_english_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "Hello, we checked the session."
+        translated = "Hello, we have checked the session."  # Slightly different (greeting removed)
+        assert _validate_translated_content(translated, english, "Bonjour") is None
