@@ -478,6 +478,7 @@ def create_app(    *,
         ticket_status = ""
         if zendesk_ticket_id:
             from backend.services.zendesk_ticket_assignment import (
+                classify_zendesk_ticket_status,
                 read_ticket_ownership_snapshot,
             )
 
@@ -489,6 +490,14 @@ def create_app(    *,
                     detail=f"ticket status unreadable: {str(exc)[:200]}",
                 ) from exc
             ticket_status = str(snapshot.ticket_status or "").strip()
+            # Explicit whitelist: ONLY an actionable status is valid. An
+            # empty or unexpected value cannot be confirmed and must be a
+            # refusal, never a default-valid (acceptance round 4).
+            if classify_zendesk_ticket_status(ticket_status) == "unconfirmed":
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"ticket status unconfirmed: {ticket_status!r}",
+                )
         return {
             "request_id": str(request.get("request_id") or ""),
             "status": str(request.get("status") or ""),
@@ -497,7 +506,7 @@ def create_app(    *,
             "zendesk_ticket_id": zendesk_ticket_id,
             "request_version": int(request.get("request_version") or 1),
             "ticket_status": ticket_status,
-            "ticket_valid": ticket_status not in {"solved", "closed"},
+            "ticket_valid": classify_zendesk_ticket_status(ticket_status) == "actionable",
             "updated_at": str(request.get("updated_at") or ""),
         }
 

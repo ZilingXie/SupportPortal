@@ -198,6 +198,42 @@ class EnablementRelayRequestStateTests(unittest.TestCase):
         self.assertFalse(payload["ticket_valid"])
         self.assertEqual(payload["ticket_status"], "solved")
 
+    def test_relay_request_empty_or_unexpected_ticket_is_503(self) -> None:
+        """Round 4: only an explicit actionable status is valid — empty or
+        unexpected values are refusals, never default-valid."""
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+
+        client, _store = _client()
+        repository = Mock()
+        repository.get_enablement_relay_request.return_value = {
+            "request_id": "enr-AC-1-v1",
+            "status": "dispatched",
+            "dispatch_status": "created",
+            "relay_task_id": "task-1",
+            "zendesk_ticket_id": "13601",
+            "request_version": 1,
+            "updated_at": "2026-09-19T00:00:00+00:00",
+        }
+        token = _settings("api").intake_shared_token
+        for status_value in ("", "unexpected"):
+            with self.subTest(status=status_value):
+                with patch.object(
+                    __import__(
+                        "backend.automation_ecs_api", fromlist=["_TICKET_REPOSITORY"]
+                    ),
+                    "_TICKET_REPOSITORY",
+                    repository,
+                ), patch(
+                    "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                    return_value=SimpleNamespace(ticket_status=status_value),
+                ):
+                    response = client.get(
+                        "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
+                        headers={"Authorization": f"Bearer {token}"},
+                    )
+                self.assertEqual(response.status_code, 503)
+
     def test_relay_request_unreadable_ticket_is_503(self) -> None:
         from unittest.mock import Mock
 

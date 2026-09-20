@@ -57,6 +57,24 @@ class ZendeskRouteBackResult:
     updated: bool
 
 
+# Automation-gate ticket-status classification (13601 acceptance round 4):
+# ONLY statuses on the actionable whitelist may proceed; solved/closed
+# terminate the round; everything else -- including an empty field or an
+# unexpected value -- is "unconfirmed" and must defer/refuse. Deliberately
+# NOT the dashboard's ACTIVE set, which counts "unknown" as active.
+ZENDESK_ACTIONABLE_TICKET_STATUSES = frozenset({"new", "open", "pending", "hold"})
+ZENDESK_TERMINAL_TICKET_STATUSES = frozenset({"solved", "closed"})
+
+
+def classify_zendesk_ticket_status(status: object) -> str:
+    normalized = str(status or "").strip().lower()
+    if normalized in ZENDESK_ACTIONABLE_TICKET_STATUSES:
+        return "actionable"
+    if normalized in ZENDESK_TERMINAL_TICKET_STATUSES:
+        return "terminal"
+    return "unconfirmed"
+
+
 @dataclass(frozen=True, slots=True)
 class ZendeskOwnershipSnapshot:
     ticket_id: str

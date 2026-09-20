@@ -129,7 +129,8 @@ class EnablementRelayRepositoryMixin:
     ) -> bool: ...
     def fail_enablement_relay_dispatch(self, *, request_id: str, reason: str, now: str) -> bool: ...
     def list_enablement_relay_requests(
-        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25
+        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25,
+        offset: int = 0,
     ) -> list[dict[str, Any]]: ...
     def find_enablement_relay_request_by_task(self, relay_task_id: str) -> dict[str, Any] | None: ...
     def get_enablement_relay_request(self, request_id: str) -> dict[str, Any] | None: ...
@@ -359,7 +360,8 @@ class InMemoryEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
             return True
 
     def list_enablement_relay_requests(
-        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25
+        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         wanted = set(statuses)
         with self._assignment_lock:
@@ -369,7 +371,7 @@ class InMemoryEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                 if request.get("status") in wanted
             ]
         rows.sort(key=lambda item: (str(item.get("created_at") or ""), str(item.get("request_id"))))
-        return rows[: max(1, int(limit))]
+        return rows[max(0, int(offset)) : max(0, int(offset)) + max(1, int(limit))]
 
     def find_enablement_relay_request_by_task(self, relay_task_id: str) -> dict[str, Any] | None:
         normalized = str(relay_task_id or "").strip()
@@ -936,7 +938,8 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
         return self._run_with_connection_retry("fail_enablement_relay_dispatch", _operation)
 
     def list_enablement_relay_requests(
-        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25
+        self, *, statuses: tuple[str, ...], now: str | None = None, limit: int = 25,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         wanted = tuple(statuses)
 
@@ -947,9 +950,9 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                 cur.execute(
                     sql.SQL(
                         "SELECT * FROM {} WHERE status = ANY(%s) "
-                        "ORDER BY created_at, request_id LIMIT %s"
+                        "ORDER BY created_at, request_id LIMIT %s OFFSET %s"
                     ).format(self._table("support_enablement_relay_requests")),
-                    (list(wanted), max(1, int(limit))),
+                    (list(wanted), max(1, int(limit)), max(0, int(offset))),
                 )
                 return [
                     _normalize_relay_request(_row_to_request(row)) for row in cur.fetchall()
