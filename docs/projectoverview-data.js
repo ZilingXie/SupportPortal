@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-19T15:22:30Z",
-  "source_base_commit": "15c92514c658ca5db20bd83e1ede799ca6f7ef4f",
-  "registry_digest": "2825d550e72eb9fafdca46891c81e9aed073d286a0b433016833f328980a9183",
+  "generated_at": "2026-09-20T03:23:31Z",
+  "source_base_commit": "f23aee4ed75de65b5f80d20038b3f461b98588c0",
+  "registry_digest": "2e252700af302c5109c2f8fb00ac512a8101131043a6b68eb0c3f3e9212edc63",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3580,6 +3580,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "205 单测（含 Round4 六例）+ PG 集成",
+          "command": "pytest -q backend/tests/...（九套件）+ RUN_POSTGRES_INTEGRATION=1 PG suite",
+          "details": "205 passed。新增 TestTranslationValidationRound4 六例（URL 尾标点中英文/逗号/真实缺失/法语未翻/法语已翻/英文正常）+ TestPostgresDeliveryPrepJob 三例（幂等创建/失败重试 ON CONFLICT 重置/completed 保护）。PG SCHEMA_REVISION 断言更新 008→009。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -3922,8 +3928,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 40,
-      "done_count": 19,
+      "task_count": 41,
+      "done_count": 20,
       "blocked_count": 0
     },
     {
@@ -13955,6 +13961,52 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-19",
           "event": "done",
           "summary": "五项缺口全部修复，181 回归全绿。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-175",
+      "title": "第四轮修复：URL 尾标点误拦 + 非 CJK 翻译检测 + PG 集成测试",
+      "status": "done",
+      "owner": "codex",
+      "summary": "验收三项残留：①_URL_RE 的 \\S+ 把句尾标点（.）算进 URL，英文原文 URL 后跟中文句号时译文必缺含标点版本→误拦；②非 CJK 语言（法语等）纯英文回复通过校验进入 queued（重音字符检测缺失）；③PG ON CONFLICT 无集成测试且 postgres.py 有 stale SCHEMA_REVISION=008 断言。",
+      "next_action": "",
+      "acceptance_criteria": [
+        "URL 尾标点（. , ; : ! ? ) 等）不再导致误拦。",
+        "法语参考含重音字符 + 纯英文译文 → prepare_failed。",
+        "PG 集成测试覆盖 ON CONFLICT 重置/幂等/completed 保护。",
+        "全套回归 + PG 集成全绿 + 发布。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "205 单测（含 Round4 六例）+ PG 集成",
+          "command": "pytest -q backend/tests/...（九套件）+ RUN_POSTGRES_INTEGRATION=1 PG suite",
+          "details": "205 passed。新增 TestTranslationValidationRound4 六例（URL 尾标点中英文/逗号/真实缺失/法语未翻/法语已翻/英文正常）+ TestPostgresDeliveryPrepJob 三例（幂等创建/失败重试 ON CONFLICT 重置/completed 保护）。PG SCHEMA_REVISION 断言更新 008→009。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_hermes_delivery.py"
+      ],
+      "created_at": "2026-09-20",
+      "updated_at": "2026-09-20",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-20",
+          "event": "created",
+          "summary": "第四轮验收三项残留修复。"
+        },
+        {
+          "at": "2026-09-20",
+          "event": "done",
+          "summary": "三项残留修复完成，205 单测全绿。"
         }
       ]
     },

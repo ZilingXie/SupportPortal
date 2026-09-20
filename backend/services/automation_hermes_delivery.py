@@ -125,7 +125,18 @@ def translate_draft_for_delivery(
 import re
 
 _CJK_SCRIPT_RE = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+# Latin-1 Supplement + Latin Extended-A: covers é è à ç ü ö ñ å æ ø ß etc.
+# Used to detect French/German/Spanish/Portuguese references so an
+# untranslated English response fails the soft script check.
+_DIACRITIC_RE = re.compile(r"[\u00c0-\u024f]")
 _URL_RE = re.compile(r"https?://\S+")
+_URL_TRAILING_PUNCT = ".,;:!?)'\"}]>"
+_URL_TRAILING_PUNCT_CJK = "。，；：！？）」』】》〉"
+
+
+def _strip_trailing_punct(url: str) -> str:
+    """Strip trailing sentence punctuation that \\S+ greedily captures."""
+    return url.rstrip(_URL_TRAILING_PUNCT + _URL_TRAILING_PUNCT_CJK)
 
 
 def _validate_translated_content(
@@ -166,10 +177,22 @@ def _validate_translated_content(
             "wrong language"
         )
 
-    # Identifier preservation (p2-174 review issue #3)
-    import re as _re
+    # Latin-script languages (p2-175 review issue #2): when the customer's
+    # reference uses accented characters (é, ü, ñ, ...) but the translation
+    # is pure ASCII, the model likely returned the English original
+    # untranslated. Soft check — worst case is a prepare_failed retry, which
+    # is safer than sending English to a French/German/Spanish customer.
+    reference_has_diacritics = bool(_DIACRITIC_RE.search(language_reference))
+    translated_has_diacritics = bool(_DIACRITIC_RE.search(translated))
+    if reference_has_diacritics and not translated_has_diacritics and not translated_has_cjk:
+        return (
+            "translation may be untranslated: the customer's reference uses "
+            "accented Latin characters but the translation is pure ASCII — "
+            "the model likely returned the English original"
+        )
 
-    for number in _re.findall(r"\d{3,}", english_original):
+    # Identifier preservation (p2-174 review issue #3; URL fix p2-175 #1)
+    for number in re.findall(r"\d{3,}", english_original):
         if number not in translated:
             return (
                 f"identifier '{number}' from the English original is "
@@ -177,8 +200,12 @@ def _validate_translated_content(
                 f"or dropped session/UID/channel identifiers"
             )
     for url in _URL_RE.findall(english_original):
-        if url not in translated:
-            return f"URL '{url}' from the English original is missing in the translation"
+        # \\S+ greedily captures trailing sentence punctuation; strip it from
+        # both sides so an English URL followed by a Chinese full stop (。)
+        # in the translation does not fail the containment check.
+        clean_url = _strip_trailing_punct(url)
+        if clean_url and clean_url not in translated:
+            return f"URL '{clean_url}' from the English original is missing in the translation"
 
     # Safety patterns
     from backend.services.engineer_guardrail_agent import (

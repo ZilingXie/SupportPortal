@@ -63,7 +63,7 @@ def store() -> Any:
     postgres_store = PostgresAutomationEcsStore(settings)
     try:
         postgres_store.migrate()
-        assert SCHEMA_REVISION == "automation-ecs-008"
+        assert SCHEMA_REVISION == "automation-ecs-009"
         yield postgres_store
     finally:
         with psycopg.connect(_DSN, autocommit=True) as connection:
@@ -351,3 +351,100 @@ class TestPostgresAdhocSession:
                             "500.000",
                         ),
                     )
+
+
+class TestPostgresDeliveryPrepJob:
+    """p2-175: ON CONFLICT prep job behavior on real PostgreSQL."""
+
+    def _approved_prep_draft(self, store):
+        handoff = _hand_off(store, _event("zendesk:ticket:123:created"))
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        store.start_hermes_agent_turn(handoff["turn_id"], run_id="r1")
+        draft = store.save_hermes_case_draft(
+            handoff["turn_id"],
+            content="Hi Customer,\n\nDraft text.",
+            basis={},
+            guardrail={"decision": "approved_for_final_engineer_review", "blockers": []},
+            publish_policy="manual",
+        )
+        store.request_hermes_draft_publish(draft["draft_id"])
+        store.approve_hermes_case_draft(draft["draft_id"], approver="test")
+        return draft
+
+    def test_create_prep_job_and_idempotent_second_call(self, store) -> None:
+        draft = self._approved_prep_draft(store)
+        result = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        assert result["status"] == "preparing"
+        assert result["job_id"] is not None
+        # Second call is idempotent (early return, no new job)
+        result2 = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        assert result2.get("already") == "preparing"
+
+    def test_retry_after_failure_resets_existing_job(self, store) -> None:
+        draft = self._approved_prep_draft(store)
+        store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        store.fail_hermes_draft_prep(draft["draft_id"], error="test failure")
+        # Retry: resets the existing job to pending (ON CONFLICT path)
+        result = store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        assert result["status"] == "preparing"
+        # Direct SQL: exactly one non-completed prep job exists for this draft
+        from psycopg import sql as _sql
+
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "SELECT job_id,status FROM {} WHERE namespace=%s AND kind=%s "
+                        "AND payload->>'draft_id'=%s AND status NOT IN ('completed')"
+                    ).format(store._table("automation_jobs")),
+                    (store.settings.job_namespace, "hermes_delivery_prep", draft["draft_id"]),
+                )
+                rows = cursor.fetchall()
+        assert len(rows) == 1
+        assert str(rows[0]["status"]) == "pending"
+
+    def test_completed_job_is_not_reset_on_retry(self, store) -> None:
+        draft = self._approved_prep_draft(store)
+        store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        store.complete_hermes_draft_prep(
+            draft["draft_id"],
+            delivery_content="译文",
+            delivery_language_ref="参考",
+            source_revision=1,
+            prompt_version=None,
+        )
+        # Mark the prep job as completed via direct SQL (simulates worker finishing)
+        from psycopg import sql as _sql
+
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "UPDATE {} SET status='completed',updated_at=NOW() "
+                        "WHERE namespace=%s AND kind=%s AND payload->>'draft_id'=%s"
+                    ).format(store._table("automation_jobs")),
+                    (store.settings.job_namespace, "hermes_delivery_prep", draft["draft_id"]),
+                )
+        # Force draft back to prepare_failed and retry — the completed job
+        # should NOT be reset (WHERE status NOT IN ('completed') guard).
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "UPDATE {} SET status='prepare_failed' WHERE draft_id=%s"
+                    ).format(store._table("automation_hermes_case_drafts")),
+                    (draft["draft_id"],),
+                )
+        store.create_hermes_delivery_prep_job(draft["draft_id"], base_event={})
+        with store._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    _sql.SQL(
+                        "SELECT status FROM {} WHERE namespace=%s AND kind=%s "
+                        "AND payload->>'draft_id'=%s AND status='completed'"
+                    ).format(store._table("automation_jobs")),
+                    (store.settings.job_namespace, "hermes_delivery_prep", draft["draft_id"]),
+                )
+                completed = cursor.fetchall()
+        # The original completed job is still completed; a new job was inserted
+        assert len(completed) >= 1
