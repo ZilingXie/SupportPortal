@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-20T06:55:12Z",
-  "source_base_commit": "46c7ae70f688331174220db66377574fb18a81c1",
-  "registry_digest": "468b37023756cbd6993f11cfd47814fd9059bdb0acc3dc44d14a4b9849f64d5a",
+  "generated_at": "2026-09-20T07:04:39Z",
+  "source_base_commit": "f6e5f5791e8c96df499d2c3c2e3db42548f0afe4",
+  "registry_digest": "f80e4a65e3c35137e5eb34b0ca27be5d9723a716bc0030a5d9a34d42560623da",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1248,7 +1248,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Investigation send test-evidence hardening (round 6, branch pending acceptance)",
           "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "237 passed / 28 subtests（另 hermes 套件 62 passed）。九个调查用例全部改走真实入口 fixture（含新增 test_investigation_real_entry_open_ticket_sends 与补读失败+恢复用例）；零 claim 断言改真实方法 spy（替换无效的 claimed_at 检查）。运行时代码零改动。"
+          "details": "238 passed / 28 subtests（另 hermes 套件 62 passed）。十个调查用例：真实入口 fixture（synthetic intake→handoff→真实 mirror/方向记录，断言 ownership eligible=False；settings+store 双注入使 case revision 栅栏实际执行并加 mirror 查询 spy）；读取失败拆分 revision 查询/补读两分支（补读失败 assertLogs 错误码+claim spy 零调用+恢复经真实 drain 双跑恰一次投递）；旧 queued 输入 deepcopy 重放（真实 claim True/False 序列+audit 零次）；新增 stale_case_revision 负例（错误 draft revision→failed 零 claim 零发送）。运行时零改动。首轮 f6e5f579 经审查发现 from_env 未注入致栅栏被跳过，本提交补 settings 注入+mirror spy+负例后复跑。"
         },
         {
           "type": "test",
@@ -13222,7 +13222,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "#1256 调查回复发送回归修复已合码未部署（preprod 现为 r20260920-54ec242 manual）。本轮（测试证据固化，分支待独立验收）：①调查 fixture 改真实入口（synthetic intake→route job→handoff→真实 _ensure_case_mirror+tool_record_direction+binding 方向，断言 ownership eligible=False，发送器注入同款内存 store 使 case revision 校验实际执行；ledger 因 InMemory 不收 source=hermes 仍定向播种并注明）；②读取失败拆分为 revision 查询失败与补读失败两用例（后者本地 revision 非空+补读抛错命中新增分支，assertLogs 含补读失败标识与错误码，claim 用真实方法 spy 断言零调用，恢复后真实 drain 双跑恰一次投递）；③重复处理改为 deepcopy 旧 queued 输入重放（claim spy 结果 True/False、发送恰一次、audit 零次、drain 不重发）。定向四套件 237 passed/28 subtests+hermes 62。剩：本轮独立验收→合码→#1256 部署（需重读环境）→archer 重切与真实 Mac 开通受控验收→Production 授权。",
+      "next_action": "#1256 调查回复发送回归修复已合码未部署（preprod 现为 r20260920-54ec242 manual）。本轮（测试证据固化，分支待独立验收）：①调查 fixture 改真实入口（synthetic intake→route job→handoff→真实 _ensure_case_mirror+tool_record_direction+binding 方向，断言 ownership eligible=False，发送器注入同款内存 store 使 case revision 校验实际执行；ledger 因 InMemory 不收 source=hermes 仍定向播种并注明）；②读取失败拆分为 revision 查询失败与补读失败两用例（后者本地 revision 非空+补读抛错命中新增分支，assertLogs 含补读失败标识与错误码，claim 用真实方法 spy 断言零调用，恢复后真实 drain 双跑恰一次投递）；③重复处理改为 deepcopy 旧 queued 输入重放（claim spy 结果 True/False、发送恰一次、audit 零次、drain 不重发）。定向四套件 238 passed/28 subtests+hermes 62（含 stale 负例与 mirror spy）。剩：本轮独立验收→合码→#1256 部署（需重读环境）→archer 重切与真实 Mac 开通受控验收→Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13320,7 +13320,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Investigation send test-evidence hardening (round 6, branch pending acceptance)",
           "command": "python -B -m pytest -p no:cacheprovider backend/tests/test_worker.py backend/tests/test_account_automation_ownership.py backend/tests/test_zendesk_ticket_assignment.py backend/tests/test_hermes_zendesk_agent_tools.py",
-          "details": "237 passed / 28 subtests（另 hermes 套件 62 passed）。九个调查用例全部改走真实入口 fixture（含新增 test_investigation_real_entry_open_ticket_sends 与补读失败+恢复用例）；零 claim 断言改真实方法 spy（替换无效的 claimed_at 检查）。运行时代码零改动。"
+          "details": "238 passed / 28 subtests（另 hermes 套件 62 passed）。十个调查用例：真实入口 fixture（synthetic intake→handoff→真实 mirror/方向记录，断言 ownership eligible=False；settings+store 双注入使 case revision 栅栏实际执行并加 mirror 查询 spy）；读取失败拆分 revision 查询/补读两分支（补读失败 assertLogs 错误码+claim spy 零调用+恢复经真实 drain 双跑恰一次投递）；旧 queued 输入 deepcopy 重放（真实 claim True/False 序列+audit 零次）；新增 stale_case_revision 负例（错误 draft revision→failed 零 claim 零发送）。运行时零改动。首轮 f6e5f579 经审查发现 from_env 未注入致栅栏被跳过，本提交补 settings 注入+mirror spy+负例后复跑。"
         }
       ],
       "source_refs": [

@@ -1053,12 +1053,25 @@ class WorkerResilienceTests(unittest.TestCase):
             comments_revision=effective_revision,
             ticket_status=ticket_status,
         )
+        # Spy on the mirror lookup so tests can prove the sender's
+        # case-revision fence actually executed (it only runs when the
+        # settings + store injection succeeds).
+        mirror_queries: list[str] = []
+        original_get_case_mirror = store.get_case_mirror
+
+        def mirror_spy(*args, **kwargs):
+            mirror_queries.append(str(args[0] if args else kwargs.get("ticket_id") or ""))
+            return original_get_case_mirror(*args, **kwargs)
+
+        store.get_case_mirror = mirror_spy
         return {
             "repository": repository,
             "store": store,
+            "settings": _settings(),
             "ticket_id": ticket_id,
             "account_case_id": account_case_id,
             "snapshot": snapshot,
+            "mirror_queries": mirror_queries,
         }
 
     @staticmethod
@@ -1104,6 +1117,9 @@ class WorkerResilienceTests(unittest.TestCase):
             "backend.services.automation_ecs_store.create_automation_ecs_store",
             lambda *_a, **_k: seeded["store"],
         ), patch(
+            "backend.services.automation_ecs_runtime.AutomationEcsSettings.from_env",
+            lambda *_a, **_k: seeded["settings"],
+        ), patch(
             "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
             **kwargs,
         ), patch.object(worker, "read_ticket_ownership_snapshot", **kwargs) as snap_mock, patch.object(
@@ -1128,6 +1144,26 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(delivery["status"], "delivered")
         # The status source is a real snapshot read this invocation.
         self.assertEqual(snap_mock.call_count, 1)
+        # The case-revision fence actually executed against the real mirror.
+        self.assertEqual(seeded["mirror_queries"], [seeded["ticket_id"]])
+
+    def test_investigation_stale_draft_revision_fails_without_send(self) -> None:
+        """Negative contract: a draft revision that no longer matches the
+        real mirror fails with stale_case_revision — zero claim, zero public
+        write — proving the fence runs for real."""
+        seeded = self._seed_investigation_delivery()
+        repository = seeded["repository"]
+        ledger_key = (seeded["account_case_id"], "draft-inv-1")
+        stored = repository._account_zendesk_comment_deliveries[ledger_key]
+        stored["draft_version"] = int(stored.get("draft_version") or 0) + 1
+        claim_calls = self._claim_spy(repository)
+        add_comment, _ = self._run_investigation_sender(seeded)
+        add_comment.assert_not_called()
+        self.assertEqual(claim_calls, [])
+        self.assertEqual(seeded["mirror_queries"], [seeded["ticket_id"]])
+        delivery = repository._account_zendesk_comment_deliveries[ledger_key]
+        self.assertEqual(delivery["status"], "failed")
+        self.assertEqual(delivery.get("failure_code"), "stale_case_revision")
 
     def test_investigation_delivery_sends_for_each_actionable_status(self) -> None:
         for ticket_status in ("new", "open", "pending", "hold"):
@@ -1231,6 +1267,9 @@ class WorkerResilienceTests(unittest.TestCase):
             "backend.services.automation_ecs_store.create_automation_ecs_store",
             lambda *_a, **_k: seeded["store"],
         ), patch(
+            "backend.services.automation_ecs_runtime.AutomationEcsSettings.from_env",
+            lambda *_a, **_k: seeded["settings"],
+        ), patch(
             "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
             return_value=recovered,
         ), patch.object(
@@ -1262,6 +1301,9 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch(
             "backend.services.automation_ecs_store.create_automation_ecs_store",
             lambda *_a, **_k: seeded["store"],
+        ), patch(
+            "backend.services.automation_ecs_runtime.AutomationEcsSettings.from_env",
+            lambda *_a, **_k: seeded["settings"],
         ), patch(
             "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
             return_value=recovered,
@@ -1297,6 +1339,9 @@ class WorkerResilienceTests(unittest.TestCase):
         with patch.object(worker, "ticket_repository", repository), patch(
             "backend.services.automation_ecs_store.create_automation_ecs_store",
             lambda *_a, **_k: seeded["store"],
+        ), patch(
+            "backend.services.automation_ecs_runtime.AutomationEcsSettings.from_env",
+            lambda *_a, **_k: seeded["settings"],
         ), patch(
             "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
             return_value=seeded["snapshot"],
