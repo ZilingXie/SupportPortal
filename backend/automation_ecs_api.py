@@ -464,20 +464,40 @@ def create_app(    *,
         """Read-only live state for the Mac-side executor (13601 gap #7).
 
         The local skill re-reads this right before the pilot write: a request
-        cancelled or completed after dispatch (e.g. the ticket was solved)
-        must never be executed on a stale approval.
+        cancelled or completed after dispatch must never be executed on a
+        stale approval — and the LIVE Zendesk ticket must still be open: the
+        request row alone stays "dispatched" until the sweep converges it,
+        so the executor additionally gates on ticket_valid. An unreadable
+        ticket status is a refusal (503), never a default-valid.
         """
         repository = _engineer_ticket_repository()
         request = repository.get_enablement_relay_request(str(request_id or "").strip())
         if not isinstance(request, dict) or not request:
             raise HTTPException(status_code=404, detail="relay request not found")
+        zendesk_ticket_id = str(request.get("zendesk_ticket_id") or "").strip()
+        ticket_status = ""
+        if zendesk_ticket_id:
+            from backend.services.zendesk_ticket_assignment import (
+                read_ticket_ownership_snapshot,
+            )
+
+            try:
+                snapshot = read_ticket_ownership_snapshot(ticket_id=zendesk_ticket_id)
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"ticket status unreadable: {str(exc)[:200]}",
+                ) from exc
+            ticket_status = str(snapshot.ticket_status or "").strip()
         return {
             "request_id": str(request.get("request_id") or ""),
             "status": str(request.get("status") or ""),
             "dispatch_status": str(request.get("dispatch_status") or ""),
             "relay_task_id": str(request.get("relay_task_id") or ""),
-            "zendesk_ticket_id": str(request.get("zendesk_ticket_id") or ""),
+            "zendesk_ticket_id": zendesk_ticket_id,
             "request_version": int(request.get("request_version") or 1),
+            "ticket_status": ticket_status,
+            "ticket_valid": ticket_status not in {"solved", "closed"},
             "updated_at": str(request.get("updated_at") or ""),
         }
 

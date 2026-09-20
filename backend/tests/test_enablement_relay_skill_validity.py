@@ -54,6 +54,10 @@ class SkillRequestValidityTests(unittest.TestCase):
                 skill._fetch_request_status({"request_id": "enr-1"})
 
     def test_non_dispatched_status_fails_closed(self) -> None:
+        """The fetch succeeds but the status is terminal — the payload the
+        execute gate sees. (Entry-level refusal with zero pilot writes is
+        covered by test_enablement_local_pilot.py against the real
+        cmd_execute.)"""
         skill = _load_skill()
         env = {
             "SUPPORTPORTAL_RELAY_API_BASE": "https://api.example.test/automation/preproduction",
@@ -65,25 +69,28 @@ class SkillRequestValidityTests(unittest.TestCase):
                 {"request_id": "enr-1", "status": "cancelled"}
             ),
         ):
-            # The fetch itself succeeds; the execute gate must reject it.
             payload = skill._fetch_request_status({"request_id": "enr-1"})
         self.assertEqual(payload["status"], "cancelled")
-        # cmd_execute-level gate: simulate the refusal decision directly.
-        with patch.dict(os.environ, env, clear=False):
-            with patch.object(
-                skill, "_fetch_request_status", return_value=payload
-            ):
-                with self.assertRaises(SystemExit) as ctx:
-                    # Reuse the gate exactly as cmd_execute applies it.
-                    live = skill._fetch_request_status({"request_id": "enr-1"})
-                    if str(live.get("status") or "") != "dispatched":
-                        raise SystemExit(
-                            f"relay request enr-1 is no longer active "
-                            f"(status={live.get('status')}); refusing to execute"
-                        )
-        self.assertIn("no longer active", str(ctx.exception))
 
-    def test_dispatched_status_passes(self) -> None:
+    def test_unreadable_ticket_status_is_refused(self) -> None:
+        """A 503 (ticket status unreadable) must fail closed at the fetch."""
+        import urllib.error
+
+        skill = _load_skill()
+        env = {
+            "SUPPORTPORTAL_RELAY_API_BASE": "https://api.example.test/automation/preproduction",
+            "SUPPORTPORTAL_RELAY_TOKEN": "token-1",
+        }
+        with patch.dict(os.environ, env, clear=False), patch(
+            "urllib.request.urlopen",
+            side_effect=urllib.error.HTTPError(
+                "url", 503, "ticket status unreadable", None, None
+            ),
+        ):
+            with self.assertRaises(SystemExit):
+                skill._fetch_request_status({"request_id": "enr-1"})
+
+    def test_dispatched_open_ticket_passes(self) -> None:
         skill = _load_skill()
         env = {
             "SUPPORTPORTAL_RELAY_API_BASE": "https://api.example.test/automation/preproduction",
@@ -92,11 +99,18 @@ class SkillRequestValidityTests(unittest.TestCase):
         with patch.dict(os.environ, env, clear=False), patch(
             "urllib.request.urlopen",
             return_value=_FakeResponse(
-                {"request_id": "enr-1", "status": "dispatched"}
+                {
+                    "request_id": "enr-1",
+                    "status": "dispatched",
+                    "ticket_valid": True,
+                    "ticket_status": "open",
+                    "zendesk_ticket_id": "13601",
+                }
             ),
         ):
             payload = skill._fetch_request_status({"request_id": "enr-1"})
         self.assertEqual(payload["status"], "dispatched")
+        self.assertTrue(payload["ticket_valid"])
 
 
 if __name__ == "__main__":

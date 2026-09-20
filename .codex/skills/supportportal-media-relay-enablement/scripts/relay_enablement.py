@@ -536,14 +536,21 @@ def cmd_execute(args: argparse.Namespace) -> int:
             f"{precheck.get('outcome')}"
         )
 
-    # Server-side freshness gate: the request may have been cancelled after
-    # dispatch (e.g. the ticket was solved) — a stale approval must never
-    # reach the pilot write, and an Archer write cannot be undone.
+    # Server-side freshness gate: the request must still be dispatched AND the
+    # live Zendesk ticket must still be open — the request row alone stays
+    # "dispatched" until the sweep converges it, so the executor gates on
+    # ticket_valid too. Any refusal here must precede the pilot write, which
+    # cannot be undone.
     live_status = _fetch_request_status(request)
     if str(live_status.get("status") or "") != "dispatched":
         raise SystemExit(
             f"relay request {request.get('request_id')} is no longer active "
             f"(status={live_status.get('status')}); refusing to execute"
+        )
+    if live_status.get("ticket_valid") is not True:
+        raise SystemExit(
+            f"zendesk ticket {live_status.get('zendesk_ticket_id')} is not open "
+            f"(status={live_status.get('ticket_status')}); refusing to execute"
         )
 
     result = {

@@ -135,7 +135,20 @@ def notify_account_failure(
         LOGGER.exception("Could not claim Account failure alert %s", incident_id)
         return {"status": "claim_failed", "incident_id": incident_id, "error": _safe_detail(exc)}
     if not claim.get("created"):
-        return {"status": "already_claimed", "incident_id": incident_id}
+        # Preserve the previous attempt's recorded outcome — a claim may
+        # cover a send whose outcome was unknown, which must never be
+        # reported downstream as delivered (acceptance: ok:dedup was wrong).
+        previous_payload = claim.get("response_payload")
+        previous_status = ""
+        if isinstance(previous_payload, dict):
+            previous_status = str(previous_payload.get("status") or "").strip()
+        if not previous_status:
+            previous_status = str(claim.get("state") or "").strip()
+        return {
+            "status": "already_claimed",
+            "incident_id": incident_id,
+            "previous_status": previous_status,
+        }
     subject, body = build_account_failure_alert(
         incident_id=incident_id,
         stage=stage,

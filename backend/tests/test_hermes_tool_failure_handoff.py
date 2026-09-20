@@ -622,6 +622,72 @@ class ToolFailureHandoffTests(unittest.TestCase):
         notify_mock.assert_called_once()
         self.assertIn("handoff_steps", result)
 
+    def test_turn_completed_during_extraction_stops_before_workflow(self) -> None:
+        """Acceptance: the boundary allowlist must reject a turn completed by
+        the missing-result timeout — a late tool call may not start business
+        actions on a terminal turn."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+
+        def complete_mid_extraction(**kwargs):
+            store._hermes_turns[handoff["turn_id"]]["status"] = "completed"
+            return {
+                "customer_reply": "",
+                "missing_fields": [],
+                "collected_fields": {
+                    "app_id": "0123456789abcdef0123456789abcdef",
+                    "requested_feature": "media_relay",
+                },
+                "internal_email_payload": {"to": ["ops@example.com"], "body": "x"},
+                "internal_email_to_send": {"to": ["ops@example.com"], "body": "x"},
+                "internal_email_send_status": "pending",
+                "internal_email_send_reason": "",
+                "requires_human_review": False,
+            }
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.automation_account_intake._build_enablement_attempt",
+            side_effect=complete_mid_extraction,
+        ), patch(
+            "backend.services.automation_account_intake._run_enablement_workflow"
+        ) as workflow_mock:
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertEqual(result["status"], "human_review_required")
+        self.assertEqual(result["reason"], "turn_cancelled_before_execution")
+        workflow_mock.assert_not_called()
+        dispatched = [
+            e
+            for e in repository.list_ticket_events("123")
+            if e.get("event_type") == "enablement_auto_dispatch"
+        ]
+        self.assertEqual(dispatched, [])
+
     def test_tool_replay_returns_recorded_result_without_reexecution(self) -> None:
         """PR-B: a second invocation on the same turn replays the recorded
         business result; external actions never run twice."""
@@ -764,6 +830,56 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(str(binding.get("status") or ""), "paused")
         self.assertEqual(str(binding.get("direction") or ""), "automation")
         self.assertIsNone(binding.get("escalation"))
+
+    def test_already_claimed_alert_preserves_previous_outcome(self) -> None:
+        """Acceptance: a claim covering an earlier delivery_outcome_unknown
+        must be recorded with that previous outcome, never as ok/dedup."""
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_FAILED,
+            OwnershipGateResult,
+        )
+
+        store = _store()
+        repository, handoff, _agent_job, _event = self._seed_case_without_route_family(store)
+        gate_result = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_FAILED,
+            failure_code="zendesk_assignment_unverified",
+            failure_category="policy",
+        )
+
+        import asyncio
+
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership",
+            return_value=gate_result,
+        ), patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=NS(status="completed"),
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            return_value={
+                "status": "already_claimed",
+                "previous_status": "delivery_outcome_unknown",
+            },
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="enablement",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        steps = result.get("handoff_steps") or {}
+        self.assertEqual(
+            steps.get("owner_email"),
+            "already_claimed:previous=delivery_outcome_unknown",
+        )
 
     def test_failure_handoff_step_records_use_real_return_values(self) -> None:
         """Acceptance gap #8: degraded escalation and delivery-failed email
