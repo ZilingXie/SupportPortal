@@ -306,7 +306,11 @@ async def tool_execute_automation_action(
     # superseded turn create further external effects: re-read the turn and
     # refuse to continue business execution for a dead turn.
     current_turn = store.get_hermes_turn(turn_id) or {}
-    if str(current_turn.get("status") or "") in {"cancel_requested", "cancelled", "superseded"}:
+    # Explicit allowlist: business execution is legal only while the turn is
+    # genuinely active. A turn completed by the missing-result timeout or a
+    # review park must refuse late tool calls (acceptance: reject-set checks
+    # let a completed turn start business actions).
+    if str(current_turn.get("status") or "") not in {"pending", "running"}:
         stale_result = {
             "status": "human_review_required",
             "reason": "turn_cancelled_before_execution",
@@ -448,7 +452,7 @@ async def tool_execute_automation_action(
         # cancel or supersede; a dead turn must not create replies or
         # applications.
         boundary_turn = store.get_hermes_turn(turn_id) or {}
-        if str(boundary_turn.get("status") or "") in {"cancel_requested", "cancelled", "superseded"}:
+        if str(boundary_turn.get("status") or "") not in {"pending", "running"}:
             boundary_result = {
                 "status": "human_review_required",
                 "reason": "turn_cancelled_before_execution",
@@ -722,7 +726,15 @@ def _escalate_uncompleted_automation(
         if notify_status in {"sent", "sent_unpersisted"}:
             handoff_steps["owner_email"] = "ok"
         elif notify_status == "already_claimed":
-            handoff_steps["owner_email"] = "ok:dedup"
+            previous = str((notify_result or {}).get("previous_status") or "").strip()
+            if previous == "sent":
+                handoff_steps["owner_email"] = "ok:dedup:previous=sent"
+            elif previous:
+                # The earlier attempt's outcome is preserved as-is (e.g.
+                # delivery_outcome_unknown): a claim is not a delivery.
+                handoff_steps["owner_email"] = f"already_claimed:previous={previous}"
+            else:
+                handoff_steps["owner_email"] = "already_claimed:previous=unknown"
         elif notify_status:
             handoff_steps["owner_email"] = notify_status
         else:

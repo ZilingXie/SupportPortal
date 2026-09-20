@@ -128,6 +128,7 @@ def _client(
 class EnablementRelayRequestStateTests(unittest.TestCase):
     def test_relay_request_state_endpoint_returns_live_fields(self) -> None:
         from unittest.mock import Mock
+        from types import SimpleNamespace
 
         client, _store = _client()
         repository = Mock()
@@ -147,6 +148,9 @@ class EnablementRelayRequestStateTests(unittest.TestCase):
             ),
             "_TICKET_REPOSITORY",
             repository,
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=SimpleNamespace(ticket_status="open"),
         ):
             response = client.get(
                 "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
@@ -157,6 +161,73 @@ class EnablementRelayRequestStateTests(unittest.TestCase):
         self.assertEqual(payload["status"], "dispatched")
         self.assertEqual(payload["relay_task_id"], "task-1")
         self.assertEqual(payload["request_version"], 1)
+        self.assertTrue(payload["ticket_valid"])
+
+    def test_relay_request_solved_ticket_reports_invalid(self) -> None:
+        from unittest.mock import Mock
+        from types import SimpleNamespace
+
+        client, _store = _client()
+        repository = Mock()
+        repository.get_enablement_relay_request.return_value = {
+            "request_id": "enr-AC-1-v1",
+            "status": "dispatched",
+            "dispatch_status": "created",
+            "relay_task_id": "task-1",
+            "zendesk_ticket_id": "13601",
+            "request_version": 1,
+            "updated_at": "2026-09-19T00:00:00+00:00",
+        }
+        token = _settings("api").intake_shared_token
+        with patch.object(
+            __import__(
+                "backend.automation_ecs_api", fromlist=["_TICKET_REPOSITORY"]
+            ),
+            "_TICKET_REPOSITORY",
+            repository,
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=SimpleNamespace(ticket_status="solved"),
+        ):
+            response = client.get(
+                "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["ticket_valid"])
+        self.assertEqual(payload["ticket_status"], "solved")
+
+    def test_relay_request_unreadable_ticket_is_503(self) -> None:
+        from unittest.mock import Mock
+
+        client, _store = _client()
+        repository = Mock()
+        repository.get_enablement_relay_request.return_value = {
+            "request_id": "enr-AC-1-v1",
+            "status": "dispatched",
+            "dispatch_status": "created",
+            "relay_task_id": "task-1",
+            "zendesk_ticket_id": "13601",
+            "request_version": 1,
+            "updated_at": "2026-09-19T00:00:00+00:00",
+        }
+        token = _settings("api").intake_shared_token
+        with patch.object(
+            __import__(
+                "backend.automation_ecs_api", fromlist=["_TICKET_REPOSITORY"]
+            ),
+            "_TICKET_REPOSITORY",
+            repository,
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            side_effect=RuntimeError("zendesk down"),
+        ):
+            response = client.get(
+                "/automation/production/v1/enablement-relay/requests/enr-AC-1-v1",
+                headers={"Authorization": f"Bearer {token}"},
+            )
+        self.assertEqual(response.status_code, 503)
 
     def test_relay_request_state_endpoint_404_and_auth(self) -> None:
         from unittest.mock import Mock

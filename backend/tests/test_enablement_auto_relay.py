@@ -538,6 +538,9 @@ class RelayInboxTests(unittest.TestCase):
         ), patch(
             "backend.services.account_automation_delivery.prepare_account_internal_email",
             prepare,
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
         ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
         request = self.repository.get_enablement_relay_request(self.request_id)
@@ -566,6 +569,9 @@ class RelayInboxTests(unittest.TestCase):
             WORKER, "ticket_repository", self.repository
         ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
             WORKER, "_record_execution_failure", failure
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
         ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
         # No completion job; request failed into the unified chain; the relay
@@ -590,6 +596,9 @@ class RelayInboxTests(unittest.TestCase):
             WORKER, "ticket_repository", self.repository
         ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
             WORKER, "_record_execution_failure", failure
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
         ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
         jobs = [
@@ -611,6 +620,9 @@ class RelayInboxTests(unittest.TestCase):
             WORKER, "ticket_repository", self.repository
         ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
             WORKER, "_record_execution_failure", failure
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
         ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
         jobs = [
@@ -717,6 +729,76 @@ class RelayInboxTests(unittest.TestCase):
         events = [item["event_type"] for item in self.repository._events]
         self.assertIn("enablement_relay_result_not_applied_ticket_closed", events)
 
+    def test_solved_ticket_with_failed_outcome_cancels_not_fails(self):
+        """Acceptance gap: the closed check must cover EVERY outcome — a
+        solved ticket receiving enable_failed is a cancellation with
+        evidence, never the failure chain."""
+        from types import SimpleNamespace as _NS
+
+        client, _payload = self._client_with_result(outcome="enable_failed")
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_NS(ticket_status="solved"),
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "cancelled")
+        self.assertEqual(
+            request.get("suppression_reason") or "", "zendesk_ticket_closed"
+        )
+        failure.assert_not_awaited()
+        result = self.repository.get_enablement_relay_result(self.request_id)
+        self.assertEqual(result["applied_status"], "superseded")
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_result_not_applied_ticket_closed", events)
+
+    def test_unreadable_status_with_failed_outcome_defers(self):
+        """Unreadable status defers for ANY outcome — no failure chain."""
+        client, _payload = self._client_with_result(outcome="enable_failed")
+        failure = AsyncMock()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            side_effect=RuntimeError("zendesk read timeout"),
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        failure.assert_not_awaited()
+        result = self.repository.get_enablement_relay_result(self.request_id)
+        self.assertEqual(result["applied_status"], "pending")
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertNotIn(request["status"], ("failed", "cancelled", "completed"))
+
+    def test_expiry_sweep_cancels_dispatched_when_ticket_solved(self):
+        """Dispatched applications converge to cancelled once the ticket is
+        solved — the request row itself becomes authoritative."""
+        from types import SimpleNamespace as _NS
+
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        request["relay_task_expires_at"] = "2026-10-03T00:00:00+00:00"
+        self.repository._enablement_relay_requests[self.request_id] = request
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_NS(ticket_status="solved"),
+        ):
+            WORKER._sweep_enablement_relay_expiry(limit=10)
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        self.assertEqual(request["status"], "cancelled")
+        self.assertEqual(
+            request.get("suppression_reason") or "", "zendesk_ticket_closed"
+        )
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_sweep_cancelled_ticket_closed", events)
+
     def test_notification_event_acked_and_never_applied(self):
         client, _payload = self._client_with_result()
         client.events.clear()
@@ -811,7 +893,10 @@ class RelayInboxTests(unittest.TestCase):
         )
         with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
             WORKER, "ticket_repository", self.repository
-        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
+        ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
         self.assertEqual(len(client.acked), 1)
         self.assertEqual(client.acked[0]["fencing"]["expected_task_version"], 3)

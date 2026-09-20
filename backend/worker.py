@@ -4500,46 +4500,8 @@ def _apply_enablement_relay_success(
     if str(account_case.get("automation_status") or "") == "human_review_required":
         # Taken over by a human: the result stays as evidence only.
         return _RELAY_APPLY_HUMAN_REVIEW
-    ticket_id_for_status = str(request.get("ticket_id") or "")
-    if ticket_id_for_status:
-        from backend.services.zendesk_ticket_assignment import (
-            ZendeskCommentError,
-            read_ticket_ownership_snapshot,
-        )
-
-        try:
-            live_snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id_for_status)
-        except Exception as exc:
-            # Acceptance gap #6: an unreadable status must not silently let
-            # the completion through — classify and defer for re-verification.
-            LOGGER.warning(
-                "enablement relay result status read failed request=%s: %s",
-                str(request.get("request_id") or ""),
-                exc,
-            )
-            ticket_repository.record_event(
-                ticket_id_for_status or None,
-                "enablement_relay_result_apply_deferred_status_unreadable",
-                {
-                    "request_id": str(request.get("request_id") or ""),
-                    "error": str(exc)[:300],
-                    "attempted_at": now_iso(),
-                },
-            )
-            return _RELAY_APPLY_STATUS_UNREADABLE
-        if str(live_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
-            # Ticket closed before the result applied: keep the result as
-            # evidence, never create a completion reply or reopen (13601).
-            ticket_repository.record_event(
-                ticket_id_for_status or None,
-                "enablement_relay_result_not_applied_ticket_closed",
-                {
-                    "request_id": str(request.get("request_id") or ""),
-                    "ticket_status": str(live_snapshot.ticket_status or ""),
-                    "attempted_at": now_iso(),
-                },
-            )
-            return _RELAY_APPLY_TICKET_CLOSED
+    # Ticket closed/unreadable handling lives at the common entry of
+    # _apply_enablement_relay_result (every outcome), not here.
     if enablement_workflow_mode() != "archer":
         # Mode switched after dispatch: keep the result as evidence.
         return _RELAY_APPLY_MODE_SWITCHED
@@ -4640,6 +4602,59 @@ def _apply_enablement_relay_result(
     request_id = str(request.get("request_id") or "")
     outcome = str(result.get("outcome") or "")
     task_id = str((task_detail.get("task") or {}).get("task_id") or "")
+
+    # Common-entry ticket-status gate for EVERY outcome (acceptance: the
+    # closed check used to live only in the success branch, so a solved
+    # ticket receiving enable_failed still fired the failure chain). Closed
+    # → cancellation with evidence, never a failure handoff; unreadable →
+    # defer and let the re-drive retry once the read recovers.
+    ticket_id_entry = str(request.get("ticket_id") or "")
+    if ticket_id_entry:
+        from backend.services.zendesk_ticket_assignment import (
+            read_ticket_ownership_snapshot,
+        )
+
+        try:
+            entry_snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id_entry)
+        except Exception as exc:
+            LOGGER.warning(
+                "enablement relay result status read failed request=%s: %s",
+                request_id,
+                exc,
+            )
+            ticket_repository.record_event(
+                ticket_id_entry or None,
+                "enablement_relay_result_apply_deferred_status_unreadable",
+                {
+                    "request_id": request_id,
+                    "error": str(exc)[:300],
+                    "attempted_at": now_iso(),
+                },
+            )
+            return
+        if str(entry_snapshot.ticket_status or "").strip().lower() in {"solved", "closed"}:
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="superseded", now=now_iso()
+            )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="cancelled",
+                now=now_iso(),
+                reason="zendesk_ticket_closed",
+            )
+            ticket_repository.record_event(
+                ticket_id_entry or None,
+                "enablement_relay_result_not_applied_ticket_closed",
+                {
+                    "request_id": request_id,
+                    "ticket_status": str(entry_snapshot.ticket_status or ""),
+                    "outcome": outcome,
+                    "attempted_at": now_iso(),
+                },
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+
     if outcome in {"enabled", "already_satisfied"}:
         target_params = _enablement_relay_target_params(request)
         if not _enablement_relay_readback_satisfied(result, target_params):
@@ -5044,7 +5059,54 @@ def _sweep_enablement_relay_expiry(*, limit: int = 10) -> None:
     except Exception:
         LOGGER.exception("enablement relay expiry scan failed")
         return
+    from backend.services.zendesk_ticket_assignment import (
+        read_ticket_ownership_snapshot,
+    )
+
     for request in dispatched:
+        # Converge dispatched applications whose ticket was solved/closed:
+        # the request row stays "dispatched" otherwise and the executor-side
+        # gate would be the only defense (13601 acceptance: post-dispatch
+        # solve must cancel the application itself).
+        request_id_sweep = str(request.get("request_id") or "")
+        ticket_id_sweep = str(request.get("ticket_id") or "")
+        if ticket_id_sweep and not ticket_repository.get_enablement_relay_result(
+            request_id_sweep
+        ):
+            try:
+                sweep_snapshot = read_ticket_ownership_snapshot(
+                    ticket_id=ticket_id_sweep
+                )
+            except Exception as exc:
+                LOGGER.warning(
+                    "enablement relay sweep status read failed request=%s: %s",
+                    request_id_sweep,
+                    exc,
+                )
+                sweep_snapshot = None
+            if sweep_snapshot is not None and str(
+                sweep_snapshot.ticket_status or ""
+            ).strip().lower() in {"solved", "closed"}:
+                ticket_repository.finish_enablement_relay_request(
+                    request_id=request_id_sweep,
+                    status="cancelled",
+                    now=now_iso(),
+                    reason="zendesk_ticket_closed",
+                )
+                ticket_repository.record_event(
+                    ticket_id_sweep or None,
+                    "enablement_relay_sweep_cancelled_ticket_closed",
+                    {
+                        "request_id": request_id_sweep,
+                        "ticket_status": str(sweep_snapshot.ticket_status or ""),
+                        "attempted_at": now_iso(),
+                    },
+                )
+                LOGGER.warning(
+                    "enablement relay sweep cancelled (ticket closed): request=%s",
+                    request_id_sweep,
+                )
+                continue
         expires_at = str(request.get("relay_task_expires_at") or "")
         if not expires_at:
             continue

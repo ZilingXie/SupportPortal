@@ -209,6 +209,15 @@ def _approval(entry, **overrides):
     return json.dumps(payload)
 
 
+def _is_pilot_write(call) -> bool:
+    """A pilot write is an `archer open ...` invocation without --dry-run
+    (the precheck's dry-run call is a read, not a write)."""
+    args = call.args[0] if call.args else []
+    if not args or "open" not in args[:3]:
+        return False
+    return "--dry-run" not in args
+
+
 def _precheck_entry():
     with patch.object(MODULE.subprocess, "run", side_effect=_sane_pilot_side_effect()):
         return MODULE._classify_precheck(dict(REQUEST))
@@ -221,15 +230,64 @@ class ExecuteApprovalBindingTests(unittest.TestCase):
         self.request_path = _write_request(self.tmp.name)
         MODULE.STATE_DIR = Path(self.tmp.name) / "state"
 
-    def _execute(self, approval_text, side_effect=None):
+    def _execute(self, approval_text, side_effect=None, live_status=None):
         side_effect = side_effect or _sane_pilot_side_effect()
         argv = ["execute", "--request", self.request_path, "--approval-ref", approval_text]
-        with patch.object(MODULE.subprocess, "run", side_effect=side_effect) as run:
+        live = live_status or {
+            "status": "dispatched",
+            "ticket_valid": True,
+            "ticket_status": "open",
+            "zendesk_ticket_id": "13601",
+        }
+        with patch.object(MODULE.subprocess, "run", side_effect=side_effect) as run, \
+                patch.object(MODULE, "_fetch_request_status", return_value=live):
             try:
                 MODULE.main(argv)
             except SystemExit as exc:
                 return exc, run
         return None, run
+
+    def test_cancelled_request_refuses_execute_with_zero_pilot_writes(self):
+        # Acceptance: a cancelled relay request must be refused by the real
+        # execute entry with ZERO pilot write calls.
+        entry = _precheck_entry()
+        exc, run = self._execute(
+            _approval(entry),
+            side_effect=_sane_pilot_side_effect(),
+            live_status={
+                "status": "cancelled",
+                "ticket_valid": True,
+                "ticket_status": "open",
+                "zendesk_ticket_id": "13601",
+            },
+        )
+        self.assertIsNotNone(exc)
+        self.assertEqual(
+            [c for c in run.call_args_list if _is_pilot_write(c)], []
+        )
+        marker = MODULE.STATE_DIR / f"{REQUEST['request_id']}.executed.json"
+        self.assertFalse(marker.exists())
+
+    def test_solved_ticket_refuses_execute_with_zero_pilot_writes(self):
+        # Acceptance: a dispatched request on a solved ticket must be refused
+        # with zero pilot writes.
+        entry = _precheck_entry()
+        exc, run = self._execute(
+            _approval(entry),
+            side_effect=_sane_pilot_side_effect(),
+            live_status={
+                "status": "dispatched",
+                "ticket_valid": False,
+                "ticket_status": "solved",
+                "zendesk_ticket_id": "13601",
+            },
+        )
+        self.assertIsNotNone(exc)
+        self.assertEqual(
+            [c for c in run.call_args_list if _is_pilot_write(c)], []
+        )
+        marker = MODULE.STATE_DIR / f"{REQUEST['request_id']}.executed.json"
+        self.assertFalse(marker.exists())
 
     def test_non_json_approval_string_aborts_before_any_write(self):
         exc, run = self._execute("approved by zac personally")
@@ -300,7 +358,16 @@ class TimeoutClassificationTests(unittest.TestCase):
             return _sane_pilot_side_effect()(cmd)
 
         argv = ["execute", "--request", self.request_path, "--approval-ref", _approval(entry)]
-        with patch.object(MODULE.subprocess, "run", side_effect=run):
+        with patch.object(MODULE.subprocess, "run", side_effect=run), patch.object(
+            MODULE,
+            "_fetch_request_status",
+            return_value={
+                "status": "dispatched",
+                "ticket_valid": True,
+                "ticket_status": "open",
+                "zendesk_ticket_id": "13601",
+            },
+        ):
             MODULE.main(argv)
         result = json.loads(
             (MODULE.STATE_DIR / f"{REQUEST['request_id']}.executed.json").read_text(encoding="utf-8")
@@ -323,7 +390,16 @@ class TimeoutClassificationTests(unittest.TestCase):
             return _sane_pilot_side_effect()(cmd)
 
         argv = ["execute", "--request", self.request_path, "--approval-ref", _approval(entry)]
-        with patch.object(MODULE.subprocess, "run", side_effect=run):
+        with patch.object(MODULE.subprocess, "run", side_effect=run), patch.object(
+            MODULE,
+            "_fetch_request_status",
+            return_value={
+                "status": "dispatched",
+                "ticket_valid": True,
+                "ticket_status": "open",
+                "zendesk_ticket_id": "13601",
+            },
+        ):
             MODULE.main(argv)
         result = json.loads(
             (MODULE.STATE_DIR / f"{REQUEST['request_id']}.executed.json").read_text(encoding="utf-8")
