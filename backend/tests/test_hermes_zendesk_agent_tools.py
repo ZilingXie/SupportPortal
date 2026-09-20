@@ -656,3 +656,50 @@ class TestDeliveryPreparationFixes:
         )
         assert result["status"] == "preparing", result
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
+
+
+class TestTranslationValidationRound4:
+    """p2-175: URL trailing punctuation + Latin diacritics detection."""
+
+    def test_url_trailing_period_not_mismatched(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        # English original: URL followed by period
+        english = "See https://example.com/help. for more details about session 123456."
+        # Chinese translation: URL followed by Chinese full stop (。)
+        chinese = "请查看 https://example.com/help 。关于会话 123456 的更多详情。"
+        assert _validate_translated_content(chinese, english, "中文参考") is None
+
+    def test_url_trailing_comma_not_mismatched(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "Check https://example.com/doc, then retry."
+        chinese = "请检查 https://example.com/doc，然后重试。"
+        assert _validate_translated_content(chinese, english, "中文") is None
+
+    def test_actual_missing_url_still_fails(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english = "See https://example.com/help for details."
+        chinese = "请查看详情。"  # URL completely dropped
+        result = _validate_translated_content(chinese, english, "中文")
+        assert result is not None
+        assert "example.com" in result
+
+    def test_french_reference_untranslated_english_fails(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        french_ref = "Bonjour, mon téléphone ne fonctionne pas avec l'application à distance."
+        untranslated_english = "Hello, we have checked the session and found no issues."
+        result = _validate_translated_content(untranslated_english, untranslated_english, french_ref)
+        assert result is not None
+        assert "accented" in result.lower() or "untranslated" in result.lower()
+
+    def test_french_reference_french_translation_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        french_ref = "Bonjour, mon téléphone ne fonctionne pas avec l'application à distance."
+        french_translation = "Bonjour, nous avons vérifié la séance et n'avons trouvé aucun problème."
+        english_orig = "Hello, we have checked the session and found no issues."
+        assert _validate_translated_content(french_translation, english_orig, french_ref) is None
+
+    def test_english_reference_pure_ascii_translation_passes(self) -> None:
+        from backend.services.automation_hermes_delivery import _validate_translated_content
+        english_ref = "Hello, my call is not working."
+        english_translation = "Hi Customer, we have checked and found no issues."
+        assert _validate_translated_content(english_translation, english_translation, english_ref) is None
