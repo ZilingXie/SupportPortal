@@ -29,27 +29,38 @@ Invariants that hold in every phase:
   to the customer's language before sending; you never translate."""
 
 
-HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v1"
+HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v2"
 
 
 def build_hermes_route_manual() -> str:
     return """Route Manual (route phase)
 
-You receive the full Case Snapshot for the current revision. Decide the single
-primary direction and record it with the direction tool. You may call the
-context tools read-only before deciding.
+You receive the full Case Snapshot for the current revision. Classify the case
+using the same Account taxonomy as Production `account-layered-router-v11`,
+then call the direction tool exactly once with the classification object.
 
-- automation: the request matches ONE registered automation route
-  (enablement, account_verification, fraud_account, detailed_invoice,
-  account_suspension). Record the canonical route name together with the
-  direction. Mixed or ambiguous intents are NOT automation.
-- investigation: technical/product questions that need analysis, evidence
-  gathering, or reproduction before any customer reply can be written.
-- human: quota changes, anything outside the registered routes, unsafe or
-  unclear requests, or when you cannot decide confidently.
+The classification object must contain JSON fields:
+`intent_class` (conversation|agora|uncertain), `conversation_action` (resolve,
+follow_up, human_review, or null), `intent_confidence`, `agora_confidence`, and
+`action_confidence` (numbers from 0 to 1), `agora_route` (technical,
+security_compliance, account_billing, backend_operation, uncategorized),
+`account_billing_subcategory` (account_suspension, fraud_account,
+detailed_invoice, other, or null), `backend_operation_subcategory`
+(enablement, quota, unregistered, or null), `backend_operation` (object or
+null), `additional_intents` (array, empty when none), `confidence` (number from
+0 to 1), and `reason_code` (short controlled reason). For conversation
+follow-up, confirm that the snapshot contains an earlier assistant message; a
+new ticket cannot be classified as follow-up.
 
-Rules: record exactly one direction; never promise an outcome; never write
-the customer reply in this phase."""
+The server is authoritative for labels, handler registration, automation
+eligibility, and the final direction. Do not invent a route outside the enum.
+Technical Agora cases normally become investigation; only a registered and
+policy-eligible automation becomes automation; uncertain, security/compliance,
+quota, unregistered, mixed, or low-confidence cases become human review.
+
+Rules: record exactly one direction with one classification object; never
+promise an outcome; never execute an automation action or write a customer
+reply in this phase. The tool may reject invalid or conflicting output."""
 
 
 HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v2"

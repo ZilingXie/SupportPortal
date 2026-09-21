@@ -2,6 +2,27 @@
   "schema_version": 1,
   "versions": [
     {
+      "version": "2.0.1",
+      "released_at": "2026-09-21",
+      "release_id": "r20260921-e07961d",
+      "summary": "Production hotfix for safe Fraud Account ambiguity handoff, preserving the existing reviewer-contact workflow.",
+      "sections": [
+        {
+          "title": "Fixed",
+          "items": [
+            "When verified and grounded ambiguity is limited to a safe missing field after the first follow-up, the case now continues the existing internal handoff instead of failing reconciliation; unsafe ambiguity remains fail-closed to Human Review."
+          ]
+        },
+        {
+          "title": "Notes",
+          "items": [
+            "Deployed from authorized hotfix commit e07961df834e3fc8f8f4c1889b21e2cc1bf2b16c with Prompt candidate pr-402c812b49c7; Production Hermes case workflow remains disabled.",
+            "Production API, Route, and Worker rollouts completed with Terraform zero-drift, Prompt activation, health, heartbeat, CloudWatch, and release provenance checks passed."
+          ]
+        }
+      ]
+    },
+    {
       "version": "2.0.0",
       "released_at": "2026-09-14",
       "release_id": "r20260914-cd80096",
@@ -53,4 +74,3 @@
     }
   ]
 }
-

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-21T03:20:41Z",
-  "source_base_commit": "100d6d25829e0cc5b940576fdf2096824688ac35",
-  "registry_digest": "789d935221e601c224a331fd336de1738a59ebb3779bf9fb629049171fdd6879",
+  "generated_at": "2026-09-21T10:13:49Z",
+  "source_base_commit": "26b719cbc31433b3009ac5afa2dff090f9d72a8f",
+  "registry_digest": "d9faefa95e011518e2f8ca276841430fc76c5e4755eb3dbfa8d222ece7a5467b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -622,6 +622,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Case 13616 verified ambiguity hotfix regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py",
           "details": "396 项测试通过、52 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖一次追问后 verified/grounded ambiguity 进入现有内部交接并把 account_type 作为缺失字段，同时保留 ambiguous 审计状态。首次追问、corrected grounding、grounding failure、trusted-field conflict 和 sensitive data 均继续 fail closed 到 Human Review；现有 comment-sync 回归覆盖只发送一封内部邮件和只创建一个 fraud_handoff_confirmation。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production urgent hotfix r20260921-e07961d",
+          "command": "./deployment/release_automation_ecs_pipeline.sh --release-commit e07961df834e3fc8f8f4c1889b21e2cc1bf2b16c --prompt-release-id pr-402c812b49c7 --through production --codebuild-direct-production --resume",
+          "details": "Production 从 baseline cd80096b47c5976e9d321712c348e878ebf410c8 通过现有 checkpoint 部署 release r20260921-e07961d；未重建镜像、未重复 promotion、未修改 Prompt 内容、未重跑真实 Case。API/Route/Worker 分别运行 :46/:40/:44，digest 与 manifest 一致，Terraform pre/post zero-drift、Prompt activation、heartbeat、collector、CloudWatch、public health、release provenance 全部通过；Hermes case workflow 保持 disabled。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production Prompt release independent readback",
+          "command": "PGOPTIONS='-c default_transaction_read_only=on' psql $PRODUCTION_TICKET_DB_DSN -X -v ON_ERROR_STOP=1 -At -c '\u003cactive release, release items, and content fingerprint queries>'",
+          "details": "Production 数据库确认 pr-402c812b49c7 为唯一 active release，build_ref=d4d55a1f0692，包含 36/36 active prompt items；content fingerprint sha256:672406d756d04992b611a53ae3bc32cc6915b9db9556d3eb06127c034c2ec5fc 与旧 pr-175312c491e7 完全一致。查询强制使用 PostgreSQL read-only transaction。"
+        },
+        {
+          "type": "deployment",
+          "label": "Terraform release identity access verification",
+          "command": "aws s3api head-object --bucket supportportal-terraform-state-891612554546-us-east-1 --key supportportal/ecs-production/terraform.tfstate; aws dynamodb describe-table --table-name supportportal-terraform-locks",
+          "details": "arn:aws:iam::891612554546:user/Zac 可读取 Production state object，且 lock table 为 ACTIVE；受控 inline policy 仅授予目标 state 的 s3:GetObject 与目标 lock table 的 dynamodb:GetItem/PutItem/DeleteItem。"
         },
         {
           "type": "test",
@@ -3261,6 +3279,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction Persona restored on Production-identical images",
           "details": "2026-09-08 Preproduction 三角色 :10 对齐 r20260907-3adc2c9 / pr-ef75242faa67；API/Worker 的 ENGINEER_INVESTIGATION_REPLY_BASE_URL 与 ENGINEER_INVESTIGATION_REPLY_API_KEY 均引用 Preproduction SSM，Route 无注入且没有 callback token。Hermes 服务保持 :10、1/1/0 和原镜像，Hermes/memory-core 双容器 HEALTHY。复用新 API task definition 的短生命周期探针 authenticated GET /v1/models 返回200、exit0；未调用 Responses 或 /v1/turns。首次探针因错误假定 base URL 带 /v1 在发请求前退出，核对配置为 origin 后修正探针路径，未修改服务配置。两环境三角色实际 digest、live/release/ready、目标 release 新鲜 heartbeat 及 Production 原 revision 独立读回通过。技术验收不代表实际 Persona 回复或真实调查链业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes route alignment classification-only contract",
+          "details": "本轮在 Hermes route manual v2 中冻结与 Production account-layered-router-v11 对齐的 intent/Agora/billing/backend 分类契约；新增无状态 normalizer 与 classify_route tool adapter，record_direction 可保存归一化 route_classification，非法/低置信度/冲突结果 fail closed。2026-09-21 修复低 intent/Agora confidence reason code、billing 非法输出 reason、显式非法 intent confidence 校验，以及 backend_operation/additional_intents 持久化；受影响的 classifier、Hermes tools、ECS API 共 100 passed + 2 subtests，Production route、Hermes agent、Agent config/prompt 回归共 128 passed + 3 subtests；独立临时 PostgreSQL 实例上的 Hermes Zendesk agent 套件 16 passed。compileall、diff check、Project Overview check 均通过。PostgreSQL 仅使用 127.0.0.1 临时测试库，实例已停止并清理，未连接 Production 数据库。"
         },
         {
           "type": "decision",
@@ -8431,7 +8454,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-      "next_action": "完成 Case 13616 verified ambiguity 热修复的 main finalization 与 Preproduction 验证；随后从 Production 基线准备受限热修复 commit，并在获得 exact baseline/hotfix SHA 授权后部署 Production 和补录发布证据。",
+      "next_action": "Production 热修复已部署并完成平台门禁；待用户批准后对 Case 13616 做一次受控业务验收，确认人工联系客户路径的真实外部结果，再关闭任务。",
       "acceptance_criteria": [
         "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
         "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -8508,6 +8531,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Case 13616 verified ambiguity hotfix regression",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py",
           "details": "396 项测试通过、52 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖一次追问后 verified/grounded ambiguity 进入现有内部交接并把 account_type 作为缺失字段，同时保留 ambiguous 审计状态。首次追问、corrected grounding、grounding failure、trusted-field conflict 和 sensitive data 均继续 fail closed 到 Human Review；现有 comment-sync 回归覆盖只发送一封内部邮件和只创建一个 fraud_handoff_confirmation。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production urgent hotfix r20260921-e07961d",
+          "command": "./deployment/release_automation_ecs_pipeline.sh --release-commit e07961df834e3fc8f8f4c1889b21e2cc1bf2b16c --prompt-release-id pr-402c812b49c7 --through production --codebuild-direct-production --resume",
+          "details": "Production 从 baseline cd80096b47c5976e9d321712c348e878ebf410c8 通过现有 checkpoint 部署 release r20260921-e07961d；未重建镜像、未重复 promotion、未修改 Prompt 内容、未重跑真实 Case。API/Route/Worker 分别运行 :46/:40/:44，digest 与 manifest 一致，Terraform pre/post zero-drift、Prompt activation、heartbeat、collector、CloudWatch、public health、release provenance 全部通过；Hermes case workflow 保持 disabled。"
+        },
+        {
+          "type": "deployment",
+          "label": "Production Prompt release independent readback",
+          "command": "PGOPTIONS='-c default_transaction_read_only=on' psql $PRODUCTION_TICKET_DB_DSN -X -v ON_ERROR_STOP=1 -At -c '\u003cactive release, release items, and content fingerprint queries>'",
+          "details": "Production 数据库确认 pr-402c812b49c7 为唯一 active release，build_ref=d4d55a1f0692，包含 36/36 active prompt items；content fingerprint sha256:672406d756d04992b611a53ae3bc32cc6915b9db9556d3eb06127c034c2ec5fc 与旧 pr-175312c491e7 完全一致。查询强制使用 PostgreSQL read-only transaction。"
+        },
+        {
+          "type": "deployment",
+          "label": "Terraform release identity access verification",
+          "command": "aws s3api head-object --bucket supportportal-terraform-state-891612554546-us-east-1 --key supportportal/ecs-production/terraform.tfstate; aws dynamodb describe-table --table-name supportportal-terraform-locks",
+          "details": "arn:aws:iam::891612554546:user/Zac 可读取 Production state object，且 lock table 为 ACTIVE；受控 inline policy 仅授予目标 state 的 s3:GetObject 与目标 lock table 的 dynamodb:GetItem/PutItem/DeleteItem。"
         }
       ],
       "source_refs": [
@@ -8538,6 +8579,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-21",
           "event": "verified_ambiguity_after_follow_up_hotfix",
           "summary": "Case 13616 在首次追问后已收集六项，account_type 仍为 verified、grounded ambiguity，却被通用 ambiguous 规则提前转 Human Review；最小修复仅在安全条件全部满足时将 ambiguity 合并为有效缺失字段，复用既有内部交接路径，其他 ambiguity 保持 fail closed。"
+        },
+        {
+          "at": "2026-09-21",
+          "event": "production_hotfix_deployed",
+          "summary": "受限 Production hotfix e07961df 从 baseline cd80096 部署为 r20260921-e07961d；三角色 rollout、Terraform zero-drift、Prompt active readback 与健康门禁通过，未执行真实 Case 重跑。"
         },
         {
           "at": "2026-08-26",
@@ -12043,7 +12089,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-11",
+      "updated_at": "2026-09-21",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
       "next_action": "2026-09-11 用户以 13424 验收 Slack 召唤后反馈格式不符（应为旧工程师协作流格式：根消息=case title/cx question/route result，调查结果作为同线程 comment）。本轮改版：notify_hermes_review_pending 改为根消息+线程回复两条同步直发（根复刻 build_engineer_case_opened_event 四行模板，线程复用 hermes_investigation_output 纯文本类型承载 summary/blockers/next_steps+待审草稿+审阅入口，根 ts 即线程锚点）。待部署后 13424 注入评论重放，用户在频道确认新格式。",
       "acceptance_criteria": [
@@ -12056,6 +12102,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes route alignment classification-only contract",
+          "details": "本轮在 Hermes route manual v2 中冻结与 Production account-layered-router-v11 对齐的 intent/Agora/billing/backend 分类契约；新增无状态 normalizer 与 classify_route tool adapter，record_direction 可保存归一化 route_classification，非法/低置信度/冲突结果 fail closed。2026-09-21 修复低 intent/Agora confidence reason code、billing 非法输出 reason、显式非法 intent confidence 校验，以及 backend_operation/additional_intents 持久化；受影响的 classifier、Hermes tools、ECS API 共 100 passed + 2 subtests，Production route、Hermes agent、Agent config/prompt 回归共 128 passed + 3 subtests；独立临时 PostgreSQL 实例上的 Hermes Zendesk agent 套件 16 passed。compileall、diff check、Project Overview check 均通过。PostgreSQL 仅使用 127.0.0.1 临时测试库，实例已停止并清理，未连接 Production 数据库。"
+        },
         {
           "type": "decision",
           "label": "Approved revised implementation plan",
