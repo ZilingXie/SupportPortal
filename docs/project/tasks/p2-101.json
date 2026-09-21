@@ -5,14 +5,15 @@
   "status": "active",
   "owner": "zac",
   "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-  "next_action": "完成 AC-13018 单次追问与 AC-13027 reviewer handoff reconciliation 修复的 review/finalize、官方栈与 EC2 main-only 部署，并用新 F1 Case 验证单次追问、正常 reviewer assignment 且无错误 reconciliation Internal comment 后关闭任务。",
+  "next_action": "完成 Case 13616 verified ambiguity 热修复的 main finalization 与 Preproduction 验证；随后从 Production 基线准备受限热修复 commit，并在获得 exact baseline/hotfix SHA 授权后部署 Production 和补录发布证据。",
   "acceptance_criteria": [
     "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
     "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
     "Slack 消息增加 Provided: 和 Missing: 行显示字段。",
     "客户追问缺失字段时，1-2 项以内嵌入自然句子，3 项及以上每项独立使用 bullet；不合规 Persona 输出不得发布。",
     "客户首次追问后即使只补充部分信息，也不得再次公开追问缺失字段；系统直接进入内部交接，且整条 Case 仅存在一次 request_missing_information。",
-    "Fraud 最终确认回复成功并 assign 给 reviewer 后，ownership 必须持久化为 human_reassigned、handoff_status 为 assigned_to_reviewer；route_status 保持 automated，且后续 reconciliation 不得写入 account_human_review_reconciliation Internal comment 或将 Case route back。"
+    "Fraud 最终确认回复成功并 assign 给 reviewer 后，ownership 必须持久化为 human_reassigned、handoff_status 为 assigned_to_reviewer；route_status 保持 automated，且后续 reconciliation 不得写入 account_human_review_reconciliation Internal comment 或将 Case route back。",
+    "首次追问后，若只剩七项 Fraud 必填字段中的 ambiguity，且 extraction 已 verified、grounding passed、无 grounding failure、trusted-field conflict 或 sensitive data，则保留 ambiguous 审计状态并按缺失字段进入现有内部交接；首次追问或任一安全条件不满足时仍进入 Human Review。"
   ],
   "blockers": [],
   "evidence": [
@@ -75,6 +76,12 @@
       "label": "AC-13027 Fraud reviewer handoff reconciliation regression",
       "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_automation_ownership.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_intake.py backend/tests/test_automation_comment_sync.py",
       "details": "350 项测试通过、32 个子测试通过；覆盖正常与 already-assigned reviewer handoff 统一写入 human_reassigned/assigned_to_reviewer、保留源 ownership、后续 reconciliation 不升级，以及真实 assigned mismatch 仍写 Internal note 并 route back。另覆盖 F1 等待 Zendesk 通知超时后使用 plus-address 继续下一客户回合，并确认取消或非超时异常不会误发 fallback 邮件。"
+    },
+    {
+      "type": "test",
+      "label": "Case 13616 verified ambiguity hotfix regression",
+      "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py",
+      "details": "396 项测试通过、52 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖一次追问后 verified/grounded ambiguity 进入现有内部交接并把 account_type 作为缺失字段，同时保留 ambiguous 审计状态。首次追问、corrected grounding、grounding failure、trusted-field conflict 和 sensitive data 均继续 fail closed 到 Human Review；现有 comment-sync 回归覆盖只发送一封内部邮件和只创建一个 fraud_handoff_confirmation。"
     }
   ],
   "source_refs": [
@@ -99,8 +106,13 @@
     "backend/tests/test_account_reply_version_fence.py"
   ],
   "created_at": "2026-08-24",
-  "updated_at": "2026-08-26",
+  "updated_at": "2026-09-21",
   "history": [
+    {
+      "at": "2026-09-21",
+      "event": "verified_ambiguity_after_follow_up_hotfix",
+      "summary": "Case 13616 在首次追问后已收集六项，account_type 仍为 verified、grounded ambiguity，却被通用 ambiguous 规则提前转 Human Review；最小修复仅在安全条件全部满足时将 ambiguity 合并为有效缺失字段，复用既有内部交接路径，其他 ambiguity 保持 fail closed。"
+    },
     {
       "at": "2026-08-26",
       "event": "fraud_reviewer_handoff_reconciliation_fix",
