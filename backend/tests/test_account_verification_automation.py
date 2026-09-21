@@ -419,6 +419,97 @@ class AccountVerificationAutomationTests(unittest.TestCase):
         self.assertEqual(second.internal_email["body_content_type"], "HTML")
         self.assertIn("Missing after one follow-up", second.internal_email["body_html"])
 
+    def test_verified_ambiguity_after_one_follow_up_continues_to_handoff(self) -> None:
+        extraction = AccountVerificationFieldExtraction(
+            status="ambiguous",
+            collected_fields={
+                "name": "Example Company",
+                "office_address": "Shanghai",
+                "contact_number": "+1 555 0100",
+                "contact_email": "ops@example.com",
+                "use_case_description": "Customer support",
+                "console_configuration": "RTC project",
+            },
+            ambiguous_fields=["account_type"],
+            grounding_status="passed",
+            prompt_snapshot={"verification_status": "verified"},
+        )
+
+        result = build_account_verification_automation_result(
+            ticket_subject="Verification",
+            customer_messages=[],
+            ticket_id="13616",
+            account_case_id="13616",
+            customer_email="customer@example.com",
+            follow_up_count=1,
+            extract=lambda **_: extraction,
+        )
+
+        self.assertFalse(result.requires_human_review)
+        self.assertEqual(result.missing_fields, ["account_type"])
+        self.assertTrue(result.proceed_with_missing_fields)
+        self.assertIs(result.extraction, extraction)
+        self.assertEqual(result.extraction.status, "ambiguous")
+        self.assertIsNotNone(result.internal_email)
+        assert result.internal_email is not None
+        self.assertIn("Missing after one follow-up", result.internal_email["body"])
+        self.assertIn("Account type", result.internal_email["body"])
+
+    def test_unsafe_or_first_turn_ambiguity_still_requires_human_review(self) -> None:
+        scenarios = {
+            "first_turn": {
+                "follow_up_count": 0,
+                "grounding_status": "passed",
+                "prompt_snapshot": {"verification_status": "verified"},
+            },
+            "verification_not_clean": {
+                "follow_up_count": 1,
+                "grounding_status": "passed",
+                "prompt_snapshot": {"verification_status": "corrected_grounding"},
+            },
+            "grounding_failed": {
+                "follow_up_count": 1,
+                "grounding_status": "failed",
+                "grounding_failures": {"account_type": ["quote_not_found"]},
+                "prompt_snapshot": {"verification_status": "verification_conflict"},
+            },
+            "trusted_conflict": {
+                "follow_up_count": 1,
+                "grounding_status": "failed",
+                "failure_type": "trusted_field_conflict",
+                "prompt_snapshot": {"verification_status": "verified"},
+            },
+            "sensitive": {
+                "follow_up_count": 1,
+                "grounding_status": "passed",
+                "sensitive_data_types": ["payment_card"],
+                "prompt_snapshot": {"verification_status": "verified"},
+            },
+        }
+
+        for name, values in scenarios.items():
+            with self.subTest(name=name):
+                follow_up_count = int(values.pop("follow_up_count"))
+                extraction = AccountVerificationFieldExtraction(
+                    status="ambiguous",
+                    collected_fields={"contact_email": "ops@example.com"},
+                    ambiguous_fields=["account_type"],
+                    **values,
+                )
+                result = build_account_verification_automation_result(
+                    ticket_subject="Verification",
+                    customer_messages=[],
+                    ticket_id="13616",
+                    account_case_id="13616",
+                    customer_email="customer@example.com",
+                    follow_up_count=follow_up_count,
+                    extract=lambda **_: extraction,
+                )
+
+                self.assertTrue(result.requires_human_review)
+                self.assertEqual(result.missing_fields, [])
+                self.assertIsNone(result.internal_email)
+
     def test_all_account_automation_subcategories_are_explicitly_registered(self) -> None:
         self.assertEqual(
             registered_account_automation_subcategories(),

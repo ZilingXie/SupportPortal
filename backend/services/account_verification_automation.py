@@ -9,6 +9,7 @@ from backend.services.account_internal_email_recipients import (
     attach_account_internal_email_recipients,
 )
 from backend.services.account_verification_field_extractor import (
+    ACCOUNT_VERIFICATION_REQUIRED_GROUPS,
     AccountVerificationFieldExtraction,
     compose_account_verification_follow_up,
     extract_account_verification_fields,
@@ -139,7 +140,23 @@ def build_account_verification_automation_result(
         **({"automation_context": automation_context} if automation_context is not None else {}),
     )
     safe_count = max(0, int(follow_up_count or 0))
-    if extraction.requires_human_review:
+    safe_ambiguity_after_follow_up = (
+        safe_count >= 1
+        and extraction.status == "ambiguous"
+        and bool(extraction.ambiguous_fields)
+        and all(
+            field_name in ACCOUNT_VERIFICATION_REQUIRED_GROUPS
+            and not extraction.collected_fields.get(field_name)
+            for field_name in extraction.ambiguous_fields
+        )
+        and extraction.grounding_status == "passed"
+        and not extraction.grounding_failures
+        and not extraction.grounding_reason_code
+        and not extraction.failure_type
+        and not extraction.sensitive_data_types
+        and extraction.prompt_snapshot.get("verification_status") == "verified"
+    )
+    if extraction.requires_human_review and not safe_ambiguity_after_follow_up:
         return AccountVerificationAutomationResult(
             customer_reply="",
             missing_fields=[],
@@ -149,10 +166,17 @@ def build_account_verification_automation_result(
             follow_up_count=safe_count,
             requires_human_review=True,
         )
-    if extraction.missing_fields and safe_count < 1:
+    effective_missing_fields = list(extraction.missing_fields)
+    if safe_ambiguity_after_follow_up:
+        effective_missing_fields.extend(
+            field_name
+            for field_name in extraction.ambiguous_fields
+            if field_name not in effective_missing_fields
+        )
+    if effective_missing_fields and safe_count < 1:
         return AccountVerificationAutomationResult(
             customer_reply="",
-            missing_fields=list(extraction.missing_fields),
+            missing_fields=effective_missing_fields,
             collected_fields=dict(extraction.collected_fields),
             internal_email=None,
             extraction=extraction,
@@ -164,7 +188,7 @@ def build_account_verification_automation_result(
         account_case_id=account_case_id,
         customer_email=customer_email,
         collected_fields=extraction.collected_fields,
-        missing_fields=extraction.missing_fields,
+        missing_fields=effective_missing_fields,
         customer_message="\n".join(
             str(message.get("content") or "").strip()
             for message in customer_messages
@@ -176,10 +200,10 @@ def build_account_verification_automation_result(
     )
     return AccountVerificationAutomationResult(
         customer_reply="",
-        missing_fields=list(extraction.missing_fields),
+        missing_fields=effective_missing_fields,
         collected_fields=dict(extraction.collected_fields),
         internal_email=internal_email,
         extraction=extraction,
         follow_up_count=safe_count,
-        proceed_with_missing_fields=bool(extraction.missing_fields),
+        proceed_with_missing_fields=bool(effective_missing_fields),
     )
