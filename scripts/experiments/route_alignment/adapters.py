@@ -12,6 +12,7 @@ from typing import Any, Callable
 from urllib.parse import urlparse
 
 from .core import CandidateResult, CaseSnapshot, build_snapshot, normalize_classification
+from .dataset import candidate_state
 
 
 def load_fixture_snapshots(path: str) -> list[CaseSnapshot]:
@@ -94,9 +95,10 @@ def fetch_production_snapshots(*, dsn: str, schema: str = "supportportal_product
                 cur.execute(query, (candidate_limit,))
                 rows = [dict(row) for row in cur.fetchall()]
                 for row in rows:
-                    question = row.pop("question", "")
+                    question = row.get("question", "")
                     comments = row.get("comments") or []
-                    row["messages"] = ([{"role": "user", "content": question}] if question else []) + comments
+                    row["question"] = question
+                    row["messages"] = comments
                     comments_revision = str(row.pop("comments_revision") or "").strip()
                     case_updated_at = str(row.pop("case_updated_at") or "")
                     row["case_revision"] = comments_revision or case_updated_at
@@ -105,6 +107,7 @@ def fetch_production_snapshots(*, dsn: str, schema: str = "supportportal_product
                         "processing_profile": row.pop("processing_profile", None),
                         "status": row.pop("status", None),
                         "product": row.pop("product", None),
+                        "baseline_input_alignment": "unknown",
                     }
     selected = _stratified_rows(rows, limit)
     return [build_snapshot(row, alias=f"prod-{index:03d}") for index, row in enumerate(selected, 1)]
@@ -114,11 +117,11 @@ def fixture_candidate(name: str, mapping: Mapping[str, Mapping[str, Any]]) -> Ca
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
         value = mapping.get(snapshot.alias)
         if value is None:
-            return CandidateResult(candidate=name, status="error", error="fixture_missing")
+            return CandidateResult(candidate=name, status="error", error="fixture_missing", error_code="fixture_missing")
         normalized = normalize_classification(value)
         if not any(normalized.get(field) is not None for field in ("intent_class", "agora_route", "conversation_action")):
-            return CandidateResult(candidate=name, status="error", raw=dict(value), error="missing_classification", model_version="fixture")
-        return CandidateResult(candidate=name, status="ok", raw=dict(value), normalized=normalized, model_version="fixture", prompt_version="fixture")
+            return CandidateResult(candidate=name, status="error", raw=dict(value), error="missing_classification", error_code="missing_classification", model_version="fixture")
+        return CandidateResult(candidate=name, status="ok", raw=dict(value), normalized=normalized, model_version="fixture", prompt_version="fixture", requested_model="fixture", returned_model="fixture")
     return invoke
 
 
@@ -143,13 +146,13 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
         raise ValueError("candidate endpoint host is not allowlisted")
 
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
+        state = candidate_state(snapshot)
         payload = {
             "contract": "route-alignment-v1",
             "case_snapshot": {
                 "case_alias": snapshot.alias,
                 "case_revision": snapshot.case_revision,
-                "subject": snapshot.subject,
-                "messages": list(snapshot.messages),
+                **state,
             },
         }
         request = urllib.request.Request(
@@ -166,6 +169,8 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
                 raise ValueError("response_not_object")
             if parsed.get("contract") != "route-alignment-v1":
                 raise ValueError("invalid_contract")
+            if parsed.get("case_alias") != snapshot.alias or parsed.get("case_revision") != snapshot.case_revision:
+                raise ValueError("snapshot_identity_mismatch")
             raw_value = parsed.get("normalized_classification") or parsed.get("classification")
             if not isinstance(raw_value, Mapping):
                 raise ValueError("missing_classification")
@@ -181,7 +186,33 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
                 model_version=str(parsed.get("model_version") or "unknown"),
                 prompt_version=str(parsed.get("prompt_version") or "unknown"),
+                requested_model=str(parsed.get("requested_model") or parsed.get("model_version") or "unknown"),
+                returned_model=str(parsed.get("returned_model") or parsed.get("model_version") or "unknown"),
+                call_count=1,
+                usage=dict(parsed.get("usage") or {}) if isinstance(parsed.get("usage"), Mapping) else {},
+                metadata={
+                    key: parsed.get(key)
+                    for key in (
+                        "provider",
+                        "reasoning_effort",
+                        "hermes_route_manual_version",
+                        "normalizer_version",
+                        "wrapper_version",
+                        "actual_model_verified",
+                    )
+                    if key in parsed
+                },
             )
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-            return CandidateResult(candidate=name, status="error", error=type(exc).__name__ + ":" + str(exc)[:200], latency_ms=round((time.monotonic() - started) * 1000, 2))
+            status_code = getattr(exc, "code", None)
+            error_code = (
+                "authentication_error"
+                if status_code in {401, 403}
+                else "rate_limited"
+                if status_code == 429
+                else "http_error"
+                if status_code
+                else str(exc)[:80] or type(exc).__name__
+            )
+            return CandidateResult(candidate=name, status="error", error=type(exc).__name__ + ":" + str(exc)[:200], error_code=error_code, latency_ms=round((time.monotonic() - started) * 1000, 2), call_count=1)
     return invoke

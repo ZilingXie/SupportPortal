@@ -125,7 +125,7 @@ def test_http_empty_json_is_missing_classification(monkeypatch) -> None:
             return False
 
         def read(self):
-            return json.dumps({"contract": "route-alignment-v1"}).encode("utf-8")
+            return json.dumps({"contract": "route-alignment-v1", "case_alias": "case-001", "case_revision": "rev-1"}).encode("utf-8")
 
     captured = {}
 
@@ -136,13 +136,15 @@ def test_http_empty_json_is_missing_classification(monkeypatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     module = _load_core()
+    row = _row()
+    row["metadata"] = {"product": "RTC", "status": "open", "private": "not-allowed"}
     result = http_candidate("hermes", "https://example.invalid/route-alignment/v1/classify")(
-        module.build_snapshot(_row(), alias="case-001")
+        module.build_snapshot(row, alias="case-001")
     )
     assert result.status == "error"
     assert "missing_classification" in (result.error or "")
     assert captured["payload"]["contract"] == "route-alignment-v1"
-    assert "case_snapshot" in captured["payload"]
+    assert captured["payload"]["case_snapshot"]["metadata"] == {"product": "RTC", "status": "open"}
 
 
 def test_http_endpoint_rejects_ordinary_business_path() -> None:
@@ -241,7 +243,9 @@ def test_cli_emits_only_candidate_disagreements(tmp_path: Path) -> None:
     assert summary["case_count"] == 1
     assert summary["review_required_count"] == 1
     raw = json.loads((output / "raw_results.jsonl").read_text(encoding="utf-8"))
-    assert "subject" not in raw["candidates"][0]["raw_classification"]
+    assert "raw_classification" not in raw["candidates"][0]
+    assert "subject" not in raw["candidates"][0]
+    assert "messages" not in raw["candidates"][0]
     manifest = json.loads((output / "manifest.jsonl").read_text(encoding="utf-8"))
     assert "subject" not in manifest
     assert manifest["subject_length"] > 0

@@ -1,74 +1,88 @@
 # Route alignment experiment
 
-This runner compares the stored Production Account route classification with Jev
-and Hermes classification-only results. It is an offline experiment tool. It
-does not submit an intake event, create a Hermes case, or write to the ticket
-database. Both Jev and Hermes are mandatory; a one-candidate run is rejected.
+This offline runner compares the stored Production Account route label with a
+fixed TypeSafe Jev candidate and a stateless Hermes route-prompt candidate. It
+does not submit intake, create a Hermes case, or write to the ticket database.
+Both candidates are mandatory.
 
-The default mode uses redacted JSONL fixtures and candidate fixtures:
+## Workflow
 
-```bash
-python3 -m scripts.experiments.route_alignment \
-  --fixture fixtures/cases.jsonl \
-  --fixture-candidates fixtures/candidates.json \
-  --output-dir artifacts/route-alignment/run-001
-```
-
-The live snapshot mode uses a read-only DSN and includes public case comments:
+Freeze the input first. Production access is limited to this separate read-only
+step; the DSN is named on the command line but its value stays in the
+environment. Freezing customer text requires explicit local approval:
 
 ```bash
+export ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1
 python3 -m scripts.experiments.route_alignment \
-  --production-dsn "$PRODUCTION_READONLY_DSN" \
+  --mode freeze \
+  --production-dsn-env ROUTE_EXPERIMENT_READ_ONLY_DSN \
   --schema supportportal_production \
   --limit 100 \
-  --fixture-candidates fixtures/candidates.json \
-  --output-dir artifacts/route-alignment/run-001
+  --output-dir artifacts/route-alignment/dataset-001
 ```
 
-Candidate HTTP endpoints are disabled unless `--live-candidates` is supplied.
-They must implement the classification-only contract and must not be the normal
-SupportPortal intake endpoint:
+Use `--fixture fixtures/cases.jsonl` instead of `--production-dsn-env` for a
+local fixture freeze. The frozen directory is created with mode `0700`; its
+JSONL files use `0600` and share a content-derived `dataset_id`.
+
+Start the stateless Hermes candidate on loopback after setting its explicit
+model profile and an experiment-only bearer token:
 
 ```bash
+python3 -m scripts.experiments.route_alignment.hermes_service \
+  --host 127.0.0.1 \
+  --port 8765
+```
+
+The service requires `HERMES_EXPERIMENT_TOKEN`,
+`HERMES_ROUTE_EXPERIMENT_API_KEY`, `HERMES_ROUTE_EXPERIMENT_BASE_URL`,
+`HERMES_ROUTE_EXPERIMENT_MODEL`, and
+`HERMES_ROUTE_EXPERIMENT_REASONING_EFFORT`. It sends one Responses request per
+case with no retry, fallback, tools, session, store, or ambient trace.
+
+Run both live candidates only from a frozen dataset:
+
+```bash
+export ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED=1
 python3 -m scripts.experiments.route_alignment \
-  --production-dsn "$PRODUCTION_READONLY_DSN" \
-  --jev-endpoint "$JEV_CLASSIFICATION_ENDPOINT" \
-  --hermes-endpoint "$HERMES_CLASSIFICATION_ONLY_ENDPOINT" \
+  --frozen-snapshots artifacts/route-alignment/dataset-001/frozen_snapshots.jsonl \
+  --jev-direct \
+  --hermes-endpoint http://127.0.0.1:8765/route-alignment/v1/classify \
   --live-candidates \
   --output-dir artifacts/route-alignment/run-001
 ```
 
-Outputs are `manifest.jsonl`, `raw_results.jsonl`,
+The direct Jev adapter requires `TYPESAFE_API_KEY` and fixes the provider model
+to `jev-1.13.0`. The runner requires the Hermes bearer token in
+`HERMES_EXPERIMENT_TOKEN`. Credentials are never accepted as CLI arguments or
+written to artifacts. Fixture-only comparison remains available with
+`--fixture-candidates fixtures/candidates.json` and makes no provider calls.
+
+## Input and result contracts
+
+Jev and Hermes receive the same redacted state: subject, public messages through
+the latest customer message, and allowlisted `product`/`status` metadata. They
+never receive ticket identity, case alias/revision, or the Production baseline
+as model input. Alias and revision exist only on the loopback transport envelope
+so the runner can reject a mismatched response. Input size limits fail closed;
+text is not silently truncated.
+
+Production extraction selects `processing_profile='production'`, retains cases
+without a v11 baseline for manual review, and samples deterministic round-robin
+groups over primary label, secondary label, and route target. `comments_revision`
+is preferred over the case timestamp. Historical-label agreement is reported
+separately from same-input agreement because old Production labels may have been
+produced from a different snapshot.
+
+Outputs are `manifest.jsonl`, controlled `raw_results.jsonl`,
 `normalized_comparison.jsonl`, `disagreement_report.<run_id>.csv`, and
-`summary.json`. The summary records the generated disagreement report filename.
-The manifest contains text hashes and lengths by default, not customer text.
-The output directory must be new or empty; the runner refuses to overwrite an
-existing artifact set. Every output record carries the same generated `run_id`.
-`--include-review-text` requires `ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1` and
-writes a separate redacted `review_context.jsonl`.
+`summary.json`. The controlled evidence file does not store arbitrary provider
+responses or customer text. Every result carries one `run_id` and `dataset_id`;
+the summary records per-candidate calls, errors, latency, model versions, usage,
+agreement, and Jev's documented cost estimate. An authentication error stops all
+later paid calls. The runner refuses to overwrite a non-empty output directory.
 
-Production extraction is restricted to `processing_profile='production'`. It
-keeps cases without a v11 baseline, marks them `baseline_status=missing`, and
-includes them in the review union. The sample pool is selected by deterministic
-round-robin groups over primary label, secondary label, and route target. Case
-revision uses `comments_revision` when available and records its source.
-
-The HTTP adapter uses the dedicated `route-alignment-v1` case-snapshot contract:
-
-```json
-{
-  "contract": "route-alignment-v1",
-  "case_snapshot": {
-    "case_alias": "prod-001",
-    "case_revision": "...",
-    "subject": "...",
-    "messages": []
-  }
-}
-```
-
-The existing Hermes `classify_route` tool is not compatible: it only accepts a
-model-produced `classification` object for normalization. Real candidate calls
-also require `ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED=1`; the endpoint must
-return a non-empty `classification` or `normalized_classification` plus optional
-`model_version` and `prompt_version`.
+`--include-review-text` adds redacted `review_context.jsonl` only when
+`ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1`. Before sending real case text to a
+provider, separately confirm the provider's data-processing boundary; this tool
+does not grant that approval.

@@ -69,6 +69,12 @@ class CandidateResult:
     latency_ms: float | None = None
     model_version: str | None = None
     prompt_version: str | None = None
+    requested_model: str | None = None
+    returned_model: str | None = None
+    error_code: str | None = None
+    call_count: int = 0
+    usage: dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -129,12 +135,32 @@ def _redact(value: Any, key: str = "") -> Any:
     result = _PHONE.sub("[redacted_phone]", result)
     result = _URL.sub("[redacted_url]", result)
     result = _LONG_IDENTIFIER.sub("[redacted_identifier]", result)
-    return result[:4000]
+    return result
 
 
 def redact_case(case: Mapping[str, Any]) -> dict[str, Any]:
     """Redact customer identifiers and secrets before writing a snapshot."""
     return _redact(dict(case))
+
+
+def shape_public_context(messages: Iterable[Mapping[str, Any]], *, question: str = "") -> list[dict[str, Any]]:
+    """Keep ordered public context only through the latest customer message."""
+    shaped = [
+        {
+            "role": str(item.get("role") or "").strip().lower(),
+            "content": str(item.get("content") or "").strip(),
+            **({"created_at": str(item.get("created_at"))} if item.get("created_at") else {}),
+        }
+        for item in messages
+        if isinstance(item, Mapping)
+        and str(item.get("role") or "").strip().lower() in {"user", "assistant"}
+        and str(item.get("content") or "").strip()
+    ]
+    customer_indexes = [index for index, item in enumerate(shaped) if item["role"] == "user"]
+    if customer_indexes:
+        return shaped[: customer_indexes[-1] + 1]
+    clean_question = str(question or "").strip()
+    return [{"role": "user", "content": clean_question}] if clean_question else []
 
 
 def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
@@ -147,13 +173,21 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
     comments = row.get("messages") or row.get("comments") or []
     if not isinstance(comments, list):
         comments = []
+    comments = shape_public_context(comments, question=str(row.get("question") or ""))
     snapshot = {
         "ticket_id": _text(row.get("ticket_id") or row.get("client_ticket_id")),
         "case_revision": _text(row.get("case_revision")) or None,
-        "subject": _text(row.get("subject") or row.get("title"), 1000),
+        "subject": _text(row.get("subject") or row.get("title")),
         "messages": comments,
         "route_classification": normalize_classification(baseline) if baseline_available else {},
-        "metadata": row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {},
+        "metadata": {
+            **(row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {}),
+            "baseline_input_alignment": (
+                (row.get("metadata") or {}).get("baseline_input_alignment", "unknown")
+                if isinstance(row.get("metadata"), Mapping)
+                else "unknown"
+            ),
+        },
     }
     redacted = redact_case(snapshot)
     return CaseSnapshot(
@@ -206,7 +240,9 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
-def result_to_dict(result: ComparisonResult, *, run_id: str | None = None) -> dict[str, Any]:
+def result_to_dict(
+    result: ComparisonResult, *, run_id: str | None = None, dataset_id: str | None = None
+) -> dict[str, Any]:
     record = {
         "case_alias": result.alias,
         "baseline_status": result.baseline_status,
@@ -219,6 +255,12 @@ def result_to_dict(result: ComparisonResult, *, run_id: str | None = None) -> di
                 "latency_ms": item.latency_ms,
                 "model_version": item.model_version,
                 "prompt_version": item.prompt_version,
+                "requested_model": item.requested_model,
+                "returned_model": item.returned_model,
+                "error_code": item.error_code,
+                "call_count": item.call_count,
+                "usage": item.usage,
+                "metadata": item.metadata,
             }
             for name, item in result.candidates.items()
         },
@@ -228,6 +270,8 @@ def result_to_dict(result: ComparisonResult, *, run_id: str | None = None) -> di
     }
     if run_id:
         record["run_id"] = run_id
+    if dataset_id:
+        record["dataset_id"] = dataset_id
     return record
 
 
@@ -236,11 +280,18 @@ def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
     with path.open("w", encoding="utf-8") as handle:
         for record in records:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n")
+    path.chmod(0o600)
 
 
-def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult], *, run_id: str | None = None) -> None:
+def write_disagreement_csv(
+    path: Path,
+    results: Iterable[ComparisonResult],
+    *,
+    run_id: str | None = None,
+    dataset_id: str | None = None,
+) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["run_id", "case_alias", "baseline_status", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
+    fields = ["run_id", "dataset_id", "case_alias", "baseline_status", "baseline_input_alignment", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -251,8 +302,19 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult], *, r
             writer.writerow(
                 {
                     "run_id": run_id or "",
+                    "dataset_id": dataset_id or "",
                     "case_alias": result.alias,
                     "baseline_status": result.baseline_status,
+                    "baseline_input_alignment": (
+                        next(
+                            (
+                                candidate.metadata.get("baseline_input_alignment")
+                                for candidate in result.candidates.values()
+                                if candidate.metadata.get("baseline_input_alignment")
+                            ),
+                            "unknown",
+                        )
+                    ),
                     "production_baseline": json.dumps(result.baseline, ensure_ascii=False, sort_keys=True),
                     "jev": json.dumps(result.candidates.get("jev").normalized if result.candidates.get("jev") else None, ensure_ascii=False, sort_keys=True),
                     "hermes": json.dumps(result.candidates.get("hermes").normalized if result.candidates.get("hermes") else None, ensure_ascii=False, sort_keys=True),
@@ -265,15 +327,19 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult], *, r
                     "human_judgment": "",
                 }
             )
+    path.chmod(0o600)
 
 
-def snapshot_manifest_record(snapshot: CaseSnapshot, *, run_id: str | None = None) -> dict[str, Any]:
+def snapshot_manifest_record(
+    snapshot: CaseSnapshot, *, run_id: str | None = None, dataset_id: str | None = None
+) -> dict[str, Any]:
     subject_digest = hashlib.sha256(snapshot.subject.encode("utf-8")).hexdigest()
     messages_digest = hashlib.sha256(
         json.dumps(list(snapshot.messages), ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     payload = {
         "run_id": run_id,
+        "dataset_id": dataset_id,
         "case_alias": snapshot.alias,
         "case_revision": snapshot.case_revision,
         "case_revision_source": snapshot.case_revision_source,
@@ -290,9 +356,12 @@ def snapshot_manifest_record(snapshot: CaseSnapshot, *, run_id: str | None = Non
     return payload
 
 
-def review_context_record(snapshot: CaseSnapshot, *, run_id: str | None = None) -> dict[str, Any]:
+def review_context_record(
+    snapshot: CaseSnapshot, *, run_id: str | None = None, dataset_id: str | None = None
+) -> dict[str, Any]:
     return {
         "run_id": run_id,
+        "dataset_id": dataset_id,
         "case_alias": snapshot.alias,
         "case_revision": snapshot.case_revision,
         "subject": snapshot.subject,

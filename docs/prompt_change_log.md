@@ -11,6 +11,16 @@ classification-only tool contract returns the normalized result without
 creating Hermes or business state. This change is contract/prompt work only;
 no Production route, n8n workflow, or deployment was changed in this task.
 
+The comparison experiment now executes that route manual through a dedicated
+loopback-only, bearer-authenticated wrapper with an explicit Responses model
+profile. Each case is stateless and makes at most one model call with
+`store=false`, no tools, no session, no fallback, and no ambient trace. The
+wrapper and the fixed `jev-1.13.0` adapter receive the same frozen, redacted
+subject/messages and allowlisted metadata; neither candidate receives the
+historical baseline or ticket identity. This is developer experiment tooling,
+not a Hermes runtime or Prompt Release change, and no provider or Production
+data was used during verification.
+
 ## 2026-09-20 — Enablement 收件绑定核验（skill 行为提示）
 
 `.codex/skills/supportportal-media-relay-enablement/SKILL.md` 在 Pilot 预检前新增固定顺序的收件绑定核验：从指定 Task 的当前 Message 解析申请四元组（request_id/version/工单/relay_task_id）并经只读端点核对；要求 dispatched+ticket_valid；同 AppID 关联申请按六行处理表（旧申请已取消/工单已关闭→排除继续；绑定不一致→暂停报告；双有效→报告两者暂停等选择；查询失败→待核实不放行）。只读消除歧义，不自动关闭/回复另一条 Task；两次审批、digest、独立回读契约不变。配套 AgentRelay 本地交接模板（另一仓库）同步修正 metadata 绑定语义。
