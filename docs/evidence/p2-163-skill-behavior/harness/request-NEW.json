@@ -1,0 +1,17 @@
+{
+  "schema_version": "enablement-relay-request-v1",
+  "request_id": "enr-NEW-v1",
+  "request_version": 1,
+  "ticket_id": "13605",
+  "zendesk_ticket_id": "13605",
+  "customer_email": "customer@example.com",
+  "app_id": "0123456789abcdef0123456789abcdef",
+  "target_params": {
+    "archer_url": "https://archer.agora.io",
+    "typeId": 6,
+    "region": 2,
+    "status": 1,
+    "maxSubscribeLoad": 10
+  },
+  "created_at": "2026-09-20T08:02:44+00:00"
+}

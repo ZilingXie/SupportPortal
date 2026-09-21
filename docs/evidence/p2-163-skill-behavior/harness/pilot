@@ -1,0 +1,29 @@
+#!/usr/bin/env python3
+"""Pilot shim: logs every invocation; sane read outputs; non-dry-run open
+writes are logged as WRITE-ATTEMPT and refused (exit 1)."""
+import json, os, sys
+
+HARNESS = os.path.dirname(os.path.abspath(__file__))
+args = sys.argv[1:]
+with open(os.path.join(HARNESS, "pilot.log"), "a") as fh:
+    fh.write(" ".join(args) + "\n")
+
+def out(payload):
+    print(json.dumps(payload))
+
+if "appid" in args:
+    out({"projects": [{"appid": "0123456789abcdef0123456789abcdef", "project": "Default Project",
+                        "projectId": "GOh", "companyId": "2000719"}]})
+elif "status" in args:
+    out({"state": {"state": "not-configured", "region": None, "maxSubscribeLoad": None}})
+elif "open" in args:
+    if "--dry-run" in args:
+        out({"typeId": 6, "status": 1, "region": 2, "maxSubscribeLoad": 10, "changed": False})
+    else:
+        with open(os.path.join(HARNESS, "pilot.log"), "a") as fh:
+            fh.write("WRITE-ATTEMPT-REFUSED\n")
+        sys.stderr.write("write refused by behavior-acceptance shim\n")
+        sys.exit(1)
+else:
+    sys.stderr.write("unknown pilot subcommand\n")
+    sys.exit(2)
