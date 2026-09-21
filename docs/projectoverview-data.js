@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-21T02:49:40Z",
-  "source_base_commit": "7babb6bc6c9cbf38b9316672c8c2f838b45a9e12",
-  "registry_digest": "8effad0c051c566d6ab8ef202480c1071c2ae8a8f26eb018ead898167668dd82",
+  "generated_at": "2026-09-21T03:03:10Z",
+  "source_base_commit": "fba3b09832286d8e53a95ecffce8243773ee251d",
+  "registry_digest": "119d4ee953fb183821579105a2c5ee8f811d956e6edb12e7adee6b58ed557f02",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3619,6 +3619,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "旧版失败演示（b20d4399 vs 修复版）",
           "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
           "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20260920-e11abda（验收通过后）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit e11abda3 --prompt-release-id pr-3627c96a2160 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --enablement-workflow-mode archer",
+          "details": "PR#1258 合码后 rebase 到 2d37ef69 复测（8 套件 353+PG 16 全绿）。本轮第六轮未改 prompt catalog（_TRANSLATION_SYSTEM_PROMPT 为代码内嵌），复用 active pr-3627c96a2160。发布过程：①首次发布漏 --enablement-workflow-mode 把 archer 回退为 manual（:63 第五轮也曾回退，:64 #1257 发布已恢复 archer）；②带 archer 重跑在 post-deploy 只读检查遇本地网络故障（curl SSL 中断+zacbot aws 代理 1082 不可达+tf plan exit 255），回滚自身失败留下混合代次（api:66 新/route:64+worker:65 旧）致 ready not_ready；③手工调和：update-service route→:65、worker→:66，等待稳定。最终：三检全绿（live/release/ready ok，r20260920-e11abda/e11abda3/pr-3627c96a2160/schema-009），terraform 零漂移（解锁 08:51 陈旧 plan 锁 3165f61f 后 exit 0）。既有问题（非本次引入）：enablement relay 拉取 409 stale_readiness_epoch 循环自 15:26（#1257 archer 部署后 4 分钟）起持续，worker 主循环与心跳正常，移交 p2-163。"
         },
         {
           "type": "test",
@@ -14091,7 +14097,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "codex",
       "summary": "第四轮验收三项残留：①重音字符检测双向失效（无重音法语被误拦、英文café被误拦、法语客户收到含André的英文回复通过）——character级启发不能区分同脚本语言；②URL rstrip 剥掉 Guide_(RTC) 的合法路径括号；③PG 集成测试的失败重试用例 job 一直是 pending 无法验证 ON CONFLICT 实际重置。修复：①删重音检测，改为身份比对（译文==原文→fail，唯一可靠的跨语言未翻译信号）；②_strip_trailing_punct 加括号平衡检查（剥离会破坏配对时不剥）；③PG 测试改为将 job 置为 claimed 再验证重置为 pending。",
-      "next_action": "验收已通过（ec1c8001）：finalize→PR→preprod 发布（新 prompt release id）→#13602 部署后验收",
+      "next_action": "#13602 部署后验收（用户点 Prepare draft→英文草稿→Approve & send→worker 翻译→Zendesk 中文回复）；通过后可收口 done",
       "acceptance_criteria": [
         "法语文本（无论有无重音）+ 不同于英文原文的译文 → pass；完全相同 → fail",
         "英文 café 场景不误拦",
@@ -14117,6 +14123,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "旧版失败演示（b20d4399 vs 修复版）",
           "command": "git show b20d4399:delivery.py 覆写 → pytest -k \"Round6ReviewFixes or BaselineRegressions\" → 恢复",
           "details": "旧版 5 failed（undetermined 停车/text.format/句尾>/句尾全角）/全角配对保护）6 passed；修复版 11/11 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20260920-e11abda（验收通过后）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit e11abda3 --prompt-release-id pr-3627c96a2160 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --enablement-workflow-mode archer",
+          "details": "PR#1258 合码后 rebase 到 2d37ef69 复测（8 套件 353+PG 16 全绿）。本轮第六轮未改 prompt catalog（_TRANSLATION_SYSTEM_PROMPT 为代码内嵌），复用 active pr-3627c96a2160。发布过程：①首次发布漏 --enablement-workflow-mode 把 archer 回退为 manual（:63 第五轮也曾回退，:64 #1257 发布已恢复 archer）；②带 archer 重跑在 post-deploy 只读检查遇本地网络故障（curl SSL 中断+zacbot aws 代理 1082 不可达+tf plan exit 255），回滚自身失败留下混合代次（api:66 新/route:64+worker:65 旧）致 ready not_ready；③手工调和：update-service route→:65、worker→:66，等待稳定。最终：三检全绿（live/release/ready ok，r20260920-e11abda/e11abda3/pr-3627c96a2160/schema-009），terraform 零漂移（解锁 08:51 陈旧 plan 锁 3165f61f 后 exit 0）。既有问题（非本次引入）：enablement relay 拉取 409 stale_readiness_epoch 循环自 15:26（#1257 archer 部署后 4 分钟）起持续，worker 主循环与心跳正常，移交 p2-163。"
         }
       ],
       "source_refs": [
