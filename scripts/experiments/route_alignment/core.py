@@ -37,6 +37,11 @@ _SENSITIVE_KEY = re.compile(
 )
 _LONG_IDENTIFIER = re.compile(r"\b[A-Za-z0-9_-]{28,}\b")
 _EMAIL = re.compile(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b")
+_PHONE = re.compile(r"(?<!\d)(?:\+?\d[\d .()/-]{7,}\d)(?!\d)")
+_URL = re.compile(r"https?://[^\s]+", re.IGNORECASE)
+_SECRET_ASSIGNMENT = re.compile(
+    r"(?i)\b(?:token|secret|password|authorization|api[_ -]?key|app[_ -]?id)\s*[:=]\s*[^\s,;]+"
+)
 
 
 @dataclass(frozen=True)
@@ -49,6 +54,8 @@ class CaseSnapshot:
     baseline: dict[str, Any]
     metadata: dict[str, Any] = field(default_factory=dict)
     baseline_available: bool = True
+    baseline_status: str = "available"
+    case_revision_source: str | None = None
 
 
 @dataclass(frozen=True)
@@ -60,12 +67,14 @@ class CandidateResult:
     error: str | None = None
     latency_ms: float | None = None
     model_version: str | None = None
+    prompt_version: str | None = None
 
 
 @dataclass(frozen=True)
 class ComparisonResult:
     alias: str
     baseline: dict[str, Any]
+    baseline_status: str
     candidates: dict[str, CandidateResult]
     disagreement: bool
     disagreement_fields: dict[str, list[str]]
@@ -112,7 +121,10 @@ def _redact(value: Any, key: str = "") -> Any:
         return value
     if _SENSITIVE_KEY.search(key):
         return "[redacted]"
-    result = _EMAIL.sub("[redacted_email]", value)
+    result = _SECRET_ASSIGNMENT.sub("[redacted_secret]", value)
+    result = _EMAIL.sub("[redacted_email]", result)
+    result = _PHONE.sub("[redacted_phone]", result)
+    result = _URL.sub("[redacted_url]", result)
     result = _LONG_IDENTIFIER.sub("[redacted_identifier]", result)
     return result[:4000]
 
@@ -127,8 +139,8 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
     if not isinstance(baseline, Mapping):
         baseline = {}
     version = _text(baseline.get("pipeline_version"))
-    if version != BASELINE_PIPELINE_VERSION:
-        raise ValueError(f"baseline_missing_or_wrong_version:{alias}")
+    baseline_available = version == BASELINE_PIPELINE_VERSION
+    baseline_status = "available" if baseline_available else "missing_or_wrong_version"
     comments = row.get("messages") or row.get("comments") or []
     if not isinstance(comments, list):
         comments = []
@@ -137,7 +149,7 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
         "case_revision": _text(row.get("case_revision")) or None,
         "subject": _text(row.get("subject") or row.get("title"), 1000),
         "messages": comments,
-        "route_classification": normalize_classification(baseline),
+        "route_classification": normalize_classification(baseline) if baseline_available else {},
         "metadata": row.get("metadata") if isinstance(row.get("metadata"), Mapping) else {},
     }
     redacted = redact_case(snapshot)
@@ -149,7 +161,9 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
         messages=tuple(redacted["messages"]),
         baseline=redacted["route_classification"],
         metadata=redacted["metadata"],
-        baseline_available=True,
+        baseline_available=baseline_available,
+        baseline_status=baseline_status,
+        case_revision_source=_text(row.get("case_revision_source")) or None,
     )
 
 
@@ -173,6 +187,7 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
     return ComparisonResult(
         alias=snapshot.alias,
         baseline=baseline_key,
+        baseline_status=snapshot.baseline_status,
         candidates=candidate_map,
         disagreement=bool(differences),
         disagreement_fields=differences,
@@ -189,6 +204,7 @@ def _json_default(value: Any) -> Any:
 def result_to_dict(result: ComparisonResult) -> dict[str, Any]:
     return {
         "case_alias": result.alias,
+        "baseline_status": result.baseline_status,
         "production_baseline": result.baseline,
         "candidates": {
             name: {
@@ -197,6 +213,7 @@ def result_to_dict(result: ComparisonResult) -> dict[str, Any]:
                 "error": item.error,
                 "latency_ms": item.latency_ms,
                 "model_version": item.model_version,
+                "prompt_version": item.prompt_version,
             }
             for name, item in result.candidates.items()
         },
@@ -215,7 +232,7 @@ def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
 
 def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["case_alias", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
+    fields = ["case_alias", "baseline_status", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -226,6 +243,7 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> N
             writer.writerow(
                 {
                     "case_alias": result.alias,
+                    "baseline_status": "missing" if "production" in result.disagreement_fields else "available",
                     "production_baseline": json.dumps(result.baseline, ensure_ascii=False, sort_keys=True),
                     "jev": json.dumps(result.candidates.get("jev").normalized if result.candidates.get("jev") else None, ensure_ascii=False, sort_keys=True),
                     "hermes": json.dumps(result.candidates.get("hermes").normalized if result.candidates.get("hermes") else None, ensure_ascii=False, sort_keys=True),
@@ -241,14 +259,32 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> N
 
 
 def snapshot_manifest_record(snapshot: CaseSnapshot) -> dict[str, Any]:
+    subject_digest = hashlib.sha256(snapshot.subject.encode("utf-8")).hexdigest()
+    messages_digest = hashlib.sha256(
+        json.dumps(list(snapshot.messages), ensure_ascii=False, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     payload = {
         "case_alias": snapshot.alias,
         "case_revision": snapshot.case_revision,
-        "subject": snapshot.subject,
-        "messages": list(snapshot.messages),
+        "case_revision_source": snapshot.case_revision_source,
+        "baseline_status": snapshot.baseline_status,
+        "subject_sha256": subject_digest,
+        "subject_length": len(snapshot.subject),
+        "message_count": len(snapshot.messages),
+        "messages_sha256": messages_digest,
         "production_baseline": snapshot.baseline,
         "metadata": snapshot.metadata,
     }
     digest = hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
     payload["snapshot_sha256"] = digest
     return payload
+
+
+def review_context_record(snapshot: CaseSnapshot) -> dict[str, Any]:
+    return {
+        "case_alias": snapshot.alias,
+        "case_revision": snapshot.case_revision,
+        "subject": snapshot.subject,
+        "messages": list(snapshot.messages),
+        "redaction_profile": "conservative-v1",
+    }

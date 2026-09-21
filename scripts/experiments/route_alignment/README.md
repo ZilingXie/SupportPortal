@@ -3,7 +3,7 @@
 This runner compares the stored Production Account route classification with Jev
 and Hermes classification-only results. It is an offline experiment tool. It
 does not submit an intake event, create a Hermes case, or write to the ticket
-database.
+database. Both Jev and Hermes are mandatory; a one-candidate run is rejected.
 
 The default mode uses redacted JSONL fixtures and candidate fixtures:
 
@@ -40,6 +40,32 @@ python3 -m scripts.experiments.route_alignment \
 
 Outputs are `manifest.jsonl`, `raw_results.jsonl`,
 `normalized_comparison.jsonl`, `disagreement_report.csv`, and `summary.json`.
-Only disagreement or candidate-error cases enter the CSV. The Production
-baseline must carry `pipeline_version=account-layered-router-v11`; fixture rows
-without that exact version fail rather than silently inventing a baseline.
+The manifest contains text hashes and lengths by default, not customer text.
+`--include-review-text` requires `ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1` and
+writes a separate redacted `review_context.jsonl`.
+
+Production extraction is restricted to `processing_profile='production'`. It
+keeps cases without a v11 baseline, marks them `baseline_status=missing`, and
+includes them in the review union. The sample pool is selected by deterministic
+round-robin groups over primary label, secondary label, and route target. Case
+revision uses `comments_revision` when available and records its source.
+
+The HTTP adapter uses the dedicated `route-alignment-v1` case-snapshot contract:
+
+```json
+{
+  "contract": "route-alignment-v1",
+  "case_snapshot": {
+    "case_alias": "prod-001",
+    "case_revision": "...",
+    "subject": "...",
+    "messages": []
+  }
+}
+```
+
+The existing Hermes `classify_route` tool is not compatible: it only accepts a
+model-produced `classification` object for normalization. Real candidate calls
+also require `ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED=1`; the endpoint must
+return a non-empty `classification` or `normalized_classification` plus optional
+`model_version` and `prompt_version`.

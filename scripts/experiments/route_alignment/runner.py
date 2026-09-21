@@ -10,7 +10,33 @@ from pathlib import Path
 from typing import Any
 
 from .adapters import fetch_production_snapshots, fixture_candidate, http_candidate, load_fixture_snapshots
-from .core import compare_case, normalize_classification, result_to_dict, snapshot_manifest_record, write_disagreement_csv, write_jsonl
+from .core import compare_case, normalize_classification, result_to_dict, review_context_record, snapshot_manifest_record, write_disagreement_csv, write_jsonl
+
+
+def _latency_summary(values: list[float]) -> dict[str, float | None]:
+    if not values:
+        return {"count": 0, "p50": None, "p95": None}
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "p50": ordered[(len(ordered) - 1) // 2],
+        "p95": ordered[min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))],
+    }
+
+
+def _field_agreement(results: list[Any]) -> dict[str, dict[str, int]]:
+    from .core import COMPARISON_FIELDS
+
+    totals = {field: {"compared": 0, "agreed": 0} for field in COMPARISON_FIELDS}
+    for result in results:
+        for candidate in result.candidates.values():
+            if candidate.status != "ok" or candidate.normalized is None:
+                continue
+            for field in COMPARISON_FIELDS:
+                totals[field]["compared"] += 1
+                if result.baseline.get(field) == candidate.normalized.get(field):
+                    totals[field]["agreed"] += 1
+    return totals
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -25,6 +51,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hermes-endpoint", help="Opt-in classification-only candidate endpoint.")
     parser.add_argument("--fixture-candidates", type=Path, help="JSON object: {\"jev\": {alias: classification}, ...}")
     parser.add_argument("--live-candidates", action="store_true", help="Required to enable HTTP candidate calls.")
+    parser.add_argument("--include-review-text", action="store_true", help="Write a redacted review_context.jsonl only with explicit approval.")
     return parser
 
 
@@ -49,6 +76,12 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("--live-candidates requires at least one endpoint")
     if (args.jev_endpoint or args.hermes_endpoint) and not args.live_candidates:
         raise SystemExit("candidate endpoints require --live-candidates")
+    if args.live_candidates and not (args.jev_endpoint and args.hermes_endpoint):
+        raise SystemExit("both --jev-endpoint and --hermes-endpoint are required")
+    if args.live_candidates and os.getenv("ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED") != "1":
+        raise SystemExit("live candidates require ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED=1")
+    if args.include_review_text and os.getenv("ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED") != "1":
+        raise SystemExit("review text requires ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1")
 
     snapshots = load_fixture_snapshots(str(args.fixture)) if args.fixture else fetch_production_snapshots(dsn=args.production_dsn, schema=args.schema, limit=args.limit)
     if len(snapshots) > args.limit:
@@ -59,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("no snapshots available")
 
     fixture_data = _load_candidate_fixtures(args.fixture_candidates)
+    if not args.live_candidates and not (isinstance(fixture_data.get("jev"), dict) and isinstance(fixture_data.get("hermes"), dict)):
+        raise SystemExit("fixture candidates must include both jev and hermes mappings")
     candidates = []
     if args.jev_endpoint:
         candidates.append(http_candidate("jev", args.jev_endpoint, headers=_candidate_headers("JEV_EXPERIMENT_TOKEN")))
@@ -73,6 +108,8 @@ def main(argv: list[str] | None = None) -> int:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_jsonl(args.output_dir / "manifest.jsonl", (snapshot_manifest_record(item) for item in snapshots))
+    if args.include_review_text:
+        write_jsonl(args.output_dir / "review_context.jsonl", (review_context_record(item) for item in snapshots))
     results = []
     raw_records = []
     for snapshot in snapshots:
@@ -90,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                         "error": item.error,
                         "latency_ms": item.latency_ms,
                         "model_version": item.model_version,
+                        "prompt_version": item.prompt_version,
                     }
                     for item in candidate_results
                 ],
@@ -108,6 +146,22 @@ def main(argv: list[str] | None = None) -> int:
             for name in {name for item in results for name in item.candidates}
         },
         "live_candidates": bool(args.live_candidates),
+        "candidate_names": sorted({name for item in results for name in item.candidates}),
+        "latency_ms": {
+            name: _latency_summary(
+                [candidate.latency_ms for item in results for candidate in item.candidates.values() if candidate.candidate == name and candidate.latency_ms is not None]
+            )
+            for name in {candidate.candidate for item in results for candidate in item.candidates.values()}
+        },
+        "model_versions": {
+            name: sorted({candidate.model_version for item in results for candidate in item.candidates.values() if candidate.candidate == name and candidate.model_version})
+            for name in {candidate.candidate for item in results for candidate in item.candidates.values()}
+        },
+        "prompt_versions": {
+            name: sorted({candidate.prompt_version for item in results for candidate in item.candidates.values() if candidate.candidate == name and candidate.prompt_version})
+            for name in {candidate.candidate for item in results for candidate in item.candidates.values()}
+        },
+        "field_agreement": _field_agreement(results),
     }
     (args.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0

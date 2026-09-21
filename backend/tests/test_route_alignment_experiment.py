@@ -41,16 +41,18 @@ def _row(alias: str = "case-001", **classification):
     }
 
 
-def test_snapshot_requires_production_baseline_version() -> None:
+def test_snapshot_preserves_missing_production_baseline_for_review() -> None:
     module = _load_core()
     row = _row()
     row["route_classification"]["pipeline_version"] = "old-router"
-    try:
-        module.build_snapshot(row, alias="case-001")
-    except ValueError as exc:
-        assert str(exc) == "baseline_missing_or_wrong_version:case-001"
-    else:
-        raise AssertionError("missing baseline must not be silently filled")
+    snapshot = module.build_snapshot(row, alias="case-001")
+    assert snapshot.baseline_available is False
+    assert snapshot.baseline_status == "missing_or_wrong_version"
+    result = module.compare_case(
+        snapshot,
+        [module.CandidateResult(candidate="jev", status="error", error="fixture_missing")],
+    )
+    assert result.disagreement_fields["production"] == ["baseline_missing"]
 
 
 def test_redaction_removes_sensitive_values_from_snapshot() -> None:
@@ -76,6 +78,60 @@ def test_compare_only_returns_disagreement_union_and_keeps_errors() -> None:
     result = module.compare_case(snapshot, [same, error])
     assert result.review_required is True
     assert result.disagreement_fields == {"hermes": ["candidate_error"]}
+
+
+def test_empty_candidate_is_an_error() -> None:
+    module = _load_core()
+    from scripts.experiments.route_alignment.adapters import fixture_candidate
+
+    result = fixture_candidate("jev", {"case-001": {}})(module.build_snapshot(_row(), alias="case-001"))
+    assert result.status == "error"
+    assert result.error == "missing_classification"
+
+
+def test_stratified_rows_round_robin_route_groups() -> None:
+    from scripts.experiments.route_alignment.adapters import _stratified_rows
+
+    rows = [
+        {"route_classification": {"primary_label": "Agora", "secondary_label": "A", "route_target": "rag"}, "id": index}
+        for index in range(4)
+    ] + [
+        {"route_classification": {"primary_label": "Conversation", "secondary_label": "B", "route_target": "none"}, "id": 10}
+    ]
+    selected = _stratified_rows(rows, 2)
+    assert {row["id"] for row in selected} == {0, 10}
+
+
+def test_http_empty_json_is_missing_classification(monkeypatch) -> None:
+    import urllib.request
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        captured["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    module = _load_core()
+    result = http_candidate("hermes", "https://example.invalid/classify")(
+        module.build_snapshot(_row(), alias="case-001")
+    )
+    assert result.status == "error"
+    assert "missing_classification" in (result.error or "")
+    assert captured["payload"]["contract"] == "route-alignment-v1"
+    assert "case_snapshot" in captured["payload"]
 
 
 def test_reason_text_does_not_create_disagreement() -> None:
@@ -132,3 +188,31 @@ def test_cli_emits_only_candidate_disagreements(tmp_path: Path) -> None:
     assert summary["review_required_count"] == 1
     raw = json.loads((output / "raw_results.jsonl").read_text(encoding="utf-8"))
     assert "subject" not in raw["candidates"][0]["raw_classification"]
+    manifest = json.loads((output / "manifest.jsonl").read_text(encoding="utf-8"))
+    assert "subject" not in manifest
+    assert manifest["subject_length"] > 0
+
+
+def test_cli_requires_both_candidates(tmp_path: Path) -> None:
+    fixture = tmp_path / "cases.jsonl"
+    fixture.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
+    candidates = tmp_path / "candidates.json"
+    candidates.write_text(json.dumps({"jev": {"case-001": _row()["route_classification"]}}), encoding="utf-8")
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.experiments.route_alignment",
+            "--fixture",
+            str(fixture),
+            "--fixture-candidates",
+            str(candidates),
+            "--output-dir",
+            str(tmp_path / "out"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode != 0
+    assert "both jev and hermes" in completed.stderr
