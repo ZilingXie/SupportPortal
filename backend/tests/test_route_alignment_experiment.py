@@ -234,8 +234,10 @@ def test_cli_emits_only_candidate_disagreements(tmp_path: Path) -> None:
         text=True,
     )
     assert completed.returncode == 0, completed.stderr
-    assert "case-001" in (output / "disagreement_report.csv").read_text(encoding="utf-8")
     summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    report = output / summary["artifacts"]["disagreement_report"]
+    assert summary["run_id"] in report.name
+    assert "case-001" in report.read_text(encoding="utf-8")
     assert summary["case_count"] == 1
     assert summary["review_required_count"] == 1
     raw = json.loads((output / "raw_results.jsonl").read_text(encoding="utf-8"))
@@ -243,6 +245,40 @@ def test_cli_emits_only_candidate_disagreements(tmp_path: Path) -> None:
     manifest = json.loads((output / "manifest.jsonl").read_text(encoding="utf-8"))
     assert "subject" not in manifest
     assert manifest["subject_length"] > 0
+
+
+def test_cli_zero_disagreements_keeps_run_id_in_csv_filename(tmp_path: Path) -> None:
+    fixture = tmp_path / "cases.jsonl"
+    fixture.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
+    candidates = tmp_path / "candidates.json"
+    classification = _row()["route_classification"]
+    candidates.write_text(
+        json.dumps({"jev": {"case-001": classification}, "hermes": {"case-001": classification}}),
+        encoding="utf-8",
+    )
+    output = tmp_path / "out"
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.experiments.route_alignment",
+            "--fixture",
+            str(fixture),
+            "--fixture-candidates",
+            str(candidates),
+            "--output-dir",
+            str(output),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    report = output / summary["artifacts"]["disagreement_report"]
+    assert summary["review_required_count"] == 0
+    assert summary["run_id"] in report.name
+    assert len(report.read_text(encoding="utf-8").splitlines()) == 1
 
 
 def test_cli_requires_both_candidates(tmp_path: Path) -> None:

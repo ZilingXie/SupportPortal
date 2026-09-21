@@ -143,10 +143,12 @@ def main(argv: list[str] | None = None) -> int:
         )
     write_jsonl(args.output_dir / "raw_results.jsonl", raw_records)
     write_jsonl(args.output_dir / "normalized_comparison.jsonl", (result_to_dict(item, run_id=run_id) for item in results))
-    write_disagreement_csv(args.output_dir / "disagreement_report.csv", results, run_id=run_id)
+    disagreement_filename = f"disagreement_report.{run_id}.csv"
+    write_disagreement_csv(args.output_dir / disagreement_filename, results, run_id=run_id)
     summary = {
         "run_id": run_id,
         "experiment": "route-alignment-v1",
+        "artifacts": {"disagreement_report": disagreement_filename},
         "case_count": len(results),
         "review_required_count": sum(item.review_required for item in results),
         "candidate_error_count": sum(1 for item in results for candidate in item.candidates.values() if candidate.status != "ok"),
