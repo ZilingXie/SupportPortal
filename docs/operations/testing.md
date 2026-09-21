@@ -34,6 +34,7 @@
 | 镜像裁剪与依赖锁 | [test_automation_ecs_images.py](../../backend/tests/test_automation_ecs_images.py)、[test_python_dependency_locks.py](../../backend/tests/test_python_dependency_locks.py) |
 | 构建、部署、晋级门禁 | [test_automation_codebuild_release.py](../../backend/tests/test_automation_codebuild_release.py)、[test_automation_ecs_release_pipeline.py](../../backend/tests/test_automation_ecs_release_pipeline.py)、[test_automation_ecs_deploy.py](../../backend/tests/test_automation_ecs_deploy.py) |
 | 工单回归控制台或剧本引擎 | [test_automation_test_console.py](../../backend/tests/test_automation_test_console.py)、[test_automation_test_scenarios.py](../../backend/tests/test_automation_test_scenarios.py) |
+| Route 历史 case 对比实验 | [test_route_alignment_experiment.py](../../backend/tests/test_route_alignment_experiment.py)；fixture 模式验证抽样结果、候选合同、审计 artifact 和 fail-closed 门禁，真实候选与 Production 数据读取需另行授权 |
 
 例如只改 ECS 裁剪契约时：
 
