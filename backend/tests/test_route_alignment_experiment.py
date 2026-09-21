@@ -47,12 +47,23 @@ def test_snapshot_preserves_missing_production_baseline_for_review() -> None:
     row["route_classification"]["pipeline_version"] = "old-router"
     snapshot = module.build_snapshot(row, alias="case-001")
     assert snapshot.baseline_available is False
-    assert snapshot.baseline_status == "missing_or_wrong_version"
+    assert snapshot.baseline_status == "missing"
     result = module.compare_case(
         snapshot,
         [module.CandidateResult(candidate="jev", status="error", error="fixture_missing")],
     )
     assert result.disagreement_fields["production"] == ["baseline_missing"]
+    assert result.disagreement_fields["jev"] == ["candidate_error"]
+
+
+def test_sha256_case_revision_survives_redaction_and_manifest() -> None:
+    module = _load_core()
+    revision = "a" * 64
+    row = _row()
+    row["case_revision"] = revision
+    snapshot = module.build_snapshot(row, alias="case-001")
+    assert snapshot.case_revision == revision
+    assert module.snapshot_manifest_record(snapshot)["case_revision"] == revision
 
 
 def test_redaction_removes_sensitive_values_from_snapshot() -> None:
@@ -114,7 +125,7 @@ def test_http_empty_json_is_missing_classification(monkeypatch) -> None:
             return False
 
         def read(self):
-            return b"{}"
+            return json.dumps({"contract": "route-alignment-v1"}).encode("utf-8")
 
     captured = {}
 
@@ -125,13 +136,54 @@ def test_http_empty_json_is_missing_classification(monkeypatch) -> None:
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     module = _load_core()
-    result = http_candidate("hermes", "https://example.invalid/classify")(
+    result = http_candidate("hermes", "https://example.invalid/route-alignment/v1/classify")(
         module.build_snapshot(_row(), alias="case-001")
     )
     assert result.status == "error"
     assert "missing_classification" in (result.error or "")
     assert captured["payload"]["contract"] == "route-alignment-v1"
     assert "case_snapshot" in captured["payload"]
+
+
+def test_http_endpoint_rejects_ordinary_business_path() -> None:
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    for endpoint in ("https://example.invalid/account", "https://example.invalid/intake"):
+        try:
+            http_candidate("jev", endpoint)
+        except ValueError as exc:
+            assert any(text in str(exc) for text in ("ordinary business", "route-alignment"))
+        else:
+            raise AssertionError("ordinary endpoint was accepted")
+
+
+def test_http_endpoint_requires_route_alignment_path() -> None:
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    try:
+        http_candidate("jev", "https://example.invalid/classify")
+    except ValueError as exc:
+        assert "route-alignment" in str(exc)
+    else:
+        raise AssertionError("non route-alignment endpoint was accepted")
+
+
+def test_http_response_requires_contract(monkeypatch) -> None:
+    import urllib.request
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def read(self): return json.dumps({"classification": {"intent_class": "agora"}}).encode()
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: Response())
+    module = _load_core()
+    result = http_candidate("jev", "https://example.invalid/route-alignment/v1/classify")(
+        module.build_snapshot(_row(), alias="case-001")
+    )
+    assert result.status == "error"
+    assert "invalid_contract" in (result.error or "")
 
 
 def test_reason_text_does_not_create_disagreement() -> None:
@@ -216,3 +268,26 @@ def test_cli_requires_both_candidates(tmp_path: Path) -> None:
     )
     assert completed.returncode != 0
     assert "both jev and hermes" in completed.stderr
+
+
+def test_latency_p95_uses_nearest_rank() -> None:
+    from scripts.experiments.route_alignment.runner import _latency_summary
+
+    assert _latency_summary([10, 20])["p95"] == 20
+
+
+def test_cli_refuses_nonempty_output_directory(tmp_path: Path) -> None:
+    fixture = tmp_path / "cases.jsonl"
+    fixture.write_text(json.dumps(_row()) + "\n", encoding="utf-8")
+    candidates = tmp_path / "candidates.json"
+    value = _row()["route_classification"]
+    candidates.write_text(json.dumps({"jev": {"case-001": value}, "hermes": {"case-001": value}}), encoding="utf-8")
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "old.json").write_text("old", encoding="utf-8")
+    completed = subprocess.run(
+        [sys.executable, "-m", "scripts.experiments.route_alignment", "--fixture", str(fixture), "--fixture-candidates", str(candidates), "--output-dir", str(output)],
+        check=False, capture_output=True, text=True,
+    )
+    assert completed.returncode != 0
+    assert "refusing to overwrite" in completed.stderr

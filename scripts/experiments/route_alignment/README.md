@@ -41,6 +41,8 @@ python3 -m scripts.experiments.route_alignment \
 Outputs are `manifest.jsonl`, `raw_results.jsonl`,
 `normalized_comparison.jsonl`, `disagreement_report.csv`, and `summary.json`.
 The manifest contains text hashes and lengths by default, not customer text.
+The output directory must be new or empty; the runner refuses to overwrite an
+existing artifact set. Every output record carries the same generated `run_id`.
 `--include-review-text` requires `ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1` and
 writes a separate redacted `review_context.jsonl`.
 

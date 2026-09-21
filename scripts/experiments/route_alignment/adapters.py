@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from typing import Any, Callable
+from urllib.parse import urlparse
 
 from .core import CandidateResult, CaseSnapshot, build_snapshot, normalize_classification
 
@@ -126,6 +128,20 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
     This is intentionally incompatible with Hermes' existing ``classify_route``
     tool, which only normalizes a supplied classification object.
     """
+    parsed_endpoint = urlparse(endpoint)
+    host = (parsed_endpoint.hostname or "").lower()
+    path = parsed_endpoint.path.lower()
+    local_http = parsed_endpoint.scheme == "http" and host in {"127.0.0.1", "localhost", "::1"}
+    allowed_hosts = {item.strip().lower() for item in os.getenv("ROUTE_EXPERIMENT_ALLOWED_HOSTS", "").split(",") if item.strip()}
+    if parsed_endpoint.scheme != "https" and not local_http:
+        raise ValueError("candidate endpoint must use https (or localhost http for tests)")
+    if not parsed_endpoint.path or "route-alignment" not in path:
+        raise ValueError("candidate endpoint path must include route-alignment")
+    if any(segment in path for segment in ("/account", "/intake", "/cases", "/automation/production", "/automation/preproduction")):
+        raise ValueError("ordinary business endpoints are not allowed")
+    if allowed_hosts and host not in allowed_hosts:
+        raise ValueError("candidate endpoint host is not allowlisted")
+
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
         payload = {
             "contract": "route-alignment-v1",
@@ -148,6 +164,8 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
                 parsed = json.loads(response.read().decode("utf-8"))
             if not isinstance(parsed, Mapping):
                 raise ValueError("response_not_object")
+            if parsed.get("contract") != "route-alignment-v1":
+                raise ValueError("invalid_contract")
             raw_value = parsed.get("normalized_classification") or parsed.get("classification")
             if not isinstance(raw_value, Mapping):
                 raise ValueError("missing_classification")

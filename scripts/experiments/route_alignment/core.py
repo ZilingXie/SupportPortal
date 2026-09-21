@@ -42,6 +42,7 @@ _URL = re.compile(r"https?://[^\s]+", re.IGNORECASE)
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)\b(?:token|secret|password|authorization|api[_ -]?key|app[_ -]?id)\s*[:=]\s*[^\s,;]+"
 )
+_SHA256_REVISION = re.compile(r"[0-9a-f]{64}")
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,8 @@ def _redact(value: Any, key: str = "") -> Any:
         return [_redact(item, key) for item in value]
     if not isinstance(value, str):
         return value
+    if key.lower() in {"case_revision", "comments_revision"} and _SHA256_REVISION.fullmatch(value):
+        return value
     if _SENSITIVE_KEY.search(key):
         return "[redacted]"
     result = _SECRET_ASSIGNMENT.sub("[redacted_secret]", value)
@@ -140,7 +143,7 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
         baseline = {}
     version = _text(baseline.get("pipeline_version"))
     baseline_available = version == BASELINE_PIPELINE_VERSION
-    baseline_status = "available" if baseline_available else "missing_or_wrong_version"
+    baseline_status = "available" if baseline_available else "missing"
     comments = row.get("messages") or row.get("comments") or []
     if not isinstance(comments, list):
         comments = []
@@ -169,7 +172,7 @@ def build_snapshot(row: Mapping[str, Any], *, alias: str) -> CaseSnapshot:
 
 def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) -> ComparisonResult:
     candidate_map = {item.candidate: item for item in candidates}
-    baseline_key = comparison_key(snapshot.baseline)
+    baseline_key = comparison_key(snapshot.baseline) if snapshot.baseline_available else {}
     differences: dict[str, list[str]] = {}
     review_required = not snapshot.baseline_available
     if not snapshot.baseline_available:
@@ -178,6 +181,8 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
         if result.status != "ok" or result.normalized is None:
             differences[name] = ["candidate_error"]
             review_required = True
+            continue
+        if not snapshot.baseline_available:
             continue
         candidate_key = comparison_key(result.normalized)
         fields = [field for field in COMPARISON_FIELDS if baseline_key.get(field) != candidate_key.get(field)]
@@ -201,8 +206,8 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"not JSON serializable: {type(value).__name__}")
 
 
-def result_to_dict(result: ComparisonResult) -> dict[str, Any]:
-    return {
+def result_to_dict(result: ComparisonResult, *, run_id: str | None = None) -> dict[str, Any]:
+    record = {
         "case_alias": result.alias,
         "baseline_status": result.baseline_status,
         "production_baseline": result.baseline,
@@ -221,6 +226,9 @@ def result_to_dict(result: ComparisonResult) -> dict[str, Any]:
         "disagreement_fields": result.disagreement_fields,
         "review_required": result.review_required,
     }
+    if run_id:
+        record["run_id"] = run_id
+    return record
 
 
 def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
@@ -230,9 +238,9 @@ def write_jsonl(path: Path, records: Iterable[Mapping[str, Any]]) -> None:
             handle.write(json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_default) + "\n")
 
 
-def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> None:
+def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult], *, run_id: str | None = None) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    fields = ["case_alias", "baseline_status", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
+    fields = ["run_id", "case_alias", "baseline_status", "production_baseline", "jev", "hermes", "difference_level", "errors", "human_judgment"]
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
@@ -242,8 +250,9 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> N
             levels = sorted({field for values in result.disagreement_fields.values() for field in values})
             writer.writerow(
                 {
+                    "run_id": run_id or "",
                     "case_alias": result.alias,
-                    "baseline_status": "missing" if "production" in result.disagreement_fields else "available",
+                    "baseline_status": result.baseline_status,
                     "production_baseline": json.dumps(result.baseline, ensure_ascii=False, sort_keys=True),
                     "jev": json.dumps(result.candidates.get("jev").normalized if result.candidates.get("jev") else None, ensure_ascii=False, sort_keys=True),
                     "hermes": json.dumps(result.candidates.get("hermes").normalized if result.candidates.get("hermes") else None, ensure_ascii=False, sort_keys=True),
@@ -258,12 +267,13 @@ def write_disagreement_csv(path: Path, results: Iterable[ComparisonResult]) -> N
             )
 
 
-def snapshot_manifest_record(snapshot: CaseSnapshot) -> dict[str, Any]:
+def snapshot_manifest_record(snapshot: CaseSnapshot, *, run_id: str | None = None) -> dict[str, Any]:
     subject_digest = hashlib.sha256(snapshot.subject.encode("utf-8")).hexdigest()
     messages_digest = hashlib.sha256(
         json.dumps(list(snapshot.messages), ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
     payload = {
+        "run_id": run_id,
         "case_alias": snapshot.alias,
         "case_revision": snapshot.case_revision,
         "case_revision_source": snapshot.case_revision_source,
@@ -280,8 +290,9 @@ def snapshot_manifest_record(snapshot: CaseSnapshot) -> dict[str, Any]:
     return payload
 
 
-def review_context_record(snapshot: CaseSnapshot) -> dict[str, Any]:
+def review_context_record(snapshot: CaseSnapshot, *, run_id: str | None = None) -> dict[str, Any]:
     return {
+        "run_id": run_id,
         "case_alias": snapshot.alias,
         "case_revision": snapshot.case_revision,
         "subject": snapshot.subject,

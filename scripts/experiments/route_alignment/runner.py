@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -20,7 +22,7 @@ def _latency_summary(values: list[float]) -> dict[str, float | None]:
     return {
         "count": len(ordered),
         "p50": ordered[(len(ordered) - 1) // 2],
-        "p95": ordered[min(len(ordered) - 1, max(0, int(len(ordered) * 0.95) - 1))],
+        "p95": ordered[max(0, math.ceil(len(ordered) * 0.95) - 1)],
     }
 
 
@@ -29,6 +31,8 @@ def _field_agreement(results: list[Any]) -> dict[str, dict[str, int]]:
 
     totals = {field: {"compared": 0, "agreed": 0} for field in COMPARISON_FIELDS}
     for result in results:
+        if result.baseline_status != "available":
+            continue
         for candidate in result.candidates.values():
             if candidate.status != "ok" or candidate.normalized is None:
                 continue
@@ -106,10 +110,13 @@ def main(argv: list[str] | None = None) -> int:
     if not candidates:
         raise SystemExit("configure --fixture-candidates or an explicit live endpoint")
 
+    if args.output_dir.exists() and any(args.output_dir.iterdir()):
+        raise SystemExit("output directory must be new or empty; refusing to overwrite existing artifacts")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    write_jsonl(args.output_dir / "manifest.jsonl", (snapshot_manifest_record(item) for item in snapshots))
+    run_id = uuid.uuid4().hex
+    write_jsonl(args.output_dir / "manifest.jsonl", (snapshot_manifest_record(item, run_id=run_id) for item in snapshots))
     if args.include_review_text:
-        write_jsonl(args.output_dir / "review_context.jsonl", (review_context_record(item) for item in snapshots))
+        write_jsonl(args.output_dir / "review_context.jsonl", (review_context_record(item, run_id=run_id) for item in snapshots))
     results = []
     raw_records = []
     for snapshot in snapshots:
@@ -118,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         results.append(result)
         raw_records.append(
             {
+                "run_id": run_id,
                 "case_alias": snapshot.alias,
                 "candidates": [
                     {
@@ -134,9 +142,10 @@ def main(argv: list[str] | None = None) -> int:
             }
         )
     write_jsonl(args.output_dir / "raw_results.jsonl", raw_records)
-    write_jsonl(args.output_dir / "normalized_comparison.jsonl", (result_to_dict(item) for item in results))
-    write_disagreement_csv(args.output_dir / "disagreement_report.csv", results)
+    write_jsonl(args.output_dir / "normalized_comparison.jsonl", (result_to_dict(item, run_id=run_id) for item in results))
+    write_disagreement_csv(args.output_dir / "disagreement_report.csv", results, run_id=run_id)
     summary = {
+        "run_id": run_id,
         "experiment": "route-alignment-v1",
         "case_count": len(results),
         "review_required_count": sum(item.review_required for item in results),
