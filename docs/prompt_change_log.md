@@ -1,5 +1,9 @@
 # Prompt Change Log
 
+## 2026-09-20 — Enablement 收件绑定核验（skill 行为提示）
+
+`.codex/skills/supportportal-media-relay-enablement/SKILL.md` 在 Pilot 预检前新增固定顺序的收件绑定核验：从指定 Task 的当前 Message 解析申请四元组（request_id/version/工单/relay_task_id）并经只读端点核对；要求 dispatched+ticket_valid；同 AppID 关联申请按六行处理表（旧申请已取消/工单已关闭→排除继续；绑定不一致→暂停报告；双有效→报告两者暂停等选择；查询失败→待核实不放行）。只读消除歧义，不自动关闭/回复另一条 Task；两次审批、digest、独立回读契约不变。配套 AgentRelay 本地交接模板（另一仓库）同步修正 metadata 绑定语义。
+
 ## 2026-09-20 — Hermes 调查回复发送修复（发布行为）
 
 `#1253` 的状态白名单使调查类工单（ownership 门禁不适用、结果携带空 `ticket_status`）的 Hermes 回复在发送器处被永久判为"实时状态未知"，发布许可后仍停在 `queued`、零发送。修复（分支待验收）：发送器在 ownership `eligible=False` 时改用本轮真实 Zendesk 快照作为状态源（revision 读取已获取则复用、否则补读一次；读取错误保持 `queued` 重试），沿用三分类：终态=取消+事件，未确认=保持 `queued`，可操作=发送；`eligible=True` 路径与人工接管优先序不变。

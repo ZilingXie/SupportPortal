@@ -119,6 +119,35 @@ pilot archer open    --appid '<appid>' --type 6 --region 2 --max-subscribe-load 
 - 有未完成的汇总任务时优先继续，避免重复领取；恢复连接后补收。
 - Relay Task 有效期 14 个自然日（覆盖周末与审批等待），到期由 ECS 侧按失败收尾，本地不再执行。
 
+## 收件绑定核验（Pilot 预检之前，固定顺序）
+
+收到 AgentRelay 交接的 enablement 任务后，按以下顺序核验，全部通过才进入
+归属核验 / status / dry-run 预检：
+
+1. **解析当前申请**：从指定 Task 的**当前 Message**（`current_message_id` 对应
+   的 Message）解析 `enablement-relay-request-v1` JSON，核对发送方
+   （supportportal 环境）、接收方（本机身份）、`request_id`、`request_version`
+   及工单关联。历史 Message 的内容不作为当前申请。
+2. **只读状态端点核验**：调用下方 execute-time 端点，确认返回的
+   `request_id / request_version / zendesk_ticket_id / relay_task_id` 与
+   当前申请和指定 Task 完全一致。
+3. **有效性判定**：当前申请必须为 `dispatched` 且 `ticket_valid=true`
+   （工单状态白名单 new/open/pending/hold）。
+4. **同 AppID 关联申请**：发现相同 AppID 的其他申请（含其他 Task）时，
+   分别只读查询其业务状态，按表处理：
+
+| 条件 | 处理 |
+| --- | --- |
+| 不同 request ID、同 AppID，旧申请已 cancelled 或其工单已 solved/closed | 排除旧申请，当前有效申请继续 |
+| 同一申请标识出现在多条 Task | 对照服务端 `relay_task_id`；只处理匹配的指定 Task，不自动替换 |
+| 指定 Task 与服务端绑定不一致（relay_task_id / request_id 不匹配） | 暂停该 Task，报告不匹配证据 |
+| 两个**不同**申请均有效且操作同一 AppID | 报告两者（request_id、工单、目标参数），暂停实际执行，等待用户明确选择 |
+| 关联申请状态查询失败 | 保留"待核实"，不得按无冲突放行 |
+| 当前申请已取消、工单已 solved/closed、或任何一步无法核实 | 不进入开通流程，报告原因 |
+
+通过只读查询消除歧义；**不自动关闭、删除或回复另一条 Task**。两次人工审批、
+执行前有效性检查、digest 绑定与独立回读契约不变。
+
 ## Execute-time request validity check (required)
 
 Before the pilot write, the executor verifies the relay request is still
