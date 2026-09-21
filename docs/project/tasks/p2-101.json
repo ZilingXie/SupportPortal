@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "fraud_account（account_verification）的字段提取从 4 组（company/contact/use_case/payment）改为 7 项独立字段（account_type/name/office_address/contact_number/contact_email/use_case_description/console_configuration）。内部邮件和 Slack 消息增加已收集与缺失字段的展示。",
-  "next_action": "完成 Case 13616 verified ambiguity 热修复的 main finalization 与 Preproduction 验证；随后从 Production 基线准备受限热修复 commit，并在获得 exact baseline/hotfix SHA 授权后部署 Production 和补录发布证据。",
+  "next_action": "Production 热修复已部署并完成平台门禁；待用户批准后对 Case 13616 做一次受控业务验收，确认人工联系客户路径的真实外部结果，再关闭任务。",
   "acceptance_criteria": [
     "客户收到的追问涵盖 7 项信息（account type、name、office address、contact number、contact email、use-case description、console configuration）。",
     "内部邮件 Provided information 按新字段标签列出已收集值，Missing after one follow-up 列出缺失项。",
@@ -82,6 +82,24 @@
       "label": "Case 13616 verified ambiguity hotfix regression",
       "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m pytest -q backend/tests/test_account_verification_automation.py backend/tests/test_automation_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_account_intake.py backend/tests/test_account_human_review_escalation.py backend/tests/test_worker.py",
       "details": "396 项测试通过、52 个子测试通过、4 个既有 FastAPI deprecation warnings；覆盖一次追问后 verified/grounded ambiguity 进入现有内部交接并把 account_type 作为缺失字段，同时保留 ambiguous 审计状态。首次追问、corrected grounding、grounding failure、trusted-field conflict 和 sensitive data 均继续 fail closed 到 Human Review；现有 comment-sync 回归覆盖只发送一封内部邮件和只创建一个 fraud_handoff_confirmation。"
+    },
+    {
+      "type": "deployment",
+      "label": "Production urgent hotfix r20260921-e07961d",
+      "command": "./deployment/release_automation_ecs_pipeline.sh --release-commit e07961df834e3fc8f8f4c1889b21e2cc1bf2b16c --prompt-release-id pr-402c812b49c7 --through production --codebuild-direct-production --resume",
+      "details": "Production 从 baseline cd80096b47c5976e9d321712c348e878ebf410c8 通过现有 checkpoint 部署 release r20260921-e07961d；未重建镜像、未重复 promotion、未修改 Prompt 内容、未重跑真实 Case。API/Route/Worker 分别运行 :46/:40/:44，digest 与 manifest 一致，Terraform pre/post zero-drift、Prompt activation、heartbeat、collector、CloudWatch、public health、release provenance 全部通过；Hermes case workflow 保持 disabled。"
+    },
+    {
+      "type": "deployment",
+      "label": "Production Prompt release independent readback",
+      "command": "PGOPTIONS='-c default_transaction_read_only=on' psql $PRODUCTION_TICKET_DB_DSN -X -v ON_ERROR_STOP=1 -At -c '<active release, release items, and content fingerprint queries>'",
+      "details": "Production 数据库确认 pr-402c812b49c7 为唯一 active release，build_ref=d4d55a1f0692，包含 36/36 active prompt items；content fingerprint sha256:672406d756d04992b611a53ae3bc32cc6915b9db9556d3eb06127c034c2ec5fc 与旧 pr-175312c491e7 完全一致。查询强制使用 PostgreSQL read-only transaction。"
+    },
+    {
+      "type": "deployment",
+      "label": "Terraform release identity access verification",
+      "command": "aws s3api head-object --bucket supportportal-terraform-state-891612554546-us-east-1 --key supportportal/ecs-production/terraform.tfstate; aws dynamodb describe-table --table-name supportportal-terraform-locks",
+      "details": "arn:aws:iam::891612554546:user/Zac 可读取 Production state object，且 lock table 为 ACTIVE；受控 inline policy 仅授予目标 state 的 s3:GetObject 与目标 lock table 的 dynamodb:GetItem/PutItem/DeleteItem。"
     }
   ],
   "source_refs": [
@@ -112,6 +130,11 @@
       "at": "2026-09-21",
       "event": "verified_ambiguity_after_follow_up_hotfix",
       "summary": "Case 13616 在首次追问后已收集六项，account_type 仍为 verified、grounded ambiguity，却被通用 ambiguous 规则提前转 Human Review；最小修复仅在安全条件全部满足时将 ambiguity 合并为有效缺失字段，复用既有内部交接路径，其他 ambiguity 保持 fail closed。"
+    },
+    {
+      "at": "2026-09-21",
+      "event": "production_hotfix_deployed",
+      "summary": "受限 Production hotfix e07961df 从 baseline cd80096 部署为 r20260921-e07961d；三角色 rollout、Terraform zero-drift、Prompt active readback 与健康门禁通过，未执行真实 Case 重跑。"
     },
     {
       "at": "2026-08-26",
