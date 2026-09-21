@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-21T08:15:47Z",
-  "source_base_commit": "ff6ade31e27276cdd9e9091379a7409e991612ba",
-  "registry_digest": "a3bd9fcdc75361455f38b21634bc340459e178f9440d4b1a94ff1bc3eceaebf3",
+  "generated_at": "2026-09-21T10:13:49Z",
+  "source_base_commit": "26b719cbc31433b3009ac5afa2dff090f9d72a8f",
+  "registry_digest": "d9faefa95e011518e2f8ca276841430fc76c5e4755eb3dbfa8d222ece7a5467b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3279,6 +3279,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction Persona restored on Production-identical images",
           "details": "2026-09-08 Preproduction 三角色 :10 对齐 r20260907-3adc2c9 / pr-ef75242faa67；API/Worker 的 ENGINEER_INVESTIGATION_REPLY_BASE_URL 与 ENGINEER_INVESTIGATION_REPLY_API_KEY 均引用 Preproduction SSM，Route 无注入且没有 callback token。Hermes 服务保持 :10、1/1/0 和原镜像，Hermes/memory-core 双容器 HEALTHY。复用新 API task definition 的短生命周期探针 authenticated GET /v1/models 返回200、exit0；未调用 Responses 或 /v1/turns。首次探针因错误假定 base URL 带 /v1 在发请求前退出，核对配置为 origin 后修正探针路径，未修改服务配置。两环境三角色实际 digest、live/release/ready、目标 release 新鲜 heartbeat 及 Production 原 revision 独立读回通过。技术验收不代表实际 Persona 回复或真实调查链业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes route alignment classification-only contract",
+          "details": "本轮在 Hermes route manual v2 中冻结与 Production account-layered-router-v11 对齐的 intent/Agora/billing/backend 分类契约；新增无状态 normalizer 与 classify_route tool adapter，record_direction 可保存归一化 route_classification，非法/低置信度/冲突结果 fail closed。2026-09-21 修复低 intent/Agora confidence reason code、billing 非法输出 reason、显式非法 intent confidence 校验，以及 backend_operation/additional_intents 持久化；受影响的 classifier、Hermes tools、ECS API 共 100 passed + 2 subtests，Production route、Hermes agent、Agent config/prompt 回归共 128 passed + 3 subtests；独立临时 PostgreSQL 实例上的 Hermes Zendesk agent 套件 16 passed。compileall、diff check、Project Overview check 均通过。PostgreSQL 仅使用 127.0.0.1 临时测试库，实例已停止并清理，未连接 Production 数据库。"
         },
         {
           "type": "decision",
@@ -12084,7 +12089,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-11",
+      "updated_at": "2026-09-21",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
       "next_action": "2026-09-11 用户以 13424 验收 Slack 召唤后反馈格式不符（应为旧工程师协作流格式：根消息=case title/cx question/route result，调查结果作为同线程 comment）。本轮改版：notify_hermes_review_pending 改为根消息+线程回复两条同步直发（根复刻 build_engineer_case_opened_event 四行模板，线程复用 hermes_investigation_output 纯文本类型承载 summary/blockers/next_steps+待审草稿+审阅入口，根 ts 即线程锚点）。待部署后 13424 注入评论重放，用户在频道确认新格式。",
       "acceptance_criteria": [
@@ -12097,6 +12102,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes route alignment classification-only contract",
+          "details": "本轮在 Hermes route manual v2 中冻结与 Production account-layered-router-v11 对齐的 intent/Agora/billing/backend 分类契约；新增无状态 normalizer 与 classify_route tool adapter，record_direction 可保存归一化 route_classification，非法/低置信度/冲突结果 fail closed。2026-09-21 修复低 intent/Agora confidence reason code、billing 非法输出 reason、显式非法 intent confidence 校验，以及 backend_operation/additional_intents 持久化；受影响的 classifier、Hermes tools、ECS API 共 100 passed + 2 subtests，Production route、Hermes agent、Agent config/prompt 回归共 128 passed + 3 subtests；独立临时 PostgreSQL 实例上的 Hermes Zendesk agent 套件 16 passed。compileall、diff check、Project Overview check 均通过。PostgreSQL 仅使用 127.0.0.1 临时测试库，实例已停止并清理，未连接 Production 数据库。"
+        },
         {
           "type": "decision",
           "label": "Approved revised implementation plan",

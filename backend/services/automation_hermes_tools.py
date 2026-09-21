@@ -29,6 +29,26 @@ class HermesToolError(RuntimeError):
         self.code = code
 
 
+def tool_classify_route(
+    classification: Any,
+    *,
+    latest_assistant_message_present: bool | None = None,
+) -> dict[str, Any]:
+    """Normalize a Hermes proposal without reading or writing case state."""
+    from backend.services.hermes_route_classifier import (
+        HermesRouteClassificationError,
+        normalize_hermes_route_classification,
+    )
+
+    try:
+        return normalize_hermes_route_classification(
+            classification,
+            latest_assistant_message_present=latest_assistant_message_present,
+        )
+    except HermesRouteClassificationError as exc:
+        raise HermesToolError(exc.code, str(exc)) from exc
+
+
 def _resolve_turn_context(
     store: AutomationEcsStore, repository: Any, turn_id: str
 ) -> dict[str, Any]:
@@ -119,12 +139,13 @@ def tool_record_direction(
     direction: str,
     reason: str,
     route: str | None = None,
+    classification: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_direction = str(direction or "").strip().lower()
     if normalized_direction not in {"automation", "investigation", "human"}:
         raise HermesToolError("invalid_direction", "direction must be automation, investigation, or human")
     normalized_reason = str(reason or "").strip()
-    if not normalized_reason:
+    if not normalized_reason and classification is None:
         raise HermesToolError("reason_required", "a direction reason is required")
     context = _resolve_turn_context(store, repository, turn_id)
     turn = context["turn"]
@@ -133,6 +154,35 @@ def tool_record_direction(
             "phase_mismatch", "direction may only be recorded during the route phase"
         )
     normalized_route = str(route or "").strip() or None
+    normalized_classification: dict[str, Any] | None = None
+    if classification is not None:
+        from backend.services.hermes_route_classifier import (
+            HermesRouteClassificationError,
+            normalize_hermes_route_classification,
+        )
+
+        latest_assistant_message_present = None
+        snapshot = turn.get("input_snapshot")
+        if isinstance(snapshot, dict):
+            latest_assistant_message_present = any(
+                str(item.get("role") or "").strip().lower() in {"assistant", "agent", "staff"}
+                for item in snapshot.get("conversation") or []
+                if isinstance(item, dict)
+            )
+        try:
+            normalized_classification = normalize_hermes_route_classification(
+                classification,
+                direction_hint=normalized_direction,
+                route_hint=normalized_route,
+                latest_assistant_message_present=latest_assistant_message_present,
+            )
+        except HermesRouteClassificationError as exc:
+            raise HermesToolError(exc.code, str(exc)) from exc
+        normalized_direction = str(normalized_classification["direction"])
+        normalized_route = normalized_classification.get("route")
+        normalized_reason = str(
+            normalized_classification.get("route_reason_code") or normalized_reason
+        )
     if normalized_direction == "automation":
         from backend.services.account_automation_handlers import account_automation_handler
 
@@ -147,8 +197,12 @@ def tool_record_direction(
     if normalized_direction == "automation":
         account_case["route"] = normalized_route or account_case.get("route")
         account_case["execution_action"] = normalized_route or account_case.get("execution_action")
+    if normalized_classification is not None:
+        account_case["route_classification"] = dict(normalized_classification)
+        account_case["route_family"] = normalized_classification.get("route_family")
+        account_case["execution_action"] = normalized_classification.get("execution_action")
     account_case["automation_status"] = (
-        "automation" if normalized_direction == "automation" else account_case.get("automation_status")
+        "automation" if normalized_direction == "automation" else "human_review_required"
     )
     if repository is not None:
         repository.save_account_case(account_case)
@@ -156,6 +210,7 @@ def tool_record_direction(
         "direction": normalized_direction,
         "case_revision": int(turn["case_revision"]),
         "route": normalized_route,
+        "classification": normalized_classification,
     }
 
 
