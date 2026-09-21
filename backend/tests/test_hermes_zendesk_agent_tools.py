@@ -153,6 +153,36 @@ class TestDirectionTools:
         assert result["direction"] == "automation"
         assert repository.account_cases["123"]["route"] == "enablement"
 
+    def test_record_direction_persists_nested_classification(self) -> None:
+        store, repository, turn_id = _setup_case()
+        result = tool_record_direction(
+            store,
+            repository,
+            turn_id=turn_id,
+            direction="automation",
+            reason="registered_enablement",
+            route="enablement",
+            classification={
+                "intent_class": "agora",
+                "intent_confidence": 0.95,
+                "agora_confidence": 0.95,
+                "agora_route": "backend_operation",
+                "backend_operation_subcategory": "enablement",
+                "backend_operation": {
+                    "action": "enable",
+                    "target": "media_relay",
+                    "evidence": "explicit customer request",
+                },
+                "additional_intents": ["technical"],
+                "reason_code": "registered_enablement",
+            },
+        )
+
+        saved = repository.account_cases["123"]
+        assert result["classification"]["backend_operation"]["target"] == "media_relay"
+        assert saved["route_classification"]["additional_intents"] == ["technical"]
+        assert saved["automation_status"] == "automation"
+
     def test_record_direction_rejects_unknown_direction(self) -> None:
         store, repository, turn_id = _setup_case()
         with pytest.raises(HermesToolError):

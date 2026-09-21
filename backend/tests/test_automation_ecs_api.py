@@ -925,6 +925,44 @@ def test_agent_tool_save_reply_draft_derives_publish_policy_server_side() -> Non
     assert all(not draft.get("delivery_message_id") for draft in drafts)
 
 
+def test_agent_tool_classify_route_is_write_free() -> None:
+    settings = _preproduction_settings()
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    client = TestClient(
+        create_app(
+            settings=settings,
+            store=store,
+            dashboard_auth=DashboardAuthConfig(
+                session_secret="test-session-secret-that-is-long-enough"
+            ),
+        ),
+        base_url="https://supportcenter.stellarix.space",
+    )
+    with patch("backend.automation_ecs_api._engineer_ticket_repository") as repository_mock:
+        response = client.post(
+            "/automation/preproduction/v1/agent/tools/classify_route",
+            headers={"Authorization": "Bearer secret"},
+            json={
+                "classification": {
+                    "intent_class": "agora",
+                    "agora_route": "technical",
+                    "confidence": 0.95,
+                    "reason_code": "technical_request",
+                }
+            }
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["direction"] == "investigation"
+    assert response.json()["secondary_label"] == "Agora Technical"
+    repository_mock.assert_not_called()
+    assert store._hermes_turns == {}
+    assert store._hermes_bindings == {}
+    assert store._jobs == {}
+    assert store._deliveries == {}
+
+
 def _park_investigation_turn(
     store: InMemoryAutomationEcsStore,
     *,

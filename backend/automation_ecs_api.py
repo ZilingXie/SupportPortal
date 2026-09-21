@@ -771,6 +771,24 @@ def create_app(    *,
             body = await http_request.json()
             if not isinstance(body, dict):
                 raise HTTPException(status_code=422, detail="tool request body must be an object")
+            if tool_name == "classify_route":
+                from backend.services.automation_hermes_tools import (
+                    HermesToolError,
+                    tool_classify_route,
+                )
+
+                try:
+                    context = body.get("context") if isinstance(body.get("context"), dict) else {}
+                    return tool_classify_route(
+                        body.get("classification"),
+                        latest_assistant_message_present=(
+                            context.get("latest_assistant_message_present")
+                            if "latest_assistant_message_present" in context
+                            else None
+                        ),
+                    )
+                except HermesToolError as exc:
+                    raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
             turn_id = str(body.get("turn_id") or "").strip()
             if not turn_id:
                 raise HTTPException(status_code=422, detail="turn_id is required")
@@ -795,6 +813,7 @@ def create_app(    *,
                         direction=str(body.get("direction") or ""),
                         reason=str(body.get("reason") or ""),
                         route=body.get("route"),
+                        classification=body.get("classification"),
                     )
                 if tool_name == "execute_automation_action":
                     return await tool_execute_automation_action(
