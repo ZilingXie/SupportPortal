@@ -270,6 +270,57 @@ def test_reason_text_does_not_create_disagreement() -> None:
     assert result.review_required is False
 
 
+def test_missing_production_derived_fields_are_unavailable_not_disagreements() -> None:
+    module = _load_core()
+    row = _row(
+        route_family=None,
+        execution_action=None,
+        automation_eligibility=None,
+    )
+    snapshot = module.build_snapshot(row, alias="case-001")
+    candidate = dict(snapshot.baseline)
+    candidate.update(
+        route_family="human_review",
+        execution_action="human_review_required",
+        automation_eligibility="not_eligible",
+    )
+    result = module.compare_case(
+        snapshot,
+        [module.CandidateResult(candidate="hermes", status="ok", normalized=candidate)],
+    )
+    assert result.disagreement is False
+    assert result.disagreement_fields == {}
+    assert result.baseline_unavailable_fields == [
+        "automation_eligibility",
+        "execution_action",
+        "route_family",
+    ]
+
+
+def test_missing_derived_fields_do_not_hide_core_route_difference() -> None:
+    module = _load_core()
+    row = _row(route_family=None, execution_action=None, automation_eligibility=None)
+    snapshot = module.build_snapshot(row, alias="case-001")
+    candidate = dict(snapshot.baseline)
+    candidate["agora_route"] = "technical"
+    result = module.compare_case(
+        snapshot,
+        [module.CandidateResult(candidate="jev", status="ok", normalized=candidate)],
+    )
+    assert result.disagreement_fields == {"jev": ["agora_route"]}
+
+
+def test_source_commit_is_bound_to_loaded_worktree_not_cwd(monkeypatch) -> None:
+    from scripts.experiments.route_alignment.provenance import source_code_commit
+
+    source_file = Path(__file__).resolve().parents[2] / "scripts" / "experiments" / "route_alignment" / "runner.py"
+    monkeypatch.chdir(Path("/"))
+    expected = subprocess.check_output(
+        ["git", "-C", str(source_file.parent), "rev-parse", "HEAD"], text=True
+    ).strip()
+    assert source_code_commit(source_file) == expected
+
+
 def test_write_disagreement_csv_excludes_agreements(tmp_path: Path) -> None:
     module = _load_core()
     snapshot = module.build_snapshot(_row(), alias="case-001")

@@ -23,17 +23,25 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
         "input_too_large",
         "model_identity_unverified",
         "model_invocation_failed",
+        "incomplete_output",
+        "empty_model_output",
+        "invalid_model_json",
+        "invalid_model_classification",
+        "normalization_error",
+        "provider_http_error",
+        "provider_timeout",
     }
 )
 
 
-def _http_error_code(error: urllib.error.HTTPError) -> str:
+def _http_error_code(error: urllib.error.HTTPError) -> tuple[str, dict[str, Any]]:
+    diagnostics: dict[str, Any] = {"http_status": error.code}
     if error.code in {401, 403}:
         error.close()
-        return "authentication_error"
+        return "authentication_error", diagnostics
     if error.code == 429:
         error.close()
-        return "rate_limited"
+        return "rate_limited", diagnostics
     try:
         payload = json.loads(error.read().decode("utf-8"))
     except (AttributeError, OSError, UnicodeDecodeError, json.JSONDecodeError):
@@ -42,8 +50,14 @@ def _http_error_code(error: urllib.error.HTTPError) -> str:
         error.close()
     controlled = payload.get("error") if isinstance(payload, Mapping) else None
     if isinstance(controlled, str) and controlled in _CONTROLLED_HTTP_ERRORS:
-        return controlled
-    return "http_error"
+        diagnostics_payload = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
+        diagnostics.update({str(key): value for key, value in diagnostics_payload.items() if str(key) in {
+            "response_status", "incomplete_reason", "message_status", "requested_model", "actual_model",
+            "input_tokens", "output_tokens", "reasoning_tokens", "text_length", "max_output_tokens",
+            "reasoning_effort", "config_version", "normalization_code", "implementation_commit", "schema_version",
+        }})
+        return controlled, diagnostics
+    return "http_error", diagnostics
 
 
 def load_fixture_snapshots(path: str) -> list[CaseSnapshot]:
@@ -226,11 +240,17 @@ def http_candidate(
                     "reasoning_effort",
                     "hermes_route_manual_version",
                     "normalizer_version",
+                    "schema_version",
+                    "implementation_commit",
                     "wrapper_version",
                     "actual_model_verified",
                 )
                 if key in parsed
             }
+            diagnostics = parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), Mapping) else {}
+            metadata["diagnostics"] = dict(diagnostics)
+            metadata["max_output_tokens"] = parsed.get("max_output_tokens")
+            metadata["config_version"] = parsed.get("config_version")
             if parsed.get("actual_model_verified") is not True or not returned_model:
                 return CandidateResult(
                     candidate=name,
@@ -261,7 +281,7 @@ def http_candidate(
                 metadata=metadata,
             )
         except urllib.error.HTTPError as exc:
-            error_code = _http_error_code(exc)
+            error_code, diagnostics = _http_error_code(exc)
             return CandidateResult(
                 candidate=name,
                 status="error",
@@ -269,6 +289,7 @@ def http_candidate(
                 error_code=error_code,
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
                 call_count=1,
+                metadata=diagnostics,
             )
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             error_code = str(exc)[:80] or type(exc).__name__

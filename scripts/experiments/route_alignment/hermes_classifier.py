@@ -25,6 +25,7 @@ from backend.services.prompts.hermes_support_agent import (
 
 from .core import CaseSnapshot
 from .dataset import DatasetError, candidate_state, validate_candidate_request_size
+from .provenance import source_code_commit
 
 
 HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION = "hermes-route-experiment-v1"
@@ -33,6 +34,11 @@ HERMES_ROUTE_EXPERIMENT_SCENARIO = "route_alignment_hermes"
 HERMES_NORMALIZER_POLICY_VERSION = "hermes-normalizer-threshold-v1"
 HERMES_NORMALIZER_CONFIDENCE_THRESHOLD = 0.7
 HERMES_MODEL_TIMEOUT_SECONDS = 60.0
+HERMES_DEFAULT_MAX_OUTPUT_TOKENS = 1600
+HERMES_MAX_OUTPUT_TOKENS_MIN = 256
+HERMES_MAX_OUTPUT_TOKENS_MAX = 8192
+HERMES_EXPERIMENT_CONFIG_VERSION = "hermes-route-experiment-config-v1"
+HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION = "hermes-route-experiment-schema-v1"
 _ALLOWED_ROLES = frozenset({"user", "assistant"})
 _ALLOWED_INTENTS = frozenset({"conversation", "agora", "uncertain"})
 _ALLOWED_CONVERSATION_ACTIONS = frozenset({"resolve", "follow_up", "human_review"})
@@ -68,9 +74,14 @@ _ALLOWED_REASON_CODES = frozenset(
 class HermesExperimentError(RuntimeError):
     """A controlled classifier or request-contract failure."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, diagnostics: Mapping[str, Any] | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.diagnostics = dict(diagnostics or {})
+
+
+def experiment_config_version(profile: ModelProfile, max_output_tokens: int) -> str:
+    return f"{HERMES_EXPERIMENT_CONFIG_VERSION}:{profile.reasoning_effort or 'unset'}:{max_output_tokens}"
 
 
 def validate_normalizer_environment() -> None:
@@ -125,6 +136,44 @@ def build_experiment_profile(
         fallback_models=(),
         fallback_profiles=(),
     )
+
+
+def validate_max_output_tokens(value: int) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HermesExperimentError("invalid_output_configuration")
+    if not HERMES_MAX_OUTPUT_TOKENS_MIN <= value <= HERMES_MAX_OUTPUT_TOKENS_MAX:
+        raise HermesExperimentError("invalid_output_configuration")
+    return value
+
+
+def _response_diagnostics(
+    result: LlmTextResult,
+    *,
+    profile: ModelProfile,
+    max_output_tokens: int,
+) -> dict[str, Any]:
+    raw = result.raw_payload if isinstance(result.raw_payload, Mapping) else {}
+    output = raw.get("output") if isinstance(raw.get("output"), list) else []
+    message = next((item for item in output if isinstance(item, Mapping) and item.get("type") == "message"), {})
+    incomplete = raw.get("incomplete_details") if isinstance(raw.get("incomplete_details"), Mapping) else {}
+    raw_model = raw.get("model")
+    actual_model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    return {
+        "response_status": raw.get("status") if isinstance(raw.get("status"), str) else None,
+        "incomplete_reason": incomplete.get("reason") if isinstance(incomplete.get("reason"), str) else None,
+        "message_status": message.get("status") if isinstance(message.get("status"), str) else None,
+        "requested_model": profile.model,
+        "actual_model": actual_model,
+        "input_tokens": result.prompt_tokens,
+        "output_tokens": result.completion_tokens,
+        "reasoning_tokens": result.reasoning_tokens,
+        "text_length": len(result.text or ""),
+        "max_output_tokens": max_output_tokens,
+        "reasoning_effort": profile.reasoning_effort,
+        "config_version": experiment_config_version(profile, max_output_tokens),
+        "implementation_commit": source_code_commit(__file__),
+        "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
+    }
 
 
 def _classification_schema() -> dict[str, Any]:
@@ -277,6 +326,10 @@ def _provider_error_code(error: BaseException) -> str | None:
             return "authentication_error"
         if status == 429:
             return "rate_limited"
+        if status in {500, 502, 503, 504}:
+            return "provider_http_error"
+        if isinstance(current, TimeoutError):
+            return "provider_timeout"
         current = current.__cause__ or current.__context__
     return None
 
@@ -347,10 +400,12 @@ def classify_case_snapshot(
     case_snapshot: CaseSnapshot | Mapping[str, Any],
     *,
     profile: ModelProfile,
+    max_output_tokens: int = HERMES_DEFAULT_MAX_OUTPUT_TOKENS,
     invoke: Callable[..., LlmTextResult] = invoke_responses_text,
 ) -> dict[str, Any]:
     """Classify one submitted snapshot with one model call and no durable state."""
     validate_normalizer_environment()
+    max_output_tokens = validate_max_output_tokens(max_output_tokens)
     if profile.scenario != HERMES_ROUTE_EXPERIMENT_SCENARIO or profile.api_mode != OPENAI_RESPONSES_API:
         raise HermesExperimentError("invalid_model_profile")
     if profile.max_retries != 0 or profile.fallback_models or profile.fallback_profiles or profile.temperature is not None:
@@ -368,7 +423,7 @@ def classify_case_snapshot(
             user_prompt=json.dumps(candidate_state(snapshot), ensure_ascii=False, sort_keys=True),
             extra_payload={
                 "store": False,
-                "max_output_tokens": 1600,
+                "max_output_tokens": max_output_tokens,
                 "text": {
                     "format": {
                         "type": "json_schema",
@@ -383,9 +438,30 @@ def classify_case_snapshot(
         raise
     except Exception as exc:
         provider_code = _provider_error_code(exc)
+        diagnostics = {
+            "requested_model": profile.model,
+            "actual_model": None,
+            "max_output_tokens": max_output_tokens,
+            "reasoning_effort": profile.reasoning_effort,
+            "config_version": experiment_config_version(profile, max_output_tokens),
+            "implementation_commit": source_code_commit(__file__),
+            "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
+        }
+        status = getattr(exc, "http_status", None)
+        if isinstance(status, int):
+            diagnostics["http_status"] = status
         if provider_code:
-            raise HermesExperimentError(provider_code) from exc
-        raise HermesExperimentError("model_invocation_failed") from exc
+            raise HermesExperimentError(provider_code, diagnostics=diagnostics) from exc
+        raise HermesExperimentError("model_invocation_failed", diagnostics=diagnostics) from exc
+    diagnostics = _response_diagnostics(
+        llm_result,
+        profile=profile,
+        max_output_tokens=max_output_tokens,
+    )
+    if diagnostics["response_status"] == "incomplete" or diagnostics["message_status"] == "incomplete":
+        raise HermesExperimentError("incomplete_output", diagnostics=diagnostics)
+    if not llm_result.text.strip():
+        raise HermesExperimentError("empty_model_output", diagnostics=diagnostics)
     try:
         classification = _clean_classification(json.loads(llm_result.text))
         normalized = normalize_hermes_route_classification(
@@ -393,9 +469,16 @@ def classify_case_snapshot(
             latest_assistant_message_present=latest_assistant_message_present,
         )
     except json.JSONDecodeError as exc:
-        raise HermesExperimentError("invalid_model_json") from exc
+        raise HermesExperimentError("invalid_model_json", diagnostics=diagnostics) from exc
+    except HermesExperimentError as exc:
+        if exc.code == "invalid_model_classification":
+            raise HermesExperimentError(exc.code, diagnostics=diagnostics) from exc
+        raise
     except HermesRouteClassificationError as exc:
-        raise HermesExperimentError(f"normalization_{exc.code}") from exc
+        raise HermesExperimentError(
+            "normalization_error",
+            diagnostics={**diagnostics, "normalization_code": exc.code},
+        ) from exc
 
     raw_payload = llm_result.raw_payload if isinstance(llm_result.raw_payload, Mapping) else {}
     raw_actual_model = raw_payload.get("model")
@@ -426,4 +509,9 @@ def classify_case_snapshot(
             "reasoning_tokens": llm_result.reasoning_tokens,
         },
         "input_sizes": input_sizes,
+        "diagnostics": diagnostics,
+        "config_version": experiment_config_version(profile, max_output_tokens),
+        "max_output_tokens": max_output_tokens,
+        "implementation_commit": source_code_commit(__file__),
+        "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
     }

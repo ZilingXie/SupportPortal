@@ -120,6 +120,9 @@ def test_classifier_executes_one_stateless_model_call_and_records_metadata() -> 
     assert response["actual_model"] == "actual-model"
     assert response["returned_model"] == "actual-model"
     assert response["actual_model_verified"] is True
+    assert response["implementation_commit"]
+    assert response["schema_version"] == "hermes-route-experiment-schema-v1"
+    assert response["config_version"].endswith(":medium:1600")
     assert response["prompt_version"] == HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION
     assert response["usage"] == {
         "input_tokens": 31,
