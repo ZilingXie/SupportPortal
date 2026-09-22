@@ -679,6 +679,7 @@ class WorkflowScriptTests(unittest.TestCase):
         official_torch_available: bool = True,
         official_image: str = "localhost/supportportal-app:test-ref",
         official_image_id: str = "sha256:previous-image-id",
+        official_container_build_ref: str = "",
         official_health_build_ref: str = "test-ref",
         official_runtime_build_ref: str = "test-ref",
         official_runtime_build_time: str = "2026-04-20T00:00:00Z",
@@ -858,7 +859,13 @@ class WorkflowScriptTests(unittest.TestCase):
                             "app_build_time": {auxiliary_runtime_build_time!r},
                         }}))
                 elif args[:1] == ["inspect"]:
-                    print({official_image!r} if "ImageName" in " ".join(args) else {official_image_id!r})
+                    if "Config.Env" in " ".join(args):
+                        container_ref = {official_container_build_ref!r}
+                        print(f"APP_BUILD_REF={{container_ref}}" if container_ref else "")
+                    elif "ImageName" in " ".join(args):
+                        print({official_image!r})
+                    else:
+                        print({official_image_id!r})
                 else:
                     print("")
                 """
@@ -1006,6 +1013,43 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("Created task branch codex/engineer-opt-2.", result.stdout)
         self.assertTrue(expected_path.is_dir())
         self.assertEqual(_git(["branch", "--show-current"], cwd=expected_path).stdout.strip(), "codex/engineer-opt-2")
+
+    def test_restart_single_host_stack_restore_uses_container_build_ref_not_rollback_tag(self) -> None:
+        _, seed, repo = self._init_remote_repo_on_main()
+        self._write(seed, ".env", "TICKET_DB_DSN=postgresql://ticket:test@db.local/tickets\nPGVECTOR_DSN=postgresql://rag:test@db.local/rag\n")
+        self._write(seed, "deployment/docker-compose.single-host.yml", "services: {}\n")
+        self._commit_all(seed, "Add local runtime files")
+        _git(["push", "origin", "main"], cwd=seed)
+        _git(["pull", "--ff-only", "origin", "main"], cwd=repo)
+        fake_bin, state_dir = self._install_fake_single_host_commands(
+            official_image="localhost/supportportal-app:rollback-e209bfacf87e-2195",
+            official_container_build_ref="e209bfacf87e",
+        )
+
+        result = self._run_workflow(
+            "restart_single_host_stack.sh",
+            repo,
+            extra_env={
+                "PATH": f"{fake_bin}:{os.environ['PATH']}",
+                "RESTART_TEST_STATE_DIR": str(state_dir),
+                "SUPPORTPORTAL_HEALTH_ATTEMPTS": "2",
+                "SUPPORTPORTAL_HEALTH_INTERVAL_SECONDS": "0",
+                "RESTART_CURL_FAIL_COUNT": "99",
+            },
+        )
+
+        # The new stack fails its health gate and the restore attempt also
+        # fails, but the restore must be driven by the clean container env
+        # APP_BUILD_REF, never by the whole rollback-<ref>-<pid> tag.
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to restore previous image", result.stderr)
+        calls = self._read_json_lines(state_dir / "podman_calls.jsonl")
+        ups = [call for call in calls if "up" in call["argv"]]
+        self.assertGreaterEqual(len(ups), 2, msg=[call["argv"] for call in calls])
+        restore_up = ups[-1]
+        self.assertEqual(restore_up["app_build_ref"], "e209bfacf87e")
+        self.assertNotIn("rollback-", str(restore_up["app_build_ref"]))
+        self.assertTrue(str(restore_up["app_runtime_image"]).startswith("localhost/supportportal-app:rollback-"))
 
     def test_restart_single_host_stack_requires_clean_root_main(self) -> None:
         _, seed, repo = self._init_remote_repo_on_main()

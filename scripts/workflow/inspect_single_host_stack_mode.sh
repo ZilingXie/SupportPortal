@@ -83,6 +83,9 @@ official_image="$(container_image "$official_api_container")"
 [[ -n "$official_image" ]] || die "Official single-host stack is not running (missing $official_api_container)."
 root_main_ref="$(git rev-parse --short=12 HEAD)"
 official_image_tag="$(image_tag_from_ref "$official_image")"
+# Rollback tags (rollback-<ref>-<pid>) encode the same build ref; normalize
+# so provenance compares the ref instead of the restore label.
+official_image_tag="$(printf '%s' "$official_image_tag" | sed -E 's/^rollback-([0-9a-f]+)-[0-9]+$/\1/')"
 
 official_port="$(container_port "$official_nginx_container")" || die "Unable to resolve host port for $official_nginx_container."
 official_health_url="http://127.0.0.1:${official_port}/health"
