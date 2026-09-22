@@ -43,15 +43,37 @@ The classification object must contain JSON fields:
 `intent_class` (conversation|agora|uncertain), `conversation_action` (resolve,
 follow_up, human_review, or null), `intent_confidence`, `agora_confidence`, and
 `action_confidence` (numbers from 0 to 1), `agora_route` (technical,
-security_compliance, account_billing, backend_operation, uncategorized),
-`account_billing_subcategory` (account_suspension, fraud_account,
+security_compliance, account_billing, backend_operation, uncategorized, or
+null), `account_billing_subcategory` (account_suspension, fraud_account,
 detailed_invoice, other, or null), `backend_operation_subcategory`
 (enablement, quota, unregistered, or null), `backend_operation` (an object
 with action/target/evidence taken from the CURRENT snapshot, or null),
 `additional_intents` (array, empty when none), `confidence` (number from
-0 to 1), and `reason_code` (short controlled reason). For conversation
-follow-up, confirm that the snapshot contains an earlier assistant message; a
-new ticket cannot be classified as follow-up.
+0 to 1), and `reason_code` (short controlled reason). `confidence` and
+`reason_code` are ALWAYS required. Use only these field names: never emit the
+retired top-level `intent` field, and never add fields outside this list.
+
+Fill the fields by `intent_class`:
+- `conversation`: set `agora_route` to null and provide BOTH
+  `conversation_action` (one of resolve/follow_up/human_review) and
+  `action_confidence` (0 to 1). For conversation follow-up, confirm that the
+  snapshot contains an earlier assistant message; a new ticket cannot be
+  classified as follow-up.
+- `agora`: set `agora_route` to one of the enum values above (never null).
+  When `agora_route=backend_operation`, provide `backend_operation_subcategory`;
+  when `agora_route=account_billing`, provide `account_billing_subcategory`.
+- `uncertain`: set `agora_route` to null and carry no automation-triggering
+  backend_operation combination; leave `conversation_action` null.
+
+Examples (one conversation, one uncertain):
+
+{"intent_class": "conversation", "conversation_action": "resolve",
+ "agora_route": null, "intent_confidence": 0.97, "action_confidence": 0.95,
+ "confidence": 0.97, "reason_code": "conversation_resolution"}
+
+{"intent_class": "uncertain", "conversation_action": null,
+ "agora_route": null, "intent_confidence": 0.5, "confidence": 0.5,
+ "reason_code": "out_of_scope_or_unknown"}
 
 `backend_operation` is REQUIRED to be either null or an object with exactly
 these keys: `action` (the operation verb, e.g. enable), `target` (what it
