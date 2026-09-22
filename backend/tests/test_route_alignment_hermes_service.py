@@ -176,6 +176,63 @@ def test_classifier_rejects_malformed_model_output(result, code) -> None:
     assert exc_info.value.code == code
 
 
+@pytest.mark.parametrize(
+    ("raw_payload", "text", "expected_code"),
+    [
+        (
+            {
+                "model": "actual-model",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "status": "incomplete"}],
+            },
+            "",
+            "incomplete_output",
+        ),
+        (
+            {"model": "actual-model", "status": "completed", "output": []},
+            "",
+            "empty_model_output",
+        ),
+    ],
+)
+def test_classifier_preserves_controlled_output_diagnostics(raw_payload, text, expected_code) -> None:
+    result = _result(text=text)
+    result = LlmTextResult(
+        text=result.text,
+        model_name=result.model_name,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=1600,
+        reasoning_tokens=result.reasoning_tokens,
+        raw_payload=raw_payload,
+        provider_name=result.provider_name,
+    )
+    with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None), pytest.raises(
+        HermesExperimentError
+    ) as exc_info:
+        classify_case_snapshot(_snapshot(), profile=_profile(), invoke=lambda **_: result)
+    assert exc_info.value.code == expected_code
+    assert exc_info.value.diagnostics["response_status"] == raw_payload["status"]
+    assert exc_info.value.diagnostics["max_output_tokens"] == 1600
+    assert "text" not in exc_info.value.diagnostics
+
+
+def test_classifier_passes_explicit_output_budget_to_provider_and_response() -> None:
+    calls = []
+
+    def invoke(**kwargs):
+        calls.append(kwargs)
+        return _result()
+
+    with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None):
+        response = classify_case_snapshot(
+            _snapshot(), profile=_profile(), max_output_tokens=3200, invoke=invoke
+        )
+    assert calls[0]["extra_payload"]["max_output_tokens"] == 3200
+    assert response["max_output_tokens"] == 3200
+    assert response["diagnostics"]["config_version"].endswith(":medium:3200")
+
+
 def test_classifier_rejects_ambient_trace_before_model_call() -> None:
     calls = []
     with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value={"trace_id": "existing"}), pytest.raises(
@@ -294,6 +351,38 @@ def test_http_success_executes_exactly_one_mock_llm_call() -> None:
         assert body["case_alias"] == "case-001"
         assert body["normalized_classification"]["route_target"] == "rag"
         assert len(model_calls) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_error_returns_allowlisted_diagnostics_without_model_text() -> None:
+    diagnostics = {
+        "response_status": "incomplete",
+        "incomplete_reason": "max_output_tokens",
+        "text_length": 0,
+        "max_output_tokens": 1600,
+        "customer_text": "must-not-appear",
+    }
+
+    def classifier(_snapshot):
+        raise HermesExperimentError("incomplete_output", diagnostics=diagnostics)
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = _post(
+            server.server_address[1],
+            {"contract": "route-alignment-v1", "case_snapshot": _snapshot()},
+        )
+        assert status == 422
+        assert body["error"] == "incomplete_output"
+        assert body["diagnostics"] == {
+            key: value for key, value in diagnostics.items() if key != "customer_text"
+        }
+        assert "text" not in body["diagnostics"]
     finally:
         server.shutdown()
         server.server_close()

@@ -4777,3 +4777,11 @@ For each new entry, record:
 ## 2026-09-21 — Route manual v3：classification 工具合同强化（13650）
 
 `hermes-route-manual` 升级 v3：`backend_operation` 明确为 null 或含 action/target/evidence 三键的对象，evidence 必须取自当前快照（禁止在此阶段补全 App ID——有效性由后续执行链判定）；禁止把 JSON 塞进 `reason` 或省略 `classification`（插件本地拒绝、零 HTTP）；automation 方向必须携带注册路由。配套服务端 `tool_record_direction` 对 automation 无路由返回 422（先于任何决策写入）、Worker 在认领与 Work 提交前的路由合同门禁（无效路由统一 `route_contract_invalid` 转人工）、插件 schema 的 classification 必填对象合同。
+
+## 2026-09-22 - Hermes route alignment 输出合同与参数实验（Plan2）
+
+- Area or subsystem: frozen route alignment experiment only; no Production route or ECS runtime behavior.
+- Prompt or model versions: prompt、JSON schema、normalizer、model 保持固定；新增显式 `HERMES_ROUTE_EXPERIMENT_MAX_OUTPUT_TOKENS` 与 reasoning effort 记录，并以 config version 隔离参数实验结果。
+- Reason: run-002 出现空模型输出、incomplete message 和 `invalid_model_json`；实验必须区分 provider 输出状态、候选错误与有效分类分歧。
+- Tooling and behavior changes: Hermes 只返回 allowlisted output telemetry；Jev/Hermes 输入预检独立；candidate error report 与 disagreement report 分离；错误候选不进入 agreement 分母。
+- Verification: 离线 Hermes service、runner、experiment、Jev targeted tests；真实 frozen dataset 参数矩阵另行执行并保存到独立 output 目录。

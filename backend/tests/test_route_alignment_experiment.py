@@ -53,7 +53,8 @@ def test_snapshot_preserves_missing_production_baseline_for_review() -> None:
         [module.CandidateResult(candidate="jev", status="error", error="fixture_missing")],
     )
     assert result.disagreement_fields["production"] == ["baseline_missing"]
-    assert result.disagreement_fields["jev"] == ["candidate_error"]
+    assert "jev" not in result.disagreement_fields
+    assert result.review_required is True
 
 
 def test_sha256_case_revision_survives_redaction_and_manifest() -> None:
@@ -88,7 +89,8 @@ def test_compare_only_returns_disagreement_union_and_keeps_errors() -> None:
     error = module.CandidateResult(candidate="hermes", status="error", error="timeout")
     result = module.compare_case(snapshot, [same, error])
     assert result.review_required is True
-    assert result.disagreement_fields == {"hermes": ["candidate_error"]}
+    assert result.disagreement_fields == {}
+    assert result.review_required is True
 
 
 def test_empty_candidate_is_an_error() -> None:

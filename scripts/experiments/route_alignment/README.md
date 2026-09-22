@@ -37,8 +37,10 @@ python3 -m scripts.experiments.route_alignment.hermes_service \
 The service requires `HERMES_EXPERIMENT_TOKEN`,
 `HERMES_ROUTE_EXPERIMENT_API_KEY`, `HERMES_ROUTE_EXPERIMENT_BASE_URL`,
 `HERMES_ROUTE_EXPERIMENT_MODEL`, and
-`HERMES_ROUTE_EXPERIMENT_REASONING_EFFORT`. It sends one Responses request per
-case with no retry, fallback, tools, session, store, or ambient trace.
+`HERMES_ROUTE_EXPERIMENT_REASONING_EFFORT`. `HERMES_ROUTE_EXPERIMENT_MAX_OUTPUT_TOKENS`
+is optional and defaults to `1600`; valid values are `256` through `8192`.
+The value is recorded with each result. The service sends one Responses request
+per case with no retry, fallback, tools, session, store, or ambient trace.
 
 Run both live candidates only from a frozen dataset:
 
@@ -65,9 +67,10 @@ the latest customer message, and allowlisted `product`/`status` metadata. They
 never receive ticket identity, case alias/revision, or the Production baseline
 as model input. Alias and revision exist only on the loopback transport envelope
 so the runner can reject a mismatched response. Input size limits fail closed;
-text is not silently truncated. Before either candidate runs, the runner checks
-the exact Jev and Hermes request sizes and rejects both candidates together if
-either request is too large.
+text is not silently truncated. Before each live candidate runs, the runner
+checks that candidate's exact request size. A Jev size failure does not hide a
+valid Hermes result, and vice versa; either result still requires human review
+and cannot make the case automation-eligible.
 
 Jev treats an uncertain or low-confidence cross-route additional intent as a
 review signal. In particular, it cannot leave account-suspension automation
@@ -85,14 +88,25 @@ separately from same-input agreement because old Production labels may have been
 produced from a different snapshot.
 
 Outputs are `manifest.jsonl`, controlled `raw_results.jsonl`,
-`normalized_comparison.jsonl`, `disagreement_report.<run_id>.csv`, and
-`summary.json`. The controlled evidence file does not store arbitrary provider
-responses or customer text. Every result carries one `run_id` and `dataset_id`;
-the summary records per-candidate calls, errors, latency, model versions, usage,
-agreement, model-identity readiness, and Jev's documented cost estimate. A live
-candidate without a provider-returned model identity is an error and cannot set
+`normalized_comparison.jsonl`, `disagreement_report.<run_id>.csv`,
+`candidate_error_report.<run_id>.csv`, and `summary.json`. The disagreement
+report contains only valid classifications with field differences. Candidate
+errors, input-size failures, and missing baselines are recorded separately and
+are excluded from agreement denominators. The controlled evidence file does
+not store arbitrary provider responses or customer text. Every result carries
+one `run_id` and `dataset_id`; the summary records attempted/success/valid-
+comparison counts, completion rate, error categories, latency, model versions,
+output configuration, usage, agreement, model-identity readiness, and Jev's
+documented cost estimate. A live candidate without a provider-returned model
+identity or with any candidate error cannot set
 `formal_experiment_ready=true`. An authentication error stops all later paid
 calls. The runner refuses to overwrite a non-empty output directory.
+
+For a controlled Hermes parameter experiment, keep the frozen dataset fixed and
+change only `HERMES_ROUTE_EXPERIMENT_REASONING_EFFORT` and
+`HERMES_ROUTE_EXPERIMENT_MAX_OUTPUT_TOKENS` between fresh output directories.
+Record the configuration in each `summary.json`; do not combine runs with
+different prompt, schema, normalizer, model, or configuration versions.
 
 Default result artifacts remove `backend_operation.evidence` customer text.
 `--include-review-text` adds redacted `review_context.jsonl` only when
