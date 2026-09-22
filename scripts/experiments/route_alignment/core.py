@@ -358,6 +358,44 @@ def write_disagreement_csv(
     path.chmod(0o600)
 
 
+def write_candidate_error_csv(
+    path: Path,
+    results: Iterable[ComparisonResult],
+    *,
+    run_id: str | None = None,
+    dataset_id: str | None = None,
+) -> None:
+    """Write candidate failures separately from valid classification disagreements."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "run_id", "dataset_id", "case_alias", "candidate", "status", "error_code",
+        "error", "call_count", "latency_ms", "baseline_status", "baseline_input_alignment",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for result in results:
+            for candidate in result.candidates.values():
+                if candidate.status == "ok":
+                    continue
+                writer.writerow(
+                    {
+                        "run_id": run_id or "",
+                        "dataset_id": dataset_id or "",
+                        "case_alias": result.alias,
+                        "candidate": candidate.candidate,
+                        "status": candidate.status,
+                        "error_code": candidate.error_code or candidate.error or "candidate_error",
+                        "error": candidate.error or "",
+                        "call_count": candidate.call_count,
+                        "latency_ms": candidate.latency_ms,
+                        "baseline_status": result.baseline_status,
+                        "baseline_input_alignment": candidate.metadata.get("baseline_input_alignment", "unknown"),
+                    }
+                )
+    path.chmod(0o600)
+
+
 def snapshot_manifest_record(
     snapshot: CaseSnapshot, *, run_id: str | None = None, dataset_id: str | None = None
 ) -> dict[str, Any]:
