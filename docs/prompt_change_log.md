@@ -1,5 +1,40 @@
 # Prompt Change Log
 
+## 2026-09-22 - Route Manual v3 classification contract converged (p2-148, 13650 round-3)
+
+- Area or subsystem: Preproduction Hermes route phase — `build_hermes_route_manual`
+  (`hermes-route-manual-v3`, version string unchanged) and the cross-repo
+  `support_record_direction` plugin classification schema.
+- Prompt or model version: `HERMES_ROUTE_MANUAL_VERSION` stays
+  `hermes-route-manual-v3`; wording clarified, no new prompt release id and no
+  model change.
+- Reason: The plugin schema, the server-side normalizer
+  (`normalize_hermes_route_classification`), and the Route Manual disagreed on
+  the classification input contract. The schema did not conditionally require
+  `action_confidence` for conversation, still `required` a non-null
+  `agora_route` for every intent, and the manual/error hint referenced the
+  retired top-level `intent` field — so a valid conversation classification was
+  rejected by the schema while a conversation missing `action_confidence` was
+  forwarded and only failed server-side with `invalid_confidence`.
+- Behavior change: The manual now states `agora_route` is null for
+  conversation/uncertain, requires both `conversation_action` and
+  `action_confidence` for conversation, forbids the legacy `intent` field and
+  any field outside the enumerated list, and adds one conversation and one
+  uncertain example. The plugin schema mirrors the normalizer exactly with
+  conditional (`if/then`) requirements and `additionalProperties: false`, so a
+  structurally-incomplete automation/conversation decision is rejected at the
+  schema BEFORE any HTTP request; the normalizer still owns value-level
+  degradation (low confidence, mismatched billing reason, unsupported
+  enablement target). The server normalizer was NOT widened.
+- Verification: hermes-deploy plugin contract tests 16 passed, 0 skipped
+  (`jsonschema` promoted to a hard test dependency; the previous silent skip is
+  removed). SupportPortal `backend/tests/test_hermes_route_schema_normalizer_alignment.py`
+  (7 shapes: schema-accept → normalizer direction, schema-reject-before-HTTP,
+  and no turn/binding/Account-case writes on rejection) plus the seven named
+  route/tool/worker suites: 208 passed against a real isolated PostgreSQL
+  (`RUN_POSTGRES_INTEGRATION=1`). No Production route, deployment, or real
+  ticket was exercised.
+
 ## 2026-09-22 - Route alignment experiment acceptance fixes
 
 The experiment now removes customer-authored backend evidence from default
@@ -4738,3 +4773,7 @@ For each new entry, record:
   - `_strip_trailing_punct` 改逐字符处理+配对括号保护（含全角`）`配对映射与外围 `>`/全角`）` 剥离）。
 - Verification: 211 单测（7 套件）+ 16 PG 真库（PostgreSQL 14.19 Homebrew 隔离实例 port 54399，含原子批准/Worker 失败收尾/并发批准/事务回滚场景）。
   - 部署说明：本条 prompt 为代码内嵌（automation_hermes_delivery.py），不在 prompt release catalog 内；r20260920-e11abda 复用 active release pr-3627c96a2160，无需新 prompt release id。
+
+## 2026-09-21 — Route manual v3：classification 工具合同强化（13650）
+
+`hermes-route-manual` 升级 v3：`backend_operation` 明确为 null 或含 action/target/evidence 三键的对象，evidence 必须取自当前快照（禁止在此阶段补全 App ID——有效性由后续执行链判定）；禁止把 JSON 塞进 `reason` 或省略 `classification`（插件本地拒绝、零 HTTP）；automation 方向必须携带注册路由。配套服务端 `tool_record_direction` 对 automation 无路由返回 422（先于任何决策写入）、Worker 在认领与 Work 提交前的路由合同门禁（无效路由统一 `route_contract_invalid` 转人工）、插件 schema 的 classification 必填对象合同。

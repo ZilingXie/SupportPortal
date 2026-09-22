@@ -196,6 +196,43 @@ class TestDirectionTools:
 
 
 class TestInvestigationTool:
+    def test_automation_with_missing_route_is_rejected_before_write(self) -> None:
+        """13650 regression: direction=automation with a missing/empty route
+        must be rejected BEFORE any decision state is written."""
+        from backend.services.automation_hermes_tools import HermesToolError
+
+        store, repository, turn_id = _setup_case()
+        with pytest.raises(HermesToolError) as excinfo:
+            tool_record_direction(
+                store,
+                repository,
+                turn_id=turn_id,
+                direction="automation",
+                reason="registered_enablement",
+                route=None,
+            )
+        assert excinfo.value.code == "route_required_for_automation"
+        # No decision state was written.
+        turn = store.get_hermes_turn(turn_id)
+        assert turn.get("direction") != "automation"
+        binding = store.get_hermes_case_binding("123")
+        assert str(binding.get("direction") or "") in {"", "pending"}
+
+    def test_automation_with_empty_route_is_rejected(self) -> None:
+        from backend.services.automation_hermes_tools import HermesToolError
+
+        store, repository, turn_id = _setup_case()
+        with pytest.raises(HermesToolError) as excinfo:
+            tool_record_direction(
+                store,
+                repository,
+                turn_id=turn_id,
+                direction="automation",
+                reason="registered_enablement",
+                route="   ",
+            )
+        assert excinfo.value.code == "route_required_for_automation"
+
     def test_save_investigation_does_not_flip_direction(self) -> None:
         # PR-C (13601): saving investigation progress must never implicitly
         # change the case direction; direction changes are explicit only.
@@ -297,7 +334,7 @@ class TestDraftTools:
 
     def test_publication_gate_blocks_auto_when_guardrail_fails(self) -> None:
         store, repository, turn_id = _setup_case()
-        tool_record_direction(store, repository, turn_id=turn_id, direction="automation", reason="enablement")
+        tool_record_direction(store, repository, turn_id=turn_id, direction="automation", reason="enablement", route="enablement")
         blocked = {"decision": "blocked", "blockers": ["No draft customer reply provided."]}
         draft = self._persona_draft(store, repository, turn_id, guardrail=lambda *a, **k: blocked)
         assert draft["guardrail_decision"] == "blocked"
