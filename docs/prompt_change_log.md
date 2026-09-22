@@ -4704,3 +4704,7 @@ For each new entry, record:
   - `_strip_trailing_punct` 改逐字符处理+配对括号保护（含全角`）`配对映射与外围 `>`/全角`）` 剥离）。
 - Verification: 211 单测（7 套件）+ 16 PG 真库（PostgreSQL 14.19 Homebrew 隔离实例 port 54399，含原子批准/Worker 失败收尾/并发批准/事务回滚场景）。
   - 部署说明：本条 prompt 为代码内嵌（automation_hermes_delivery.py），不在 prompt release catalog 内；r20260920-e11abda 复用 active release pr-3627c96a2160，无需新 prompt release id。
+
+## 2026-09-21 — Route manual v3：classification 工具合同强化（13650）
+
+`hermes-route-manual` 升级 v3：`backend_operation` 明确为 null 或含 action/target/evidence 三键的对象，evidence 必须取自当前快照（禁止在此阶段补全 App ID——有效性由后续执行链判定）；禁止把 JSON 塞进 `reason` 或省略 `classification`（插件本地拒绝、零 HTTP）；automation 方向必须携带注册路由。配套服务端 `tool_record_direction` 对 automation 无路由返回 422（先于任何决策写入）、Worker 在认领与 Work 提交前的路由合同门禁（无效路由统一 `route_contract_invalid` 转人工）、插件 schema 的 classification 必填对象合同。

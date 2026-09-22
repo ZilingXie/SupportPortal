@@ -10,7 +10,7 @@
   "created_at": "2026-09-08",
   "updated_at": "2026-09-21",
   "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-  "next_action": "2026-09-11 用户以 13424 验收 Slack 召唤后反馈格式不符（应为旧工程师协作流格式：根消息=case title/cx question/route result，调查结果作为同线程 comment）。本轮改版：notify_hermes_review_pending 改为根消息+线程回复两条同步直发（根复刻 build_engineer_case_opened_event 四行模板，线程复用 hermes_investigation_output 纯文本类型承载 summary/blockers/next_steps+待审草稿+审阅入口，根 ts 即线程锚点）。待部署后 13424 注入评论重放，用户在频道确认新格式。",
+  "next_action": "13650 工具合同修复已实施（分支待独立验收）：①服务端 tool_record_direction 对 direction=automation 且 route 缺失/为空返回route_required_for_automation（422，先于任何决策写入）；②Worker 在 route 完成后（认领前）与 Work 提交前（覆盖重启恢复）两处路由合同门禁，无效路由统一 route_contract_invalid 转人工（Account Case→human_review_required、binding→human/paused、turn 终态，零认领零 Work 零客户回复，终态重放幂等不重复通知）；③Work manual 选择对 automation+空路由返回 sentinel 而非回退调查手册；④插件 support_record_direction 合同升级（classification 必填对象含 intent/agora_route/reason_code 必填与 backend_operation 对象或 null；缺失或非对象本地报错零 HTTP）；⑤Route manual v3（backend_operation 三键合同+当前快照 evidence+禁止 reason 塞 JSON）。四条故障回归在旧基线全红、修复后全绿；跨仓集成测试（真实插件 schema+handler→测试 API→store+Worker）4 用例；隔离 PG 2 用例（拒绝零部分写入+人工接管持久化与幂等重放）。⚠预存失败：test_worker.py 七个调查发送用例在干净 main（a188e00f）同样失败（并发合入的 route alignment 改动使真实入口调查 case 的 automation_status=human_review_required→ownership eligible=True→hermes 发送器走 eligible 路径遇空状态跳过），与本修复无关，需另行修复。验收通过后：合并→发布 preprod（先服务端门禁生效，再插件镜像与新 Prompt Release v3，三者读回一致）→受控 Enablement+Troubleshoot 工单终验。",
   "acceptance_criteria": [
     "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
     "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -120,6 +120,12 @@
       "type": "test",
       "label": "Slack review summons reformatted to legacy thread style (user feedback)",
       "details": "2026-09-11 用户验收 13424（真实入口 36 秒全链至 awaiting_approval+Slack delivered）后指出消息格式应为旧工程师协作流格式。改版（PR 本轮）：notify_hermes_review_pending 签名扩为 draft/title/question/route_result/investigation/environment——根消息（hermes_review_pending 根类型，event_id 不变）复刻 build_engineer_case_opened_event 模板：escape(title)/escape(question)/zendesk 链接/route reason 四行纯文本；线程回复（现成非根枚举 hermes_investigation_output，无 action=纯文本，event_id 加 :investigation 后缀，thread_ts=根消息 ts）承载 investigation summary/blockers/next_steps+草稿预览≤700+dashboard 审阅链接；返回 {root, thread} 双结果。processor._notify_review_pending 组装数据：title=ticket.subject、question=trigger comment body 否则 description、route_result=binding.direction(+turn.route)、investigation=binding.investigation；best-effort 语义不变。测试 127 绿（engineer_slack 改为断言两次 post 的根/线程载荷与转义，processor kwargs 断言同步）。"
+    },
+    {
+      "type": "test",
+      "label": "Route classification tool contract fix (13650, branch pending acceptance)",
+      "command": "pytest -q test_hermes_route_classifier.py test_hermes_zendesk_agent_tools.py test_hermes_zendesk_agent.py test_hermes_tool_failure_handoff.py test_automation_ecs_api.py test_hermes_route_tool_contract_integration.py test_automation_ecs_worker.py；RUN_POSTGRES_INTEGRATION=1 test_hermes_route_contract_pg.py（2 passed 真库/无 DSN 时 2 skipped）",
+      "details": "核心套件 199 passed+2 subtests。四条故障回归（automation 无 route 422×2/Worker 门禁转人工/manual 不回退调查）在旧基线全红、修复后绿。跨仓集成 4 用例走真实插件 schema+转发 handler→服务端函数→store+manual 选择（合法 Media Relay 全链/合法 Troubleshoot 选调查手册/13650 同型拒绝零写入/插件缺 classification 零 HTTP）。隔离 PG：拒绝输入无部分写入（字段逐项 byte 相等）+人工接管持久化重读+终态重放幂等零重复通知。test_worker.py 七个调查发送用例为干净 main 预存失败（另行修复）。"
     }
   ],
   "history": [

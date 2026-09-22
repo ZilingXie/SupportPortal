@@ -186,7 +186,16 @@ def tool_record_direction(
     if normalized_direction == "automation":
         from backend.services.account_automation_handlers import account_automation_handler
 
-        if normalized_route and account_automation_handler(normalized_route) is None:
+        # 13650: an automation decision without a route is incomplete and must
+        # be rejected BEFORE any decision state is written — an empty route
+        # previously slipped through and the worker silently fell back to the
+        # investigation manual.
+        if not normalized_route:
+            raise HermesToolError(
+                "route_required_for_automation",
+                "direction=automation requires a registered automation route",
+            )
+        if account_automation_handler(normalized_route) is None:
             raise HermesToolError(
                 "invalid_route", f"route {normalized_route} has no registered automation handler"
             )

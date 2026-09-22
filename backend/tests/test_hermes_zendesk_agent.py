@@ -799,6 +799,84 @@ class TestAgentTurnProcessor:
         saved = repository.get_account_case("AC-123")
         assert saved["automation_status"] == "human_review_required"
 
+    def test_work_manual_selection_empty_automation_route_is_not_investigation(self) -> None:
+        """13650 regression: an automation direction with an empty route must
+        NOT silently select the investigation work manual."""
+        instructions, key = phase_instructions(
+            phase="work", direction="automation", route=None
+        )
+        assert key != "hermes-investigation-manual"
+        instructions, key = phase_instructions(
+            phase="work", direction="automation", route=""
+        )
+        assert key != "hermes-investigation-manual"
+
+    def test_work_manual_selection_registered_routes(self) -> None:
+        _, key = phase_instructions(
+            phase="work", direction="automation", route="enablement"
+        )
+        assert key == "hermes-automation-enablement-manual"
+        _, key = phase_instructions(
+            phase="work", direction="investigation", route=None
+        )
+        assert key == "hermes-investigation-manual"
+
+    def test_automation_empty_route_pre_work_gate_transfers_to_human(self) -> None:
+        """13650 regression: an automation turn whose route is empty/unknown
+        must be transferred to human BEFORE the ownership claim and the Work
+        submission — never silently routed to the investigation manual."""
+        from unittest.mock import patch
+        from types import SimpleNamespace
+
+        store = _store()
+        repository = self._automation_repository()
+        handoff, agent_job = self._hand_off_claim(store, _event())
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                # The legacy defect: automation recorded with NO route.
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route=None,
+                    reason="registered_enablement",
+                )
+                store.record_hermes_case_direction(
+                    handoff["turn_id"], direction="automation",
+                    reason="registered_enablement",
+                )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store, client=client, environment="preproduction",
+            repository=repository, poll_interval_seconds=0.01,
+        )
+        with patch(
+            "backend.services.account_automation_ownership."
+            "ensure_production_automation_ownership"
+        ) as ownership_mock, patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=SimpleNamespace(status="completed"),
+        ) as escalate_mock, patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            return_value={"status": "sent"},
+        ):
+            outcome = processor.process(agent_job)
+
+        assert outcome["status"] == "human_review"
+        assert outcome["reason"] == "route_contract_invalid"
+        # The ownership claim and the Work run never happened.
+        ownership_mock.assert_not_called()
+        assert len(client.submissions) == 1  # route only
+        # Persisted human-takeover state.
+        binding = store.get_hermes_case_binding("123")
+        assert str(binding.get("direction") or "") == "human"
+        assert str(binding.get("status") or "") == "paused"
+        saved = repository.get_account_case("AC-123")
+        assert saved["automation_status"] == "human_review_required"
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["status"] != "running"
+
     def test_unknown_work_status_never_reaches_persona(self) -> None:
         """PR-C: persona may only consume explicitly publishable business
         conclusions; an unknown terminal status parks the turn instead."""

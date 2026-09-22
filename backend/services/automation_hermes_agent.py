@@ -179,6 +179,14 @@ def phase_instructions(
     if phase == HermesTurnPhase.WORK.value:
         if str(session_kind or "case") == "adhoc":
             key = "hermes-adhoc-investigation-manual"
+        elif str(direction or "") == "automation":
+            # 13650: an automation direction with a missing/unknown route must
+            # NOT silently fall back to the investigation manual. The
+            # pre-work gate rejects such turns; this sentinel makes the
+            # fallback impossible even if the gate is bypassed.
+            key = WORK_PROMPT_KEYS.get(str(route or ""), "")
+            if not key:
+                key = "hermes-route-contract-invalid"
         else:
             key = WORK_PROMPT_KEYS.get(
                 "investigation" if direction == "investigation" else str(route or ""),
@@ -357,6 +365,14 @@ class HermesAgentTurnProcessor:
                 return self._recover_cancellation(payload)
             if str(refreshed["status"]) == "superseded":
                 return {"engine": "hermes", "turn_id": payload.turn_id, "status": "superseded"}
+            if (
+                phase == HermesTurnPhase.WORK
+                and str(refreshed.get("direction") or "") == "automation"
+                and not self._automation_route_contract_valid(refreshed)
+            ):
+                # Resume/restart entry: the same contract gate before Work
+                # submission (covers turns persisted with an invalid route).
+                return self._fail_route_contract_invalid(payload)
             if phase == HermesTurnPhase.WORK and str(refreshed.get("direction") or "") == "human":
                 self.store.complete_hermes_agent_turn(
                     payload.turn_id,
@@ -542,6 +558,11 @@ class HermesAgentTurnProcessor:
                     # every later notification lands in one thread
                     self._ensure_case_thread(payload, refreshed)
                 if direction == "automation":
+                    # Route contract gate BEFORE the ownership claim (13650):
+                    # an automation turn without a valid registered route
+                    # transfers to human instead of claiming or running Work.
+                    if not self._automation_route_contract_valid(refreshed):
+                        return self._fail_route_contract_invalid(payload)
                     # Legacy parity: claim the Zendesk ticket before the work
                     # phase can execute any business action. The ~90s
                     # routing-window wait belongs in this worker context, not
@@ -851,6 +872,79 @@ class HermesAgentTurnProcessor:
         self.store.complete_hermes_agent_turn(turn_id, result=result)
         self._notify_investigation_result(payload, investigation)
         return result
+
+    def _automation_route_contract_valid(self, turn: dict[str, Any]) -> bool:
+        """A turn may only proceed to Work as automation when its route is
+        non-empty, registered, and has a Work manual (13650: empty routes
+        previously fell through to the investigation manual)."""
+        from backend.services.account_automation_handlers import account_automation_handler
+
+        route = str(turn.get("route") or "").strip()
+        if not route:
+            return False
+        if account_automation_handler(route) is None:
+            return False
+        return bool(WORK_PROMPT_KEYS.get(route, ""))
+
+    def _fail_route_contract_invalid(self, payload: AgentTurnJobPayload) -> dict[str, Any]:
+        """Unified human takeover for an automation turn whose route contract
+        is invalid: no ownership claim, no Work/Persona run, no customer
+        reply; the existing escalation chain records the reason."""
+        turn = self.store.get_hermes_turn(payload.turn_id) or {}
+        ticket_id = str(turn.get("zendesk_ticket_id") or payload.event.ticket.id)
+        account_case = (
+            self.repository.get_account_case_by_ticket_id(ticket_id)
+            if self.repository is not None and ticket_id
+            else None
+        )
+        reason = "route_contract_invalid"
+        if account_case is not None:
+            self._escalate_automation_failure(
+                payload,
+                account_case,
+                reason_code=reason,
+                detail=(
+                    "The automation direction was recorded without a valid "
+                    "registered route (empty, unknown, or without a Work "
+                    "manual); transferred to human review before the "
+                    "ownership claim and Work execution."
+                ),
+            )
+            # Terminate the turn so late work writes are refused.
+            try:
+                self.store.complete_hermes_agent_turn(
+                    payload.turn_id,
+                    result={
+                        "engine": "hermes",
+                        "turn_id": payload.turn_id,
+                        "status": "human_review",
+                        "reason": reason,
+                    },
+                )
+            except Exception:
+                LOGGER.exception(
+                    "route-contract-invalid turn completion failed for %s", payload.turn_id
+                )
+        else:
+            self.store.record_hermes_turn_work(
+                payload.turn_id,
+                work_result={"status": "human_review_required", "reason": reason},
+            )
+            self.store.complete_hermes_agent_turn(
+                payload.turn_id,
+                result={
+                    "engine": "hermes",
+                    "turn_id": payload.turn_id,
+                    "status": "human_review",
+                    "reason": reason,
+                },
+            )
+        return {
+            "engine": "hermes",
+            "turn_id": payload.turn_id,
+            "status": "human_review",
+            "reason": reason,
+        }
 
     # ------------------------------------------------------- automation claim
 
