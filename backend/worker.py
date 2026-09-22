@@ -4112,7 +4112,38 @@ _ENABLEMENT_RELAY_LISTENER: dict[str, Any] = {
     "instance_id": "",
     "epoch": 0,
     "published_at": 0.0,
+    "stale_rejections": 0,
+    "register_backoff_until": 0.0,
 }
+
+
+def _note_enablement_relay_stale(message: str) -> bool:
+    """Handle a stale-epoch rejection and arm re-registration backoff.
+
+    The register call takes over the shared service-identity readiness epoch
+    unconditionally (it does not use recover_if_stale), so concurrent worker
+    tasks preempt each other; without backoff two live instances reping-pong
+    409 -> re-register at the worker cycle beat (observed during the
+    2026-09-20 deploy storms). Exponential backoff with jitter lets one
+    side keep the listener instead.
+    """
+    if "stale_readiness_epoch" not in message and "recovery_not_allowed" not in message:
+        return False
+    import random as _random
+    import time as _time
+
+    state = _ENABLEMENT_RELAY_LISTENER
+    state["epoch"] = 0
+    rejections = int(state.get("stale_rejections") or 0) + 1
+    state["stale_rejections"] = rejections
+    backoff = min(5.0 * (2 ** (rejections - 1)), 60.0) + _random.uniform(0.0, 2.0)
+    state["register_backoff_until"] = _time.monotonic() + backoff
+    LOGGER.warning(
+        "enablement relay stale epoch rejected (%d consecutive); re-registration deferred %.1fs",
+        rejections,
+        backoff,
+    )
+    return True
 
 
 def _enablement_relay_failure_stage() -> str:
@@ -4423,16 +4454,19 @@ def _ensure_enablement_relay_listener(client: AgentRelayClient) -> tuple[str, in
     import time as _time
 
     state = _ENABLEMENT_RELAY_LISTENER
+    now = _time.monotonic()
     if not state["instance_id"]:
         state["instance_id"] = new_listener_instance_id()
     if not state["epoch"]:
+        if now < float(state.get("register_backoff_until") or 0.0):
+            return None
         try:
             state["epoch"] = client.register_listener(state["instance_id"])
+            state["stale_rejections"] = 0
         except AgentRelayError as exc:
             LOGGER.warning("enablement relay listener registration failed: %s", exc)
             state["epoch"] = 0
             return None
-    now = _time.monotonic()
     if now - float(state["published_at"] or 0.0) >= 45.0:
         try:
             client.publish_readiness(state["instance_id"], int(state["epoch"]), ready=True)
@@ -4440,8 +4474,7 @@ def _ensure_enablement_relay_listener(client: AgentRelayClient) -> tuple[str, in
         except AgentRelayError as exc:
             message = str(exc)
             LOGGER.warning("enablement relay readiness publish failed: %s", message)
-            if "stale_readiness_epoch" in message or "recovery_not_allowed" in message:
-                state["epoch"] = 0
+            _note_enablement_relay_stale(message)
             return None
     return str(state["instance_id"]), int(state["epoch"])
 
@@ -5102,8 +5135,7 @@ def _cycle_enablement_relay_inbox(*, max_events: int = 10) -> None:
         except AgentRelayError as exc:
             message = str(exc)
             LOGGER.warning("enablement relay pull failed: %s", message)
-            if "stale_readiness_epoch" in message or "recovery_not_allowed" in message:
-                _ENABLEMENT_RELAY_LISTENER["epoch"] = 0
+            _note_enablement_relay_stale(message)
             return
         if event is None:
             return
