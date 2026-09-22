@@ -254,7 +254,15 @@ class RelayDispatchTests(unittest.TestCase):
         self.case = _seed_auto_case(self.repository)
         _seed_delivered_confirmation(self.repository, self.case)
         self.request_id = _seed_gated_request(self.repository, self.case)
-        WORKER._ENABLEMENT_RELAY_LISTENER.update({"instance_id": "", "epoch": 0, "published_at": 0.0})
+        WORKER._ENABLEMENT_RELAY_LISTENER.update(
+            {
+                "instance_id": "",
+                "epoch": 0,
+                "published_at": 0.0,
+                "stale_rejections": 0,
+                "register_backoff_until": 0.0,
+            }
+        )
 
     def test_release_and_dispatch_after_delivered_confirmation(self):
         client = _FakeRelayClient()
@@ -404,7 +412,15 @@ class RelayInboxTests(unittest.TestCase):
             relay_task_expires_at="2026-09-30T00:00:00+00:00",
             now="2026-09-16T00:00:05+00:00",
         )
-        WORKER._ENABLEMENT_RELAY_LISTENER.update({"instance_id": "", "epoch": 0, "published_at": 0.0})
+        WORKER._ENABLEMENT_RELAY_LISTENER.update(
+            {
+                "instance_id": "",
+                "epoch": 0,
+                "published_at": 0.0,
+                "stale_rejections": 0,
+                "register_backoff_until": 0.0,
+            }
+        )
 
     def _client_with_result(self, *, outcome="enabled"):
         client = _FakeRelayClient()
@@ -1023,6 +1039,82 @@ class RelayInboxTests(unittest.TestCase):
         self.assertEqual(request["suppression_reason"], "relay_task_expired")
         detail = str(failure.call_args.kwargs["detail"])
         self.assertIn("may already have executed", detail)
+
+
+class RelayListenerBackoffTests(unittest.TestCase):
+    """Stale-epoch re-registration backoff (deploy-storm epoch preemption)."""
+
+    def setUp(self) -> None:
+        WORKER._ENABLEMENT_RELAY_LISTENER.update(
+            {
+                "instance_id": "listener-test",
+                "epoch": 7,
+                "published_at": 0.0,
+                "stale_rejections": 0,
+                "register_backoff_until": 0.0,
+            }
+        )
+
+    def _run_cycle_with_pull_error(self, client: _FakeRelayClient) -> None:
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", InMemoryTicketRepository()
+        ), patch.object(WORKER, "agentrelay_config", lambda: client.config), patch.object(
+            WORKER, "AgentRelayClient", return_value=client
+        ):
+            WORKER._cycle_enablement_relay_inbox()
+
+    @staticmethod
+    def _stale_pull_client() -> _FakeRelayClient:
+        client = _FakeRelayClient()
+
+        def _pull(listener_instance_id, readiness_epoch):
+            raise AgentRelayError(
+                "stale_readiness_epoch",
+                'AgentRelay HTTP 409 {"code":"stale_readiness_epoch"}',
+                retryable=True,
+            )
+
+        client.pull_event = _pull
+        return client
+
+    def test_stale_pull_defers_re_registration(self) -> None:
+        client = self._stale_pull_client()
+        self._run_cycle_with_pull_error(client)
+        state = WORKER._ENABLEMENT_RELAY_LISTENER
+        self.assertEqual(state["epoch"], 0)
+        self.assertEqual(state["stale_rejections"], 1)
+        self.assertGreater(float(state["register_backoff_until"]), 0.0)
+        # During the backoff window no re-registration is attempted.
+        registers: list[str] = []
+        fresh = _FakeRelayClient()
+        fresh.register_listener = lambda iid: (registers.append(iid), fresh.epoch)[1]
+        self.assertIsNone(WORKER._ensure_enablement_relay_listener(fresh))
+        self.assertEqual(registers, [])
+
+    def test_backoff_expiry_restores_registration_and_resets_counter(self) -> None:
+        client = self._stale_pull_client()
+        self._run_cycle_with_pull_error(client)
+        state = WORKER._ENABLEMENT_RELAY_LISTENER
+        state["register_backoff_until"] = 0.0  # expire immediately
+        fresh = _FakeRelayClient()
+        listener = WORKER._ensure_enablement_relay_listener(fresh)
+        self.assertEqual(listener, ("listener-test", fresh.epoch))
+        self.assertEqual(state["stale_rejections"], 0)
+        self.assertEqual(int(state["epoch"]), fresh.epoch)
+
+    def test_non_stale_error_does_not_arm_backoff(self) -> None:
+        client = _FakeRelayClient()
+
+        def _pull(listener_instance_id, readiness_epoch):
+            raise AgentRelayError("network", "connection reset by peer", retryable=True)
+
+        client.pull_event = _pull
+        self._run_cycle_with_pull_error(client)
+        state = WORKER._ENABLEMENT_RELAY_LISTENER
+        self.assertEqual(state["epoch"], 7)
+        self.assertEqual(state["stale_rejections"], 0)
+        fresh = _FakeRelayClient()
+        self.assertIsNotNone(WORKER._ensure_enablement_relay_listener(fresh))
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-22T07:13:51Z",
-  "source_base_commit": "3f4114dcf975e67fc063784b13cdbd38cadc4d6c",
-  "registry_digest": "3e1c38a0b91750e04e3db73efcaa3e63929c9eb29365e91d27821eee1340e32c",
+  "generated_at": "2026-09-22T10:10:16Z",
+  "source_base_commit": "1b04955811569d0abf97204db9016653334ef999",
+  "registry_digest": "540cc51b8e04567e2558a56648bb79983976f24b8440338ee7f80861766b9b00",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1279,6 +1279,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Inbox binding verification hardening (round 7, both repos pending acceptance)",
           "command": "agent-relay-mcp: node --test test/；SupportPortal: python -B -m pytest -p no:cacheprovider test_enablement_relay_inbox_binding_scenarios.py test_enablement_local_pilot.py test_enablement_relay_skill_validity.py test_worker.py",
           "details": "AgentRelay 全套 263 pass（workspace 19：绑定语义五态矩阵/历史不沿用/身份不匹配即停/同版本 resync/rebuild 重生成/**字段值 JSON 编码+换行引号对抗**）。SupportPortal 分两层：①pytest `test_enablement_relay_inbox_binding_scenarios.py` 定位为**文档检查+底层可执行回归**（章节存在与关键词、预检/审批 digest 绑定/执行时门禁），**不构成行为验收**——独立验收反向探针证明仅关键词检查时篡改规则仍全过，该缺口已如实记录；②**行为验收=一次性隔离运行**（docs/evidence/p2-163-skill-behavior/）：三个独立真实代理各自加载新版 SKILL.md，面对合成收件（指定 Task A+同 AppID 关联 Task B）与 mock 状态服务/pilot shim 自主决策——s1 旧取消→查询两者后排除并仅对当前申请预检（3 只读 pilot 零写，停在首次审批门槛）；s2 双有效→**零 pilot 调用于预检前暂停**并报告两者给出三选一；s3 端点 503→反复核实确认为全局不可读后**零 pilot 调用于预检前停止**并报告原因。相关 pytest 套件 21 passed/5 subtests；运行时零改动。"
+        },
+        {
+          "type": "test",
+          "label": "Relay listener stale-epoch backoff (worker)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py",
+          "details": "32 passed（新增 3：连续 stale 409 后重注册被退避窗口拦住、退避过期后恢复注册并清零计数、非 stale 网络错误不武装退避且 epoch 保持）。backend/worker.py 监听器状态增 stale_rejections/register_backoff_until 两键，_ensure_enablement_relay_listener 退避窗口内跳过注册、注册成功重置；publish/pull 两处 stale 判定统一收敛进 _note_enablement_relay_stale。对照验证：test_worker.py 14 failed 在干净 main(1b049558) stash 对照同数复现，非本改动引入。"
         },
         {
           "type": "test",
@@ -13345,7 +13351,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "七轮（收件绑定核验，两库分支待独立验收）：AgentRelay(34b3fb02 基线 feat/inbox-handoff-binding) 修正交接绑定合同（metadata 仅取 current_message_id 对应 Message 的 project_hermes；缺失/null=不适用，显式 {}=存在但空，不再 ||{} 伪造；绑定字段用源名 task_kind/human_event_id/local_task_id；task_id/current_message_id/Relay 状态精确匹配保留）+关联任务规则改为允许只读核实、仅确认冲突或无法判定才暂停；模板同步。真实入口测试（persistTaskWorkspace/resyncLocalTask/rebuildTaskIndex）覆盖 7 场景+既有断言更新，node --test 全套 262 pass。SupportPortal(e11abda3 基线 codex/p2-163-inbox-binding-verification) SKILL.md 增收件绑定核验固定顺序（解析当前 Message→只读端点核对四元组→dispatched+ticket_valid→同 AppID 关联申请六行处理表），不自动关闭/回复另一条 Task；场景验收两层：pytest=文档检查+底层回归（21 passed）；行为验收=一次性隔离运行三场景全符合（evidence/p2-163-skill-behavior：s1 排除旧申请仅预检当前零写/s2 预检前零调用暂停报告两者/s3 预检前零调用停止报告原因）。两库停在未合码提交交独立验收；通过后本地启用（授权更新+确认进程加载+13605 定向 resync）。再后：三时点关闭验收+四段受控+Mac token→真实 Mac 审批开通→Production 授权。",
+      "next_action": "八轮（relay 热循环预防修复）：worker 监听器对 stale_readiness_epoch/recovery_not_allowed 加指数退避+jitter（5/10/20/40s 封顶 60s+0-2s 抖动，注册成功重置；register 无条件接管 epoch 的多实例互顶在 09-20 部署风暴实测 ~2.2s 节拍乒乓 409，热循环已停但滚动部署会复发）。修复后按既有链路部署 preprod 并复测 E1P/畸形参数单（#1269 route manual v3 + fail-closed 已在 main）。后续仍按七轮遗留：三时点关闭验收+四段受控+Mac 10:00 触发+Mac token→真实 Mac 审批开通→Production 授权。七轮（收件绑定核验，两库分支待独立验收）：AgentRelay(34b3fb02 基线 feat/inbox-handoff-binding) 修正交接绑定合同（metadata 仅取 current_message_id 对应 Message 的 project_hermes；缺失/null=不适用，显式 {}=存在但空，不再 ||{} 伪造；绑定字段用源名 task_kind/human_event_id/local_task_id；task_id/current_message_id/Relay 状态精确匹配保留）+关联任务规则改为允许只读核实、仅确认冲突或无法判定才暂停；模板同步。真实入口测试（persistTaskWorkspace/resyncLocalTask/rebuildTaskIndex）覆盖 7 场景+既有断言更新，node --test 全套 262 pass。SupportPortal(e11abda3 基线 codex/p2-163-inbox-binding-verification) SKILL.md 增收件绑定核验固定顺序（解析当前 Message→只读端点核对四元组→dispatched+ticket_valid→同 AppID 关联申请六行处理表），不自动关闭/回复另一条 Task；场景验收两层：pytest=文档检查+底层回归（21 passed）；行为验收=一次性隔离运行三场景全符合（evidence/p2-163-skill-behavior：s1 排除旧申请仅预检当前零写/s2 预检前零调用暂停报告两者/s3 预检前零调用停止报告原因）。两库停在未合码提交交独立验收；通过后本地启用（授权更新+确认进程加载+13605 定向 resync）。再后：三时点关闭验收+四段受控+Mac token→真实 Mac 审批开通→Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13450,6 +13456,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Inbox binding verification hardening (round 7, both repos pending acceptance)",
           "command": "agent-relay-mcp: node --test test/；SupportPortal: python -B -m pytest -p no:cacheprovider test_enablement_relay_inbox_binding_scenarios.py test_enablement_local_pilot.py test_enablement_relay_skill_validity.py test_worker.py",
           "details": "AgentRelay 全套 263 pass（workspace 19：绑定语义五态矩阵/历史不沿用/身份不匹配即停/同版本 resync/rebuild 重生成/**字段值 JSON 编码+换行引号对抗**）。SupportPortal 分两层：①pytest `test_enablement_relay_inbox_binding_scenarios.py` 定位为**文档检查+底层可执行回归**（章节存在与关键词、预检/审批 digest 绑定/执行时门禁），**不构成行为验收**——独立验收反向探针证明仅关键词检查时篡改规则仍全过，该缺口已如实记录；②**行为验收=一次性隔离运行**（docs/evidence/p2-163-skill-behavior/）：三个独立真实代理各自加载新版 SKILL.md，面对合成收件（指定 Task A+同 AppID 关联 Task B）与 mock 状态服务/pilot shim 自主决策——s1 旧取消→查询两者后排除并仅对当前申请预检（3 只读 pilot 零写，停在首次审批门槛）；s2 双有效→**零 pilot 调用于预检前暂停**并报告两者给出三选一；s3 端点 503→反复核实确认为全局不可读后**零 pilot 调用于预检前停止**并报告原因。相关 pytest 套件 21 passed/5 subtests；运行时零改动。"
+        },
+        {
+          "type": "test",
+          "label": "Relay listener stale-epoch backoff (worker)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py",
+          "details": "32 passed（新增 3：连续 stale 409 后重注册被退避窗口拦住、退避过期后恢复注册并清零计数、非 stale 网络错误不武装退避且 epoch 保持）。backend/worker.py 监听器状态增 stale_rejections/register_backoff_until 两键，_ensure_enablement_relay_listener 退避窗口内跳过注册、注册成功重置；publish/pull 两处 stale 判定统一收敛进 _note_enablement_relay_stale。对照验证：test_worker.py 14 failed 在干净 main(1b049558) stash 对照同数复现，非本改动引入。"
         }
       ],
       "source_refs": [
