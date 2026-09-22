@@ -29,6 +29,20 @@ def _load_plugin():
     return module
 
 
+def _plugin_schema(plugin):
+    return [t for t in plugin._TOOLS if t[0] == "support_record_direction"][0][2]
+
+
+def _assert_schema_valid(plugin, tool_args):
+    """Positive inputs must pass the plugin's registered JSON Schema BEFORE
+    the handler runs (round-2 acceptance: schema-lens-first)."""
+    try:
+        import jsonschema
+    except ImportError:
+        return
+    jsonschema.validate(tool_args, _plugin_schema(plugin))
+
+
 @unittest.skipIf(PLUGIN_PATH is None, "hermes-deploy plugin not available on this machine")
 class RouteToolContractIntegrationTests(unittest.TestCase):
     def setUp(self):
@@ -138,25 +152,31 @@ class RouteToolContractIntegrationTests(unittest.TestCase):
     def test_valid_media_relay_classification_full_chain(self):
         classification = {
             "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.95,
+            "agora_confidence": 0.95,
+            "action_confidence": 0.9,
             "agora_route": "backend_operation",
-            "reason_code": "registered_enablement",
+            "account_billing_subcategory": None,
             "backend_operation_subcategory": "enablement",
             "backend_operation": {
                 "action": "enable",
                 "target": "media_relay",
                 "evidence": "Please enable media relay for 0123456789abcdef0123456789abcdef.",
             },
+            "additional_intents": [],
             "confidence": 0.95,
+            "reason_code": "registered_enablement",
         }
-        result, captured, server_result, server_error = self._plugin_call(
-            {
-                "turn_id": self.turn_id,
-                "direction": "automation",
-                "reason": "registered_enablement",
-                "route": "enablement",
-                "classification": classification,
-            }
-        )
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "registered_enablement",
+            "route": "enablement",
+            "classification": classification,
+        }
+        _assert_schema_valid(self.plugin, tool_args)
+        result, captured, server_result, server_error = self._plugin_call(tool_args)
         self.assertTrue(result.get("ok"), result)
         self.assertEqual(len(captured), 1)
         # The HTTP body carries the classification as a JSON OBJECT.
@@ -176,20 +196,25 @@ class RouteToolContractIntegrationTests(unittest.TestCase):
     def test_valid_troubleshoot_classification_selects_investigation(self):
         classification = {
             "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.9,
+            "agora_confidence": 0.9,
             "agora_route": "technical",
-            "reason_code": "technical_investigation",
+            "account_billing_subcategory": None,
             "backend_operation_subcategory": None,
             "backend_operation": None,
+            "additional_intents": [],
             "confidence": 0.9,
+            "reason_code": "technical_request",
         }
-        result, captured, server_result, server_error = self._plugin_call(
-            {
-                "turn_id": self.turn_id,
-                "direction": "investigation",
-                "reason": "technical_investigation",
-                "classification": classification,
-            }
-        )
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "investigation",
+            "reason": "technical_request",
+            "classification": classification,
+        }
+        _assert_schema_valid(self.plugin, tool_args)
+        result, captured, server_result, server_error = self._plugin_call(tool_args)
         self.assertTrue(result.get("ok"), result)
         self.assertIsNone(server_error)
         turn = self.store.get_hermes_turn(self.turn_id)
