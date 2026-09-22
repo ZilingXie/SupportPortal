@@ -68,6 +68,16 @@ DETAILED_INVOICE_BODY = (
     "Thank you."
 )
 
+
+def _enablement_request_body() -> str:
+    return (
+        "Hello Agora team,\n\n"
+        "Please enable Media Relay from your end for our project.\n\n"
+        f"App ID: {ENABLEMENT_APP_ID}\n\n"
+        "We are building a live event platform and need Media Relay to bridge presenters "
+        "between two channels. Thank you."
+    )
+
 _TWENTY_FOUR_HOURS_RE = re.compile(r"(?i)\b24\s*[- ]?\s*hours?\b|\b24h\b")
 _CLOSE_CLAIM_WORD_RE = re.compile(r"(?i)\b(?:clos\w*|archiv\w*|reop\w*)\b")
 _NEGATED_CLAUSE_RE = re.compile(r"(?i)\b(?:not|never|won't|don't|cannot|can't)\b")
@@ -168,6 +178,7 @@ class ScenarioEngine:
         imap_port: int,
         db_dsn: str,
         db_schema: str = "supportportal",
+        processing_profile: str = "production",
         subject_tag: str = DEFAULT_SUBJECT_TAG,
         turn_timeout_min: int = DEFAULT_TURN_TIMEOUT_MIN,
         approval_timeout_min: int = DEFAULT_APPROVAL_TIMEOUT_MIN,
@@ -183,6 +194,7 @@ class ScenarioEngine:
         self.imap_port = imap_port
         self.db_dsn = db_dsn
         self.db_schema = db_schema
+        self.processing_profile = processing_profile
         self.subject_tag = subject_tag
         self.turn_timeout_min = turn_timeout_min
         self.approval_timeout_min = approval_timeout_min
@@ -202,11 +214,13 @@ class ScenarioEngine:
         smtp_host = str(os.getenv("BILLING_AUTOMATION_SMTP_HOST") or "").strip()
         sender = str(os.getenv("BILLING_AUTOMATION_SMTP_USERNAME") or "").strip()
         smtp_password = str(os.getenv("BILLING_AUTOMATION_SMTP_PASSWORD") or "").strip()
-        # The engine always targets the production ticket DB. In the
+        # The engine defaults to the production ticket DB contract. In the
         # api_production container TICKET_DB_DSN already IS production, and
         # PRODUCTION_TICKET_DB_DSN is present via the root .env everywhere;
         # prefer the explicit production key so a staging api process can
-        # never drive scenarios against the staging DB.
+        # never drive scenarios against the staging DB. Preproduction runs
+        # override AUTOMATION_TEST_DB_DSN + TICKET_DB_SCHEMA +
+        # AUTOMATION_TEST_PROCESSING_PROFILE together.
         db_dsn = (
             str(os.getenv("AUTOMATION_TEST_DB_DSN") or "").strip()
             or str(os.getenv("PRODUCTION_TICKET_DB_DSN") or "").strip()
@@ -243,6 +257,10 @@ class ScenarioEngine:
             imap_port=_int_env("AUTOMATION_TEST_IMAP_PORT", 993),
             db_dsn=db_dsn,
             db_schema=str(os.getenv("TICKET_DB_SCHEMA") or "supportportal").strip() or "supportportal",
+            processing_profile=(
+                str(os.getenv("AUTOMATION_TEST_PROCESSING_PROFILE") or "production").strip()
+                or "production"
+            ),
             subject_tag=str(
                 os.getenv("AUTOMATION_TEST_TICKET_SUBJECT_TAG") or DEFAULT_SUBJECT_TAG
             ).strip(),
@@ -416,14 +434,14 @@ class ScenarioEngine:
             rows = self.db_query(
                 "SELECT account_case_id, client_ticket_id, zendesk_ticket_id, title "
                 "FROM support_account_cases "
-                "WHERE processing_profile = 'production' AND title = %s "
+                "WHERE processing_profile = %s AND title = %s "
                 "AND created_at >= %s ORDER BY created_at DESC LIMIT 1",
-                (ctx.subject, since),
+                (self.processing_profile, ctx.subject, since),
             )
             return rows[0] if rows else None
 
         case = self.wait_for(
-            "production case creation (n8n intake)", probe, self.turn_timeout_min * 60
+            f"{self.processing_profile} case creation (n8n intake)", probe, self.turn_timeout_min * 60
         )
         ctx.account_case_id = case["account_case_id"]
         ctx.client_ticket_id = case["client_ticket_id"]
@@ -713,18 +731,65 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
+    def wait_public_comment_delivered(self, ctx: ScenarioContext, step: str) -> None:
+        """Wait for a delivered public comment with no ticket-status change.
+
+        Preproduction confirmation replies deliver a public comment without a
+        target_status transition (the ticket stays open while the enablement
+        relay leg continues), so the solved-targeted wait above does not apply.
+        """
+        def probe():
+            rows = self.db_query(
+                "SELECT status, is_public, zendesk_comment_id "
+                "FROM support_account_zendesk_comment_deliveries "
+                "WHERE account_case_id = %s AND is_public = true "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.account_case_id,),
+            )
+            if rows and str(rows[0].get("status") or "") == "delivered":
+                return rows[0]
+            return None
+
+        try:
+            row = self.wait_for(
+                "public zendesk comment delivered", probe, self.turn_timeout_min * 60
+            )
+            self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
     # -- scenarios ---------------------------------------------------------
+
+    def run_e1p(self) -> None:
+        """Preproduction enablement auto chain (hermes engine + archer mode).
+
+        Verified against golden ticket 13605 on r20260920-e11abda: no internal
+        handoff email (relay auto path marks internal_email_send_status
+        not_applicable), the confirmation reply publishes automatically, and
+        the public Zendesk comment delivery has no target_status change.
+        """
+        ctx = ScenarioContext("E1P")
+        self.start_ticket(
+            ctx,
+            "Please enable Media Relay for our project",
+            _enablement_request_body(),
+        )
+        self.find_case(ctx)
+        self.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+        self.wait_case_field(
+            ctx, "internal_email_send_status", "not_applicable",
+            "enablement auto path (no internal handoff email)",
+        )
+        self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+        self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
 
     def run_e1(self) -> None:
         ctx = ScenarioContext("E1")
         self.start_ticket(
             ctx,
             "Please enable Media Relay for our project",
-            "Hello Agora team,\n\n"
-            "Please enable Media Relay from your end for our project.\n\n"
-            f"App ID: {ENABLEMENT_APP_ID}\n\n"
-            "We are building a live event platform and need Media Relay to bridge presenters "
-            "between two channels. Thank you.",
+            _enablement_request_body(),
         )
         self.find_case(ctx)
         row = self.case_row(ctx)
@@ -886,6 +951,14 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
     SCENARIOS: dict[str, dict[str, Any]] = {
+        "E1P": {
+            "label": "Enablement auto (preproduction)",
+            "description": (
+                "AppID ticket → auto enablement route → confirmation reply published "
+                "+ Zendesk delivered (no internal email, no manual approval)"
+            ),
+            "run": run_e1p,
+        },
         "E1": {
             "label": "Enablement happy path",
             "description": "AppID provided → confirmation → manual approval → enabled + solved",

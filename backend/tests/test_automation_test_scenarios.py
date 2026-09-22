@@ -307,6 +307,124 @@ class ScenarioEngineTests(unittest.TestCase):
         )
         self.assertIn("content check passed", completion_step.detail)
 
+    def test_e1p_happy_path_scripted(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [
+                {
+                    "account_case_id": "AC-13605",
+                    "client_ticket_id": "13605",
+                    "zendesk_ticket_id": "13605",
+                    "title": engine.tagged("Please enable Media Relay for our project"),
+                }
+            ]),
+            ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+            ("WHERE account_case_id", [{"internal_email_send_status": "not_applicable"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
+                "zendesk_comment_id": "53746309711252",
+            }]),
+        ]
+        engine.run_scenario("E1P")
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(len(engine.sent_emails), 1)
+        self.assertTrue(engine.sent_emails[0]["subject"].startswith("[zac test] "))
+        kinds = [kind for kind, _ in engine.events]
+        self.assertIn("ticket_linked", kinds)
+        self.assertNotIn("approval_required", kinds)
+        step_names = [step.step for step in engine.steps]
+        self.assertEqual(
+            step_names,
+            [
+                "routed to enablement",
+                "enablement auto path (no internal handoff email)",
+                "submission confirmation reply",
+                "confirmation comment delivered to Zendesk",
+            ],
+        )
+
+    def test_e1p_fails_when_internal_email_path_appears(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [
+                {
+                    "account_case_id": "AC-13610",
+                    "client_ticket_id": "13610",
+                    "zendesk_ticket_id": "13610",
+                    "title": engine.tagged("Please enable Media Relay for our project"),
+                }
+            ]),
+            ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+        ]
+        # internal_email_send_status stays "sent" (manual mode): the wait never
+        # matches, and the failure path's diagnostic case_row must keep working,
+        # so every further case lookup returns the manual-mode row forever.
+        manual_row = [{"internal_email_send_status": "sent"}]
+        scripted_queue = engine.db_queue
+
+        def persistent_case_row(sql, params):
+            if scripted_queue:
+                matcher, result = scripted_queue.pop(0)
+                assert matcher in sql, f"unexpected query: {sql}"
+                return result
+            if "WHERE account_case_id" in sql:
+                return manual_row
+            raise AssertionError(f"unexpected query: {sql}")
+
+        engine.db_query = persistent_case_row
+        with self.assertRaises(AssertionError):
+            engine.run_scenario("E1P")
+        self.assertFalse(engine.all_passed())
+        failed = [step for step in engine.steps if step.status == "FAIL"]
+        self.assertTrue(
+            any("enablement auto path" in step.step for step in failed),
+            msg=f"recorded steps: {[s.step for s in engine.steps]}",
+        )
+
+    def test_find_case_queries_configured_processing_profile(self) -> None:
+        engine = ScriptedEngine()
+        engine.processing_profile = "preproduction"
+        captured: list[tuple[str, list]] = []
+
+        def capture_query(sql, params):
+            captured.append((sql, list(params)))
+            return [{
+                "account_case_id": "AC-13611",
+                "client_ticket_id": "13611",
+                "zendesk_ticket_id": "13611",
+                "title": "probe",
+            }]
+
+        engine.db_query = capture_query
+        ctx = automation_test_scenarios.ScenarioContext("probe")
+        ctx.subject = "probe"
+        engine.find_case(ctx)
+        sql, params = captured[0]
+        self.assertIn("processing_profile = %s", sql)
+        self.assertEqual(params[0], "preproduction")
+        self.assertEqual(engine.processing_profile, "preproduction")
+
+    def test_from_env_reads_processing_profile(self) -> None:
+        env = {
+            "BILLING_AUTOMATION_SMTP_HOST": "smtp.163.com",
+            "BILLING_AUTOMATION_SMTP_USERNAME": "xieziling97@163.com",
+            "BILLING_AUTOMATION_SMTP_PASSWORD": "code",
+            "AUTOMATION_TEST_DB_DSN": "postgresql://example.invalid/preprod",
+            "AUTOMATION_TEST_PROCESSING_PROFILE": "preproduction",
+        }
+        with patch.dict(os.environ, env):
+            engine = ScenarioEngine.from_env()
+            self.assertEqual(engine.processing_profile, "preproduction")
+            os.environ.pop("AUTOMATION_TEST_PROCESSING_PROFILE", None)
+            engine_default = ScenarioEngine.from_env()
+            self.assertEqual(engine_default.processing_profile, "production")
+
     def test_e2_followup_completion_acknowledges_additional_information(self) -> None:
         engine = ScriptedEngine()
         engine.db_queue = [
@@ -589,7 +707,7 @@ class AutomationTestScenarioApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(
             {item["id"] for item in payload["scenarios"]},
-            {"E1", "E2", "F1", "S1", "D1"},
+            {"E1", "E2", "F1", "S1", "D1", "E1P"},
         )
         self.assertEqual(payload["runs"], [])
 
