@@ -311,7 +311,7 @@ print_startup_diagnostics() {
   podman ps -a --filter name=deployment_ --format '{{.Names}} {{.Status}}' 2>&1 | tail -n 80 >&2 || true
   for service in api rag_api worker_query worker_aux rag_worker; do
     podman logs --tail 100 "deployment_${service}_1" 2>&1 \
-      | sed -E 's#(postgres(?:ql)?://)[^ @]+@#\1[REDACTED]@#g; s#(Bearer )[A-Za-z0-9._-]+#\1[REDACTED]#g' \
+      | sed -E 's#(postgresql?://)[^ @]+@#\1[REDACTED]@#g; s#(Bearer )[A-Za-z0-9._-]+#\1[REDACTED]#g' \
       | tail -n 100 >&2 || true
   done
 }
