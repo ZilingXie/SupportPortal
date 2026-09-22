@@ -73,7 +73,9 @@ Jev treats an uncertain or low-confidence cross-route additional intent as a
 review signal. In particular, it cannot leave account-suspension automation
 eligible when another requested route may be present. The Hermes transport
 waits 75 seconds around the 60-second model deadline. Provider authentication
-failure stops all later candidate calls.
+failure stops all later candidate calls, including model-unavailable responses
+returned with HTTP 401/403. HTTP status takes precedence over body error text;
+nested or malformed error bodies remain controlled candidate errors.
 
 Production extraction selects `processing_profile='production'`, retains cases
 without a v11 baseline for manual review, and samples deterministic round-robin

@@ -272,7 +272,7 @@ def _provider_error_code(error: BaseException) -> str | None:
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
-        status = getattr(current, "code", None)
+        status = getattr(current, "http_status", None) or getattr(current, "code", None)
         if status in {401, 403}:
             return "authentication_error"
         if status == 429:

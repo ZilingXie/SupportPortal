@@ -9,8 +9,12 @@ intent is uncertain or low-confidence. Hermes provider authentication errors
 propagate through the loopback service so the runner stops later paid calls.
 Missing provider-returned model identity is a candidate error and blocks formal
 experiment readiness; the 75-second HTTP deadline now covers the 60-second
-Hermes model deadline. These changes affect only developer experiment tooling;
-no Production data, real provider, runtime route, or deployment was used.
+Hermes model deadline. Provider HTTP status is preserved even when the shared
+LLM factory classifies a response body as model-unavailable, and the experiment
+adapter gives 401/403 precedence over any body error code while treating nested
+or malformed error bodies as controlled candidate failures. These changes
+affect only developer experiment tooling and error metadata; no Production
+data, real provider, runtime route, or deployment was used.
 
 ## 2026-09-21 - Hermes route aligned to Production Account taxonomy
 

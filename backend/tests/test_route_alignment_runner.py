@@ -5,6 +5,7 @@ import json
 import stat
 import threading
 import urllib.error
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
@@ -248,8 +249,19 @@ def test_oversized_shared_input_rejects_both_candidates_before_calls(tmp_path: P
     assert {item["call_count"] for item in records["candidates"].values()} == {0}
 
 
-def test_hermes_provider_authentication_error_aborts_complete_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from backend.services.llm_factory import LlmInvocationError
+@pytest.mark.parametrize(
+    ("provider_status", "provider_body"),
+    [
+        (401, b'{"error":{"message":"Invalid API key"}}'),
+        (403, b'{"error":{"message":"Model is not available for this API key"}}'),
+    ],
+)
+def test_real_llm_factory_authentication_error_aborts_complete_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    provider_status: int,
+    provider_body: bytes,
+) -> None:
     from scripts.experiments.route_alignment.adapters import http_candidate
     from scripts.experiments.route_alignment.hermes_classifier import (
         build_experiment_profile,
@@ -268,20 +280,22 @@ def test_hermes_provider_authentication_error_aborts_complete_run(tmp_path: Path
         reasoning_effort="medium",
     )
 
-    def failing_invoke(**_kwargs):
+    def provider_urlopen(*_args, **_kwargs):
         model_calls.append("call")
-        upstream = urllib.error.HTTPError(
+        raise urllib.error.HTTPError(
             "http://127.0.0.1:1/v1/responses",
-            401,
-            "Unauthorized",
+            provider_status,
+            "Provider rejected request",
             {},
-            io.BytesIO(b'{"error":"credential rejected"}'),
+            io.BytesIO(provider_body),
         )
-        raise LlmInvocationError("route_alignment_hermes_request_failed") from upstream
 
     def classifier(snapshot):
-        with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None):
-            return classify_case_snapshot(snapshot, profile=profile, invoke=failing_invoke)
+        with (
+            patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=provider_urlopen),
+            patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None),
+        ):
+            return classify_case_snapshot(snapshot, profile=profile)
 
     server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -324,6 +338,96 @@ def test_hermes_provider_authentication_error_aborts_complete_run(tmp_path: Path
         assert summary["abort_reason"] == "authentication_error"
         assert summary["candidates"]["jev"]["call_count"] == 1
         assert summary["candidates"]["hermes"]["call_count"] == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("status", "body", "expected_code", "expected_calls", "expected_abort"),
+    [
+        (401, b'{"error":{"message":"Unauthorized"}}', "authentication_error", 1, "authentication_error"),
+        (401, b'{"error":"rate_limited"}', "authentication_error", 1, "authentication_error"),
+        (502, b'{"error":{"message":"Unauthorized"}}', "http_error", 2, None),
+        (502, b'{"error":[]}', "http_error", 2, None),
+        (502, b'not-json', "http_error", 2, None),
+    ],
+)
+def test_http_error_bodies_remain_controlled_and_status_wins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    body: bytes,
+    expected_code: str,
+    expected_calls: int,
+    expected_abort: str | None,
+) -> None:
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    http_calls: list[str] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+        def do_POST(self) -> None:
+            http_calls.append(self.path)
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        fixture = tmp_path / "cases.jsonl"
+        _write_fixture(fixture, [_row("case-001"), _row("case-002")])
+        jev_calls: list[str] = []
+
+        def jev(snapshot):
+            jev_calls.append(snapshot.alias)
+            return CandidateResult(
+                candidate="jev",
+                status="ok",
+                normalized=snapshot.baseline,
+                requested_model="jev-1.13.0",
+                returned_model="jev-1.13.0",
+                call_count=1,
+                metadata={"actual_model_verified": True},
+            )
+
+        endpoint = f"http://127.0.0.1:{server.server_address[1]}/route-alignment/v1/classify"
+        hermes = http_candidate("hermes", endpoint)
+        monkeypatch.setenv("ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED", "1")
+        monkeypatch.setenv("TYPESAFE_API_KEY", "fake-test-key")
+        monkeypatch.setenv("HERMES_EXPERIMENT_TOKEN", "fake-test-token")
+        monkeypatch.setattr(runner, "_candidate_functions", lambda _args: [("jev", jev), ("hermes", hermes)])
+        output = tmp_path / "results"
+
+        assert runner.main([
+            "--fixture", str(fixture),
+            "--live-candidates",
+            "--jev-direct",
+            "--hermes-endpoint", endpoint,
+            "--output-dir", str(output),
+        ]) == 0
+        assert len(jev_calls) == expected_calls
+        assert len(http_calls) == expected_calls
+        summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+        assert summary["abort_reason"] == expected_abort
+        assert summary["run_status"] == ("failed" if expected_abort else "completed_with_errors")
+        records = [
+            json.loads(line)
+            for line in (output / "normalized_comparison.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        assert len(records) == 2
+        assert records[0]["candidates"]["hermes"]["error_code"] == expected_code
+        assert (output / summary["artifacts"]["disagreement_report"]).exists()
     finally:
         server.shutdown()
         server.server_close()

@@ -28,19 +28,21 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
 
 
 def _http_error_code(error: urllib.error.HTTPError) -> str:
+    if error.code in {401, 403}:
+        error.close()
+        return "authentication_error"
+    if error.code == 429:
+        error.close()
+        return "rate_limited"
     try:
         payload = json.loads(error.read().decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+    except (AttributeError, OSError, UnicodeDecodeError, json.JSONDecodeError):
         payload = {}
     finally:
         error.close()
     controlled = payload.get("error") if isinstance(payload, Mapping) else None
-    if controlled in _CONTROLLED_HTTP_ERRORS:
-        return str(controlled)
-    if error.code in {401, 403}:
-        return "authentication_error"
-    if error.code == 429:
-        return "rate_limited"
+    if isinstance(controlled, str) and controlled in _CONTROLLED_HTTP_ERRORS:
+        return controlled
     return "http_error"
 
 
