@@ -15,6 +15,35 @@ from .core import CandidateResult, CaseSnapshot, build_snapshot, normalize_class
 from .dataset import candidate_state
 
 
+DEFAULT_CANDIDATE_HTTP_TIMEOUT_SECONDS = 75.0
+_CONTROLLED_HTTP_ERRORS = frozenset(
+    {
+        "authentication_error",
+        "rate_limited",
+        "input_too_large",
+        "model_identity_unverified",
+        "model_invocation_failed",
+    }
+)
+
+
+def _http_error_code(error: urllib.error.HTTPError) -> str:
+    try:
+        payload = json.loads(error.read().decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        payload = {}
+    finally:
+        error.close()
+    controlled = payload.get("error") if isinstance(payload, Mapping) else None
+    if controlled in _CONTROLLED_HTTP_ERRORS:
+        return str(controlled)
+    if error.code in {401, 403}:
+        return "authentication_error"
+    if error.code == 429:
+        return "rate_limited"
+    return "http_error"
+
+
 def load_fixture_snapshots(path: str) -> list[CaseSnapshot]:
     snapshots: list[CaseSnapshot] = []
     with open(path, encoding="utf-8") as handle:
@@ -125,7 +154,13 @@ def fixture_candidate(name: str, mapping: Mapping[str, Mapping[str, Any]]) -> Ca
     return invoke
 
 
-def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: Mapping[str, str] | None = None) -> Callable[[CaseSnapshot], CandidateResult]:
+def http_candidate(
+    name: str,
+    endpoint: str,
+    *,
+    timeout: float = DEFAULT_CANDIDATE_HTTP_TIMEOUT_SECONDS,
+    headers: Mapping[str, str] | None = None,
+) -> Callable[[CaseSnapshot], CandidateResult]:
     """Call a dedicated route-alignment case-snapshot endpoint.
 
     This is intentionally incompatible with Hermes' existing ``classify_route``
@@ -178,6 +213,37 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
             normalized = normalize_classification(raw)
             if not any(normalized.get(field) is not None for field in ("intent_class", "agora_route", "conversation_action")):
                 raise ValueError("missing_classification")
+            requested_model = str(parsed.get("requested_model") or parsed.get("model_version") or "unknown")
+            raw_returned_model = parsed.get("returned_model")
+            returned_model = raw_returned_model.strip() if isinstance(raw_returned_model, str) else None
+            usage = dict(parsed.get("usage") or {}) if isinstance(parsed.get("usage"), Mapping) else {}
+            metadata = {
+                key: parsed.get(key)
+                for key in (
+                    "provider",
+                    "reasoning_effort",
+                    "hermes_route_manual_version",
+                    "normalizer_version",
+                    "wrapper_version",
+                    "actual_model_verified",
+                )
+                if key in parsed
+            }
+            if parsed.get("actual_model_verified") is not True or not returned_model:
+                return CandidateResult(
+                    candidate=name,
+                    status="error",
+                    error="model_identity_unverified",
+                    error_code="model_identity_unverified",
+                    latency_ms=round((time.monotonic() - started) * 1000, 2),
+                    model_version=str(parsed.get("model_version") or "unknown"),
+                    prompt_version=str(parsed.get("prompt_version") or "unknown"),
+                    requested_model=requested_model,
+                    returned_model=None,
+                    call_count=1,
+                    usage=usage,
+                    metadata=metadata,
+                )
             return CandidateResult(
                 candidate=name,
                 status="ok",
@@ -186,33 +252,23 @@ def http_candidate(name: str, endpoint: str, *, timeout: float = 30.0, headers: 
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
                 model_version=str(parsed.get("model_version") or "unknown"),
                 prompt_version=str(parsed.get("prompt_version") or "unknown"),
-                requested_model=str(parsed.get("requested_model") or parsed.get("model_version") or "unknown"),
-                returned_model=str(parsed.get("returned_model") or parsed.get("model_version") or "unknown"),
+                requested_model=requested_model,
+                returned_model=returned_model,
                 call_count=1,
-                usage=dict(parsed.get("usage") or {}) if isinstance(parsed.get("usage"), Mapping) else {},
-                metadata={
-                    key: parsed.get(key)
-                    for key in (
-                        "provider",
-                        "reasoning_effort",
-                        "hermes_route_manual_version",
-                        "normalizer_version",
-                        "wrapper_version",
-                        "actual_model_verified",
-                    )
-                    if key in parsed
-                },
+                usage=usage,
+                metadata=metadata,
+            )
+        except urllib.error.HTTPError as exc:
+            error_code = _http_error_code(exc)
+            return CandidateResult(
+                candidate=name,
+                status="error",
+                error=error_code,
+                error_code=error_code,
+                latency_ms=round((time.monotonic() - started) * 1000, 2),
+                call_count=1,
             )
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
-            status_code = getattr(exc, "code", None)
-            error_code = (
-                "authentication_error"
-                if status_code in {401, 403}
-                else "rate_limited"
-                if status_code == 429
-                else "http_error"
-                if status_code
-                else str(exc)[:80] or type(exc).__name__
-            )
+            error_code = str(exc)[:80] or type(exc).__name__
             return CandidateResult(candidate=name, status="error", error=type(exc).__name__ + ":" + str(exc)[:200], error_code=error_code, latency_ms=round((time.monotonic() - started) * 1000, 2), call_count=1)
     return invoke

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .adapters import fetch_production_snapshots, fixture_candidate, http_candidate, load_fixture_snapshots
-from .core import CandidateResult, CaseSnapshot, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_disagreement_csv, write_jsonl
+from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_disagreement_csv, write_jsonl
 from .dataset import dataset_id_for, load_frozen_dataset, write_frozen_dataset
 
 
@@ -197,11 +197,32 @@ def _candidate_summary(results: list[Any], name: str) -> dict[str, Any]:
         "latency_ms": _latency_summary([item.latency_ms for item in candidates if item.latency_ms is not None]),
         "requested_models": sorted({item.requested_model for item in candidates if item.requested_model}),
         "returned_models": sorted({item.returned_model for item in candidates if item.returned_model}),
+        "model_identity_unverified_count": sum(
+            item.error_code == "model_identity_unverified"
+            or item.metadata.get("actual_model_verified") is False
+            for item in candidates
+        ),
         "usage": {"input_tokens": input_tokens, "output_tokens": sum(int(item.usage.get("output_tokens") or 0) for item in candidates)},
     }
     if name == "jev":
         output["estimated_cost"] = {"currency": "USD", "amount": round(input_tokens * 42 / 1_000_000_000, 10), "basis": "$42 per billion input tokens; output free", "price_checked_at": "2026-09-21", "estimated_not_billed": True}
     return output
+
+
+def _shared_input_error(snapshot: CaseSnapshot) -> str | None:
+    """Reject a case for both candidates if either exact request exceeds its limit."""
+    from .dataset import DatasetError
+    from .hermes_classifier import HermesExperimentError, validate_hermes_request_size
+    from .jev import JevAdapterError, prepare_jev_request
+
+    try:
+        prepare_jev_request(snapshot)
+        validate_hermes_request_size(snapshot)
+    except (DatasetError, JevAdapterError, HermesExperimentError) as exc:
+        if str(exc).startswith("input_too_large"):
+            return "input_too_large"
+        raise
+    return None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -227,14 +248,17 @@ def main(argv: list[str] | None = None) -> int:
     abort_reason: str | None = None
     for snapshot in snapshots:
         candidate_results: list[CandidateResult] = []
+        input_error = _shared_input_error(snapshot)
         for name, invoke in candidates:
-            if abort_reason:
+            if input_error:
+                result = _not_run(name, input_error)
+            elif abort_reason:
                 result = _not_run(name, f"not_run_after_{abort_reason}")
             else:
                 result = invoke(snapshot)
-                result = replace(result, metadata={**result.metadata, "baseline_input_alignment": snapshot.metadata.get("baseline_input_alignment", "unknown")})
                 if result.error_code == "authentication_error":
                     abort_reason = "authentication_error"
+            result = replace(result, metadata={**result.metadata, "baseline_input_alignment": snapshot.metadata.get("baseline_input_alignment", "unknown")})
             candidate_results.append(result)
         comparison = compare_case(snapshot, candidate_results)
         results.append(comparison)
@@ -245,7 +269,7 @@ def main(argv: list[str] | None = None) -> int:
             "candidates": [{
                 "candidate": item.candidate,
                 "status": item.status,
-                "normalized_classification": item.normalized,
+                "normalized_classification": classification_artifact_view(item.normalized),
                 "error_code": item.error_code,
                 "latency_ms": item.latency_ms,
                 "requested_model": item.requested_model,
@@ -262,6 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     disagreement_filename = f"disagreement_report.{run_id}.csv"
     write_disagreement_csv(args.output_dir / disagreement_filename, results, run_id=run_id, dataset_id=dataset_id)
     candidate_names = sorted({name for item in results for name in item.candidates})
+    candidate_summaries = {name: _candidate_summary(results, name) for name in candidate_names}
     alignment_counts = {state: sum(item.metadata.get("baseline_input_alignment", "unknown") == state for item in snapshots) for state in ("matched", "mismatch", "unknown")}
     summary = {
         "run_id": run_id,
@@ -277,7 +302,11 @@ def main(argv: list[str] | None = None) -> int:
         "baseline_input_alignment": alignment_counts,
         "same_input_agreement_available": alignment_counts["matched"] > 0,
         "candidate_names": candidate_names,
-        "candidates": {name: _candidate_summary(results, name) for name in candidate_names},
+        "candidates": candidate_summaries,
+        "formal_experiment_ready": bool(args.live_candidates) and all(
+            summary["error_count"] == 0 and summary["model_identity_unverified_count"] == 0
+            for summary in candidate_summaries.values()
+        ),
         "field_agreement": _field_agreement(results, snapshots),
         "sampling_note": "stratified experiment sample; not Production prevalence or model accuracy",
     }

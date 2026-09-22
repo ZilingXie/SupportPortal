@@ -65,7 +65,15 @@ the latest customer message, and allowlisted `product`/`status` metadata. They
 never receive ticket identity, case alias/revision, or the Production baseline
 as model input. Alias and revision exist only on the loopback transport envelope
 so the runner can reject a mismatched response. Input size limits fail closed;
-text is not silently truncated.
+text is not silently truncated. Before either candidate runs, the runner checks
+the exact Jev and Hermes request sizes and rejects both candidates together if
+either request is too large.
+
+Jev treats an uncertain or low-confidence cross-route additional intent as a
+review signal. In particular, it cannot leave account-suspension automation
+eligible when another requested route may be present. The Hermes transport
+waits 75 seconds around the 60-second model deadline. Provider authentication
+failure stops all later candidate calls.
 
 Production extraction selects `processing_profile='production'`, retains cases
 without a v11 baseline for manual review, and samples deterministic round-robin
@@ -79,9 +87,12 @@ Outputs are `manifest.jsonl`, controlled `raw_results.jsonl`,
 `summary.json`. The controlled evidence file does not store arbitrary provider
 responses or customer text. Every result carries one `run_id` and `dataset_id`;
 the summary records per-candidate calls, errors, latency, model versions, usage,
-agreement, and Jev's documented cost estimate. An authentication error stops all
-later paid calls. The runner refuses to overwrite a non-empty output directory.
+agreement, model-identity readiness, and Jev's documented cost estimate. A live
+candidate without a provider-returned model identity is an error and cannot set
+`formal_experiment_ready=true`. An authentication error stops all later paid
+calls. The runner refuses to overwrite a non-empty output directory.
 
+Default result artifacts remove `backend_operation.evidence` customer text.
 `--include-review-text` adds redacted `review_context.jsonl` only when
 `ROUTE_EXPERIMENT_REVIEW_TEXT_APPROVED=1`. Before sending real case text to a
 provider, separately confirm the provider's data-processing boundary; this tool

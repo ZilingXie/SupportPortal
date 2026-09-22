@@ -245,6 +245,31 @@ def test_uncertain_suspension_gate_is_not_treated_as_empty() -> None:
 
 
 @pytest.mark.parametrize(
+    ("choice", "confidence"),
+    [("uncertain", 0.95), ("no", 0.2)],
+)
+def test_uncertain_cross_route_intent_blocks_suspension_automation(choice: str, confidence: float) -> None:
+    snapshot = _snapshot(subject="Suspended account")
+    response = _response(
+        snapshot,
+        {
+            "intent": "agora",
+            "agora_route": "account_billing",
+            "billing_reason": "registered_account_suspension",
+            "suspension_other_billing": "no",
+            "additional_technical": choice,
+        },
+        confidences={"additional_technical": confidence},
+    )
+    normalized, raw = parse_response(jev_input_from_snapshot(snapshot), response)
+
+    assert "uncertain_additional_intent" in normalized["additional_intents"]
+    assert normalized["automation_eligibility"] == "ineligible"
+    assert normalized["route_target"] == "human_review"
+    assert "additional_technical" in raw["_jev"]["abstentions"]
+
+
+@pytest.mark.parametrize(
     ("kind", "expected_subcategory", "expected_target", "eligible"),
     [
         ("explicit_media_relay_enablement", "enablement", "media_relay", "eligible"),

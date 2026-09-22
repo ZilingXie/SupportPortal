@@ -199,6 +199,20 @@ def build_request(value: JevInput) -> tuple[dict[str, Any], dict[str, str]]:
     )
 
 
+def prepare_jev_request(snapshot: CaseSnapshot) -> tuple[JevInput, dict[str, Any], dict[str, int]]:
+    """Build and size-check the exact Jev request without making a network call."""
+    value = jev_input_from_snapshot(snapshot)
+    payload, _ = build_request(value)
+    input_sizes = validate_candidate_request_size(snapshot, payload["questions"])
+    complete_request_bytes = len(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    )
+    if complete_request_bytes > MAX_REQUEST_BYTES:
+        raise JevAdapterError("input_too_large")
+    input_sizes["complete_request_bytes"] = complete_request_bytes
+    return value, payload, input_sizes
+
+
 def _finite_probability(value: Any, *, code: str) -> float:
     if isinstance(value, bool):
         raise JevAdapterError(code)
@@ -302,6 +316,8 @@ def _map_answers(value: JevInput, answers: Mapping[str, _Answer]) -> tuple[dict[
     )
     additional, additional_abstentions = _additional_intents(answers, primary=route_choice)
     abstentions.extend(additional_abstentions)
+    if additional_abstentions:
+        additional.append("uncertain_additional_intent")
     payload["additional_intents"] = additional
 
     if route_choice == "account_billing":
@@ -403,6 +419,7 @@ def parse_response(value: JevInput, response: Any) -> tuple[dict[str, Any], dict
     evidence = {
         "requested_model": JEV_MODEL,
         "returned_model": response["model"],
+        "actual_model_verified": True,
         "questions_version": QUESTIONS_VERSION,
         "questions_sha256": questions_sha256(questions),
         "adapter_version": ADAPTER_VERSION,
@@ -462,17 +479,9 @@ def jev_direct_candidate(
     open_request = opener or _default_open
 
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
-        value = jev_input_from_snapshot(snapshot)
         try:
             _validate_threshold_environment()
-            payload, _ = build_request(value)
-            input_sizes = validate_candidate_request_size(snapshot, payload["questions"])
-            complete_request_bytes = len(
-                json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
-            )
-            if complete_request_bytes > MAX_REQUEST_BYTES:
-                raise JevAdapterError("input_too_large")
-            input_sizes["complete_request_bytes"] = complete_request_bytes
+            value, payload, input_sizes = prepare_jev_request(snapshot)
             request = urllib.request.Request(
                 TYPESAFE_SYSTEMONE_URL,
                 data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

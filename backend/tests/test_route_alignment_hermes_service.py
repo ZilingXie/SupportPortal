@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 import urllib.error
 import urllib.request
 from unittest.mock import patch
@@ -10,6 +11,8 @@ from unittest.mock import patch
 import pytest
 
 from backend.services.llm_factory import LlmTextResult
+from scripts.experiments.route_alignment.adapters import http_candidate
+from scripts.experiments.route_alignment.core import CaseSnapshot
 from scripts.experiments.route_alignment.hermes_classifier import (
     HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
     HermesExperimentError,
@@ -288,6 +291,48 @@ def test_http_success_executes_exactly_one_mock_llm_call() -> None:
         assert body["case_alias"] == "case-001"
         assert body["normalized_classification"]["route_target"] == "rag"
         assert len(model_calls) == 1
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_http_candidate_waits_for_slow_service_response() -> None:
+    def classifier(snapshot):
+        time.sleep(0.05)
+        return {
+            "contract": "route-alignment-v1",
+            "case_alias": snapshot["case_alias"],
+            "case_revision": snapshot["case_revision"],
+            "normalized_classification": {"intent_class": "agora", "agora_route": "technical"},
+            "model_version": "actual-model",
+            "requested_model": "requested-model",
+            "returned_model": "actual-model",
+            "actual_model_verified": True,
+        }
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        invoke = http_candidate(
+            "hermes",
+            f"http://127.0.0.1:{server.server_address[1]}/route-alignment/v1/classify",
+            timeout=0.2,
+            headers={"Authorization": "Bearer service-secret"},
+        )
+        result = invoke(
+            CaseSnapshot(
+                alias="case-001",
+                ticket_id="",
+                case_revision="rev-001",
+                subject="SDK question",
+                messages=({"role": "user", "content": "Test question"},),
+                baseline={},
+            )
+        )
+        assert result.status == "ok"
+        assert result.latency_ms is not None and result.latency_ms >= 40
     finally:
         server.shutdown()
         server.server_close()

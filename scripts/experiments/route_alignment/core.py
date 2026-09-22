@@ -117,6 +117,19 @@ def comparison_key(value: Mapping[str, Any] | None) -> dict[str, Any]:
     return {name: normalized.get(name) for name in COMPARISON_FIELDS}
 
 
+def classification_artifact_view(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """Remove customer-authored evidence while retaining controlled route fields."""
+    if not isinstance(value, Mapping):
+        return None
+    result = dict(value)
+    operation = result.get("backend_operation")
+    if isinstance(operation, Mapping):
+        result["backend_operation"] = {
+            str(key): item for key, item in operation.items() if str(key) != "evidence"
+        }
+    return result
+
+
 def _redact(value: Any, key: str = "") -> Any:
     if isinstance(value, Mapping):
         return {str(k): _redact(v, str(k)) for k, v in value.items()}
@@ -316,8 +329,8 @@ def write_disagreement_csv(
                         )
                     ),
                     "production_baseline": json.dumps(result.baseline, ensure_ascii=False, sort_keys=True),
-                    "jev": json.dumps(result.candidates.get("jev").normalized if result.candidates.get("jev") else None, ensure_ascii=False, sort_keys=True),
-                    "hermes": json.dumps(result.candidates.get("hermes").normalized if result.candidates.get("hermes") else None, ensure_ascii=False, sort_keys=True),
+                    "jev": json.dumps(classification_artifact_view(result.candidates.get("jev").normalized) if result.candidates.get("jev") else None, ensure_ascii=False, sort_keys=True),
+                    "hermes": json.dumps(classification_artifact_view(result.candidates.get("hermes").normalized) if result.candidates.get("hermes") else None, ensure_ascii=False, sort_keys=True),
                     "difference_level": ",".join(levels),
                     "errors": ";".join(
                         f"{name}:{candidate.error or candidate.status}"

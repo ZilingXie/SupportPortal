@@ -188,6 +188,76 @@ def test_http_response_requires_contract(monkeypatch) -> None:
     assert "invalid_contract" in (result.error or "")
 
 
+def test_http_candidate_preserves_unverified_returned_model(monkeypatch) -> None:
+    import urllib.request
+    from scripts.experiments.route_alignment.adapters import http_candidate
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def read(self):
+            return json.dumps({
+                "contract": "route-alignment-v1",
+                "case_alias": "case-001",
+                "case_revision": "rev-1",
+                "normalized_classification": {"intent_class": "agora", "agora_route": "technical"},
+                "model_version": "requested-model",
+                "requested_model": "requested-model",
+                "returned_model": None,
+                "actual_model_verified": False,
+            }).encode()
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda request, timeout: Response())
+    module = _load_core()
+    result = http_candidate("hermes", "https://example.invalid/route-alignment/v1/classify")(
+        module.build_snapshot(_row(), alias="case-001")
+    )
+    assert result.status == "error"
+    assert result.error_code == "model_identity_unverified"
+    assert result.requested_model == "requested-model"
+    assert result.returned_model is None
+    assert result.metadata["actual_model_verified"] is False
+
+
+def test_default_http_timeout_covers_hermes_model_deadline(monkeypatch) -> None:
+    import urllib.request
+    from scripts.experiments.route_alignment.adapters import (
+        DEFAULT_CANDIDATE_HTTP_TIMEOUT_SECONDS,
+        http_candidate,
+    )
+    from scripts.experiments.route_alignment.hermes_classifier import HERMES_MODEL_TIMEOUT_SECONDS
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return False
+        def read(self):
+            return json.dumps({
+                "contract": "route-alignment-v1",
+                "case_alias": "case-001",
+                "case_revision": "rev-1",
+                "normalized_classification": {"intent_class": "agora", "agora_route": "technical"},
+                "model_version": "actual-model",
+                "requested_model": "requested-model",
+                "returned_model": "actual-model",
+                "actual_model_verified": True,
+            }).encode()
+
+    seen: dict[str, float] = {}
+
+    def slow_urlopen(_request, timeout):
+        seen["timeout"] = timeout
+        return Response()
+
+    monkeypatch.setattr(urllib.request, "urlopen", slow_urlopen)
+    module = _load_core()
+    result = http_candidate("hermes", "https://example.invalid/route-alignment/v1/classify")(
+        module.build_snapshot(_row(), alias="case-001")
+    )
+    assert result.status == "ok"
+    assert seen["timeout"] == DEFAULT_CANDIDATE_HTTP_TIMEOUT_SECONDS
+    assert DEFAULT_CANDIDATE_HTTP_TIMEOUT_SECONDS > HERMES_MODEL_TIMEOUT_SECONDS
+
+
 def test_reason_text_does_not_create_disagreement() -> None:
     module = _load_core()
     snapshot = module.build_snapshot(_row(), alias="case-001")

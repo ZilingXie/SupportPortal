@@ -82,7 +82,8 @@ def create_server(
             try:
                 response = classifier(payload.get("case_snapshot"))
             except HermesExperimentError as exc:
-                self._write(422, {"contract": "route-alignment-v1", "error": exc.code})
+                status = 502 if exc.code in {"authentication_error", "rate_limited"} else 422
+                self._write(status, {"contract": "route-alignment-v1", "error": exc.code})
                 return
             except Exception:
                 self._write(500, {"contract": "route-alignment-v1", "error": "classification_failed"})

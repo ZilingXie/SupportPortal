@@ -1,5 +1,17 @@
 # Prompt Change Log
 
+## 2026-09-22 - Route alignment experiment acceptance fixes
+
+The experiment now removes customer-authored backend evidence from default
+result artifacts, applies one shared pre-call size decision to both candidates,
+and blocks Jev account-suspension automation when any cross-route additional
+intent is uncertain or low-confidence. Hermes provider authentication errors
+propagate through the loopback service so the runner stops later paid calls.
+Missing provider-returned model identity is a candidate error and blocks formal
+experiment readiness; the 75-second HTTP deadline now covers the 60-second
+Hermes model deadline. These changes affect only developer experiment tooling;
+no Production data, real provider, runtime route, or deployment was used.
+
 ## 2026-09-21 - Hermes route aligned to Production Account taxonomy
 
 `hermes-route-manual-v2` requires a typed Account classification compatible

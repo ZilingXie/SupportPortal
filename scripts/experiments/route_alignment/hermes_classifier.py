@@ -32,6 +32,7 @@ HERMES_ROUTE_EXPERIMENT_CONTRACT = "route-alignment-v1"
 HERMES_ROUTE_EXPERIMENT_SCENARIO = "route_alignment_hermes"
 HERMES_NORMALIZER_POLICY_VERSION = "hermes-normalizer-threshold-v1"
 HERMES_NORMALIZER_CONFIDENCE_THRESHOLD = 0.7
+HERMES_MODEL_TIMEOUT_SECONDS = 60.0
 _ALLOWED_ROLES = frozenset({"user", "assistant"})
 _ALLOWED_INTENTS = frozenset({"conversation", "agora", "uncertain"})
 _ALLOWED_CONVERSATION_ACTIONS = frozenset({"resolve", "follow_up", "human_review"})
@@ -89,7 +90,7 @@ def build_experiment_profile(
     base_url: str,
     model: str,
     reasoning_effort: str,
-    timeout_seconds: float = 60.0,
+    timeout_seconds: float = HERMES_MODEL_TIMEOUT_SECONDS,
 ) -> ModelProfile:
     """Build the explicit, single-attempt Responses profile used by this experiment."""
     values = {
@@ -255,6 +256,31 @@ def _validated_snapshot(
     return alias, revision, snapshot, any(item["role"] == "assistant" for item in clean_messages)
 
 
+def validate_hermes_request_size(snapshot: CaseSnapshot) -> dict[str, int]:
+    """Size-check the exact Hermes prompt input without invoking the model."""
+    try:
+        return validate_candidate_request_size(
+            snapshot,
+            {"hermes_route_prompt": {"instructions": _experiment_system_prompt()}},
+        )
+    except DatasetError as exc:
+        raise HermesExperimentError("input_too_large") from exc
+
+
+def _provider_error_code(error: BaseException) -> str | None:
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        status = getattr(current, "code", None)
+        if status in {401, 403}:
+            return "authentication_error"
+        if status == 429:
+            return "rate_limited"
+        current = current.__cause__ or current.__context__
+    return None
+
+
 def _finite_confidence(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value) and 0 <= value <= 1
 
@@ -334,13 +360,7 @@ def classify_case_snapshot(
     alias, revision, snapshot, latest_assistant_message_present = _validated_snapshot(case_snapshot)
     system_prompt = _experiment_system_prompt()
     manual_hash = hashlib.sha256(build_hermes_route_manual().encode("utf-8")).hexdigest()
-    try:
-        input_sizes = validate_candidate_request_size(
-            snapshot,
-            {"hermes_route_prompt": {"instructions": system_prompt}},
-        )
-    except DatasetError as exc:
-        raise HermesExperimentError("input_too_large") from exc
+    input_sizes = validate_hermes_request_size(snapshot)
     try:
         llm_result = invoke(
             profile=profile,
@@ -362,6 +382,9 @@ def classify_case_snapshot(
     except HermesExperimentError:
         raise
     except Exception as exc:
+        provider_code = _provider_error_code(exc)
+        if provider_code:
+            raise HermesExperimentError(provider_code) from exc
         raise HermesExperimentError("model_invocation_failed") from exc
     try:
         classification = _clean_classification(json.loads(llm_result.text))
