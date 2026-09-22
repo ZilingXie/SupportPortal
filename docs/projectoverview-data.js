@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-22T10:10:16Z",
-  "source_base_commit": "1b04955811569d0abf97204db9016653334ef999",
-  "registry_digest": "540cc51b8e04567e2558a56648bb79983976f24b8440338ee7f80861766b9b00",
+  "generated_at": "2026-09-22T12:34:29Z",
+  "source_base_commit": "47e69bb175de6e1d04669f2f5b8e65ec3d7a625f",
+  "registry_digest": "9ea020f791d2fea492944e9a5a3f3f3dfdf782b716e0b89b0026c6ff8bf91207",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12109,7 +12109,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-08",
       "updated_at": "2026-09-22",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "13650 工具合同修复已实施（分支待独立验收）：①服务端 tool_record_direction 对 direction=automation 且 route 缺失/为空返回route_required_for_automation（422，先于任何决策写入）；②Worker 在 route 完成后（认领前）与 Work 提交前（覆盖重启恢复）两处路由合同门禁，无效路由统一 route_contract_invalid 转人工（Account Case→human_review_required、binding→human/paused、turn 终态，零认领零 Work 零客户回复，终态重放幂等不重复通知）；③Work manual 选择对 automation+空路由返回 sentinel 而非回退调查手册；④插件 support_record_direction 合同升级（classification 必填对象含 intent/agora_route/reason_code 必填与 backend_operation 对象或 null；缺失或非对象本地报错零 HTTP）；⑤Route manual v3（backend_operation 三键合同+当前快照 evidence+禁止 reason 塞 JSON）。四条故障回归在旧基线全红、修复后全绿；跨仓集成测试（真实插件 schema+handler→测试 API→store+Worker）4 用例；隔离 PG 2 用例（拒绝零部分写入+人工接管持久化与幂等重放）。⚠预存失败：test_worker.py 九个调查发送用例（验收方实测 9 个 test_investigation_*）在干净 main（a188e00f）同样失败（并发合入的 route alignment 改动使真实入口调查 case 的 automation_status=human_review_required→ownership eligible=True→hermes 发送器走 eligible 路径遇空状态跳过），与本修复无关，需另行修复。验收通过后：合并→发布 preprod（先服务端门禁生效，再插件镜像与新 Prompt Release v3，三者读回一致）→受控 Enablement+Troubleshoot 工单终验。",
+      "next_action": "Plan1 代码、Prompt Release 和 Preproduction 运行发布已完成；Plan2 采用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses，执行 Hermes smoke、参数矩阵和 frozen 100-case 对比。Plan1 不新增公网 route-alignment-v1 endpoint，不读取 Production 工单，不调用 Jev，不创建 Case/Turn/Job/Draft 或发送客户回复。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -12308,6 +12308,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-11",
           "event": "slack_summons_reformatted_thread_style",
           "summary": "用户反馈格式不符；改为旧工程师协作流格式（根四行+线程调查结果+审阅入口），127 绿，待部署重放确认。"
+        },
+        {
+          "type": "deployment",
+          "label": "Plan1 Preproduction runtime and active Route Manual v3",
+          "details": "2026-09-22 通过正式 Preproduction deploy：release=r20260922-47e69bb，source git=47e69bb175de6e1d04669f2f5b8e65ec3d7a625f，schema=automation-ecs-009，API/Route/Worker task definitions 分别为 70/69/70，三角色均绑定 PROMPT_RELEASE_ID=pr-fe1f5a21205e，APP_BUILD_REF=47e69bb175de6e1d04669f2f5b8e65ec3d7a625f，HERMES_CASE_WORKFLOW_MODE=disabled，AUTOMATION_CASE_ENGINE=legacy，ENABLEMENT_WORKFLOW_MODE=manual；正式 evidence status=complete，Terraform pre/post zero-drift、provider probe、heartbeats、public health、CloudWatch 和 rollback gate 均通过。Preproduction schema 中 active Prompt Release pr-fe1f5a21205e 的 build_ref=1b04955811569d0abf97204db9016653334ef999；hermes-route-manual active version=4，content_sha256=9dccc9a9cfa2c44ad434bb17fef33a6085d401e07fdae2700cfe8680d72206ed，与源码 Route Manual v3 内容一致。未调用 /v1/responses，未创建 Case、Turn、Job、Draft，未发送客户回复。"
+        },
+        {
+          "type": "decision",
+          "label": "Plan2 route-alignment architecture boundary",
+          "details": "Plan2 使用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses。SupportPortal Preproduction 不提供公网 route-alignment-v1 endpoint；Plan1 只负责证明 Preproduction Hermes/凭证可供实验 runner 使用。route-alignment-v1 的 case-snapshot、Jev 调用和 frozen 100-case Production 数据实验均属于 Plan2。"
+        },
+        {
+          "type": "test",
+          "label": "Official local stack post-merge verification",
+          "details": "inspect_single_host_stack_mode.sh 确认 official project=deployment、auxiliary_stack_present=false、build provenance matched；当前 root main 已推进至 47e69bb175de6e1d04669f2f5b8e65ec3d7a625f，官方栈 /health=ok、ticket_storage=postgres、knowledge_storage=postgres、rag_service=ok、app_build.ref=47e69bb175de。用户早先指定的 403251bec marker 未再使用，因为仓库重启脚本要求 root main 与 origin/main 同步，且 47e69bb 仅包含重启脚本/测试的发布门禁修复；因此没有把 47e 栈标记为 403 栈。"
         }
       ],
       "legacy_ids": [],
