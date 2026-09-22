@@ -46,7 +46,7 @@ def load_env_into_process() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "all"])
+    parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "D1", "E1P", "all"])
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     parser.add_argument("--check", action="store_true", help="verify DB/SMTP/IMAP reachability only")
