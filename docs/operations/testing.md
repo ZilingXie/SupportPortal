@@ -2,12 +2,13 @@
 
 本页用于按改动选择验证入口，区分本地测试、数据库集成、部署核验和真实业务回归。源码核对日期：2026-09-12；基线：`7cbd383e`。这里列出可执行入口，不表示这些测试已在当前版本运行通过。
 
-实施交接与验收规则核对日期：2026-09-20；来源为 [AGENTS.md](../../AGENTS.md#execution-modes)、[工作流细则](../agent_workflow_details.md#implementation-handoff-and-independent-acceptance) 和 [验收技能](../../.codex/skills/review-implemented-plan/SKILL.md)。
+实施交接与验收规则核对日期：2026-09-22；来源为 [AGENTS.md](../../AGENTS.md#execution-modes)、[工作流细则](../agent_workflow_details.md#implementation-handoff-and-independent-acceptance) 和 [验收技能](../../.codex/skills/review-implemented-plan/SKILL.md)。
 
 ## 合同与验收时点
 
 - 计划默认面向 low thinking 执行者，先解决关键设计判断，再把当前改动的关键合同写成输入/状态、可观察结果和验证方法。证据按合同对应到具体检查；测试总数不能替代这些结果。
 - `实施计划`：定向验证通过后直接进入既定合码和适用部署流程。`实施计划，需要验收`：执行者提交分支/commit、diff 和证据后，等待独立验收通过再合码、部署；自测不能代替独立验收。该选择持续到验收通过或用户明确取消。
+- 计划、实现交接和验收结果沿用同一简短计划名；计划任务未参与实现时可以担任独立验收方。验收输出按[可转交格式](../agent_workflow_details.md#forwardable-review-result)标明实际 commit、额外 diff、证据和结论。用户将通过结果转交执行任务后，执行者核对版本及审查有效性，直接继续已授权的 Preproduction 合码、部署和运行验证，无需额外确认；未通过、证据不足或明确暂不部署时不放行。
 - 对关键链路从真实入口验证结果和外部调用次数，mock 外部服务边界。涉及 PostgreSQL 事务、约束、并发或失败重试语义时使用隔离 PostgreSQL；正常输入、拒绝输入和恢复路径按当前风险选取。已有 bug 的回归用例尽可能证明旧实现会失败，无法验证时说明限制。
 - 区分明确缺陷、验证缺口和可选改进；关键合同缺证据可以阻止通过，可选改进不自动加入门槛。复审检查未关闭问题、新 diff 和受影响路径，新增重大阻断需说明依据。
 - 合码前代码验收和部署后运行验收分别记录。源码更新后的定向复测与必要补审遵循工作流细则；部署后 Health、版本来源和业务检查仍按适用层次执行。
@@ -34,7 +35,7 @@
 | 镜像裁剪与依赖锁 | [test_automation_ecs_images.py](../../backend/tests/test_automation_ecs_images.py)、[test_python_dependency_locks.py](../../backend/tests/test_python_dependency_locks.py) |
 | 构建、部署、晋级门禁 | [test_automation_codebuild_release.py](../../backend/tests/test_automation_codebuild_release.py)、[test_automation_ecs_release_pipeline.py](../../backend/tests/test_automation_ecs_release_pipeline.py)、[test_automation_ecs_deploy.py](../../backend/tests/test_automation_ecs_deploy.py) |
 | 工单回归控制台或剧本引擎 | [test_automation_test_console.py](../../backend/tests/test_automation_test_console.py)、[test_automation_test_scenarios.py](../../backend/tests/test_automation_test_scenarios.py) |
-| Route 历史 case 对比实验 | [test_route_alignment_experiment.py](../../backend/tests/test_route_alignment_experiment.py)；fixture 模式验证抽样结果、候选合同、审计 artifact 和 fail-closed 门禁，真实候选与 Production 数据读取需另行授权 |
+| Route 历史 case 对比实验 | [test_route_alignment_experiment.py](../../backend/tests/test_route_alignment_experiment.py)、[test_route_alignment_dataset.py](../../backend/tests/test_route_alignment_dataset.py)、[test_route_alignment_runner.py](../../backend/tests/test_route_alignment_runner.py)、[test_route_alignment_jev.py](../../backend/tests/test_route_alignment_jev.py)、[test_route_alignment_hermes_service.py](../../backend/tests/test_route_alignment_hermes_service.py)；覆盖冻结数据、相同候选输入、runner 审计/停止合同、Jev direct 映射及 Hermes 无状态 loopback 服务，全部 provider/DB 边界均用 fixture 或 mock；真实 Production 读取、Jev/Hermes 调用和向 provider 发送工单文本需分别授权 |
 
 例如只改 ECS 裁剪契约时：
 

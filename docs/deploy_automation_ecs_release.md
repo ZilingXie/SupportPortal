@@ -4,7 +4,7 @@
 
 ## 实施与验收入口
 
-规则核对日期：2026-09-20。按 [AGENTS.md](../AGENTS.md#execution-modes)，ECS 运行时改动的 `实施计划` 包含正常 Preproduction 发布；`实施计划，需要验收` 包含同样的后续发布范围，但必须先停在任务分支，收到针对当前实现的独立验收通过结果后才能合码及发布。通过后继续执行，不重复请求同一范围的部署确认。仅修改文档或开发工具不触发应用部署。
+规则核对日期：2026-09-22。按 [AGENTS.md](../AGENTS.md#execution-modes)，ECS 运行时改动的 `实施计划` 包含正常 Preproduction 发布；`实施计划，需要验收` 包含同样的后续发布范围，但必须先停在任务分支，收到针对当前实现的独立验收通过结果后才能合码及发布。计划任务可以独立验收并输出[可转交结果](./agent_workflow_details.md#forwardable-review-result)；用户将通过结果转交执行任务后，执行者核对计划名、commit 及额外 diff，直接继续既定合码、CodeBuild/release、Preproduction 部署及运行验证，无需再等待一句 `继续` 或部署确认。明确的 `暂不部署` 等用户限制仍然有效。仅修改文档或开发工具不触发应用部署。
 
 独立审查与源码同步的时序见 [工作流细则](./agent_workflow_details.md#implementation-handoff-and-independent-acceptance)。代码验收不替代本 Runbook 的发布门禁和运行核验；普通 Production 晋级仍需 Preproduction 验证和单独明确授权，紧急 Production 热修复仍遵循既有例外条件。
 

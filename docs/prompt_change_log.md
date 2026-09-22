@@ -35,6 +35,30 @@
   (`RUN_POSTGRES_INTEGRATION=1`). No Production route, deployment, or real
   ticket was exercised.
 
+## 2026-09-22 - Route alignment experiment acceptance fixes
+
+The experiment now removes customer-authored backend evidence from default
+result artifacts, applies one shared pre-call size decision to both candidates,
+and blocks Jev account-suspension automation when any cross-route additional
+intent is uncertain or low-confidence. Hermes provider authentication errors
+propagate through the loopback service so the runner stops later paid calls.
+Missing provider-returned model identity is a candidate error and blocks formal
+experiment readiness; the 75-second HTTP deadline now covers the 60-second
+Hermes model deadline. Provider HTTP status is preserved even when the shared
+LLM factory classifies a response body as model-unavailable, and the experiment
+adapter gives 401/403 precedence over any body error code while treating nested
+or malformed error bodies as controlled candidate failures. These changes
+affect only developer experiment tooling and error metadata; no Production
+data, real provider, runtime route, or deployment was used.
+
+## 2026-09-22 - Named plans and forwarded Preproduction acceptance
+
+- Area: Developer agent rules and workflow documentation; no application prompt, model, or runtime change.
+- Behavior: Give plans stable, memorable names and use those names in implementation handoffs and acceptance requests. A planning thread that did not implement the changes may independently review them and returns a self-contained result tied to the branch, full commit, additional diff, evidence, target environment, and next action.
+- Continuation: When the user forwards a matching passing result, the executor continues authorized finalization and Preproduction build/deployment/verification without another `继续` or deployment confirmation. Review freshness, explicit user limits, release gates, Production authorization, and business-write boundaries still apply.
+- Files: Repository `AGENTS.md`, workflow details, testing navigation and ECS release runbook; the local Codex global `AGENTS.md` is aligned outside the repository.
+- Verification scope: Direct wording, Markdown link/format, and cross-document consistency checks; no live cross-thread acceptance or deployment is exercised by this documentation change.
+
 ## 2026-09-21 - Hermes route aligned to Production Account taxonomy
 
 `hermes-route-manual-v2` requires a typed Account classification compatible
@@ -45,6 +69,16 @@ unsupported, or conflicting output fails closed to human review. A separate
 classification-only tool contract returns the normalized result without
 creating Hermes or business state. This change is contract/prompt work only;
 no Production route, n8n workflow, or deployment was changed in this task.
+
+The comparison experiment now executes that route manual through a dedicated
+loopback-only, bearer-authenticated wrapper with an explicit Responses model
+profile. Each case is stateless and makes at most one model call with
+`store=false`, no tools, no session, no fallback, and no ambient trace. The
+wrapper and the fixed `jev-1.13.0` adapter receive the same frozen, redacted
+subject/messages and allowlisted metadata; neither candidate receives the
+historical baseline or ticket identity. This is developer experiment tooling,
+not a Hermes runtime or Prompt Release change, and no provider or Production
+data was used during verification.
 
 ## 2026-09-20 — Enablement 收件绑定核验（skill 行为提示）
 

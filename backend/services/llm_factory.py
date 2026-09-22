@@ -18,9 +18,16 @@ from backend.services.llm_profiles import (
 
 
 class LlmInvocationError(RuntimeError):
-    def __init__(self, message: str, *, fallback_eligible: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        fallback_eligible: bool = False,
+        http_status: int | None = None,
+    ) -> None:
         super().__init__(message)
         self.fallback_eligible = bool(fallback_eligible)
+        self.http_status = http_status
 
 
 LOGGER = logging.getLogger(__name__)
@@ -211,6 +218,7 @@ def _raise_with_fallback_failures(primary_error: LlmInvocationError, fallback_er
     raise LlmInvocationError(
         f"{primary_error}; provider_fallback_failed: {fallback_summary}",
         fallback_eligible=primary_error.fallback_eligible,
+        http_status=primary_error.http_status,
     ) from primary_error
 
 
@@ -311,6 +319,7 @@ def _invoke_responses_text_once(
                     last_error = LlmInvocationError(
                         f"{profile.scenario}_model_unavailable: {model_name}",
                         fallback_eligible=True,
+                        http_status=exc.code,
                     )
                     break
                 if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
@@ -325,6 +334,7 @@ def _invoke_responses_text_once(
                 current_error = LlmInvocationError(
                     f"{profile.scenario}_request_failed: {exc}",
                     fallback_eligible=_should_retry_http_error(exc.code),
+                    http_status=exc.code,
                 )
                 if has_next_model and _should_retry_http_error(exc.code):
                     last_error = current_error
@@ -485,6 +495,7 @@ def _invoke_chat_text_once(
                     last_error = LlmInvocationError(
                         f"{profile.scenario}_model_unavailable: {model_name}",
                         fallback_eligible=True,
+                        http_status=exc.code,
                     )
                     break
                 if _should_retry_http_error(exc.code) and retry_attempts < _retry_budget(profile):
@@ -499,6 +510,7 @@ def _invoke_chat_text_once(
                 raise LlmInvocationError(
                     f"{profile.scenario}_request_failed: {exc}",
                     fallback_eligible=_should_retry_http_error(exc.code),
+                    http_status=exc.code,
                 ) from exc
             except (urllib.error.URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
                 if retry_attempts < _retry_budget(profile):
