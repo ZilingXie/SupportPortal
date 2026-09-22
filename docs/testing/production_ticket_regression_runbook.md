@@ -168,3 +168,28 @@
 | 客户回复随机延迟 | 6-10 min | 硬编码（account_reply_jobs） |
 | 内部回复轮询 | 300s | AUTOMATION_REPLY_POLL_INTERVAL_SECONDS |
 | enablement 内部邮件重试 | 60s | ENABLEMENT_DELIVERY_RETRY_POLL_INTERVAL_SECONDS |
+
+## 8. Preproduction（E1P 剧本）
+
+> 2026-09-22 起 Preproduction 走 Hermes 工作流（hermes engine + enablement `archer` 自动模式），
+> 与旧 `/production` 合同的关键差异：enablement 不发内部审批邮件
+> （`internal_email_send_status=not_applicable`，relay 自动路径）、确认回复自动发布、
+> 公开评论投递无 `target_status` 变更。旧 E1/F1/S1/D1 的"内部邮件 + 人工审批"合同
+> 仅适用于旧链路，勿对 Preproduction 运行。
+
+- **剧本**：`E1P`（enablement 自动链）——`[zac test]` 工单 → n8n（按 requester 路由）→
+  preprod intake → route=enablement → 确认回复 published → Zendesk 公开评论 delivered。
+  全程无人工回合；enablement relay 终局（enabled+solved）不在本剧本断言范围。
+- **环境变量**（本机 CLI 运行，DSN 从 SSM 取，勿写入仓库）：
+  ```bash
+  export AUTOMATION_TEST_DB_DSN="$(aws ssm get-parameter \
+    --name /supportportal/preproduction/automation-db-dsn \
+    --with-decryption --query 'Parameter.Value' --output text)"
+  export TICKET_DB_SCHEMA=supportportal_preproduction
+  export AUTOMATION_TEST_PROCESSING_PROFILE=preproduction
+  .venv/bin/python scripts/testing/production_ticket_scenarios.py --scenario E1P
+  ```
+- **前置**：n8n 三条工作流（建单/评论同步/状态同步）按 requester（xieziling97@163.com）
+  分流到 preprod；preprod 四服务 healthy。
+- **黄金参照**：ticket 13605（r20260920-e11abda，2026-09-20 全链零缺陷）。
+- 注意：`--scenario all` 会包含 E1P 与旧剧本；对 preprod 只跑 E1P。
