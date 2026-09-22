@@ -35,7 +35,7 @@
 | 镜像裁剪与依赖锁 | [test_automation_ecs_images.py](../../backend/tests/test_automation_ecs_images.py)、[test_python_dependency_locks.py](../../backend/tests/test_python_dependency_locks.py) |
 | 构建、部署、晋级门禁 | [test_automation_codebuild_release.py](../../backend/tests/test_automation_codebuild_release.py)、[test_automation_ecs_release_pipeline.py](../../backend/tests/test_automation_ecs_release_pipeline.py)、[test_automation_ecs_deploy.py](../../backend/tests/test_automation_ecs_deploy.py) |
 | 工单回归控制台或剧本引擎 | [test_automation_test_console.py](../../backend/tests/test_automation_test_console.py)、[test_automation_test_scenarios.py](../../backend/tests/test_automation_test_scenarios.py) |
-| Route 历史 case 对比实验 | [test_route_alignment_experiment.py](../../backend/tests/test_route_alignment_experiment.py)；fixture 模式验证抽样结果、候选合同、审计 artifact 和 fail-closed 门禁，真实候选与 Production 数据读取需另行授权 |
+| Route 历史 case 对比实验 | [test_route_alignment_experiment.py](../../backend/tests/test_route_alignment_experiment.py)、[test_route_alignment_dataset.py](../../backend/tests/test_route_alignment_dataset.py)、[test_route_alignment_runner.py](../../backend/tests/test_route_alignment_runner.py)、[test_route_alignment_jev.py](../../backend/tests/test_route_alignment_jev.py)、[test_route_alignment_hermes_service.py](../../backend/tests/test_route_alignment_hermes_service.py)；覆盖冻结数据、相同候选输入、runner 审计/停止合同、Jev direct 映射及 Hermes 无状态 loopback 服务，全部 provider/DB 边界均用 fixture 或 mock；真实 Production 读取、Jev/Hermes 调用和向 provider 发送工单文本需分别授权 |
 
 例如只改 ECS 裁剪契约时：
 

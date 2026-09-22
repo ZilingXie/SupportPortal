@@ -1,5 +1,21 @@
 # Prompt Change Log
 
+## 2026-09-22 - Route alignment experiment acceptance fixes
+
+The experiment now removes customer-authored backend evidence from default
+result artifacts, applies one shared pre-call size decision to both candidates,
+and blocks Jev account-suspension automation when any cross-route additional
+intent is uncertain or low-confidence. Hermes provider authentication errors
+propagate through the loopback service so the runner stops later paid calls.
+Missing provider-returned model identity is a candidate error and blocks formal
+experiment readiness; the 75-second HTTP deadline now covers the 60-second
+Hermes model deadline. Provider HTTP status is preserved even when the shared
+LLM factory classifies a response body as model-unavailable, and the experiment
+adapter gives 401/403 precedence over any body error code while treating nested
+or malformed error bodies as controlled candidate failures. These changes
+affect only developer experiment tooling and error metadata; no Production
+data, real provider, runtime route, or deployment was used.
+
 ## 2026-09-22 - Named plans and forwarded Preproduction acceptance
 
 - Area: Developer agent rules and workflow documentation; no application prompt, model, or runtime change.
@@ -18,6 +34,16 @@ unsupported, or conflicting output fails closed to human review. A separate
 classification-only tool contract returns the normalized result without
 creating Hermes or business state. This change is contract/prompt work only;
 no Production route, n8n workflow, or deployment was changed in this task.
+
+The comparison experiment now executes that route manual through a dedicated
+loopback-only, bearer-authenticated wrapper with an explicit Responses model
+profile. Each case is stateless and makes at most one model call with
+`store=false`, no tools, no session, no fallback, and no ambient trace. The
+wrapper and the fixed `jev-1.13.0` adapter receive the same frozen, redacted
+subject/messages and allowlisted metadata; neither candidate receives the
+historical baseline or ticket identity. This is developer experiment tooling,
+not a Hermes runtime or Prompt Release change, and no provider or Production
+data was used during verification.
 
 ## 2026-09-20 — Enablement 收件绑定核验（skill 行为提示）
 

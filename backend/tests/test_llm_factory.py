@@ -314,6 +314,27 @@ class LlmFactoryTests(unittest.TestCase):
         self.assertEqual(attempts, 1)
         self.assertIn("HTTP Error 400", str(context.exception))
 
+    def test_model_unavailable_error_preserves_provider_http_status(self) -> None:
+        def _fake_urlopen(request, timeout):
+            raise urllib.error.HTTPError(
+                url="https://api.openai.com/v1/responses",
+                code=403,
+                msg="Forbidden",
+                hdrs=None,
+                fp=io.BytesIO(b'{"error":{"message":"Model is not available for this API key"}}'),
+            )
+
+        with patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=_fake_urlopen):
+            with self.assertRaises(LlmInvocationError) as context:
+                invoke_responses_text(
+                    profile=self._profile(api_mode=OPENAI_RESPONSES_API, max_retries=0),
+                    system_prompt="system",
+                    user_prompt="user",
+                )
+
+        self.assertIn("model_unavailable", str(context.exception))
+        self.assertEqual(context.exception.http_status, 403)
+
     def test_invoke_responses_text_falls_back_to_deepseek_chat_after_openai_timeout(self) -> None:
         attempts: list[tuple[str, dict[str, object]]] = []
 
