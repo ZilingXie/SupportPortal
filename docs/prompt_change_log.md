@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-22 - Named plans and forwarded Preproduction acceptance
+
+- Area: Developer agent rules and workflow documentation; no application prompt, model, or runtime change.
+- Behavior: Give plans stable, memorable names and use those names in implementation handoffs and acceptance requests. A planning thread that did not implement the changes may independently review them and returns a self-contained result tied to the branch, full commit, additional diff, evidence, target environment, and next action.
+- Continuation: When the user forwards a matching passing result, the executor continues authorized finalization and Preproduction build/deployment/verification without another `继续` or deployment confirmation. Review freshness, explicit user limits, release gates, Production authorization, and business-write boundaries still apply.
+- Files: Repository `AGENTS.md`, workflow details, testing navigation and ECS release runbook; the local Codex global `AGENTS.md` is aligned outside the repository.
+- Verification scope: Direct wording, Markdown link/format, and cross-document consistency checks; no live cross-thread acceptance or deployment is exercised by this documentation change.
+
 ## 2026-09-21 - Hermes route aligned to Production Account taxonomy
 
 `hermes-route-manual-v2` requires a typed Account classification compatible
