@@ -185,7 +185,7 @@ done
 export APP_BUILD_REF
 export APP_BUILD_TIME
 export APP_RUNTIME_IMAGE
-APP_BUILD_REF="$(git rev-parse --short=12 HEAD)"
+APP_BUILD_REF="$(git rev-parse --short=12 "$current_main")"
 APP_BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 APP_RUNTIME_IMAGE="localhost/supportportal-app:${APP_BUILD_REF}"
 
@@ -318,7 +318,16 @@ print_startup_diagnostics() {
 
 previous_image="$(podman inspect --format '{{.ImageName}}' deployment_api_1 2>/dev/null || true)"
 previous_image_id="$(podman inspect --format '{{.Image}}' deployment_api_1 2>/dev/null || true)"
-previous_ref="${previous_image##*:}"
+# Prefer the previous container's own APP_BUILD_REF env: the running image
+# tag may be a rollback-<ref>-<pid> label, and exporting that whole tag as
+# APP_BUILD_REF pollutes health provenance and cascades across runs.
+previous_ref="$(
+  podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' deployment_api_1 2>/dev/null \
+    | awk -F= '$1 == "APP_BUILD_REF" {sub(/^[^=]*=/, ""); print; exit}'
+)"
+if [[ -z "$previous_ref" ]]; then
+  previous_ref="$(printf '%s' "${previous_image##*:}" | sed -E 's/^rollback-([0-9a-f]+)-[0-9]+$/\1/')"
+fi
 new_image="$APP_RUNTIME_IMAGE"
 new_ref="$APP_BUILD_REF"
 rollback_image=""
@@ -372,6 +381,9 @@ if [[ "$_build_progress" == "plain" ]]; then
   export BUILDAH_PROGRESS=plain
 fi
 
+if [[ "$(git rev-parse HEAD)" != "$current_main" ]]; then
+  die "Root main moved during restart preparation ($current_main -> $(git rev-parse HEAD)); rerun the restart after the concurrent finalize completes."
+fi
 podman-compose "${compose_args[@]}" "${build_args[@]}"
 "$SCRIPT_DIR/cleanup_single_host_aux_stack.sh"
 podman-compose "${compose_args[@]}" down
