@@ -218,7 +218,16 @@ def http_candidate(
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
         state = candidate_state(snapshot)
         if gateway_endpoint:
-            from .hermes_classifier import _classification_schema, _experiment_system_prompt, HERMES_DEFAULT_MAX_OUTPUT_TOKENS
+            from .hermes_classifier import (
+                HERMES_DEFAULT_MAX_OUTPUT_TOKENS,
+                HermesExperimentError,
+                build_experiment_profile,
+                classify_case_snapshot,
+                _classification_schema,
+                _experiment_provenance,
+                _experiment_system_prompt,
+            )
+            from backend.services.llm_factory import LlmTextResult
             try:
                 max_output_tokens = int(os.getenv("HERMES_ROUTE_ALIGNMENT_MAX_OUTPUT_TOKENS", str(HERMES_DEFAULT_MAX_OUTPUT_TOKENS)))
             except ValueError:
@@ -230,14 +239,7 @@ def http_candidate(
                 "instructions": _experiment_system_prompt(),
                 "reasoning": {"effort": reasoning_effort},
                 "max_output_tokens": max_output_tokens,
-                "text": {
-                    "format": {
-                        "type": "json_schema",
-                        "name": "hermes_route_experiment_classification",
-                        "strict": True,
-                        "schema": _classification_schema(),
-                    }
-                },
+                "text": {"format": {"type": "json_schema", "name": "hermes_route_experiment_classification", "strict": True, "schema": _classification_schema()}},
                 "store": False,
             }
         else:
@@ -249,6 +251,91 @@ def http_candidate(
                     **state,
                 },
             }
+        def gateway_invoke(*, profile: Any, system_prompt: str, user_prompt: str, extra_payload: dict[str, Any] | None = None) -> LlmTextResult:
+            request = urllib.request.Request(
+                endpoint,
+                data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                headers={"Content-Type": "application/json", **dict(headers or {})},
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    wrapper_status = int(getattr(response, "status", 200))
+                    parsed = json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                try:
+                    body = json.loads(exc.read().decode("utf-8"))
+                except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+                    body = {}
+                finally:
+                    exc.close()
+                diagnostics = dict(body.get("diagnostics") or {}) if isinstance(body, Mapping) else {}
+                diagnostics["gateway_http_status"] = exc.code
+                raise HermesExperimentError(str(body.get("error") or "http_error"), diagnostics=diagnostics) from exc
+            except TimeoutError as exc:
+                raise HermesExperimentError("provider_timeout", diagnostics={"gateway_http_status": None}) from exc
+            if not isinstance(parsed, Mapping) or parsed.get("contract") != "hermes-route-inference-v1":
+                raise HermesExperimentError("invalid_gateway_response", diagnostics={"gateway_http_status": wrapper_status})
+            diagnostics = dict(parsed.get("diagnostics") or {}) if isinstance(parsed.get("diagnostics"), Mapping) else {}
+            diagnostics["gateway_http_status"] = wrapper_status
+            classification = parsed.get("classification")
+            if not isinstance(classification, Mapping):
+                raise HermesExperimentError("missing_classification", diagnostics=diagnostics)
+            usage = parsed.get("usage") if isinstance(parsed.get("usage"), Mapping) else {}
+            raw_payload = {
+                "status": diagnostics.get("response_status"),
+                "incomplete_details": {"reason": diagnostics.get("incomplete_reason")},
+                "model": parsed.get("actual_model"),
+                "output_text": json.dumps(classification, ensure_ascii=False),
+            }
+            return LlmTextResult(
+                text=raw_payload["output_text"],
+                model_name=str(parsed.get("actual_model") or ""),
+                prompt_tokens=int(usage.get("input_tokens") or 0),
+                completion_tokens=int(usage.get("output_tokens") or 0),
+                reasoning_tokens=int(usage.get("reasoning_tokens") or 0),
+                raw_payload=raw_payload,
+                provider_name=str(diagnostics.get("provider") or "openai"),
+            )
+
+        started = time.monotonic()
+        if gateway_endpoint:
+            profile = build_experiment_profile(
+                api_key="gateway-transport",
+                base_url="http://127.0.0.1",
+                model=os.getenv("HERMES_ROUTE_ALIGNMENT_MODEL", "gateway-fixed"),
+                reasoning_effort=reasoning_effort,
+            )
+            try:
+                snapshot_payload = {"case_alias": snapshot.alias, "case_revision": snapshot.case_revision, **state}
+                result = classify_case_snapshot(snapshot_payload, profile=profile, max_output_tokens=max_output_tokens, invoke=gateway_invoke)
+                if result.get("actual_model_verified") is not True or not result.get("actual_model"):
+                    raise HermesExperimentError("model_identity_unverified", diagnostics=dict(result.get("diagnostics") or {}))
+                diagnostics = dict(result.get("diagnostics") or {})
+                diagnostics["gateway_http_status"] = diagnostics.get("gateway_http_status")
+                metadata = {key: result.get(key) for key in _PROVENANCE_KEYS if result.get(key) is not None}
+                metadata["diagnostics"] = diagnostics
+                return CandidateResult(
+                    candidate=name, status="ok", raw=dict(result["classification"]), normalized=dict(result["normalized_classification"]),
+                    latency_ms=round((time.monotonic() - started) * 1000, 2), model_version=result.get("actual_model"),
+                    prompt_version=result.get("prompt_version"), requested_model=result.get("requested_model"),
+                    returned_model=result.get("returned_model"), call_count=1, usage=dict(result.get("usage") or {}), metadata=metadata,
+                )
+            except HermesExperimentError as exc:
+                diagnostics = {
+                    **dict(exc.diagnostics),
+                    **_experiment_provenance(profile, max_output_tokens),
+                    "provider_attempt_count": dict(exc.diagnostics).get("provider_attempt_count", 0 if exc.code == "input_too_large" else 1),
+                }
+                metadata = {key: diagnostics.get(key) for key in _PROVENANCE_KEYS if diagnostics.get(key) is not None}
+                metadata["diagnostics"] = diagnostics
+                return CandidateResult(
+                    candidate=name, status="error", error=exc.code, error_code=exc.code,
+                    latency_ms=round((time.monotonic() - started) * 1000, 2),
+                    model_version=diagnostics.get("actual_model") or diagnostics.get("requested_model"),
+                    requested_model=diagnostics.get("requested_model"), returned_model=diagnostics.get("actual_model"),
+                    call_count=0 if exc.code == "input_too_large" else 1, metadata=metadata,
+                )
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),

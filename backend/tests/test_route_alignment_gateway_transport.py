@@ -64,6 +64,7 @@ def test_gateway_transport_sends_frozen_parameters_and_projects_diagnostics(monk
                 "contract": "hermes-route-inference-v1",
                 "classification": _classification(),
                 "requested_model": "gpt-5.6-luna",
+                "actual_model": "gpt-5.6-luna-actual",
                 "returned_model": "gpt-5.6-luna-actual",
                 "actual_model_verified": True,
                 "usage": {"input_tokens": 11, "output_tokens": 7},
@@ -72,6 +73,8 @@ def test_gateway_transport_sends_frozen_parameters_and_projects_diagnostics(monk
                     "provider_attempt_count": 1,
                     "reasoning_effort": "medium",
                     "max_output_tokens": 1600,
+                    "provider": "openai",
+                    "response_status": "completed",
                 },
             }
         )
