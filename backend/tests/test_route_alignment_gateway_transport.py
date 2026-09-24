@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import io
+import urllib.error
 from unittest.mock import patch
 
 from scripts.experiments.route_alignment.adapters import gateway_capabilities, http_candidate
@@ -122,3 +124,57 @@ def test_gateway_capabilities_fail_closed_when_isolation_contract_is_missing() -
             assert str(exc) == "route_alignment_capabilities_not_isolated"
         else:
             raise AssertionError("capability preflight must fail closed")
+
+
+def test_gateway_transport_prioritizes_http_status_and_keeps_attempt_count(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_ROUTE_ALIGNMENT_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("HERMES_ROUTE_ALIGNMENT_MAX_OUTPUT_TOKENS", "1600")
+
+    def unauthorized(request, timeout):
+        raise urllib.error.HTTPError(
+            request.full_url, 401, "unauthorized", {}, io.BytesIO(b'{"error":"rate_limited"}')
+        )
+
+    with patch("urllib.request.urlopen", side_effect=unauthorized):
+        result = http_candidate("hermes", "http://127.0.0.1:8765/v1/route-alignment/responses")(_snapshot())
+
+    assert result.status == "error"
+    assert result.error_code == "authentication_error"
+    assert result.metadata["diagnostics"]["gateway_http_status"] == 401
+    assert result.metadata["diagnostics"]["provider_attempt_count"] == 0
+
+
+def test_gateway_transport_accepts_3200_and_preserves_gateway_provenance(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_ROUTE_ALIGNMENT_REASONING_EFFORT", "medium")
+    monkeypatch.setenv("HERMES_ROUTE_ALIGNMENT_MAX_OUTPUT_TOKENS", "3200")
+
+    def urlopen(request, timeout):
+        return _Response(
+            {
+                "contract": "hermes-route-inference-v1",
+                "classification": _classification(),
+                "actual_model": "actual-model",
+                "returned_model": "actual-model",
+                "actual_model_verified": True,
+                "usage": {"input_tokens": 1, "output_tokens": 2, "reasoning_tokens": 3},
+                "diagnostics": {
+                    "gateway_implementation_commit": "gateway-commit",
+                    "gateway_http_status": 200,
+                    "provider_attempt_count": 1,
+                    "provider": "openai",
+                    "requested_model": "requested-model",
+                    "max_output_tokens": 3200,
+                    "config_version": "hermes-route-inference-v1:medium:3200",
+                    "reasoning_effort": "medium",
+                    "response_status": "completed",
+                },
+            }
+        )
+
+    with patch("urllib.request.urlopen", side_effect=urlopen):
+        result = http_candidate("hermes", "http://127.0.0.1:8765/v1/route-alignment/responses")(_snapshot())
+
+    assert result.status == "ok"
+    assert result.metadata["gateway_implementation_commit"] == "gateway-commit"
+    assert result.metadata["config_version"].endswith(":3200")
+    assert result.metadata["diagnostics"]["reasoning_tokens"] == 3

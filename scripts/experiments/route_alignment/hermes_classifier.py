@@ -176,8 +176,10 @@ def _response_diagnostics(
     incomplete = raw.get("incomplete_details") if isinstance(raw.get("incomplete_details"), Mapping) else {}
     raw_model = raw.get("model")
     actual_model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
+    gateway_diagnostics = raw.get("gateway_diagnostics") if isinstance(raw.get("gateway_diagnostics"), Mapping) else {}
     return {
         **_experiment_provenance(profile, max_output_tokens),
+        **dict(gateway_diagnostics),
         "response_status": raw.get("status") if isinstance(raw.get("status"), str) else None,
         "incomplete_reason": incomplete.get("reason") if isinstance(incomplete.get("reason"), str) else None,
         "message_status": message.get("status") if isinstance(message.get("status"), str) else None,

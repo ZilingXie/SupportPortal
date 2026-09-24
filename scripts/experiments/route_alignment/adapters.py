@@ -30,6 +30,8 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
         "normalization_error",
         "provider_http_error",
         "provider_timeout",
+        "gateway_busy",
+        "http_error",
     }
 )
 _DIAGNOSTIC_KEYS = frozenset(
@@ -271,7 +273,17 @@ def http_candidate(
                     exc.close()
                 diagnostics = dict(body.get("diagnostics") or {}) if isinstance(body, Mapping) else {}
                 diagnostics["gateway_http_status"] = exc.code
-                raise HermesExperimentError(str(body.get("error") or "http_error"), diagnostics=diagnostics) from exc
+                diagnostics.setdefault("provider_attempt_count", 0)
+                if exc.code in {401, 403}:
+                    code = "authentication_error"
+                elif exc.code == 429:
+                    code = "rate_limited"
+                elif exc.code == 409:
+                    code = "gateway_busy"
+                else:
+                    candidate_error = body.get("error") if isinstance(body, Mapping) else None
+                    code = candidate_error if isinstance(candidate_error, str) and candidate_error in _CONTROLLED_HTTP_ERRORS else "http_error"
+                raise HermesExperimentError(code, diagnostics=diagnostics) from exc
             except TimeoutError as exc:
                 raise HermesExperimentError("provider_timeout", diagnostics={"gateway_http_status": None}) from exc
             if not isinstance(parsed, Mapping) or parsed.get("contract") != "hermes-route-inference-v1":
@@ -287,6 +299,7 @@ def http_candidate(
                 "incomplete_details": {"reason": diagnostics.get("incomplete_reason")},
                 "model": parsed.get("actual_model"),
                 "output_text": json.dumps(classification, ensure_ascii=False),
+                "gateway_diagnostics": diagnostics,
             }
             return LlmTextResult(
                 text=raw_payload["output_text"],
@@ -314,17 +327,20 @@ def http_candidate(
                 diagnostics = dict(result.get("diagnostics") or {})
                 diagnostics["gateway_http_status"] = diagnostics.get("gateway_http_status")
                 metadata = {key: result.get(key) for key in _PROVENANCE_KEYS if result.get(key) is not None}
+                for key in _PROVENANCE_KEYS:
+                    if key in diagnostics:
+                        metadata[key] = diagnostics[key]
                 metadata["diagnostics"] = diagnostics
                 return CandidateResult(
                     candidate=name, status="ok", raw=dict(result["classification"]), normalized=dict(result["normalized_classification"]),
-                    latency_ms=round((time.monotonic() - started) * 1000, 2), model_version=result.get("actual_model"),
-                    prompt_version=result.get("prompt_version"), requested_model=result.get("requested_model"),
+                    latency_ms=round((time.monotonic() - started) * 1000, 2), model_version=diagnostics.get("actual_model") or result.get("actual_model"),
+                    prompt_version=result.get("prompt_version"), requested_model=diagnostics.get("requested_model") or result.get("requested_model"),
                     returned_model=result.get("returned_model"), call_count=1, usage=dict(result.get("usage") or {}), metadata=metadata,
                 )
             except HermesExperimentError as exc:
                 diagnostics = {
-                    **dict(exc.diagnostics),
                     **_experiment_provenance(profile, max_output_tokens),
+                    **dict(exc.diagnostics),
                     "provider_attempt_count": dict(exc.diagnostics).get("provider_attempt_count", 0 if exc.code == "input_too_large" else 1),
                 }
                 metadata = {key: diagnostics.get(key) for key in _PROVENANCE_KEYS if diagnostics.get(key) is not None}
