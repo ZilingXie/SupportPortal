@@ -4699,7 +4699,7 @@ def _apply_enablement_relay_success(
             "visibility": "account_only",
             "internal_resolution": True,
             "close_after_publish": True,
-            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
             "automation_delivery_key": f"enablement-relay:{request_id}",
         },
         "attempt_count": 0,

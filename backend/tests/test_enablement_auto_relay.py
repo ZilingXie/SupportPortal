@@ -475,6 +475,18 @@ class RelayInboxTests(unittest.TestCase):
         reply_facts = jobs[0]["payload"]["reply_facts"]
         self.assertEqual(reply_facts["reply_intent"], "enablement_archer_enabled")
         self.assertEqual(
+            jobs[0]["payload"]["reply_intent"], "enablement_archer_enabled"
+        )
+        normalized_payload, normalized_intent, derived_close = (
+            WORKER._normalize_account_reply_job_payload(dict(jobs[0]["payload"]))
+        )
+        self.assertEqual(normalized_intent, "enablement_archer_enabled")
+        self.assertEqual(
+            normalized_payload["reply_facts"]["reply_intent"],
+            "enablement_archer_enabled",
+        )
+        self.assertTrue(derived_close)
+        self.assertEqual(
             reply_facts["known_information"],
             {"requested_feature_name": "Media Relay"},
         )
