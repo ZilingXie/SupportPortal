@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-22T12:34:29Z",
-  "source_base_commit": "47e69bb175de6e1d04669f2f5b8e65ec3d7a625f",
-  "registry_digest": "9ea020f791d2fea492944e9a5a3f3f3dfdf782b716e0b89b0026c6ff8bf91207",
+  "generated_at": "2026-09-24T03:51:04Z",
+  "source_base_commit": "3848772f4704c743a234473801f98a23848cd16b",
+  "registry_digest": "4eada5aa0005f921624914f8e3ab3bdebe89077081ccafb3c07ff2fc23f156d8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12107,9 +12107,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-22",
+      "updated_at": "2026-09-24",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "Plan1 代码、Prompt Release 和 Preproduction 运行发布已完成；Plan2 采用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses，执行 Hermes smoke、参数矩阵和 frozen 100-case 对比。Plan1 不新增公网 route-alignment-v1 endpoint，不读取 Production 工单，不调用 Jev，不创建 Case/Turn/Job/Draft 或发送客户回复。",
+      "next_action": "Preproduction 已恢复 Route=hermes、Enablement=archer；用新建测试工单验证 submission confirmation 送达后生成 enablement relay request 并派发本地 AgentRelay Task。Plan2 继续采用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses，执行 Hermes smoke、参数矩阵和 frozen 100-case 对比；不新增公网 route-alignment-v1 endpoint，不读取 Production 工单，不调用 Jev。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -12323,6 +12323,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Official local stack post-merge verification",
           "details": "inspect_single_host_stack_mode.sh 确认 official project=deployment、auxiliary_stack_present=false、build provenance matched；当前 root main 已推进至 47e69bb175de6e1d04669f2f5b8e65ec3d7a625f，官方栈 /health=ok、ticket_storage=postgres、knowledge_storage=postgres、rag_service=ok、app_build.ref=47e69bb175de。用户早先指定的 403251bec marker 未再使用，因为仓库重启脚本要求 root main 与 origin/main 同步，且 47e69bb 仅包含重启脚本/测试的发布门禁修复；因此没有把 47e 栈标记为 403 栈。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes/Archer runtime configuration restored",
+          "details": "2026-09-24 对 13686 做只读追踪确认：该工单正确分类为 Enablement，但当时 Preproduction 运行在 AUTOMATION_CASE_ENGINE=legacy、ENABLEMENT_WORKFLOW_MODE=manual，因此只进入 enablement_manual_workflow（email_released）并发送内部邮件和 submission confirmation；support_enablement_relay_requests 与 enablement_relay 事件均为零，本地 AgentRelay 没有漏收。随后复用 immutable release r20260922-47e69bb（source git=47e69bb175de6e1d04669f2f5b8e65ec3d7a625f）和 active Prompt Release pr-fe1f5a21205e，通过完整 check-only preflight 与正式 deploy 恢复配置。运行读回：API :71、Route :70、Worker :71 均 1/1/0、rollout COMPLETED、digest 与 Manifest 一致；API/Worker ENABLEMENT_WORKFLOW_MODE=archer，Route AUTOMATION_CASE_ENGINE=hermes；public live/release、heartbeats、provider probe、CloudWatch、Terraform pre/post zero-drift、Prompt sync/activation 全部通过，evidence status=complete。滚动窗口内 readiness epoch 409 按退避恢复，服务收敛后最近 5 分钟 Worker ERROR=0、enablement relay 告警=0；本地 zac-agent listener 进程与 v0.6 agent card 可读。13686 未补派发、未重跑、未创建 relay task，等待用户用新工单验证真实派发链路。"
         }
       ],
       "legacy_ids": [],
