@@ -196,17 +196,61 @@ class AutomationPersonaTests(unittest.TestCase):
             valid.replace("Media Relay", "the feature"), facts, close_after_publish=True
         )
 
-    def test_archer_success_contract_allows_configuration_detail_when_customer_asks(self) -> None:
-        # region/load are no longer required, but a reply that mentions them (for
-        # example when the customer asked about capacity) must not be rejected
+    def test_archer_success_contract_rejects_internal_configuration_details(self) -> None:
         facts = self._archer_facts("enablement_archer_enabled", "enabled")
-        with_detail = (
-            "Thank you for your patience. Media Relay is already enabled on your project in the oversea region "
-            "with a maximum subscribe load of 50. This case will be archived now. If you have further "
-            "questions, you can open a new ticket."
+        unsafe_replies = (
+            "Media Relay is already enabled in region 2. I'm closing this case now.",
+            "Media Relay is already enabled with a maximum subscribe load of 10. I'm closing this case now.",
+            "Media Relay is already enabled with the requested capacity. I'm closing this case now.",
+            "Media Relay is already enabled; no further configuration details are needed. I'm closing this case now.",
+            "Media Relay is already enabled; no configuration write was performed. I'm closing this case now.",
         )
-        _, close = validate_account_reply_contract(with_detail, facts, close_after_publish=True)
-        self.assertTrue(close)
+        for reply in unsafe_replies:
+            with self.subTest(reply=reply), self.assertRaisesRegex(
+                AutomationPersonaError,
+                "automation_persona_archer_internal_configuration_disclosure",
+            ):
+                validate_account_reply_contract(reply, facts, close_after_publish=True)
+
+    def test_archer_internal_configuration_disclosure_rewrites_once(self) -> None:
+        facts = self._archer_facts("enablement_archer_enabled", "enabled")
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        responses = [
+            SimpleNamespace(
+                text=(
+                    "Media Relay is already enabled in region 2 with a maximum subscribe load of 10; "
+                    "no configuration write was performed. I'm closing this case now."
+                ),
+                model_name="persona-model",
+            ),
+            SimpleNamespace(
+                text=(
+                    "Media Relay is already enabled on your project. I'm closing this case now, but if "
+                    "anything else comes up, feel free to open a new ticket."
+                ),
+                model_name="persona-model",
+            ),
+        ]
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile", return_value=profile
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text", side_effect=responses
+        ) as generate:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise."}},
+                account_scope=True,
+            )
+
+        self.assertEqual(generate.call_count, 2)
+        self.assertEqual(result.generation_attempts, 2)
+        self.assertNotIn("region", result.content.casefold())
+        self.assertNotIn("subscribe load", result.content.casefold())
+        self.assertNotIn("write", result.content.casefold())
+        self.assertEqual(
+            result.safety_issue_codes,
+            ("automation_persona_archer_internal_configuration_disclosure",),
+        )
 
     def test_archer_recoverable_contracts_request_a_replacement_without_overclaim(self) -> None:
         invalid_facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")

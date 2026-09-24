@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-09-24 - AgentRelay Enablement completion isolates internal evidence (p2-163)
+
+- Area or subsystem: AgentRelay Media Relay success application and Account Automation Persona publication contract.
+- Prompt or model version: existing `enablement_archer_enabled` policy reused; no model change and no new Prompt Release content.
+- Reason: Preproduction ticket 13687 proved that the Relay success path used the generic `enablement_completed_and_close` intent and copied Relay `detail`, read-back region/load, and write status into customer-facing facts. The generated public reply disclosed `region=2`, `maxSubscribeLoad=10`, and that no configuration write was performed, despite the existing Archer-specific policy forbidding internal configuration details.
+- Behavior change: AgentRelay results retain the complete read-back and approval reference for server-side validation and audit. After validation, the completion job uses `enablement_archer_enabled` and exposes only the Media Relay feature name plus completed state; Relay detail, App ID suffix, region, subscribe load, capacity, and write/no-write evidence are excluded from Persona facts. The publication contract rejects those internal details if a model still emits them.
+- Verification: Relay inbox integration asserts the full result still passes the server gate while the completion job contains no internal evidence; Persona contract and render tests cover region, subscribe load, capacity, configuration-write disclosure, and one-rewrite recovery. Ticket 13687 is not modified or replayed.
+
 ## 2026-09-22 - Route Manual v3 classification contract converged (p2-148, 13650 round-3)
 
 - Area or subsystem: Preproduction Hermes route phase — `build_hermes_route_manual`

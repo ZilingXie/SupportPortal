@@ -71,6 +71,7 @@ from backend.services.account_reply_jobs import (
     account_reply_persona_pipeline_for_job,
     account_reply_persona_status_for_stage,
     create_account_reply_job,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
@@ -4655,31 +4656,22 @@ def _apply_enablement_relay_success(
     canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
     known_information = {
         "requested_feature": "media_relay",
-        "app_id_last4": str(request.get("app_id") or "")[-4:],
     }
-    readback = result.get("readback") if isinstance(result.get("readback"), dict) else {}
-    note = str(result.get("detail") or "Enablement completed via relay.")
-    sanitized_note = sanitize_enablement_completion_note(
-        note, {**known_information, "ticket_id": ticket_id, "account_case_id": account_case_id}
-    )
     reply_facts = build_automation_reply_facts(
         behavior="enablement",
-        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
         known_information=known_information,
-        source_facts=[sanitized_note],
+        source_facts=[],
         resolution_status="completed",
         customer_name=_account_greeting_customer_name(
             account_case, ticket_id, canonical_ticket=canonical_ticket
         ),
     )
     reply_facts["completion_acknowledgement"] = "patience"
-    if readback:
-        reply_facts["readback_region"] = readback.get("region")
-        reply_facts["readback_max_subscribe_load"] = readback.get("maxSubscribeLoad")
     try:
         normalized_facts, _intent, _close = normalize_account_reply_contract(
             reply_facts,
-            reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
+            reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
             close_after_publish=True,
         )
     except AccountReplyContractError as exc:

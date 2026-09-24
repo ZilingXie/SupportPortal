@@ -472,6 +472,16 @@ class RelayInboxTests(unittest.TestCase):
         self.assertEqual(len(jobs), 1)
         self.assertTrue(jobs[0]["payload"]["close_after_publish"])
         self.assertTrue(jobs[0]["payload"]["internal_resolution"])
+        reply_facts = jobs[0]["payload"]["reply_facts"]
+        self.assertEqual(reply_facts["reply_intent"], "enablement_archer_enabled")
+        self.assertEqual(
+            reply_facts["known_information"],
+            {"requested_feature_name": "Media Relay"},
+        )
+        self.assertEqual(reply_facts["source_facts"], [])
+        self.assertNotIn("readback_region", reply_facts)
+        self.assertNotIn("readback_max_subscribe_load", reply_facts)
+        self.assertNotIn("write_attempted", reply_facts)
         case = self.repository.get_account_case(self.case["account_case_id"])
         self.assertEqual(
             case["automation_context"]["enablement_auto_workflow"]["state"], "completed"
