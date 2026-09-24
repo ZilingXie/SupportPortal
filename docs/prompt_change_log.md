@@ -1,5 +1,20 @@
 # Prompt Change Log
 
+## 2026-09-24 - Plan2 dedicated Hermes route-inference gateway
+
+- Area: Preproduction-only route alignment experiment; the existing Hermes
+  Route Prompt, schema, normalizer, and model choice remain unchanged.
+- Behavior: Added a private `hermes-route-inference-v1` gateway with fixed
+  provider/model configuration, one async Responses call, strict structured
+  output, no tools/session/response persistence/fallback/retry, and explicit
+  provider/gateway/model provenance. The runner now requires the gateway
+  capabilities contract and records gateway HTTP status separately from the
+  local wrapper and provider status. The ordinary `/v1/responses` endpoint is
+  not an accepted experiment transport.
+- Verification: local gateway transport and installer contract tests use fake
+  HTTP/provider boundaries only; no Preproduction deployment or real model
+  call was performed in this change.
+
 ## 2026-09-22 - Route Manual v3 classification contract converged (p2-148, 13650 round-3)
 
 - Area or subsystem: Preproduction Hermes route phase — `build_hermes_route_manual`

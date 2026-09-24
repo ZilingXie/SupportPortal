@@ -25,8 +25,10 @@ Use `--fixture fixtures/cases.jsonl` instead of `--production-dsn-env` for a
 local fixture freeze. The frozen directory is created with mode `0700`; its
 JSONL files use `0600` and share a content-derived `dataset_id`.
 
-Start the stateless Hermes candidate on loopback after setting its explicit
-model profile and an experiment-only bearer token:
+The local stateless Hermes service remains useful for offline tests. It is not
+the live experiment endpoint: ordinary Hermes `/v1/responses` is rejected for
+the live path because it creates agent/session state and may use tools or
+fallbacks.
 
 ```bash
 python3 -m scripts.experiments.route_alignment.hermes_service \
@@ -42,20 +44,23 @@ is optional and defaults to `1600`; valid values are `256` through `8192`.
 The value is recorded with each result. The service sends one Responses request
 per case with no retry, fallback, tools, session, store, or ambient trace.
 
-Run both live candidates only from a frozen dataset:
+Run both live candidates only from a frozen dataset, using the dedicated
+gateway and its capability preflight:
 
 ```bash
 export ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED=1
 python3 -m scripts.experiments.route_alignment \
   --frozen-snapshots artifacts/route-alignment/dataset-001/frozen_snapshots.jsonl \
   --jev-direct \
-  --hermes-endpoint http://127.0.0.1:8765/route-alignment/v1/classify \
+  --hermes-endpoint http://127.0.0.1:8765/v1/route-alignment/responses \
   --live-candidates \
   --output-dir artifacts/route-alignment/run-001
 ```
 
 The direct Jev adapter requires `TYPESAFE_API_KEY` and fixes the provider model
-to `jev-1.13.0`. The runner requires the Hermes bearer token in
+to `jev-1.13.0`. The runner first reads `/v1/route-alignment/capabilities` and
+requires one attempt, no fallback, no tools, no session/response store, and
+structured output. It also requires the Hermes bearer token in
 `HERMES_EXPERIMENT_TOKEN`. Credentials are never accepted as CLI arguments or
 written to artifacts. Fixture-only comparison remains available with
 `--fixture-candidates fixtures/candidates.json` and makes no provider calls.

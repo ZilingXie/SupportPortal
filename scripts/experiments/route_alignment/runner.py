@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .adapters import fetch_production_snapshots, fixture_candidate, http_candidate, load_fixture_snapshots
+from .adapters import fetch_production_snapshots, fixture_candidate, gateway_capabilities, http_candidate, load_fixture_snapshots
 from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_candidate_error_csv, write_disagreement_csv, write_jsonl
 from .dataset import dataset_id_for, load_frozen_dataset, write_frozen_dataset
 from .provenance import source_code_commit
@@ -147,6 +147,11 @@ def _preflight(args: argparse.Namespace) -> None:
         raise SystemExit("--jev-direct requires TYPESAFE_API_KEY")
     if not os.getenv("HERMES_EXPERIMENT_TOKEN", "").strip():
         raise SystemExit("live Hermes candidate requires HERMES_EXPERIMENT_TOKEN")
+    if args.hermes_endpoint.endswith("/v1/route-alignment/responses"):
+        try:
+            gateway_capabilities(args.hermes_endpoint, headers=_candidate_headers("HERMES_EXPERIMENT_TOKEN"))
+        except Exception as exc:
+            raise SystemExit(f"Hermes route-alignment gateway preflight failed: {exc}") from exc
 
 
 def _source_snapshots(args: argparse.Namespace) -> tuple[str, list[CaseSnapshot]]:

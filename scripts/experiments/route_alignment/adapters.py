@@ -34,12 +34,13 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
 )
 _DIAGNOSTIC_KEYS = frozenset(
     {
-        "provider_http_status", "response_status", "incomplete_reason", "message_status",
+        "wrapper_http_status", "gateway_http_status", "provider_http_status", "response_status", "incomplete_reason", "message_status",
         "requested_model", "actual_model", "input_tokens", "output_tokens", "reasoning_tokens",
         "text_length", "max_output_tokens", "reasoning_effort", "config_version",
         "normalization_code", "implementation_commit", "schema_version", "prompt_version",
         "hermes_route_manual_version", "hermes_route_manual_hash", "normalizer_version",
-        "normalizer_policy_version", "normalizer_confidence_threshold",
+        "normalizer_policy_version", "normalizer_confidence_threshold", "gateway_implementation_commit",
+        "provider_attempt_count", "actual_model_verified",
     }
 )
 _PROVENANCE_KEYS = frozenset(
@@ -47,7 +48,7 @@ _PROVENANCE_KEYS = frozenset(
         "provider", "reasoning_effort", "hermes_route_manual_version", "hermes_route_manual_hash",
         "normalizer_version", "normalizer_policy_version", "normalizer_confidence_threshold",
         "schema_version", "implementation_commit", "wrapper_version", "actual_model_verified",
-        "max_output_tokens", "config_version",
+        "max_output_tokens", "config_version", "gateway_implementation_commit", "provider_attempt_count",
     }
 )
 
@@ -212,16 +213,42 @@ def http_candidate(
     if allowed_hosts and host not in allowed_hosts:
         raise ValueError("candidate endpoint host is not allowlisted")
 
+    gateway_endpoint = path.endswith("/v1/route-alignment/responses")
+
     def invoke(snapshot: CaseSnapshot) -> CandidateResult:
         state = candidate_state(snapshot)
-        payload = {
-            "contract": "route-alignment-v1",
-            "case_snapshot": {
-                "case_alias": snapshot.alias,
-                "case_revision": snapshot.case_revision,
-                **state,
-            },
-        }
+        if gateway_endpoint:
+            from .hermes_classifier import _classification_schema, _experiment_system_prompt, HERMES_DEFAULT_MAX_OUTPUT_TOKENS
+            try:
+                max_output_tokens = int(os.getenv("HERMES_ROUTE_ALIGNMENT_MAX_OUTPUT_TOKENS", str(HERMES_DEFAULT_MAX_OUTPUT_TOKENS)))
+            except ValueError:
+                max_output_tokens = HERMES_DEFAULT_MAX_OUTPUT_TOKENS
+            reasoning_effort = os.getenv("HERMES_ROUTE_ALIGNMENT_REASONING_EFFORT", "medium").strip()
+            payload = {
+                "contract": "hermes-route-inference-v1",
+                "input": json.dumps(state, ensure_ascii=False, sort_keys=True),
+                "instructions": _experiment_system_prompt(),
+                "reasoning": {"effort": reasoning_effort},
+                "max_output_tokens": max_output_tokens,
+                "text": {
+                    "format": {
+                        "type": "json_schema",
+                        "name": "hermes_route_experiment_classification",
+                        "strict": True,
+                        "schema": _classification_schema(),
+                    }
+                },
+                "store": False,
+            }
+        else:
+            payload = {
+                "contract": "route-alignment-v1",
+                "case_snapshot": {
+                    "case_alias": snapshot.alias,
+                    "case_revision": snapshot.case_revision,
+                    **state,
+                },
+            }
         request = urllib.request.Request(
             endpoint,
             data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -235,9 +262,10 @@ def http_candidate(
                 parsed = json.loads(response.read().decode("utf-8"))
             if not isinstance(parsed, Mapping):
                 raise ValueError("response_not_object")
-            if parsed.get("contract") != "route-alignment-v1":
+            expected_contract = "hermes-route-inference-v1" if gateway_endpoint else "route-alignment-v1"
+            if parsed.get("contract") != expected_contract:
                 raise ValueError("invalid_contract")
-            if parsed.get("case_alias") != snapshot.alias or parsed.get("case_revision") != snapshot.case_revision:
+            if not gateway_endpoint and (parsed.get("case_alias") != snapshot.alias or parsed.get("case_revision") != snapshot.case_revision):
                 raise ValueError("snapshot_identity_mismatch")
             raw_value = parsed.get("normalized_classification") or parsed.get("classification")
             if not isinstance(raw_value, Mapping):
@@ -252,9 +280,36 @@ def http_candidate(
             usage = dict(parsed.get("usage") or {}) if isinstance(parsed.get("usage"), Mapping) else {}
             metadata = {key: parsed.get(key) for key in _PROVENANCE_KEYS if key in parsed}
             diagnostics = parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), Mapping) else {}
-            metadata["diagnostics"] = {"wrapper_http_status": wrapper_http_status, **dict(diagnostics)}
+            metadata["diagnostics"] = {
+                ("gateway_http_status" if gateway_endpoint else "wrapper_http_status"): wrapper_http_status,
+                **dict(diagnostics),
+            }
+            for key in _PROVENANCE_KEYS:
+                if key in metadata["diagnostics"]:
+                    metadata[key] = metadata["diagnostics"][key]
             metadata["max_output_tokens"] = parsed.get("max_output_tokens")
             metadata["config_version"] = parsed.get("config_version")
+            if gateway_endpoint:
+                from .hermes_classifier import (
+                    HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
+                    HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
+                    HERMES_ROUTE_CLASSIFICATION_VERSION,
+                    HERMES_ROUTE_MANUAL_VERSION,
+                    build_hermes_route_manual,
+                )
+                from .provenance import source_code_commit
+                import hashlib
+                metadata.update({
+                    "implementation_commit": source_code_commit(__file__),
+                    "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
+                    "prompt_version": HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
+                    "normalizer_version": HERMES_ROUTE_CLASSIFICATION_VERSION,
+                    "hermes_route_manual_version": HERMES_ROUTE_MANUAL_VERSION,
+                    "hermes_route_manual_hash": hashlib.sha256(build_hermes_route_manual().encode("utf-8")).hexdigest(),
+                    "reasoning_effort": os.getenv("HERMES_ROUTE_ALIGNMENT_REASONING_EFFORT", "medium").strip(),
+                    "max_output_tokens": max_output_tokens,
+                })
+                metadata["diagnostics"].update({key: value for key, value in metadata.items() if key in _DIAGNOSTIC_KEYS})
             if parsed.get("actual_model_verified") is not True or not returned_model:
                 return CandidateResult(
                     candidate=name,
@@ -286,6 +341,8 @@ def http_candidate(
             )
         except urllib.error.HTTPError as exc:
             error_code, diagnostics = _http_error_code(exc)
+            if gateway_endpoint and "wrapper_http_status" in diagnostics:
+                diagnostics["gateway_http_status"] = diagnostics.pop("wrapper_http_status")
             requested_model = diagnostics.get("requested_model")
             actual_model = diagnostics.get("actual_model")
             usage = {
@@ -327,3 +384,19 @@ def http_candidate(
             error_code = str(exc)[:80] or type(exc).__name__
             return CandidateResult(candidate=name, status="error", error=type(exc).__name__ + ":" + str(exc)[:200], error_code=error_code, latency_ms=round((time.monotonic() - started) * 1000, 2), call_count=1)
     return invoke
+
+
+def gateway_capabilities(endpoint: str, *, headers: Mapping[str, str] | None = None, timeout: float = 10.0) -> dict[str, Any]:
+    """Read and validate the dedicated gateway capability contract."""
+    capabilities_url = endpoint.rsplit("/v1/route-alignment/responses", 1)[0] + "/v1/route-alignment/capabilities"
+    request = urllib.request.Request(capabilities_url, headers=dict(headers or {}), method="GET")
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if not isinstance(payload, Mapping) or payload.get("contract") != "hermes-route-inference-v1":
+        raise ValueError("invalid_route_alignment_capabilities")
+    required = {"single_attempt": True, "fallback": False, "tools": False, "session_persistence": False, "response_store": False, "structured_output": True}
+    if any(payload.get(key) != value for key, value in required.items()):
+        raise ValueError("route_alignment_capabilities_not_isolated")
+    if not payload.get("gateway_implementation_commit") or payload.get("gateway_implementation_commit") == "unverified" or not payload.get("model"):
+        raise ValueError("route_alignment_capabilities_incomplete")
+    return dict(payload)
