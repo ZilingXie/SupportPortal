@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-24T05:45:05Z",
-  "source_base_commit": "f967baccafc9242836d2dc72d806404efaf9cdc9",
-  "registry_digest": "d5132a1b9cf4985fe271131f8eb386ea0b45c57cefb339525ad1097be120187d",
+  "generated_at": "2026-09-24T07:11:51Z",
+  "source_base_commit": "5e6db1a4b91afa4747784c32554b6c1c607c057d",
+  "registry_digest": "a142efe35cff2711ac27403deccba777f2aa01474ae3caf8eef92cea4c5f769b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1297,6 +1297,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "AgentRelay success reply information isolation",
           "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
           "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。Relay 完整 readback 与 approval_ref 继续参与服务端成功门禁；completion job 改用 enablement_archer_enabled，仅保留 Media Relay+completed 客户事实，source_facts 为空且无 AppID suffix/readback/write 字段。Persona 确定性拒绝 region、subscribe load、capacity、configuration/write 细节，并覆盖重写后安全发布。13687 不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay completion intent consistency",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
         },
         {
           "type": "test",
@@ -13383,7 +13389,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "AgentRelay 成功回复信息隔离修复完成本地验证后，按正式 pipeline 发布 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 已完成且不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
+      "next_action": "发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13506,6 +13512,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "AgentRelay success reply information isolation",
           "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
           "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。Relay 完整 readback 与 approval_ref 继续参与服务端成功门禁；completion job 改用 enablement_archer_enabled，仅保留 Media Relay+completed 客户事实，source_facts 为空且无 AppID suffix/readback/write 字段。Persona 确定性拒绝 region、subscribe load、capacity、configuration/write 细节，并覆盖重写后安全发布。13687 不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay completion intent consistency",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
         }
       ],
       "source_refs": [
@@ -13658,6 +13670,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-24",
           "event": "relay_success_reply_information_isolation",
           "summary": "13687 客户回复暴露 region=2、maxSubscribeLoad=10 和 no-write 事实，定位为 Relay 成功路径使用通用 completion intent 并把 detail/readback 注入 Persona。修复为专用 enablement_archer_enabled intent，客户 facts 仅保留 Media Relay+completed，机器 readback/approval 校验和审计证据不变；发布合同新增内部配置与写入细节拒绝。"
+        },
+        {
+          "at": "2026-09-24",
+          "event": "relay_completion_intent_consistency_fix",
+          "summary": "13693 受控验收中 AgentRelay 结果已 delivered、申请 completed，但完成回复在 account_reply_contract 以 account_reply_intent_conflict 停车。根因是 job 的 reply_facts.reply_intent 已切换为 enablement_archer_enabled，而 payload.reply_intent 遗留 enablement_completed_and_close。修复统一两层 intent 并以共享合同归一化回归锁定；失败工单不重放，发布后使用新受控工单复验。"
         }
       ]
     },
