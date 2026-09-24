@@ -335,11 +335,11 @@ def _provider_error_details(error: BaseException) -> tuple[str | None, int | Non
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         status = getattr(current, "http_status", None) or getattr(current, "code", None)
-        if status in {401, 403}:
-            return "authentication_error", status
-        if status == 429:
-            return "rate_limited", status
-        if status in {500, 502, 503, 504}:
+        if isinstance(status, int) and not isinstance(status, bool) and 400 <= status <= 599:
+            if status in {401, 403}:
+                return "authentication_error", status
+            if status == 429:
+                return "rate_limited", status
             return "provider_http_error", status
         if isinstance(current, TimeoutError):
             return "provider_timeout", None
@@ -360,17 +360,23 @@ def _clean_classification(value: Any) -> dict[str, Any]:
     billing = value.get("account_billing_subcategory")
     backend = value.get("backend_operation_subcategory")
     reason = value.get("reason_code")
-    if intent not in _ALLOWED_INTENTS:
+    if not isinstance(intent, str) or intent not in _ALLOWED_INTENTS:
         raise HermesExperimentError("invalid_model_classification")
-    if conversation_action is not None and conversation_action not in _ALLOWED_CONVERSATION_ACTIONS:
+    if conversation_action is not None and (
+        not isinstance(conversation_action, str) or conversation_action not in _ALLOWED_CONVERSATION_ACTIONS
+    ):
         raise HermesExperimentError("invalid_model_classification")
-    if agora_route is not None and agora_route not in _ALLOWED_AGORA_ROUTES:
+    if agora_route is not None and (not isinstance(agora_route, str) or agora_route not in _ALLOWED_AGORA_ROUTES):
         raise HermesExperimentError("invalid_model_classification")
-    if billing is not None and billing not in _ALLOWED_BILLING_SUBCATEGORIES:
+    if billing is not None and (
+        not isinstance(billing, str) or billing not in _ALLOWED_BILLING_SUBCATEGORIES
+    ):
         raise HermesExperimentError("invalid_model_classification")
-    if backend is not None and backend not in _ALLOWED_BACKEND_SUBCATEGORIES:
+    if backend is not None and (
+        not isinstance(backend, str) or backend not in _ALLOWED_BACKEND_SUBCATEGORIES
+    ):
         raise HermesExperimentError("invalid_model_classification")
-    if reason not in _ALLOWED_REASON_CODES:
+    if not isinstance(reason, str) or reason not in _ALLOWED_REASON_CODES:
         raise HermesExperimentError("invalid_model_classification")
     for name in ("intent_confidence", "agora_confidence", "confidence"):
         if not _finite_confidence(value.get(name)):

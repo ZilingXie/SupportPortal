@@ -97,7 +97,11 @@ not store arbitrary provider responses or customer text. Failure diagnostics
 use the same sanitized `metadata.diagnostics` object in JSONL and CSV:
 `wrapper_http_status` identifies the loopback response and
 `provider_http_status` identifies the upstream response when available. Failed
-Hermes calls retain model, reasoning/output limits, token usage, incomplete
+Hermes calls preserve every upstream HTTP 4xx/5xx status; authentication and
+rate-limit responses keep their dedicated error codes, while other statuses use
+`provider_http_error`. Invalid enum types in an otherwise valid model JSON are
+reported as `invalid_model_classification`. Both paths retain model,
+reasoning/output limits, token usage, incomplete
 status, implementation/schema/config provenance, Route Manual content hash,
 and normalizer version. The summary aggregates those identities across success
 and failure results. Every result carries

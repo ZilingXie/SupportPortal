@@ -4783,5 +4783,5 @@ For each new entry, record:
 - Area or subsystem: frozen route alignment experiment only; no Production route or ECS runtime behavior.
 - Prompt or model versions: prompt、JSON schema、normalizer、model 保持固定；新增显式 `HERMES_ROUTE_EXPERIMENT_MAX_OUTPUT_TOKENS` 与 reasoning effort 记录，并以 config version 隔离参数实验结果。
 - Reason: run-002 出现空模型输出、incomplete message 和 `invalid_model_json`；实验必须区分 provider 输出状态、候选错误与有效分类分歧。
-- Tooling and behavior changes: Hermes 只返回 allowlisted output telemetry；Jev/Hermes 输入预检独立；candidate error report 与 disagreement report 分离；错误候选不进入 agreement 分母。失败链路统一使用脱敏后的 `metadata.diagnostics`，区分 wrapper/provider HTTP 状态，并保留模型参数、token、implementation/schema/config、Route Manual 内容 hash 与 normalizer provenance。
+- Tooling and behavior changes: Hermes 只返回 allowlisted output telemetry；Jev/Hermes 输入预检独立；candidate error report 与 disagreement report 分离；错误候选不进入 agreement 分母。失败链路统一使用脱敏后的 `metadata.diagnostics`，区分 wrapper/provider HTTP 状态，保留所有 provider 4xx/5xx 状态，并让非法枚举类型进入受控 `invalid_model_classification`；这些错误均保留模型参数、token、implementation/schema/config、Route Manual 内容 hash 与 normalizer provenance。
 - Verification: 离线 Hermes service、runner、experiment、Jev targeted tests；真实 frozen dataset 参数矩阵另行执行并保存到独立 output 目录。

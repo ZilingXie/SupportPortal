@@ -19,6 +19,7 @@ from scripts.experiments.route_alignment.core import (
     compare_case,
     result_to_dict,
     write_candidate_error_csv,
+    write_jsonl,
 )
 from scripts.experiments.route_alignment.hermes_classifier import (
     HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
@@ -434,6 +435,10 @@ def test_http_error_returns_allowlisted_diagnostics_without_model_text() -> None
             502,
             403,
         ),
+        (None, (400, b'{"error":{"message":"Unsupported parameter"}}'), "provider_http_error", 422, 400),
+        (None, (404, b'{"error":{"message":"Endpoint not found"}}'), "provider_http_error", 422, 404),
+        (None, (422, b'{"error":{"message":"Schema rejected"}}'), "provider_http_error", 422, 422),
+        (None, (501, b'{"error":{"message":"Not implemented"}}'), "provider_http_error", 422, 501),
     ],
 )
 def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
@@ -444,6 +449,8 @@ def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
     wrapper_status,
     provider_status,
 ) -> None:
+    provider_calls = []
+
     class ProviderResponse:
         def __enter__(self):
             return self
@@ -455,6 +462,7 @@ def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
             return json.dumps(provider_payload).encode("utf-8")
 
     def provider_urlopen(request, timeout):
+        provider_calls.append((request.full_url, timeout))
         if provider_error is not None:
             status, body = provider_error
             raise urllib.error.HTTPError(request.full_url, status, "provider error", {}, io.BytesIO(body))
@@ -493,6 +501,7 @@ def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
         thread.join(timeout=2)
 
     assert candidate.status == "error"
+    assert len(provider_calls) == 1
     assert candidate.error_code == expected_code
     diagnostics = candidate.metadata["diagnostics"]
     assert diagnostics["wrapper_http_status"] == wrapper_status
@@ -525,6 +534,105 @@ def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
         sort_keys=True,
     )
     assert customer_marker not in artifacts
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("intent_class", {}),
+        ("conversation_action", []),
+        ("agora_route", {}),
+        ("account_billing_subcategory", []),
+        ("backend_operation_subcategory", {}),
+        ("reason_code", []),
+    ],
+)
+def test_http_error_artifacts_preserve_diagnostics_for_invalid_enum_types(tmp_path, field, invalid_value) -> None:
+    provider_calls = []
+    classification = _classification(**{field: invalid_value})
+    provider_payload = {
+        "model": "actual-model",
+        "status": "completed",
+        "output_text": json.dumps(classification),
+        "usage": {"input_tokens": 31, "output_tokens": 17},
+    }
+
+    class ProviderResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(provider_payload).encode("utf-8")
+
+    def provider_urlopen(request, timeout):
+        provider_calls.append((request.full_url, timeout))
+        return ProviderResponse()
+
+    def classifier(snapshot):
+        with (
+            patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=provider_urlopen),
+            patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None),
+        ):
+            return classify_case_snapshot(snapshot, profile=_profile())
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    snapshot = CaseSnapshot(
+        alias="case-001",
+        ticket_id="",
+        case_revision="rev-001",
+        subject="SDK question",
+        messages=({"role": "user", "content": "synthetic input"},),
+        baseline={},
+        baseline_available=False,
+        baseline_status="missing",
+    )
+    try:
+        candidate = http_candidate(
+            "hermes",
+            f"http://127.0.0.1:{server.server_address[1]}/route-alignment/v1/classify",
+            headers={"Authorization": "Bearer service-secret"},
+        )(snapshot)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert len(provider_calls) == 1
+    assert candidate.status == "error"
+    assert candidate.error_code == "invalid_model_classification"
+    diagnostics = candidate.metadata["diagnostics"]
+    assert diagnostics["wrapper_http_status"] == 422
+    assert diagnostics["actual_model"] == "actual-model"
+    assert diagnostics["input_tokens"] == 31
+    assert diagnostics["output_tokens"] == 17
+    assert diagnostics["implementation_commit"]
+    assert diagnostics["schema_version"] == "hermes-route-experiment-schema-v1"
+    assert diagnostics["config_version"].endswith(":medium:1600")
+    assert len(diagnostics["hermes_route_manual_hash"]) == 64
+
+    comparison = compare_case(snapshot, [candidate])
+    jsonl_path = tmp_path / "normalized-comparison.jsonl"
+    write_jsonl(jsonl_path, [result_to_dict(comparison, run_id="run-1", dataset_id="dataset-1")])
+    jsonl_record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+    jsonl_diagnostics = jsonl_record["candidates"]["hermes"]["metadata"]["diagnostics"]
+    assert jsonl_diagnostics == diagnostics
+
+    csv_path = tmp_path / "candidate-errors.csv"
+    write_candidate_error_csv(csv_path, [comparison], run_id="run-1", dataset_id="dataset-1")
+    csv_row = next(csv.DictReader(csv_path.open(encoding="utf-8")))
+    assert json.loads(csv_row["diagnostics"]) == diagnostics
+
+    summary = _candidate_summary([comparison], "hermes")
+    assert summary["implementation_commits"] == [diagnostics["implementation_commit"]]
+    assert summary["schema_versions"] == [diagnostics["schema_version"]]
+    assert summary["config_versions"] == [diagnostics["config_version"]]
+    assert summary["route_manual_hashes"] == [diagnostics["hermes_route_manual_hash"]]
+    assert summary["normalizer_versions"] == [diagnostics["normalizer_version"]]
 
 
 def test_http_candidate_waits_for_slow_service_response() -> None:
