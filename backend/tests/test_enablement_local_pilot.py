@@ -109,6 +109,45 @@ def _stateful_side_effect():
     return run
 
 
+def _current_pilot_already_enabled_side_effect():
+    """Pilot's current data/appId response schema for an enabled project."""
+
+    def run(cmd, **_kwargs):
+        args = list(cmd)
+        if "appid" in args:
+            return _pilot_result(
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "appId": APP_ID,
+                            "projectName": "Current Project",
+                            "projectId": "project-1",
+                            "companyId": 42,
+                        }
+                    ],
+                }
+            )
+        if "status" in args:
+            return _pilot_result(
+                {
+                    "success": True,
+                    "data": [
+                        {
+                            "appId": APP_ID,
+                            "projectName": "Current Project",
+                            "state": "enabled",
+                            "region": 2,
+                            "maxSubscribeLoad": "10",
+                        }
+                    ],
+                }
+            )
+        raise AssertionError(f"unexpected pilot call: {args}")
+
+    return run
+
+
 def _write_calls(run):
     """Pilot write calls: `archer open` WITHOUT --dry-run."""
     calls = []
@@ -139,8 +178,39 @@ class MatchesTargetRobustnessTests(unittest.TestCase):
         )
         self.assertTrue(matches)
 
+    def test_current_schema_readback_rejects_a_different_app_id(self):
+        readback = MODULE._readback_state(
+            {
+                "data": [
+                    {
+                        "appId": "f" * 32,
+                        "state": "enabled",
+                        "region": 2,
+                        "maxSubscribeLoad": 10,
+                    }
+                ]
+            },
+            APP_ID,
+        )
+        self.assertIsNone(readback)
+
 
 class PrecheckGatingTests(unittest.TestCase):
+    def test_current_pilot_schema_classifies_matching_config_as_already_satisfied(self):
+        with patch.object(
+            MODULE.subprocess,
+            "run",
+            side_effect=_current_pilot_already_enabled_side_effect(),
+        ) as run:
+            entry = MODULE._classify_precheck(dict(REQUEST))
+
+        self.assertEqual(entry["recommendation"], "already_satisfied")
+        self.assertEqual(entry["outcome"], "already_satisfied")
+        self.assertFalse(entry["write_planned"])
+        self.assertEqual(entry["current"]["region"], 2)
+        self.assertEqual(entry["current"]["maxSubscribeLoad"], "10")
+        self.assertTrue(all("open" not in call.args[0] for call in run.call_args_list))
+
     def test_dry_run_exit_zero_with_wrong_params_blocks(self):
         def run(cmd, **_kwargs):
             args = list(cmd)
@@ -330,6 +400,23 @@ class ExecuteApprovalBindingTests(unittest.TestCase):
         self.assertTrue(result["write_attempted"])
         self.assertEqual(result["readback"]["region"], 2)
         self.assertEqual(result["approval_ref"]["action"], "approve_execution")
+
+    def test_current_pilot_schema_already_satisfied_records_zero_write_result(self):
+        side_effect = _current_pilot_already_enabled_side_effect()
+        with patch.object(MODULE.subprocess, "run", side_effect=side_effect):
+            entry = MODULE._classify_precheck(dict(REQUEST))
+
+        exc, run = self._execute(_approval(entry), side_effect=side_effect)
+
+        self.assertIsNone(exc)
+        self.assertEqual(_write_calls(run), [])
+        marker = MODULE.STATE_DIR / f"{REQUEST['request_id']}.executed.json"
+        result = json.loads(marker.read_text(encoding="utf-8"))
+        self.assertEqual(result["outcome"], "already_satisfied")
+        self.assertFalse(result["write_attempted"])
+        self.assertEqual(result["readback"]["state"], "enabled")
+        self.assertEqual(result["readback"]["region"], 2)
+        self.assertEqual(result["readback"]["maxSubscribeLoad"], "10")
 
 
 class TimeoutClassificationTests(unittest.TestCase):
