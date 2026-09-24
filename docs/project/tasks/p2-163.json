@@ -5,7 +5,7 @@
   "status": "active",
   "owner": "zac",
   "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-  "next_action": "13687 当前等待 owner 第一次批准：本地 Pilot 兼容修复已识别当前 data/appId 与 data[] 状态响应，真实只读预检结论 already_satisfied（region=2、maxSubscribeLoad=10、零写入计划）。批准后仅生成并持久化 already_satisfied 结果，再经第二次结果草稿批准回传 AgentRelay；ECS 负责消费结果与关闭 Task。后续仍需完成三时点关闭验收、四段受控验收、Mac 10:00 触发与 Production 授权。",
+  "next_action": "AgentRelay 成功回复信息隔离修复完成本地验证后，按正式 pipeline 发布 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 已完成且不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
   "acceptance_criteria": [
     "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
     "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -122,6 +122,12 @@
       "label": "Pilot current-schema and already-satisfied compatibility",
       "command": "python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py",
       "details": "24 passed / 5 subtests。兼容 Pilot 当前 ownership data[].appId 与 status data[] 响应；按目标 AppID 选择状态；already_satisfied 经服务端申请有效性门禁后生成零写入结果。真实只读预检对 13687 返回 state=enabled、region=2、maxSubscribeLoad=10、write_planned=false；未调用 Archer 写入或 AgentRelay mutation。"
+    },
+    {
+      "type": "test",
+      "label": "AgentRelay success reply information isolation",
+      "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+      "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。Relay 完整 readback 与 approval_ref 继续参与服务端成功门禁；completion job 改用 enablement_archer_enabled，仅保留 Media Relay+completed 客户事实，source_facts 为空且无 AppID suffix/readback/write 字段。Persona 确定性拒绝 region、subscribe load、capacity、configuration/write 细节，并覆盖重写后安全发布。13687 不修改、不重放。"
     }
   ],
   "source_refs": [
@@ -269,6 +275,11 @@
       "at": "2026-09-24",
       "event": "pilot_current_schema_compatibility",
       "summary": "13687 首次真实本地预检发现 Pilot 已从 projects[].appid/state 对象切换为 data[].appId/data[]；旧解析器把成功归属误判失败，也无法到达 already_satisfied 零写入分支。修复兼容新旧响应、按目标 AppID 选取状态，并允许有效申请的 already_satisfied 结果落盘；未放宽未配置项目的 dry-run 参数门禁。"
+    },
+    {
+      "at": "2026-09-24",
+      "event": "relay_success_reply_information_isolation",
+      "summary": "13687 客户回复暴露 region=2、maxSubscribeLoad=10 和 no-write 事实，定位为 Relay 成功路径使用通用 completion intent 并把 detail/readback 注入 Persona。修复为专用 enablement_archer_enabled intent，客户 facts 仅保留 Media Relay+completed，机器 readback/approval 校验和审计证据不变；发布合同新增内部配置与写入细节拒绝。"
     }
   ]
 }
