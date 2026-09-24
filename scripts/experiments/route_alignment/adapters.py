@@ -32,6 +32,7 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
         "provider_timeout",
         "gateway_busy",
         "http_error",
+        "provider_invocation_failed",
     }
 )
 _DIAGNOSTIC_KEYS = frozenset(
@@ -271,7 +272,8 @@ def http_candidate(
                     body = {}
                 finally:
                     exc.close()
-                diagnostics = dict(body.get("diagnostics") or {}) if isinstance(body, Mapping) else {}
+                raw_diagnostics = body.get("diagnostics") if isinstance(body, Mapping) else None
+                diagnostics = dict(raw_diagnostics) if isinstance(raw_diagnostics, Mapping) else {}
                 diagnostics["gateway_http_status"] = exc.code
                 diagnostics.setdefault("provider_attempt_count", 0)
                 if exc.code in {401, 403}:
@@ -341,16 +343,23 @@ def http_candidate(
                 diagnostics = {
                     **_experiment_provenance(profile, max_output_tokens),
                     **dict(exc.diagnostics),
-                    "provider_attempt_count": dict(exc.diagnostics).get("provider_attempt_count", 0 if exc.code == "input_too_large" else 1),
+                    "provider_attempt_count": dict(exc.diagnostics).get("provider_attempt_count", 0),
                 }
                 metadata = {key: diagnostics.get(key) for key in _PROVENANCE_KEYS if diagnostics.get(key) is not None}
                 metadata["diagnostics"] = diagnostics
+                usage = {
+                    key: diagnostics[key]
+                    for key in ("input_tokens", "output_tokens", "reasoning_tokens", "cached_input_tokens")
+                    if diagnostics.get(key) is not None
+                }
                 return CandidateResult(
                     candidate=name, status="error", error=exc.code, error_code=exc.code,
                     latency_ms=round((time.monotonic() - started) * 1000, 2),
                     model_version=diagnostics.get("actual_model") or diagnostics.get("requested_model"),
                     requested_model=diagnostics.get("requested_model"), returned_model=diagnostics.get("actual_model"),
-                    call_count=0 if exc.code == "input_too_large" else 1, metadata=metadata,
+                    prompt_version=diagnostics.get("prompt_version"),
+                    usage=usage,
+                    call_count=int(diagnostics.get("provider_attempt_count") or 0), metadata=metadata,
                 )
         request = urllib.request.Request(
             endpoint,

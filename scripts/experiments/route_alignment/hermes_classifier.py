@@ -180,9 +180,9 @@ def _response_diagnostics(
     return {
         **_experiment_provenance(profile, max_output_tokens),
         **dict(gateway_diagnostics),
-        "response_status": raw.get("status") if isinstance(raw.get("status"), str) else None,
-        "incomplete_reason": incomplete.get("reason") if isinstance(incomplete.get("reason"), str) else None,
-        "message_status": message.get("status") if isinstance(message.get("status"), str) else None,
+        "response_status": raw.get("status") if isinstance(raw.get("status"), str) else gateway_diagnostics.get("response_status"),
+        "incomplete_reason": incomplete.get("reason") if isinstance(incomplete.get("reason"), str) else gateway_diagnostics.get("incomplete_reason"),
+        "message_status": message.get("status") if isinstance(message.get("status"), str) else gateway_diagnostics.get("message_status"),
         "actual_model": actual_model,
         "input_tokens": result.prompt_tokens,
         "output_tokens": result.completion_tokens,
