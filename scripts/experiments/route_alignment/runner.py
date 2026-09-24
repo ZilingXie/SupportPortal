@@ -218,6 +218,18 @@ def _candidate_summary(results: list[Any], name: str) -> dict[str, Any]:
         "max_output_tokens": sorted({item.metadata.get("max_output_tokens") for item in candidates if item.metadata.get("max_output_tokens") is not None}),
         "implementation_commits": sorted({item.metadata.get("implementation_commit") for item in candidates if item.metadata.get("implementation_commit")}),
         "schema_versions": sorted({item.metadata.get("schema_version") for item in candidates if item.metadata.get("schema_version")}),
+        "route_manual_versions": sorted({
+            item.metadata.get("hermes_route_manual_version")
+            for item in candidates if item.metadata.get("hermes_route_manual_version")
+        }),
+        "route_manual_hashes": sorted({
+            item.metadata.get("hermes_route_manual_hash")
+            for item in candidates if item.metadata.get("hermes_route_manual_hash")
+        }),
+        "normalizer_versions": sorted({
+            item.metadata.get("normalizer_version")
+            for item in candidates if item.metadata.get("normalizer_version")
+        }),
         "model_identity_unverified_count": sum(
             item.error_code == "model_identity_unverified"
             or item.metadata.get("actual_model_verified") is False

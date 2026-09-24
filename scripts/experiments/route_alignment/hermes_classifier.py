@@ -84,6 +84,24 @@ def experiment_config_version(profile: ModelProfile, max_output_tokens: int) -> 
     return f"{HERMES_EXPERIMENT_CONFIG_VERSION}:{profile.reasoning_effort or 'unset'}:{max_output_tokens}"
 
 
+def _experiment_provenance(profile: ModelProfile, max_output_tokens: int) -> dict[str, Any]:
+    manual = build_hermes_route_manual()
+    return {
+        "requested_model": profile.model,
+        "max_output_tokens": max_output_tokens,
+        "reasoning_effort": profile.reasoning_effort,
+        "config_version": experiment_config_version(profile, max_output_tokens),
+        "prompt_version": HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
+        "hermes_route_manual_version": HERMES_ROUTE_MANUAL_VERSION,
+        "hermes_route_manual_hash": hashlib.sha256(manual.encode("utf-8")).hexdigest(),
+        "normalizer_version": HERMES_ROUTE_CLASSIFICATION_VERSION,
+        "normalizer_policy_version": HERMES_NORMALIZER_POLICY_VERSION,
+        "normalizer_confidence_threshold": HERMES_NORMALIZER_CONFIDENCE_THRESHOLD,
+        "implementation_commit": source_code_commit(__file__),
+        "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
+    }
+
+
 def validate_normalizer_environment() -> None:
     """Reject inherited settings that would silently change the shared normalizer."""
     raw_value = str(os.getenv("ACCOUNT_ROUTER_CONFIDENCE_THRESHOLD") or "0.7").strip()
@@ -159,20 +177,15 @@ def _response_diagnostics(
     raw_model = raw.get("model")
     actual_model = raw_model.strip() if isinstance(raw_model, str) and raw_model.strip() else None
     return {
+        **_experiment_provenance(profile, max_output_tokens),
         "response_status": raw.get("status") if isinstance(raw.get("status"), str) else None,
         "incomplete_reason": incomplete.get("reason") if isinstance(incomplete.get("reason"), str) else None,
         "message_status": message.get("status") if isinstance(message.get("status"), str) else None,
-        "requested_model": profile.model,
         "actual_model": actual_model,
         "input_tokens": result.prompt_tokens,
         "output_tokens": result.completion_tokens,
         "reasoning_tokens": result.reasoning_tokens,
         "text_length": len(result.text or ""),
-        "max_output_tokens": max_output_tokens,
-        "reasoning_effort": profile.reasoning_effort,
-        "config_version": experiment_config_version(profile, max_output_tokens),
-        "implementation_commit": source_code_commit(__file__),
-        "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
     }
 
 
@@ -316,22 +329,22 @@ def validate_hermes_request_size(snapshot: CaseSnapshot) -> dict[str, int]:
         raise HermesExperimentError("input_too_large") from exc
 
 
-def _provider_error_code(error: BaseException) -> str | None:
+def _provider_error_details(error: BaseException) -> tuple[str | None, int | None]:
     current: BaseException | None = error
     seen: set[int] = set()
     while current is not None and id(current) not in seen:
         seen.add(id(current))
         status = getattr(current, "http_status", None) or getattr(current, "code", None)
         if status in {401, 403}:
-            return "authentication_error"
+            return "authentication_error", status
         if status == 429:
-            return "rate_limited"
+            return "rate_limited", status
         if status in {500, 502, 503, 504}:
-            return "provider_http_error"
+            return "provider_http_error", status
         if isinstance(current, TimeoutError):
-            return "provider_timeout"
+            return "provider_timeout", None
         current = current.__cause__ or current.__context__
-    return None
+    return None, None
 
 
 def _finite_confidence(value: Any) -> bool:
@@ -414,7 +427,7 @@ def classify_case_snapshot(
         raise HermesExperimentError("ambient_trace_forbidden")
     alias, revision, snapshot, latest_assistant_message_present = _validated_snapshot(case_snapshot)
     system_prompt = _experiment_system_prompt()
-    manual_hash = hashlib.sha256(build_hermes_route_manual().encode("utf-8")).hexdigest()
+    provenance = _experiment_provenance(profile, max_output_tokens)
     input_sizes = validate_hermes_request_size(snapshot)
     try:
         llm_result = invoke(
@@ -437,19 +450,13 @@ def classify_case_snapshot(
     except HermesExperimentError:
         raise
     except Exception as exc:
-        provider_code = _provider_error_code(exc)
+        provider_code, provider_http_status = _provider_error_details(exc)
         diagnostics = {
-            "requested_model": profile.model,
+            **provenance,
             "actual_model": None,
-            "max_output_tokens": max_output_tokens,
-            "reasoning_effort": profile.reasoning_effort,
-            "config_version": experiment_config_version(profile, max_output_tokens),
-            "implementation_commit": source_code_commit(__file__),
-            "schema_version": HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION,
         }
-        status = getattr(exc, "http_status", None)
-        if isinstance(status, int):
-            diagnostics["http_status"] = status
+        if provider_http_status is not None:
+            diagnostics["provider_http_status"] = provider_http_status
         if provider_code:
             raise HermesExperimentError(provider_code, diagnostics=diagnostics) from exc
         raise HermesExperimentError("model_invocation_failed", diagnostics=diagnostics) from exc
@@ -498,7 +505,7 @@ def classify_case_snapshot(
         "reasoning_effort": profile.reasoning_effort,
         "prompt_version": HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
         "hermes_route_manual_version": HERMES_ROUTE_MANUAL_VERSION,
-        "hermes_route_manual_hash": manual_hash,
+        "hermes_route_manual_hash": provenance["hermes_route_manual_hash"],
         "normalizer_version": HERMES_ROUTE_CLASSIFICATION_VERSION,
         "normalizer_policy_version": HERMES_NORMALIZER_POLICY_VERSION,
         "normalizer_confidence_threshold": HERMES_NORMALIZER_CONFIDENCE_THRESHOLD,

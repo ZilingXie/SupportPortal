@@ -25,10 +25,12 @@ _MAX_REQUEST_BYTES = 1_000_000
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
 _DIAGNOSTIC_KEYS = frozenset(
     {
-        "http_status", "response_status", "incomplete_reason", "message_status", "requested_model",
+        "provider_http_status", "response_status", "incomplete_reason", "message_status", "requested_model",
         "actual_model", "input_tokens", "output_tokens", "reasoning_tokens", "text_length",
         "max_output_tokens", "reasoning_effort", "config_version", "normalization_code",
-        "implementation_commit", "schema_version",
+        "implementation_commit", "schema_version", "prompt_version", "hermes_route_manual_version",
+        "hermes_route_manual_hash", "normalizer_version", "normalizer_policy_version",
+        "normalizer_confidence_threshold",
     }
 )
 

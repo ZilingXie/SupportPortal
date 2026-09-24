@@ -32,10 +32,28 @@ _CONTROLLED_HTTP_ERRORS = frozenset(
         "provider_timeout",
     }
 )
+_DIAGNOSTIC_KEYS = frozenset(
+    {
+        "provider_http_status", "response_status", "incomplete_reason", "message_status",
+        "requested_model", "actual_model", "input_tokens", "output_tokens", "reasoning_tokens",
+        "text_length", "max_output_tokens", "reasoning_effort", "config_version",
+        "normalization_code", "implementation_commit", "schema_version", "prompt_version",
+        "hermes_route_manual_version", "hermes_route_manual_hash", "normalizer_version",
+        "normalizer_policy_version", "normalizer_confidence_threshold",
+    }
+)
+_PROVENANCE_KEYS = frozenset(
+    {
+        "provider", "reasoning_effort", "hermes_route_manual_version", "hermes_route_manual_hash",
+        "normalizer_version", "normalizer_policy_version", "normalizer_confidence_threshold",
+        "schema_version", "implementation_commit", "wrapper_version", "actual_model_verified",
+        "max_output_tokens", "config_version",
+    }
+)
 
 
 def _http_error_code(error: urllib.error.HTTPError) -> tuple[str, dict[str, Any]]:
-    diagnostics: dict[str, Any] = {"http_status": error.code}
+    diagnostics: dict[str, Any] = {"wrapper_http_status": error.code}
     if error.code in {401, 403}:
         error.close()
         return "authentication_error", diagnostics
@@ -51,11 +69,9 @@ def _http_error_code(error: urllib.error.HTTPError) -> tuple[str, dict[str, Any]
     controlled = payload.get("error") if isinstance(payload, Mapping) else None
     if isinstance(controlled, str) and controlled in _CONTROLLED_HTTP_ERRORS:
         diagnostics_payload = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), Mapping) else {}
-        diagnostics.update({str(key): value for key, value in diagnostics_payload.items() if str(key) in {
-            "response_status", "incomplete_reason", "message_status", "requested_model", "actual_model",
-            "input_tokens", "output_tokens", "reasoning_tokens", "text_length", "max_output_tokens",
-            "reasoning_effort", "config_version", "normalization_code", "implementation_commit", "schema_version",
-        }})
+        diagnostics.update({
+            str(key): value for key, value in diagnostics_payload.items() if str(key) in _DIAGNOSTIC_KEYS
+        })
         return controlled, diagnostics
     return "http_error", diagnostics
 
@@ -215,6 +231,7 @@ def http_candidate(
         started = time.monotonic()
         try:
             with urllib.request.urlopen(request, timeout=timeout) as response:
+                wrapper_http_status = int(getattr(response, "status", 200))
                 parsed = json.loads(response.read().decode("utf-8"))
             if not isinstance(parsed, Mapping):
                 raise ValueError("response_not_object")
@@ -233,22 +250,9 @@ def http_candidate(
             raw_returned_model = parsed.get("returned_model")
             returned_model = raw_returned_model.strip() if isinstance(raw_returned_model, str) else None
             usage = dict(parsed.get("usage") or {}) if isinstance(parsed.get("usage"), Mapping) else {}
-            metadata = {
-                key: parsed.get(key)
-                for key in (
-                    "provider",
-                    "reasoning_effort",
-                    "hermes_route_manual_version",
-                    "normalizer_version",
-                    "schema_version",
-                    "implementation_commit",
-                    "wrapper_version",
-                    "actual_model_verified",
-                )
-                if key in parsed
-            }
+            metadata = {key: parsed.get(key) for key in _PROVENANCE_KEYS if key in parsed}
             diagnostics = parsed.get("diagnostics") if isinstance(parsed.get("diagnostics"), Mapping) else {}
-            metadata["diagnostics"] = dict(diagnostics)
+            metadata["diagnostics"] = {"wrapper_http_status": wrapper_http_status, **dict(diagnostics)}
             metadata["max_output_tokens"] = parsed.get("max_output_tokens")
             metadata["config_version"] = parsed.get("config_version")
             if parsed.get("actual_model_verified") is not True or not returned_model:
@@ -282,14 +286,42 @@ def http_candidate(
             )
         except urllib.error.HTTPError as exc:
             error_code, diagnostics = _http_error_code(exc)
+            requested_model = diagnostics.get("requested_model")
+            actual_model = diagnostics.get("actual_model")
+            usage = {
+                key: diagnostics[key]
+                for key in ("input_tokens", "output_tokens", "reasoning_tokens")
+                if diagnostics.get(key) is not None
+            }
+            metadata = {
+                key: diagnostics.get(key)
+                for key in _PROVENANCE_KEYS
+                if key in diagnostics
+            }
+            metadata["diagnostics"] = diagnostics
             return CandidateResult(
                 candidate=name,
                 status="error",
                 error=error_code,
                 error_code=error_code,
                 latency_ms=round((time.monotonic() - started) * 1000, 2),
+                model_version=(
+                    str(actual_model) if isinstance(actual_model, str) and actual_model
+                    else str(requested_model) if isinstance(requested_model, str) and requested_model
+                    else None
+                ),
+                prompt_version=(
+                    str(diagnostics["prompt_version"]) if diagnostics.get("prompt_version") else None
+                ),
+                requested_model=(
+                    str(requested_model) if isinstance(requested_model, str) and requested_model else None
+                ),
+                returned_model=(
+                    str(actual_model) if isinstance(actual_model, str) and actual_model else None
+                ),
                 call_count=1,
-                metadata=diagnostics,
+                usage=usage,
+                metadata=metadata,
             )
         except (urllib.error.URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
             error_code = str(exc)[:80] or type(exc).__name__

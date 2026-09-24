@@ -93,7 +93,14 @@ Outputs are `manifest.jsonl`, controlled `raw_results.jsonl`,
 report contains only valid classifications with field differences. Candidate
 errors, input-size failures, and missing baselines are recorded separately and
 are excluded from agreement denominators. The controlled evidence file does
-not store arbitrary provider responses or customer text. Every result carries
+not store arbitrary provider responses or customer text. Failure diagnostics
+use the same sanitized `metadata.diagnostics` object in JSONL and CSV:
+`wrapper_http_status` identifies the loopback response and
+`provider_http_status` identifies the upstream response when available. Failed
+Hermes calls retain model, reasoning/output limits, token usage, incomplete
+status, implementation/schema/config provenance, Route Manual content hash,
+and normalizer version. The summary aggregates those identities across success
+and failure results. Every result carries
 one `run_id` and `dataset_id`; the summary records attempted/success/valid-
 comparison counts, completion rate, error categories, latency, model versions,
 output configuration, usage, agreement, model-identity readiness, and Jev's

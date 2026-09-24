@@ -472,6 +472,10 @@ def test_http_error_bodies_remain_controlled_and_status_wins(
         ]
         assert len(records) == 2
         assert records[0]["candidates"]["hermes"]["error_code"] == expected_code
+        if status == 422:
+            diagnostics = records[0]["candidates"]["hermes"]["metadata"]["diagnostics"]
+            assert diagnostics["wrapper_http_status"] == 422
+            assert diagnostics["response_status"] == "completed"
         assert (output / summary["artifacts"]["disagreement_report"]).exists()
     finally:
         server.shutdown()
