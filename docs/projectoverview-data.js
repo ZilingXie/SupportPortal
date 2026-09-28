@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-24T07:11:51Z",
-  "source_base_commit": "5e6db1a4b91afa4747784c32554b6c1c607c057d",
-  "registry_digest": "a142efe35cff2711ac27403deccba777f2aa01474ae3caf8eef92cea4c5f769b",
+  "generated_at": "2026-09-28T04:51:13Z",
+  "source_base_commit": "46393209eae790e9780ec84ab59c73512e901b52",
+  "registry_digest": "8bfbfdaffcf98ea98563244dde9e3761a669e4b3349d96af28cdca74f1d926a3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3693,6 +3693,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Hermes Wiki 插件定向契约",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q build/wiki_search/test_wiki_search.py",
+          "details": "hermes-deploy 独立工作区 7 passed：分页、绑定权限、56 Wiki、部分失败、长页续读、只读接口和 common 注册。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes revision 35",
+          "details": "hermes-deploy PR #31 合并提交 ce8c37d32904439f7e4cc7942d6bcbdd9ea82629；从 revision 34 的 Hermes 镜像 digest 9f021b4f304296f756a682b1720348e1bf9ad1ea3f0f18191773ab8742db6596 构建 overlay，新 ECR digest 8e28d4d9fa87764406801856a3a1c063fcc0a108527a7bc3b3597cae1c146d78。任务定义仅 Hermes image 与 WIKI_CORE_USER_KEY secret 不同；revision 35 service 1/1、rollout COMPLETED、五容器 HEALTHY、ALB target healthy。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction Wiki 直读与权限",
+          "details": "2026-09-28 Core 固定资产分页回读 56/56，Knowledge tools/list 56/56 ready。wiki-gowdoqph 的 SDK 搜索结果与 read_page 正文同 Hermes 插件结果一致；未绑定 wiki 被拒绝。检索 key 使用专用普通用户 reviewer 身份，SSM SecureString 回读一致，失去明文的默认 key 已吊销。"
+        },
+        {
+          "type": "test",
+          "label": "真实 Work 工具调用与回归",
+          "details": "无客户数据的 run_6d760c2849a1480990d4040bf60654b5 在 enabled_toolsets=[common] 下 completed；事件依次含 wiki_search 和 wiki_read_page 的 started/completed，均 error=false；返回 Wiki ID 和路径，引用短句在 Knowledge 该页正文中逐字匹配。dashboard/hermes=302、dashboard/memory=200、无凭证 /v1/models=401、automation 两入口=307。三条临时安全组规则已撤销且回读为空；未触发 Slack/Zendesk 业务投递。真实客户工单未重放，故不宣称业务链验收。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -4035,8 +4056,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 42,
-      "done_count": 20,
+      "task_count": 43,
+      "done_count": 21,
       "blocked_count": 0
     },
     {
@@ -14332,6 +14353,69 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-177",
+      "title": "Preproduction Hermes 调查回合接通绑定 Wiki 检索",
+      "status": "done",
+      "owner": "codex",
+      "summary": "为 Hermes investigation/adhoc Work 回合新增只读 Wiki 搜索与读页工具。按调查 Agent 的固定资产绑定完整分页发现 Wiki；搜索只访问已绑定、ready 的资产，结果保留 Wiki ID 和页面路径；长页可分段读取，未绑定拒绝、零命中与部分失败分开报告。首版不做跨 Wiki 自动合并或 SDK 当前版本裁决。",
+      "next_action": "Preproduction 已完成；Production 推广和真实客户工单验收须另行授权。",
+      "acceptance_criteria": [
+        "绑定超过默认分页长度时可发现全部 Wiki；未绑定或已删除 Wiki 的搜索和读页均不返回正文。",
+        "已绑定 ready Wiki 可完成 search→read_page，结果保留 Wiki ID、Wiki 名和页面路径；长页可继续读取。",
+        "零命中、未 ready、单 Wiki 请求失败和全部不可用有可区分结果；限制搜索并发和输出量。",
+        "Preproduction Hermes investigation Work 回合可见并调用两个 Wiki 工具；实际页面与 Knowledge API 直读结果一致，五容器健康；无业务投递。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes Wiki 插件定向契约",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q build/wiki_search/test_wiki_search.py",
+          "details": "hermes-deploy 独立工作区 7 passed：分页、绑定权限、56 Wiki、部分失败、长页续读、只读接口和 common 注册。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes revision 35",
+          "details": "hermes-deploy PR #31 合并提交 ce8c37d32904439f7e4cc7942d6bcbdd9ea82629；从 revision 34 的 Hermes 镜像 digest 9f021b4f304296f756a682b1720348e1bf9ad1ea3f0f18191773ab8742db6596 构建 overlay，新 ECR digest 8e28d4d9fa87764406801856a3a1c063fcc0a108527a7bc3b3597cae1c146d78。任务定义仅 Hermes image 与 WIKI_CORE_USER_KEY secret 不同；revision 35 service 1/1、rollout COMPLETED、五容器 HEALTHY、ALB target healthy。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction Wiki 直读与权限",
+          "details": "2026-09-28 Core 固定资产分页回读 56/56，Knowledge tools/list 56/56 ready。wiki-gowdoqph 的 SDK 搜索结果与 read_page 正文同 Hermes 插件结果一致；未绑定 wiki 被拒绝。检索 key 使用专用普通用户 reviewer 身份，SSM SecureString 回读一致，失去明文的默认 key 已吊销。"
+        },
+        {
+          "type": "test",
+          "label": "真实 Work 工具调用与回归",
+          "details": "无客户数据的 run_6d760c2849a1480990d4040bf60654b5 在 enabled_toolsets=[common] 下 completed；事件依次含 wiki_search 和 wiki_read_page 的 started/completed，均 error=false；返回 Wiki ID 和路径，引用短句在 Knowledge 该页正文中逐字匹配。dashboard/hermes=302、dashboard/memory=200、无凭证 /v1/models=401、automation 两入口=307。三条临时安全组规则已撤销且回读为空；未触发 Slack/Zendesk 业务投递。真实客户工单未重放，故不宣称业务链验收。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_hermes_agent.py",
+        "docs/deploy_hermes_investigator_ecs.md",
+        "docs/operations/testing.md"
+      ],
+      "created_at": "2026-09-28",
+      "updated_at": "2026-09-28",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-28",
+          "event": "created",
+          "summary": "用户批准调查 Wiki 检索接通计划并要求实施；独立插件和定向测试已完成，Preproduction 尚未发布。"
+        },
+        {
+          "at": "2026-09-28",
+          "event": "completed",
+          "summary": "Preproduction Hermes revision 35 完成发布，56/56 Wiki ready，真实技术 Work 调用搜索与读页并与 Knowledge 正文比对；未触发业务投递。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -19663,6 +19747,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "planned": [
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
+        "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"

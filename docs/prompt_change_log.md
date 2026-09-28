@@ -4785,3 +4785,9 @@ For each new entry, record:
 ## 2026-09-21 — Route manual v3：classification 工具合同强化（13650）
 
 `hermes-route-manual` 升级 v3：`backend_operation` 明确为 null 或含 action/target/evidence 三键的对象，evidence 必须取自当前快照（禁止在此阶段补全 App ID——有效性由后续执行链判定）；禁止把 JSON 塞进 `reason` 或省略 `classification`（插件本地拒绝、零 HTTP）；automation 方向必须携带注册路由。配套服务端 `tool_record_direction` 对 automation 无路由返回 422（先于任何决策写入）、Worker 在认领与 Work 提交前的路由合同门禁（无效路由统一 `route_contract_invalid` 转人工）、插件 schema 的 classification 必填对象合同。
+
+## 2026-09-28 - 调查 Wiki 检索工具（p2-177）
+
+- Prompt 内容和模型不变；Hermes `common` 工具集新增 `wiki_search`、`wiki_read_page`，随 investigation/ad-hoc Work 回合加载。
+- 工具描述要求保留 Wiki/页面来源，并说明历史工单文章不能单独证明当前 SDK 最新版本。工具只允许已绑定 Wiki 的搜索和读页。
+- 本地 7 项工具合同测试通过；Preproduction revision 35 的技术调查 Work 实际完成 `wiki_search` 与 `wiki_read_page`，运行事件均无错误，引用短句与 Knowledge 页面正文一致。真实客户工单未重放。
