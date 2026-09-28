@@ -48,6 +48,7 @@ ZENDESK_NOTIFICATION_DOMAIN = "agoraio.zendesk.com"
 DEFAULT_SUBJECT_TAG = "[zac test] "
 DEFAULT_TURN_TIMEOUT_MIN = 20
 DEFAULT_APPROVAL_TIMEOUT_MIN = 45
+DEFAULT_RELAY_TIMEOUT_MIN = 240
 DEFAULT_POLL_INTERVAL_SECONDS = 20
 
 ENABLEMENT_APP_ID = "a1b2c3d4e5f60718293a4b5c6d7e8f90"
@@ -77,6 +78,54 @@ def _enablement_request_body() -> str:
         "We are building a live event platform and need Media Relay to bridge presenters "
         "between two channels. Thank you."
     )
+
+
+# E3 full-lifecycle App IDs (user-provided fixtures, 2026-09-24):
+# invalid is 31 hex chars (fails the 32-hex fullmatch), not_found is a valid
+# format with no archer project behind it, valid is the enableable test
+# project the Mac pilot really enables in the final leg.
+E3_APPID_INVALID = "8cb7aea984c4457daad802e6960e247"
+E3_APPID_NOT_FOUND = "8cb7aea984c4457daad802e6960e2475"
+E3_APPID_VALID = "4b7634a0d0f1418b8135918292f6a507"
+
+E3_NUDGE_BODY = (
+    "Hi May,\n\n"
+    "Thank you for the update.\n\n"
+    "We understand the review and activation process. If there is any possibility of getting "
+    "the Media Relay enablement completed sooner, we would really appreciate it, as we are "
+    "currently working on this feature for our SDNXT live platform.\n\n"
+    "We appreciate your help and look forward to your update."
+)
+
+
+def _ask_appid_content_check(content: str) -> str | None:
+    """Acceptance check: the missing-App-ID ask must request the App ID."""
+    if "app id" not in str(content or "").casefold():
+        return "ask does not mention App ID"
+    return None
+
+
+def _submission_confirmation_content_check(content: str) -> str | None:
+    """Acceptance check: confirmation must mention review and promise no deadline."""
+    lowered = str(content or "").casefold()
+    if "review" not in lowered:
+        return "confirmation does not mention review"
+    close_claim = _no_affirmative_close_claim(content)
+    if close_claim:
+        return close_claim
+    return None
+
+
+def _enablement_enabled_content_check(content: str) -> str | None:
+    """Acceptance check: final reply must state enablement and close the case."""
+    lowered = str(content or "").casefold()
+    if "media relay" not in lowered:
+        return "completion does not mention media relay"
+    if not any(word in lowered for word in ("enabled", "activated", "turned on", "provisioned")):
+        return "completion does not state enablement"
+    if not any(word in lowered for word in ("clos", "archiv", "new ticket")):
+        return "completion does not close the case"
+    return None
 
 _TWENTY_FOUR_HOURS_RE = re.compile(r"(?i)\b24\s*[- ]?\s*hours?\b|\b24h\b")
 _CLOSE_CLAIM_WORD_RE = re.compile(r"(?i)\b(?:clos\w*|archiv\w*|reop\w*)\b")
@@ -182,6 +231,9 @@ class ScenarioEngine:
         subject_tag: str = DEFAULT_SUBJECT_TAG,
         turn_timeout_min: int = DEFAULT_TURN_TIMEOUT_MIN,
         approval_timeout_min: int = DEFAULT_APPROVAL_TIMEOUT_MIN,
+        relay_timeout_min: int = DEFAULT_RELAY_TIMEOUT_MIN,
+        customer_turn_transport: str = "email",
+        zendesk_auth: str = "",
         poll_interval_seconds: int = DEFAULT_POLL_INTERVAL_SECONDS,
         listener: Callable[[str, dict[str, Any]], None] | None = None,
         should_cancel: Callable[[], bool] | None = None,
@@ -198,6 +250,9 @@ class ScenarioEngine:
         self.subject_tag = subject_tag
         self.turn_timeout_min = turn_timeout_min
         self.approval_timeout_min = approval_timeout_min
+        self.relay_timeout_min = relay_timeout_min
+        self.customer_turn_transport = str(customer_turn_transport or "email").strip() or "email"
+        self.zendesk_auth = str(zendesk_auth or "").strip()
         self.poll_interval_seconds = poll_interval_seconds
         self.listener = listener
         self.should_cancel = should_cancel or (lambda: False)
@@ -268,6 +323,14 @@ class ScenarioEngine:
             approval_timeout_min=_int_env(
                 "AUTOMATION_TEST_APPROVAL_TIMEOUT_MIN", DEFAULT_APPROVAL_TIMEOUT_MIN
             ),
+            relay_timeout_min=_int_env(
+                "AUTOMATION_TEST_RELAY_TIMEOUT_MIN", DEFAULT_RELAY_TIMEOUT_MIN
+            ),
+            customer_turn_transport=(
+                str(os.getenv("AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT") or "email").strip()
+                or "email"
+            ),
+            zendesk_auth=str(os.getenv("AUTOMATION_TEST_ZENDESK_AUTH") or "").strip(),
             poll_interval_seconds=_int_env(
                 "AUTOMATION_TEST_POLL_INTERVAL_SECONDS", DEFAULT_POLL_INTERVAL_SECONDS
             ),
@@ -635,7 +698,66 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
+    def _zendesk_request(self, path: str, *, method: str = "GET", payload: dict | None = None) -> dict:
+        """Zendesk API call with the scenario's basic auth (API customer turns).
+
+        The 163->Zendesk email hop is unreliable in the preproduction test
+        setup (no requester notifications, plus-address replies never attach),
+        so customer turns post a public comment authored by the requester
+        directly via the API — the same event shape n8n comment sync consumes.
+        """
+        import base64
+        import json as _json
+        import urllib.request
+
+        if not self.zendesk_auth:
+            raise AutomationTestScenarioError(
+                "zendesk_api customer turns require AUTOMATION_TEST_ZENDESK_AUTH"
+            )
+        url = f"https://agoraio.zendesk.com/api/v2{path}"
+        data = _json.dumps(payload).encode() if payload is not None else None
+        request = urllib.request.Request(url, data=data, method=method)
+        request.add_header(
+            "Authorization",
+            "Basic " + base64.b64encode(self.zendesk_auth.encode()).decode(),
+        )
+        if data is not None:
+            request.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            body = response.read()
+        return _json.loads(body) if body else {}
+
+    def zendesk_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
+        ctx.turn_started_at = now_utc()
+        ticket = self._zendesk_request(f"/tickets/{ctx.zendesk_ticket_id}.json")
+        requester_id = (ticket.get("ticket") or {}).get("requester_id")
+        if not requester_id:
+            raise AutomationTestScenarioError(
+                f"ticket {ctx.zendesk_ticket_id} has no requester_id"
+            )
+        self._zendesk_request(
+            f"/tickets/{ctx.zendesk_ticket_id}.json",
+            method="PUT",
+            payload={
+                "ticket": {
+                    "comment": {
+                        "body": body,
+                        "public": True,
+                        "author_id": requester_id,
+                    }
+                }
+            },
+        )
+        self.emit(
+            "customer_turn_sent",
+            {"transport": "zendesk_api", "zendesk_ticket_id": ctx.zendesk_ticket_id},
+        )
+        self.info(f"customer turn posted via Zendesk API as requester {requester_id}")
+
     def next_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
+        if self.customer_turn_transport == "zendesk_api":
+            self.zendesk_customer_turn(ctx, body)
+            return
         ctx.turn_started_at = now_utc()
         since_date = (ctx.turn_started_at - timedelta(days=1)).strftime("%d-%b-%Y")
         notification = None
@@ -759,6 +881,202 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
+    def wait_hermes_turn_direction(
+        self, ctx: ScenarioContext, expected_direction: str, step: str,
+        *, reason_contains: str | None = None,
+    ) -> dict:
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+        def probe():
+            rows = self.db_query(
+                "SELECT direction, direction_reason, status "
+                "FROM automation_hermes_agent_turns "
+                "WHERE zendesk_ticket_id = %s AND created_at >= %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.zendesk_ticket_id, since),
+            )
+            row = rows[0] if rows else None
+            if row and str(row.get("status") or "") in {"completed", "failed", "human_review"}:
+                return row
+            return None
+
+        row = self.wait_for(
+            f"hermes turn direction={expected_direction}", probe, self.turn_timeout_min * 60
+        )
+        direction = str(row.get("direction") or "")
+        reason = str(row.get("direction_reason") or "")
+        ok = direction == expected_direction and (
+            reason_contains is None or reason_contains in reason
+        )
+        self.record(ctx, step, ok, f"direction={direction} reason={reason}")
+        if not ok:
+            raise AssertionError(
+                f"unexpected hermes turn: direction={direction} reason={reason}"
+            )
+        return row
+
+    def wait_hermes_draft_delivered(
+        self, ctx: ScenarioContext, step: str,
+        *, content_check: Callable[[str], str | None] | None = None,
+    ) -> dict:
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+        def probe():
+            rows = self.db_query(
+                "SELECT d.status AS draft_status, d.content, dl.status AS delivery_status, "
+                "dl.zendesk_comment_id "
+                "FROM automation_hermes_case_drafts d "
+                "LEFT JOIN support_account_zendesk_comment_deliveries dl "
+                "ON dl.message_id = d.draft_id "
+                "WHERE d.zendesk_ticket_id = %s AND d.created_at >= %s "
+                "ORDER BY d.created_at DESC LIMIT 1",
+                (ctx.zendesk_ticket_id, since),
+            )
+            row = rows[0] if rows else None
+            if row and str(row.get("delivery_status") or "") == "delivered":
+                return row
+            return None
+
+        row = self.wait_for(
+            "hermes draft reply delivered", probe, self.turn_timeout_min * 60
+        )
+        ok = True
+        detail = (
+            f"draft={row.get('draft_status')} comment={row.get('zendesk_comment_id')}"
+        )
+        if content_check is not None:
+            failure = content_check(str(row.get("content") or ""))
+            if failure:
+                ok = False
+                detail += f"; content check failed: {failure}"
+            else:
+                detail += "; content check passed"
+        self.record(ctx, step, ok, detail)
+        if not ok:
+            raise AssertionError(detail)
+        return row
+
+    def emit_relay_approval_hint(self, ctx: ScenarioContext, *, timeout_min: int) -> None:
+        self.emit(
+            "approval_required",
+            {
+                "zendesk_ticket_url": f"{ZENDESK_TICKET_URL}/{ctx.zendesk_ticket_id}",
+                "kind": "enablement_relay",
+                "instruction": (
+                    "The relay task is waiting on the Mac relay client: pick it up there and "
+                    "perform the two approve_execution approvals bound to this request."
+                ),
+                "timeout_min": timeout_min,
+            },
+        )
+
+    def wait_enablement_relay_request(self, ctx: ScenarioContext, step: str) -> dict:
+        def probe():
+            rows = self.db_query(
+                "SELECT request_id, status, app_id, request_version "
+                "FROM support_enablement_relay_requests "
+                "WHERE ticket_id = %s ORDER BY created_at DESC LIMIT 1",
+                (ctx.client_ticket_id,),
+            )
+            return rows[0] if rows else None
+
+        try:
+            row = self.wait_for(
+                "enablement relay request created", probe, self.turn_timeout_min * 60
+            )
+            self.record(
+                ctx, step, True,
+                f"request={row.get('request_id')} status={row.get('status')} "
+                f"app_id={row.get('app_id')} v{row.get('request_version')}",
+            )
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
+    def wait_enablement_relay_result(
+        self, ctx: ScenarioContext, expected_outcomes: set[str], step: str
+    ) -> dict:
+        def probe():
+            rows = self.db_query(
+                "SELECT res.outcome, res.write_attempted, req.status AS request_status "
+                "FROM support_enablement_relay_results res "
+                "JOIN support_enablement_relay_requests req ON req.request_id = res.request_id "
+                "WHERE req.ticket_id = %s ORDER BY res.created_at DESC LIMIT 1",
+                (ctx.client_ticket_id,),
+            )
+            return rows[0] if rows else None
+
+        try:
+            row = self.wait_for(
+                f"enablement relay result (expect {'|'.join(sorted(expected_outcomes))})",
+                probe,
+                self.relay_timeout_min * 60,
+            )
+            outcome = str(row.get("outcome") or "")
+            ok = outcome in expected_outcomes
+            self.record(
+                ctx, step, ok,
+                f"outcome={outcome} write_attempted={row.get('write_attempted')} "
+                f"request_status={row.get('request_status')}",
+            )
+            if not ok:
+                raise AssertionError(f"unexpected relay result outcome: {outcome}")
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
+    def wait_next_customer_visible_reply(self, ctx: ScenarioContext, step: str) -> dict | None:
+        """Discovery wait: observe whatever the system produces for the latest
+        customer turn (reply job or hermes agent turn) without pinning a contract.
+
+        Used while pinning new turn contracts (E3 nudge / not-found turns): the
+        observed outcome is recorded in the step detail and returned so the
+        caller can assert on it afterwards. Times out like a normal turn.
+        """
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+        def probe():
+            jobs = self.db_query(
+                "SELECT status, payload->>'reply_intent' AS reply_intent, created_at "
+                "FROM support_account_reply_jobs "
+                "WHERE ticket_id = %s AND created_at >= %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.client_ticket_id, since),
+            )
+            if jobs and str(jobs[0].get("status") or "") in {
+                "published", "failed", "manual_attention", "cancelled",
+            }:
+                return {"kind": "reply_job", **jobs[0]}
+            turns = self.db_query(
+                "SELECT status, direction, created_at "
+                "FROM automation_hermes_agent_turns "
+                "WHERE zendesk_ticket_id = %s AND created_at >= %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.zendesk_ticket_id, since),
+            )
+            if turns:
+                return {"kind": "hermes_turn", **turns[0]}
+            return None
+
+        try:
+            row = self.wait_for(
+                "next customer-visible product (reply job or hermes turn)",
+                probe,
+                self.turn_timeout_min * 60,
+            )
+            detail = (
+                f"kind={row.get('kind')} intent={row.get('reply_intent')} "
+                f"status={row.get('status')} direction={row.get('direction')}"
+            )
+            self.record(ctx, step, True, detail)
+            self.info(f"[{ctx.scenario_id}] observed product: {detail}")
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
     # -- scenarios ---------------------------------------------------------
 
     def run_e1p(self) -> None:
@@ -783,6 +1101,108 @@ class ScenarioEngine:
         )
         self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+
+    def run_e3(self) -> None:
+        """Preproduction enablement full lifecycle (E3).
+
+        Walks the whole customer-visible arc of the hermes auto/relay chain:
+        missing App ID -> RAG fallback -> invalid App ID -> valid-format submit
+        (relay review) -> review nudge -> archer project_not_found result ->
+        corrected App ID -> real enablement + solved. Turns 5 and 6 start in
+        discovery mode (wait_next_customer_visible_reply) until their live
+        contracts are pinned from probe runs; pin them here afterwards.
+        """
+        ctx = ScenarioContext("E3")
+        self.start_ticket(
+            ctx,
+            "Enable media relay for our project",
+            "Hello Agora team,\n\n"
+            "I want to enable media relay.\n\n"
+            "Thanks.",
+        )
+        self.find_case(ctx)
+        self.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+        # Turn 1 contract (probe 13733, r20260924): the missing-App-ID ask is an
+        # agent-drafted reply — no reply job; delivery lands via the hermes
+        # draft pipeline within seconds.
+        self.wait_hermes_draft_delivered(
+            ctx, "ask for App ID draft delivered (turn 1)",
+            content_check=_ask_appid_content_check,
+        )
+        self.next_customer_turn(
+            ctx,
+            "What is the App ID? I am not sure where to find it in the console.",
+        )
+        # Turn 2 contract (probe 13733): a mid-thread question parks to human
+        # review (new_ticket_conversation_follow_up_forbidden) — the legacy
+        # RAG auto-answer no longer fires; recovery happens on the next field
+        # submission (verified by turn 3).
+        self.wait_hermes_turn_direction(
+            ctx, "human", "question parks to human review (turn 2, no auto RAG answer)",
+            reason_contains="follow_up_forbidden",
+        )
+        self.next_customer_turn(ctx, f"My App ID is {E3_APPID_INVALID}")
+        self.wait_reply_intent(
+            ctx, {"enablement_appid_invalid"}, "invalid App ID rejected (turn 3)"
+        )
+        self.wait_case_field(
+            ctx, "internal_email_send_reason", "appid_invalid_format",
+            "invalid App ID case marker",
+        )
+        self.next_customer_turn(ctx, f"Sorry, typo. My App ID is {E3_APPID_NOT_FOUND}")
+        self.wait_reply_intent(
+            ctx, {"submission_confirmation"}, "submission confirmation (turn 4)"
+        )
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="submission_confirmation",
+            check=_submission_confirmation_content_check,
+            step="confirmation content mentions review without a deadline promise",
+        )
+        self.wait_enablement_relay_request(ctx, "relay request created after confirmation")
+        self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+
+        self.next_customer_turn(ctx, E3_NUDGE_BODY)
+        # Turn 5 contract (probe 13733): a review-wait nudge parks to human
+        # review (conversation_requires_review) — no automatic "still in
+        # review" reply in the current product contract.
+        self.wait_hermes_turn_direction(
+            ctx, "human", "review nudge parks to human review (turn 5, no auto reply)",
+            reason_contains="conversation_requires_review",
+        )
+        self.wait_case_field(
+            ctx, "automation_status", "human_review_required",
+            "nudge escalates case to human review",
+        )
+
+        self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
+        self.wait_enablement_relay_result(
+            ctx, {"project_not_found"}, "relay result: project not found (turn 6 leg)"
+        )
+        # Discovery mode: what does the customer see for the not-found result?
+        self.wait_next_customer_visible_reply(
+            ctx, "project-not-found customer product (turn 6, discovery)"
+        )
+
+        self.next_customer_turn(ctx, f"Thanks. The correct App ID is {E3_APPID_VALID}")
+        self.wait_reply_intent(
+            ctx, {"submission_confirmation"}, "re-submission confirmation (turn 7)"
+        )
+        self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
+        self.wait_enablement_relay_result(
+            ctx, {"enabled", "already_satisfied"}, "relay result: enabled (turn 7 leg)"
+        )
+        self.wait_reply_intent(
+            ctx, {"enablement_archer_enabled"}, "enablement completion reply (turn 7)"
+        )
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="enablement_archer_enabled",
+            check=_enablement_enabled_content_check,
+            step="completion content states enablement and closes the case",
+        )
+        self.wait_zendesk_delivery_delivered(ctx, "ticket solved delivery")
+        self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
     def run_e1(self) -> None:
         ctx = ScenarioContext("E1")
@@ -951,6 +1371,15 @@ class ScenarioEngine:
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
     SCENARIOS: dict[str, dict[str, Any]] = {
+        "E3": {
+            "label": "Enablement full lifecycle (preproduction)",
+            "description": (
+                "missing App ID → RAG fallback → invalid App ID → review submit → nudge → "
+                "project not found → corrected App ID → real enablement + solved "
+                "(requires the Mac relay client and two approve_execution approvals)"
+            ),
+            "run": run_e3,
+        },
         "E1P": {
             "label": "Enablement auto (preproduction)",
             "description": (

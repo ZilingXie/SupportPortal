@@ -425,6 +425,159 @@ class ScenarioEngineTests(unittest.TestCase):
             engine_default = ScenarioEngine.from_env()
             self.assertEqual(engine_default.processing_profile, "production")
 
+    def test_e3_full_lifecycle_scripted(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [
+                {
+                    "account_case_id": "AC-13700",
+                    "client_ticket_id": "13700",
+                    "zendesk_ticket_id": "13700",
+                    "title": engine.tagged("Enable media relay for our project"),
+                }
+            ]),
+            ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000009",
+                "content": "Hi Ziling, could you share the project's App ID so I can proceed?",
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "direction": "human",
+                "direction_reason": "new_ticket_conversation_follow_up_forbidden",
+                "status": "completed",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "enablement_appid_invalid",
+                "close_after_publish": None,
+            }]),
+            ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+                "content": (
+                    "Thank you for your request. Our team is reviewing it with our internal "
+                    "workflow and will follow up with an update."
+                ),
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "gated",
+                "app_id": "8cb7aea984c4457daad802e6960e2475",
+                "request_version": 1,
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
+                "zendesk_comment_id": "53820000000001",
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "direction": "human",
+                "direction_reason": "conversation_requires_review",
+                "status": "completed",
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "human_review_required"}]),
+            ("FROM support_enablement_relay_results", [{
+                "outcome": "project_not_found",
+                "write_attempted": False,
+                "request_status": "applied",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "enablement_appid_not_found",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_enablement_relay_results", [{
+                "outcome": "enabled",
+                "write_attempted": True,
+                "request_status": "applied",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "enablement_archer_enabled",
+                "close_after_publish": True,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "enablement_archer_enabled",
+                "close_after_publish": True,
+                "content": (
+                    "Thank you for your patience. Media Relay is now enabled for your project. "
+                    "We are closing this ticket now; feel free to open a new ticket for anything else."
+                ),
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
+                "zendesk_comment_id": "53820000000002",
+            }]),
+            ("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}]),
+        ]
+        engine.run_scenario("E3")
+        self.assertTrue(engine.all_passed())
+        # 6 customer-side emails: initial ticket + 5 follow-up turns
+        # (turn 6 is the system relay leg with no customer message).
+        self.assertEqual(len(engine.sent_emails), 6)
+        kinds = [kind for kind, _ in engine.events]
+        self.assertEqual(kinds.count("approval_required"), 2)
+        step_names = [step.step for step in engine.steps]
+        self.assertIn("relay result: project not found (turn 6 leg)", step_names)
+        self.assertIn("relay result: enabled (turn 7 leg)", step_names)
+        completion_step = next(
+            step for step in engine.steps if "completion content" in step.step
+        )
+        self.assertIn("content check passed", completion_step.detail)
+
+    def test_e3_fails_when_invalid_appid_unexpectedly_passes(self) -> None:
+        engine = ScriptedEngine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [
+                {
+                    "account_case_id": "AC-13701",
+                    "client_ticket_id": "13701",
+                    "zendesk_ticket_id": "13701",
+                    "title": engine.tagged("Enable media relay for our project"),
+                }
+            ]),
+            ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000010",
+                "content": "Could you share the App ID?",
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "direction": "human",
+                "direction_reason": "new_ticket_conversation_follow_up_forbidden",
+                "status": "completed",
+            }]),
+            # The malformed App ID was accepted as a submission instead of
+            # being rejected: turn 3 must fail the scenario.
+            ("FROM support_account_reply_jobs", [{
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+        ]
+        with self.assertRaises(AssertionError):
+            engine.run_scenario("E3")
+        self.assertFalse(engine.all_passed())
+        failed = [step for step in engine.steps if step.status == "FAIL"]
+        self.assertTrue(any("invalid App ID" in step.step for step in failed))
+
     def test_e2_followup_completion_acknowledges_additional_information(self) -> None:
         engine = ScriptedEngine()
         engine.db_queue = [
@@ -707,7 +860,7 @@ class AutomationTestScenarioApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(
             {item["id"] for item in payload["scenarios"]},
-            {"E1", "E2", "F1", "S1", "D1", "E1P"},
+            {"E1", "E2", "F1", "S1", "D1", "E1P", "E3"},
         )
         self.assertEqual(payload["runs"], [])
 

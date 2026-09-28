@@ -46,12 +46,13 @@ def load_env_into_process() -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "D1", "E1P", "all"])
+    parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "D1", "E1P", "E3", "all"])
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     parser.add_argument("--check", action="store_true", help="verify DB/SMTP/IMAP reachability only")
     parser.add_argument("--turn-timeout-min", type=int, default=None)
     parser.add_argument("--approval-timeout-min", type=int, default=None)
+    parser.add_argument("--relay-timeout-min", type=int, default=None)
     args = parser.parse_args()
 
     load_env_into_process()
@@ -74,6 +75,8 @@ def main() -> int:
         engine.turn_timeout_min = args.turn_timeout_min
     if args.approval_timeout_min:
         engine.approval_timeout_min = args.approval_timeout_min
+    if args.relay_timeout_min:
+        engine.relay_timeout_min = args.relay_timeout_min
 
     if args.check:
         for channel, result in engine.connectivity_check().items():
