@@ -69,6 +69,7 @@ rtk proxy python -m pytest -q -rs backend/tests/test_automation_ecs_store_postgr
 - 核对源码 commit、Manifest、各角色实际 digest、Prompt/schema 与运行 provenance 的一致性。
 - 核对 API Health、Route/Worker heartbeat、ECS 服务与 ALB target 健康；Terraform 的 zero-drift 结果不能由源码测试替代。
 - Provider probe 与业务回归分开。既有发布探针不发信、不创建工单、不执行 Archer enablement；但运行一次性 ECS task 本身属于运维动作，应在部署授权范围内执行。
+- Hermes Wiki 检索验收见[调查 Agent Runbook](../deploy_hermes_investigator_ecs.md)：先核对 Agent 固定资产绑定完整分页，再验证 Knowledge search/read、Hermes 工具可见性与无投递调查回合。工具注册或 Wiki ready 状态本身不能代替实际召回证据。
 - `--check-only` 的范围按具体脚本判断。ECS preflight 会生成本地 evidence；不能把整个流程理解成“没有任何写入”。
 
 单机运行相关代码合并后，按 [Agent 工作流详情](../agent_workflow_details.md) 从根 `main` 验证官方栈、`/health.app_build.ref` 和改动对应的实际标记。默认本地 Lightweight 可以连接远端数据库；它不等于隔离测试环境。纯文档改动不运行这套重启验证。

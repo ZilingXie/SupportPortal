@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-28 - Preproduction Hermes bound Wiki retrieval (p2-177)
+
+- Summary: investigation Work exposes read-only search and page reading across its bound Wiki assets; results retain Wiki and page provenance, and distinguish no hits from partial service failures.
+- Reason: binding 56 ready Wikis to the Agent did not make their Knowledge search/read tools available to Hermes.
+- Affected files/config: versioned Hermes plugin and overlay in `hermes-deploy/build/wiki_search/`; Preproduction Hermes task definition adds a Core user key secret. SupportPortal runtime code and existing RAGFlow routes are unchanged.
+- Data impact: no Wiki ingestion, cross-Wiki merge, schema migration, historical replay, or business delivery. Historical claims such as "latest SDK" remain time-scoped evidence.
+- Verification: 7 plugin contract tests passed. Preproduction task revision 35 reached 1/1 with five healthy containers; 56 bound Wikis were ready. Direct Knowledge search/read matched plugin output, unbound Wiki read was denied, and run_6d760c2849a1480990d4040bf60654b5 completed with error-free wiki_search and wiki_read_page events and a quote matching the Knowledge page. No customer ticket or business delivery was replayed.
+
 ## 2026-09-07 - ECS shared public conversation context (p2-110)
 
 - Summary: active Fraud and Enablement retain unfinished business state across RAG side questions; RAG receives the public conversation through the triggering comment and interpretation-only business state without a six-message truncation.

@@ -306,3 +306,14 @@ Archer 线走 pilot-server 共享 cookie(有浏览器的同事 `pilot archer dep
 - **canary 验收记录(工单 13220)**:route agora_technical→engineer case→Slack root+opening delivered;@bot 多轮真调查(记忆 L0 沉淀 score 0.935);guardrail 真实拦截一次 application-signature;final approve→delivery ledger 五连 delivered→**Zendesk 公开评论 readback 成功**。全部投递 ECS worker 归因(EC2 对照零)。
 - **EC2 Slack bot 已停用(2026-09-02)**:`~SupportPortal/.env` 删 `PRODUCTION_ENGINEER_SLACK_*` 四行,按部署变量集(APP_RUNTIME_IMAGE=69e98363511b 等,从容器 env 现取)重建三容器;drain paused(fail-closed,queued 保留);/health 200。恢复=写回四行重建。
 - **已知缺口(放宽 PR 待做)**:①`_proof_anchors_verified` 要求全部 anchor 逐字匹配本轮 engineer 语料——每轮修订需重贴证据短语,过严;②`comments_revision` 仅由 comment sync 写入,新工单首次 approve 必 409(需 ticket intake 建基线或 approve 实时拉取兜底,EC2 版有后者);③guardrail 通过后按钮重生成依赖新一轮 @bot 全量重试。④Hermes 调查证据源目前=LLM 训练知识+记忆库,无可验证检索(RAGFlow/pilot 接入是可信调查的必需品,另行规划)。
+
+## Preproduction 调查 Wiki 检索接通（p2-177，2026-09-28）
+
+Hermes `common` 工具集新增 `wiki_search` 和 `wiki_read_page`，源码在版本化 `hermes-deploy/build/wiki_search/`。调查与 ad-hoc Work 回合已加载 `common`；Route、Persona 的工具集不变。工具从 memory-core 的 `agent-fixed-asset/list-with-detail` 按 `limit=100, offset` 读完该 Agent 的 `llm_wiki` 绑定，再按 Wiki ID 调用同任务 `knowledge:8424` 的 `/v3/tools/list`、`/v3/tools/call`。只搜索 `ready` Wiki；未绑定 Wiki 不可读；搜索输出标明 Wiki ID、页面路径及部分失败。历史文章不提供当前 SDK 版本的权威裁决。
+
+- 部署前：只读核对 Preproduction Hermes service/task 的当前 revision、五容器镜像 digest、运行环境键名、绑定总数和 Wiki ready 数；构建时 `HERMES_BASE_IMAGE` 必须是当时运行的 Hermes 不可变 digest，不复用旧 overlay 的 `FROM`。`build/supportportal-build-sync.sh` 将 Wiki 插件复制到构建上下文，`Dockerfile.hermes-wiki-overlay` 只覆盖该插件目录。
+- 身份：`MEMORY_TENCENTDB_AGENT_ID` 与 `TDAI_MEMORY_SERVICE_ID` 复用当前任务配置；专用普通用户 key 从 Preproduction SSM 作为 `WIKI_CORE_USER_KEY` 注入 Hermes 容器。Core 8420 和 Knowledge 8424 均只走任务内部网络，不新增 ALB 路由。用户 key 本身不是路由级只读凭据，插件只注册两项读工具。
+- 发布：从刚回读的任务定义克隆新 revision，仅更换 Hermes 镜像并增加必要 secret/env；保留其余四容器、EFS、网络和已有 secret 引用。新镜像推送并读回 digest 后更新 Preproduction service，等待 rollout、五容器健康和原有 `/v1/models` 鉴权回归。回滚指向发布前的完整任务定义 revision。
+- 分层验证：① Core 绑定接口完整分页与 Knowledge API 的已知页面 `search`→`read_page` 一致；② Hermes `common` 工具可见，未绑定 Wiki 拒绝；③不带客户数据、不走 SupportPortal 工单入口的调查 Work 技术探针实际调用两工具，返回的 Wiki ID、页面路径、正文片段可与 Knowledge API 独立回读匹配；④零命中、单 Wiki 不可用与全部不可用区分。技术探针不触发 Slack/Zendesk/Archer，不能替代真实业务工单验收。
+
+本节描述验收合同；实际部署 revision、digest、检查时间和结果记录在 p2-177 的 evidence 中，不把本节当作当前运行状态证明。

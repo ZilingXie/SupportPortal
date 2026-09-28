@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-177",
+  "title": "Preproduction Hermes 调查回合接通绑定 Wiki 检索",
+  "status": "done",
+  "owner": "codex",
+  "summary": "为 Hermes investigation/adhoc Work 回合新增只读 Wiki 搜索与读页工具。按调查 Agent 的固定资产绑定完整分页发现 Wiki；搜索只访问已绑定、ready 的资产，结果保留 Wiki ID 和页面路径；长页可分段读取，未绑定拒绝、零命中与部分失败分开报告。首版不做跨 Wiki 自动合并或 SDK 当前版本裁决。",
+  "next_action": "Preproduction 已完成；Production 推广和真实客户工单验收须另行授权。",
+  "acceptance_criteria": [
+    "绑定超过默认分页长度时可发现全部 Wiki；未绑定或已删除 Wiki 的搜索和读页均不返回正文。",
+    "已绑定 ready Wiki 可完成 search→read_page，结果保留 Wiki ID、Wiki 名和页面路径；长页可继续读取。",
+    "零命中、未 ready、单 Wiki 请求失败和全部不可用有可区分结果；限制搜索并发和输出量。",
+    "Preproduction Hermes investigation Work 回合可见并调用两个 Wiki 工具；实际页面与 Knowledge API 直读结果一致，五容器健康；无业务投递。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Hermes Wiki 插件定向契约",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q build/wiki_search/test_wiki_search.py",
+      "details": "hermes-deploy 独立工作区 7 passed：分页、绑定权限、56 Wiki、部分失败、长页续读、只读接口和 common 注册。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction Hermes revision 35",
+      "details": "hermes-deploy PR #31 合并提交 ce8c37d32904439f7e4cc7942d6bcbdd9ea82629；从 revision 34 的 Hermes 镜像 digest 9f021b4f304296f756a682b1720348e1bf9ad1ea3f0f18191773ab8742db6596 构建 overlay，新 ECR digest 8e28d4d9fa87764406801856a3a1c063fcc0a108527a7bc3b3597cae1c146d78。任务定义仅 Hermes image 与 WIKI_CORE_USER_KEY secret 不同；revision 35 service 1/1、rollout COMPLETED、五容器 HEALTHY、ALB target healthy。"
+    },
+    {
+      "type": "test",
+      "label": "Preproduction Wiki 直读与权限",
+      "details": "2026-09-28 Core 固定资产分页回读 56/56，Knowledge tools/list 56/56 ready。wiki-gowdoqph 的 SDK 搜索结果与 read_page 正文同 Hermes 插件结果一致；未绑定 wiki 被拒绝。检索 key 使用专用普通用户 reviewer 身份，SSM SecureString 回读一致，失去明文的默认 key 已吊销。"
+    },
+    {
+      "type": "test",
+      "label": "真实 Work 工具调用与回归",
+      "details": "无客户数据的 run_6d760c2849a1480990d4040bf60654b5 在 enabled_toolsets=[common] 下 completed；事件依次含 wiki_search 和 wiki_read_page 的 started/completed，均 error=false；返回 Wiki ID 和路径，引用短句在 Knowledge 该页正文中逐字匹配。dashboard/hermes=302、dashboard/memory=200、无凭证 /v1/models=401、automation 两入口=307。三条临时安全组规则已撤销且回读为空；未触发 Slack/Zendesk 业务投递。真实客户工单未重放，故不宣称业务链验收。"
+    }
+  ],
+  "source_refs": [
+    "backend/services/automation_hermes_agent.py",
+    "docs/deploy_hermes_investigator_ecs.md",
+    "docs/operations/testing.md"
+  ],
+  "created_at": "2026-09-28",
+  "updated_at": "2026-09-28",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-28",
+      "event": "created",
+      "summary": "用户批准调查 Wiki 检索接通计划并要求实施；独立插件和定向测试已完成，Preproduction 尚未发布。"
+    },
+    {
+      "at": "2026-09-28",
+      "event": "completed",
+      "summary": "Preproduction Hermes revision 35 完成发布，56/56 Wiki ready，真实技术 Work 调用搜索与读页并与 Knowledge 正文比对；未触发业务投递。"
+    }
+  ]
+}
