@@ -196,18 +196,22 @@
 
 ### E3：Enablement 全生命周期（preproduction）
 
-> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测钉死各回合合同。
-> 客户旅程：缺 AppID 追问（草稿管线）→ 提问停人工（新工单对话追问被禁）→ 31 位格式错
-> 拒绝 → 32 位有效格式提交进 review → 催促停人工（conversation_requires_review）→
-> relay 查无项目（project_not_found，等待 Mac 审批）→ 客户更正 AppID → 真实 archer 开通 + solved。
+> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**
+> （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 改为专门客户回复）。
+> 客户旅程：缺 AppID 追问（草稿管线）→ **会话知识问句经可信 RAG 一次公开作答** → 31 位格式错拒绝 →
+> 32 位有效格式提交进 review → **催促按绑定的 relay 申请实际状态作答（不承诺加速）** →
+> relay 查无项目（**专门 not-found 回复，case 保持自动化持有**）→ 客户更正 AppID（**新版本申请 v2**）→
+> 真实 archer 开通 + solved。
 >
-> 与旧链差异（产品发现，探针实证）：①首回合追问=hermes 草稿（数秒送达，非 reply job）；
-> ②线程内提问与催促均停人工审核，**无自动 RAG 答案、无自动"还在 review"回复**
-> （direction_reason 分别为 new_ticket_conversation_follow_up_forbidden /
-> conversation_requires_review），下回合提交字段即恢复自动化（已验证）；
-> ③客户回合驱动默认走 Zendesk API 代发评论（`AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
-> + `AUTOMATION_TEST_ZENDESK_AUTH`=SSM zendesk-basic-auth）——163 邮箱路径在当前环境断链
-> （无 requester 通知邮件、加号寻址不进单），勿用 email transport。
+> p2-178 之后的合同变化：
+> - 回合 2/5 不再停人工：direction=automation + route=`conversation_followup`，一次草稿管线公开答复；
+>   RAG 无依据/状态不可信/明确要求人工优先级时才真实人工交接（私有 note + 回原队列 + 负责人通知）。
+> - 已完成人工交接的 case，后续客户补 AppID **不会**自动夺回工单；恢复自动化须走人工 reroute/rerun 入口。
+> - 各等待绑定水位线（turn_id / reply job id / 新 comment id / relay request_version），
+>   上一轮产物（旧评论、旧 relay 结果）不能再使新回合通过。
+> - 客户回合通道必须为 `zendesk_api`：剧本在建单前检查通道，选错直接失败（CLI 同样预检）；
+>   `--check` 按所选通道检查（zendesk_api 时校验 Zendesk 凭据，不再探测 163 SMTP/IMAP）。
+> - CLI relay 审批横幅按 `kind=enablement_relay` 打印 Mac 审批指引（修复旧监听器 KeyError）。
 
 - **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
   两次 `approve_execution`（relay 任务在确认回复送达后派发）。
@@ -216,7 +220,10 @@
   **终段会真实写入 archer**，load=10 等目标参数）。
 - **时长**：回复各含设计延迟，回合 1-5 约 30-50 分钟；relay 等待上限默认 240 分钟
   （`AUTOMATION_TEST_RELAY_TIMEOUT_MIN` 或 CLI `--relay-timeout-min` 覆盖）。
-- **运行**：与 E1P 同环境变量，`--scenario E3 --yes`。CLI 会在 relay 段打印
-  `approval_required` 提示（工单链接 + Mac 审批指引）。
+- **运行**：与 E1P 同环境变量，另需 `AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
+  与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`。
+  CLI 会在 relay 段打印 `approval_required` 提示（工单链接 + Mac 审批指引）。
 - **终态断言**：`enablement_archer_enabled` 完成回复（内容含 media relay + enabled +
   关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
+- **待实跑确认**：回合 6（not-found 专门回复）与回合 7 终段的实跑合同来自 p2-178 实现
+  与本地钉死测试，首次授权 E3 实跑后如与实况不符，先修断言再定稿。

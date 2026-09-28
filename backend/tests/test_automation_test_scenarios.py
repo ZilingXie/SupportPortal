@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import time
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -16,7 +17,9 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services import automation_test_mail
 from backend.services import automation_test_scenarios
 from backend.services.automation_test_scenarios import (
+    AutomationTestScenarioError,
     ScenarioCancelled,
+    ScenarioContext,
     ScenarioEngine,
 )
 from backend.services.automation_test_store import AutomationTestScenarioRunStore
@@ -217,10 +220,10 @@ class ScenarioEngineTests(unittest.TestCase):
 
     def test_next_customer_turn_uses_plus_address_when_notification_times_out(self) -> None:
         engine = ScriptedEngine()
-        context = SimpleNamespace(
+        context = ScenarioContext(
+            scenario_id="T",
             subject=engine.tagged("Account flagged for suspicious activity"),
             zendesk_ticket_id="13027",
-            turn_started_at=None,
         )
 
         with patch.object(
@@ -246,10 +249,10 @@ class ScenarioEngineTests(unittest.TestCase):
         for error in (ScenarioCancelled("cancelled"), RuntimeError("imap unavailable")):
             with self.subTest(error=type(error).__name__):
                 engine = ScriptedEngine()
-                context = SimpleNamespace(
+                context = ScenarioContext(
+                    scenario_id="T",
                     subject=engine.tagged("Account flagged for suspicious activity"),
                     zendesk_ticket_id="13027",
-                    turn_started_at=None,
                 )
 
                 with patch.object(engine, "wait_for", side_effect=error), self.assertRaises(
@@ -425,8 +428,23 @@ class ScenarioEngineTests(unittest.TestCase):
             engine_default = ScenarioEngine.from_env()
             self.assertEqual(engine_default.processing_profile, "production")
 
-    def test_e3_full_lifecycle_scripted(self) -> None:
+    def _e3_engine(self) -> ScriptedEngine:
         engine = ScriptedEngine()
+        engine.customer_turn_transport = "zendesk_api"
+
+        def scripted_zendesk_turn(ctx, body):
+            ctx.turn_started_at = automation_test_scenarios.now_utc()
+            ctx.stamp_turn_baseline()
+            engine.emit(
+                "customer_turn_sent",
+                {"transport": "zendesk_api", "zendesk_ticket_id": ctx.zendesk_ticket_id},
+            )
+
+        engine.zendesk_customer_turn = scripted_zendesk_turn  # type: ignore[method-assign]
+        return engine
+
+    def test_e3_full_lifecycle_scripted(self) -> None:
+        engine = self._e3_engine()
         engine.db_queue = [
             ("FROM support_account_cases", [
                 {
@@ -437,32 +455,51 @@ class ScenarioEngineTests(unittest.TestCase):
                 }
             ]),
             ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+            # Turn 1: the missing-App-ID ask arrives via the hermes draft pipeline.
             ("FROM automation_hermes_case_drafts", [{
                 "draft_status": "queued",
                 "delivery_status": "delivered",
-                "zendesk_comment_id": "53820000000009",
+                "zendesk_comment_id": "53820000000101",
                 "content": "Hi Ziling, could you share the project's App ID so I can proceed?",
             }]),
+            # Turn 2: in-session knowledge question -> conversation_followup.
             ("FROM automation_hermes_agent_turns", [{
-                "direction": "human",
-                "direction_reason": "new_ticket_conversation_follow_up_forbidden",
+                "turn_id": "turn-2",
+                "direction": "automation",
+                "route": "conversation_followup",
+                "direction_reason": "conversation_followup_knowledge_question",
                 "status": "completed",
             }]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000102",
+                "content": (
+                    "Hi Ziling, the App ID is the 32-character project identifier on "
+                    "the Agora Console's Project Management page.\nReferences:\n- "
+                    "Get the App ID — https://docs.agora.io/en/help/general-use/app-id"
+                ),
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            ("FROM support_enablement_relay_requests", [{"n": 0}]),
+            # Turn 3: malformed App ID rejected through the reply-job channel.
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-3",
                 "status": "published",
                 "reply_intent": "enablement_appid_invalid",
                 "close_after_publish": None,
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
+            # Turn 4: valid-format submission -> confirmation + relay v1.
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-4",
                 "status": "published",
                 "reply_intent": "submission_confirmation",
                 "close_after_publish": None,
             }]),
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-4",
                 "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
                 "content": (
                     "Thank you for your request. Our team is reviewing it with our internal "
                     "workflow and will follow up with an update."
@@ -477,28 +514,65 @@ class ScenarioEngineTests(unittest.TestCase):
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
-                "zendesk_comment_id": "53820000000001",
+                "zendesk_comment_id": "53820000000104",
             }]),
+            # Turn 5: nudge -> progress reply from the BOUND relay request.
             ("FROM automation_hermes_agent_turns", [{
-                "direction": "human",
-                "direction_reason": "conversation_requires_review",
+                "turn_id": "turn-5",
+                "direction": "automation",
+                "route": "conversation_followup",
+                "direction_reason": "conversation_followup_progress_inquiry",
                 "status": "completed",
             }]),
-            ("WHERE account_case_id", [{"automation_status": "human_review_required"}]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "dispatched",
+                "request_version": 1,
+            }]),
+            ("FROM support_enablement_relay_requests", [{"n": 1}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000106",
+                "content": (
+                    "Hi Ziling, thanks for checking in. Your Media Relay request is with "
+                    "our reviewing engineer and we will follow up once the review completes."
+                ),
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            # Turn 6 leg: relay result project_not_found for the BOUND request.
             ("FROM support_enablement_relay_results", [{
                 "outcome": "project_not_found",
                 "write_attempted": False,
                 "request_status": "applied",
             }]),
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-6",
                 "status": "published",
                 "reply_intent": "enablement_appid_not_found",
                 "close_after_publish": None,
             }]),
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-6",
+                "status": "published",
+                "content": (
+                    "Thanks for the App ID. We could not find a project for it on our "
+                    "side — could you double-check the App ID in the console and reply "
+                    "with the correct one?"
+                ),
+            }]),
+            # Turn 7: corrected App ID -> NEW request version + real enablement.
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-7",
                 "status": "published",
                 "reply_intent": "submission_confirmation",
                 "close_after_publish": None,
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v2",
+                "status": "gated",
+                "app_id": "4b7634a0d0f1418b8135918292f6a507",
+                "request_version": 2,
             }]),
             ("FROM support_enablement_relay_results", [{
                 "outcome": "enabled",
@@ -506,14 +580,14 @@ class ScenarioEngineTests(unittest.TestCase):
                 "request_status": "applied",
             }]),
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-8",
                 "status": "published",
                 "reply_intent": "enablement_archer_enabled",
                 "close_after_publish": True,
             }]),
             ("FROM support_account_reply_jobs", [{
+                "job_id": "job-8",
                 "status": "published",
-                "reply_intent": "enablement_archer_enabled",
-                "close_after_publish": True,
                 "content": (
                     "Thank you for your patience. Media Relay is now enabled for your project. "
                     "We are closing this ticket now; feel free to open a new ticket for anything else."
@@ -521,28 +595,38 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
-                "is_public": True,
-                "zendesk_comment_id": "53820000000002",
+                "zendesk_comment_id": "53820000000108",
             }]),
             ("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}]),
         ]
         engine.run_scenario("E3")
         self.assertTrue(engine.all_passed())
-        # 6 customer-side emails: initial ticket + 5 follow-up turns
-        # (turn 6 is the system relay leg with no customer message).
-        self.assertEqual(len(engine.sent_emails), 6)
+        # Only the initial ticket email: customer turns travel via the API.
+        self.assertEqual(len(engine.sent_emails), 1)
         kinds = [kind for kind, _ in engine.events]
         self.assertEqual(kinds.count("approval_required"), 2)
+        for kind, data in engine.events:
+            if kind == "approval_required":
+                self.assertEqual(data.get("kind"), "enablement_relay")
         step_names = [step.step for step in engine.steps]
-        self.assertIn("relay result: project not found (turn 6 leg)", step_names)
-        self.assertIn("relay result: enabled (turn 7 leg)", step_names)
-        completion_step = next(
-            step for step in engine.steps if "completion content" in step.step
-        )
-        self.assertIn("content check passed", completion_step.detail)
+        self.assertIn("knowledge answer delivered with references (turn 2)", step_names)
+        self.assertIn("nudge leaves the bound relay application untouched (turn 5)", step_names)
+        self.assertIn("dedicated project-not-found reply (turn 6)", step_names)
+        self.assertIn("corrected App ID opens a new request version (turn 7)", step_names)
 
-    def test_e3_fails_when_invalid_appid_unexpectedly_passes(self) -> None:
-        engine = ScriptedEngine()
+    def test_e3_rejects_email_transport_before_ticket_creation(self) -> None:
+        engine = ScriptedEngine()  # default transport: email
+        with self.assertRaises(AutomationTestScenarioError):
+            engine.run_scenario("E3")
+        # Nothing was sent: the guard fires before start_ticket.
+        self.assertEqual(engine.sent_emails, [])
+        self.assertEqual(engine.steps, [])
+
+    def test_e3_fails_when_question_parks_to_human_review(self) -> None:
+        """The pre-fix defect (13733 turn 2) must fail the scenario: an
+        in-session knowledge question that parks to human review is a
+        contract violation, not a pass."""
+        engine = self._e3_engine()
         engine.db_queue = [
             ("FROM support_account_cases", [
                 {
@@ -556,27 +640,183 @@ class ScenarioEngineTests(unittest.TestCase):
             ("FROM automation_hermes_case_drafts", [{
                 "draft_status": "queued",
                 "delivery_status": "delivered",
-                "zendesk_comment_id": "53820000000010",
+                "zendesk_comment_id": "53820000000201",
                 "content": "Could you share the App ID?",
             }]),
+            # The old broken contract: the question parks to human review.
             ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-2",
                 "direction": "human",
+                "route": None,
                 "direction_reason": "new_ticket_conversation_follow_up_forbidden",
-                "status": "completed",
-            }]),
-            # The malformed App ID was accepted as a submission instead of
-            # being rejected: turn 3 must fail the scenario.
-            ("FROM support_account_reply_jobs", [{
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+                "status": "human_review",
             }]),
         ]
         with self.assertRaises(AssertionError):
             engine.run_scenario("E3")
         self.assertFalse(engine.all_passed())
         failed = [step for step in engine.steps if step.status == "FAIL"]
-        self.assertTrue(any("invalid App ID" in step.step for step in failed))
+        self.assertTrue(any("knowledge question" in step.step for step in failed))
+
+    def test_binding_watermarks_ignore_observed_artifacts(self) -> None:
+        """p2-178: waits observe per-turn baselines — an artifact recorded by
+        a PREVIOUS leg (turn row, reply job, delivered comment) can never
+        satisfy the current leg's wait, while two waits inside one leg may
+        still observe the same entity."""
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13703",
+            client_ticket_id="13703",
+            account_case_id="AC-13703",
+        )
+        ctx.stamp_turn_baseline()
+
+        # Leg A observes its turn.
+        engine.db_queue = [
+            ("FROM automation_hermes_agent_turns", [
+                {
+                    "turn_id": "t-a",
+                    "direction": "automation",
+                    "route": "conversation_followup",
+                    "direction_reason": "conversation_followup_knowledge_question",
+                    "status": "completed",
+                }
+            ]),
+        ]
+        row = engine.wait_hermes_turn_direction(
+            ctx, "automation", "leg A turn", route_equals="conversation_followup"
+        )
+        self.assertEqual(row["turn_id"], "t-a")
+
+        # Leg B starts: the stale t-a row arrives first and must be ignored;
+        # only the new t-b row satisfies the wait.
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("FROM automation_hermes_agent_turns", [
+                {
+                    "turn_id": "t-a",
+                    "direction": "automation",
+                    "route": "conversation_followup",
+                    "direction_reason": "conversation_followup_knowledge_question",
+                    "status": "completed",
+                }
+            ]),
+            ("FROM automation_hermes_agent_turns", [
+                {
+                    "turn_id": "t-b",
+                    "direction": "automation",
+                    "route": "conversation_followup",
+                    "direction_reason": "conversation_followup_progress_inquiry",
+                    "status": "completed",
+                }
+            ]),
+        ]
+        row = engine.wait_hermes_turn_direction(
+            ctx, "automation", "leg B turn", route_equals="conversation_followup"
+        )
+        self.assertEqual(row["turn_id"], "t-b")
+
+        # Reply jobs: a job observed in leg A never satisfies leg B.
+        engine.db_queue = [
+            ("FROM support_account_reply_jobs", [
+                {
+                    "job_id": "job-a",
+                    "status": "published",
+                    "reply_intent": "enablement_appid_invalid",
+                    "close_after_publish": None,
+                }
+            ]),
+        ]
+        job_a = engine.wait_reply_intent(
+            ctx, {"enablement_appid_invalid"}, "leg A reply job"
+        )
+        self.assertEqual(job_a["job_id"], "job-a")
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("FROM support_account_reply_jobs", [
+                {
+                    "job_id": "job-a",
+                    "status": "published",
+                    "reply_intent": "enablement_appid_invalid",
+                    "close_after_publish": None,
+                }
+            ]),
+            ("FROM support_account_reply_jobs", [
+                {
+                    "job_id": "job-b",
+                    "status": "published",
+                    "reply_intent": "submission_confirmation",
+                    "close_after_publish": None,
+                }
+            ]),
+        ]
+        job = engine.wait_reply_intent(
+            ctx, {"submission_confirmation"}, "leg B reply job"
+        )
+        self.assertEqual(job["job_id"], "job-b")
+
+        # Delivered comments: the comment delivered in leg A cannot re-satisfy
+        # a later delivery wait.
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("FROM automation_hermes_case_drafts", [
+                {
+                    "draft_status": "queued",
+                    "delivery_status": "delivered",
+                    "zendesk_comment_id": "c-a",
+                    "content": "Hi Ziling, the App ID is on the Project Management page.",
+                }
+            ]),
+        ]
+        draft_a = engine.wait_hermes_draft_delivered(ctx, "leg A draft delivered")
+        self.assertEqual(draft_a["zendesk_comment_id"], "c-a")
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("FROM automation_hermes_case_drafts", [
+                {
+                    "draft_status": "queued",
+                    "delivery_status": "delivered",
+                    "zendesk_comment_id": "c-a",
+                    "content": "Hi Ziling, the App ID is on the Project Management page.",
+                }
+            ]),
+            ("FROM automation_hermes_case_drafts", [
+                {
+                    "draft_status": "queued",
+                    "delivery_status": "delivered",
+                    "zendesk_comment_id": "c-b",
+                    "content": "Hi Ziling, your request is still in review.",
+                }
+            ]),
+        ]
+        draft = engine.wait_hermes_draft_delivered(ctx, "leg B draft delivered")
+        self.assertEqual(draft["zendesk_comment_id"], "c-b")
+
+        # Relay requests: the version watermark only admits a NEWER version —
+        # the corrected-App-ID leg cannot reuse the v1 application.
+        engine.db_queue = [
+            ("FROM support_enablement_relay_requests", [
+                {
+                    "request_id": "enr-AC-13703-v1",
+                    "status": "failed",
+                    "app_id": "8cb7aea984c4457daad802e6960e2475",
+                    "request_version": 1,
+                }
+            ]),
+            ("FROM support_enablement_relay_requests", [
+                {
+                    "request_id": "enr-AC-13703-v2",
+                    "status": "gated",
+                    "app_id": "4b7634a0d0f1418b8135918292f6a507",
+                    "request_version": 2,
+                }
+            ]),
+        ]
+        request = engine.wait_enablement_relay_request(
+            ctx, "corrected request version", after_version=1
+        )
+        self.assertEqual(request["request_id"], "enr-AC-13703-v2")
 
     def test_e2_followup_completion_acknowledges_additional_information(self) -> None:
         engine = ScriptedEngine()
@@ -785,6 +1025,121 @@ class FakeEngine:
 
     def all_passed(self) -> bool:
         return True
+
+
+
+
+class ProductionTicketScenarioCliTests(unittest.TestCase):
+    """CLI wrapper contract tests (p2-178): relay approval banner fields and
+    the pre-ticket channel guard for E3."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+
+        cli_path = (
+            Path(__file__).resolve().parents[2]
+            / "scripts"
+            / "testing"
+            / "production_ticket_scenarios.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "production_ticket_scenarios_under_test", cli_path
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.cli = module
+
+    def test_relay_approval_banner_prints_instruction_not_email_fields(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        payload = {
+            "zendesk_ticket_url": "https://agoraio.zendesk.com/agent/tickets/13733",
+            "kind": "enablement_relay",
+            "instruction": "pick it up on the Mac relay client and approve twice",
+            "timeout_min": 240,
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self.cli.print_approval_banner(payload)
+        out = buffer.getvalue()
+        self.assertIn("MANUAL APPROVAL REQUIRED", out)
+        self.assertIn("Mac relay client", out)
+        # The email-reply hint fields do not exist on this payload and must
+        # not be printed (the old listener crashed with KeyError here).
+        self.assertNotIn("internal email", out)
+
+    def test_email_approval_banner_keeps_reply_hint(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        payload = {
+            "zendesk_ticket_url": "https://agoraio.zendesk.com/agent/tickets/1",
+            "internal_email_subject_prefix": "[Enablement Request] Media Relay",
+            "suggested_reply": "Media Relay is enabled for this app.",
+            "timeout_min": 45,
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            self.cli.print_approval_banner(payload)
+        self.assertIn("[Enablement Request] Media Relay", buffer.getvalue())
+
+    def test_e3_with_email_channel_aborts_before_ticket_creation(self) -> None:
+        import tempfile
+
+        engine = SimpleNamespace(
+            customer_turn_transport="email",
+            sender="xieziling97@163.com",
+            turn_timeout_min=20,
+            approval_timeout_min=45,
+            relay_timeout_min=240,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".env") as env_file:
+            env_file.write("DUMMY=1\n")
+            env_file.flush()
+            with (
+                patch.object(self.cli, "ENV_PATH", Path(env_file.name)),
+                patch(
+                    "backend.services.automation_test_scenarios.ScenarioEngine"
+                ) as engine_cls,
+                patch("sys.argv", ["scenarios", "--scenario", "E3", "--yes"]),
+            ):
+                engine_cls.from_env.return_value = engine
+                self.assertEqual(self.cli.main(), 1)
+            # The guard fires before the confirmation prompt / any send.
+            engine_cls.from_env.assert_called_once()
+
+    def test_e3_with_zendesk_api_channel_passes_the_guard(self) -> None:
+        import tempfile
+
+        engine = SimpleNamespace(
+            customer_turn_transport="zendesk_api",
+            sender="xieziling97@163.com",
+            turn_timeout_min=20,
+            approval_timeout_min=45,
+            relay_timeout_min=240,
+            steps=[],
+            listener=None,
+            all_passed=lambda: True,
+            run_scenario=lambda scenario_id: None,
+        )
+        with tempfile.NamedTemporaryFile("w", suffix=".env") as env_file:
+            env_file.write("DUMMY=1\n")
+            env_file.flush()
+            with (
+                patch.object(self.cli, "ENV_PATH", Path(env_file.name)),
+                patch(
+                    "backend.services.automation_test_scenarios.ScenarioEngine"
+                ) as engine_cls,
+                patch("sys.argv", ["scenarios", "--scenario", "E3", "--yes"]),
+            ):
+                engine_cls.from_env.return_value = engine
+
+                # The channel guard passes; the (stubbed) run executes and
+                # the CLI exits successfully without creating tickets.
+                self.assertEqual(self.cli.main(), 0)
 
 
 class AutomationTestScenarioApiTests(unittest.TestCase):

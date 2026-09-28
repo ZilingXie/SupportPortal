@@ -4814,3 +4814,11 @@ For each new entry, record:
 - Prompt 内容和模型不变；Hermes `common` 工具集新增 `wiki_search`、`wiki_read_page`，随 investigation/ad-hoc Work 回合加载。
 - 工具描述要求保留 Wiki/页面来源，并说明历史工单文章不能单独证明当前 SDK 最新版本。工具只允许已绑定 Wiki 的搜索和读页。
 - 本地 7 项工具合同测试通过；Preproduction revision 35 的技术调查 Work 实际完成 `wiki_search` 与 `wiki_read_page`，运行事件均无错误，引用短句与 Knowledge 页面正文一致。真实客户工单未重放。
+
+## 2026-09-28 - Route Manual v4 / Reply Contract v2：会话追问分类与受限答复（p2-178）
+
+- Prompt versions: `hermes-route-manual` v3→v4；`hermes-reply-contract` v1→v2；新增 `hermes-conversation-reply-manual` v1（防御性 Work 手册，受限答复回合实际由服务端执行）；服务端归一化 `hermes-route-aligned-v1`→`v2`；快照 schema `hermes-case-snapshot-v1`→`v2`（current_event 新增可选 trigger_comment_id）。
+- Route Manual v4：classification 新增 `conversation_subcategory`（knowledge_question / progress_inquiry / priority_request / null），明确 follow-up 知识问句与进度催促（含礼貌催快）的判别、明确要求人工优先级决定的追问停人工；`backend_operation.action` 必须是真实操作动词，状态查询/催促不得包装成新的 enablement 执行；follow-up 答复类提议 automation + `conversation_followup` 路由，服务端复核业务状态后可纠正回人工。
+- Reply Contract v2：新增 `conversation_followup` 小节——只按服务端 REPLY BASIS 渲染（可信 docs 答案或绑定的 relay 申请实际状态）、进度答复不承诺加速/时限、引用列表由服务端确定性追加。
+- 配套行为：服务端方向门禁（触发评论时效、AI 持有 enablement case、子类业务状态、人工交接后不复活）、发布前重核评论版本与 Zendesk 所有权、direction=human 完成真实人工交接。
+- Verification: 本地 24+2 项定向契约测试（含隔离 PostgreSQL）；Preproduction prompt release 与真实模型分类行为待验收发布后经 E3 实跑确认。

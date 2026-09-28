@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-28 - Hermes mid-session follow-up answers from trusted docs (p2-178)
+
+- Summary: an AI-held enablement conversation can now answer an in-session knowledge question ("What is the App ID?") in-turn: the Hermes route phase classifies it as conversation follow-up/knowledge_question, the server verifies business-state gates, and a server-controlled reply-only work phase queries the SAME trusted RAGFlow docs adapter used by the legacy reply fallback (`try_rag_fallback_answer`); the answer renders through the Persona phase with the deterministic References block appended, and publishes once through the hermes draft pipeline. RAG-unanswerable or failed lookups never guess — they complete the real human handoff.
+- Reason: ticket 13733 showed mid-session questions parking to human review with no answer: the snapshot author-role read made every follow-up look like a forbidden new-ticket follow-up, and no reply-only path existed between "execute enablement" and "park to human".
+- Affected files/config: `backend/services/automation_hermes_followup_reply.py` (new), `automation_hermes_tools.py`, `automation_hermes_agent.py`, `hermes_route_classifier.py`, `account_reply_rag_fallback.py` (reuse only), prompts in `prompts/hermes_support_agent.py`; no RAGFlow service, retrieval parameters, corpus, or prompt-catalog RAG change.
+- Data impact: no knowledge ingestion, schema migration, historical replay, or real ticket action. The RAG query gains a new caller (`request_id=hermes-followup:{turn_id}`) with the trigger comment as the question.
+- Verification: 26 contract tests (incl. 2 isolated-PostgreSQL turn/draft/work_result persistence and exactly-once replay cases) plus the affected hermes/escalation/enablement/scenario suites; Zendesk/mail/RAG boundaries mocked with counted calls. Live Preproduction behavior (real RAGFlow answers in the hermes draft pipeline) is verified by the first authorized E3 run.
+
 ## 2026-09-28 - Preproduction Hermes bound Wiki retrieval (p2-177)
 
 - Summary: investigation Work exposes read-only search and page reading across its bound Wiki assets; results retain Wiki and page provenance, and distinguish no hits from partial service failures.

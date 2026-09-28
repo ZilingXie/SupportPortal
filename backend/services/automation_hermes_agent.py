@@ -25,6 +25,11 @@ from backend.services.automation_ecs_store import (
     HermesTurnConflictError,
     HermesTurnStateError,
 )
+from backend.services.automation_hermes_followup_reply import (
+    CONVERSATION_FOLLOWUP_ROUTE,
+    reply_basis_for_run,
+    run_followup_reply_work,
+)
 from backend.services.automation_hermes_snapshot import (
     SnapshotTooLarge,
     build_case_snapshot,
@@ -61,6 +66,10 @@ WORK_PROMPT_KEYS = {
     "detailed_invoice": "hermes-automation-fraud-manual",
     "account_verification": "hermes-automation-verification-manual",
     "account_suspension": "hermes-automation-suspension-manual",
+    # Reply-only route: the work phase is server-controlled (no engine run);
+    # the manual exists so an accidentally submitted work run cannot execute
+    # business actions under this route.
+    "conversation_followup": "hermes-conversation-reply-manual",
 }
 
 PHASE_TOOLSETS = {
@@ -281,11 +290,15 @@ class HermesAgentTurnProcessor:
         turn_timeout_seconds: float = 900.0,
         work_result_wait_seconds: float | None = None,
         sleeper: Any = time.sleep,
+        rag_client: Any = None,
     ) -> None:
         self.store = store
         self.client = client or HermesAgentClient()
         self.environment = environment
         self.repository = repository
+        # Optional docs-search client override for the reply-only path
+        # (tests inject a fake; production resolves its own client).
+        self.rag_client = rag_client
         self.defer_seconds = max(1, defer_seconds)
         self.poll_interval_seconds = max(0.5, poll_interval_seconds)
         self.turn_timeout_seconds = turn_timeout_seconds
@@ -374,29 +387,29 @@ class HermesAgentTurnProcessor:
                 # submission (covers turns persisted with an invalid route).
                 return self._fail_route_contract_invalid(payload)
             if phase == HermesTurnPhase.WORK and str(refreshed.get("direction") or "") == "human":
-                self.store.complete_hermes_agent_turn(
-                    payload.turn_id,
-                    result={
-                        "engine": "hermes",
-                        "turn_id": payload.turn_id,
-                        "status": "human_review",
-                        "reason": "route_direction_human",
-                    },
+                # A human direction is a REAL handoff, not a silent park: the
+                # shared escalation chain (internal note, queue return,
+                # ownership release, pending-reply cancellation, owner
+                # notification) completes before the turn ends (p2-178).
+                return self._complete_human_direction_turn(payload, refreshed)
+            if (
+                phase == HermesTurnPhase.WORK
+                and str(refreshed.get("direction") or "") == "automation"
+                and str(refreshed.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE
+            ):
+                # Server-controlled reply-only work: no engine run, no
+                # business tool. Idempotent per turn via the persisted
+                # work_result.
+                outcome = self._run_followup_reply_work(payload, refreshed)
+            else:
+                outcome = self._run_phase(
+                    payload,
+                    refreshed,
+                    phase=phase.value,
+                    snapshot=snapshot,
+                    workspace=workspace,
+                    before_external=before_external,
                 )
-                return {
-                    "engine": "hermes",
-                    "turn_id": payload.turn_id,
-                    "status": "human_review",
-                    "reason": "route_direction_human",
-                }
-            outcome = self._run_phase(
-                payload,
-                refreshed,
-                phase=phase.value,
-                snapshot=snapshot,
-                workspace=workspace,
-                before_external=before_external,
-            )
             if outcome == _PHASE_FAILED:
                 failed = self.store.get_hermes_turn(payload.turn_id) or {}
                 return {
@@ -563,11 +576,18 @@ class HermesAgentTurnProcessor:
                     # transfers to human instead of claiming or running Work.
                     if not self._automation_route_contract_valid(refreshed):
                         return self._fail_route_contract_invalid(payload)
-                    # Legacy parity: claim the Zendesk ticket before the work
-                    # phase can execute any business action. The ~90s
-                    # routing-window wait belongs in this worker context, not
-                    # on the engine's tool request (ticket 13601).
-                    if not self._claim_automation_ownership_before_work(payload, refreshed):
+                    if str(refreshed.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE:
+                        # Reply-only turns never execute a business action:
+                        # the direction-time state gate already verified the
+                        # case is AI-held, and the publication gate re-checks
+                        # ownership before the reply publishes. Re-claiming
+                        # here would only burn the ~90s routing-window wait.
+                        pass
+                    elif not self._claim_automation_ownership_before_work(payload, refreshed):
+                        # Legacy parity: claim the Zendesk ticket before the work
+                        # phase can execute any business action. The ~90s
+                        # routing-window wait belongs in this worker context, not
+                        # on the engine's tool request (ticket 13601).
                         return {
                             "engine": "hermes",
                             "turn_id": payload.turn_id,
@@ -876,15 +896,136 @@ class HermesAgentTurnProcessor:
     def _automation_route_contract_valid(self, turn: dict[str, Any]) -> bool:
         """A turn may only proceed to Work as automation when its route is
         non-empty, registered, and has a Work manual (13650: empty routes
-        previously fell through to the investigation manual)."""
+        previously fell through to the investigation manual). The reply-only
+        conversation_followup route is server-controlled: it has a manual but
+        deliberately no registered business handler."""
         from backend.services.account_automation_handlers import account_automation_handler
+        from backend.services.automation_hermes_followup_reply import (
+            CONVERSATION_FOLLOWUP_ROUTE,
+        )
 
         route = str(turn.get("route") or "").strip()
         if not route:
             return False
+        if route == CONVERSATION_FOLLOWUP_ROUTE:
+            return bool(WORK_PROMPT_KEYS.get(route, ""))
         if account_automation_handler(route) is None:
             return False
         return bool(WORK_PROMPT_KEYS.get(route, ""))
+
+    def _run_followup_reply_work(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> str:
+        """Server-controlled work phase for a conversation_followup turn.
+
+        Runs the trusted-basis assembly (RAG answer or bound relay state)
+        directly in the worker — no engine work run. Escalation outcomes
+        write the unified handoff themselves; the caller's post-work logic
+        parks the turn from the recorded work_result."""
+        try:
+            work_result = run_followup_reply_work(
+                self.store,
+                self.repository,
+                turn=turn,
+                rag_client=self.rag_client,
+            )
+        except Exception:
+            LOGGER.exception(
+                "followup_reply_work_failed turn_id=%s", turn.get("turn_id")
+            )
+            account_case = (
+                self.repository.get_account_case_by_ticket_id(
+                    str(turn.get("zendesk_ticket_id") or "")
+                )
+                if self.repository is not None
+                else None
+            )
+            if isinstance(account_case, dict):
+                self._escalate_automation_failure(
+                    payload,
+                    account_case,
+                    reason_code="followup_reply_work_failed",
+                    detail="The reply-only work phase raised before any reply basis was recorded.",
+                    notification="failure",
+                )
+            try:
+                self.store.record_hermes_turn_work(
+                    str(turn["turn_id"]),
+                    work_result={
+                        "status": "human_review_required",
+                        "reason": "followup_reply_work_failed",
+                        "route": CONVERSATION_FOLLOWUP_ROUTE,
+                    },
+                )
+            except Exception:
+                pass
+            return _PHASE_COMPLETED
+        status = str(work_result.get("status") or "")
+        if status and status != "running":
+            try:
+                self.store.record_hermes_turn_work(
+                    str(turn["turn_id"]), work_result=work_result
+                )
+            except Exception:
+                LOGGER.exception(
+                    "followup_reply_work_persist_failed turn_id=%s", turn.get("turn_id")
+                )
+                return _PHASE_FAILED
+        return _PHASE_COMPLETED
+
+    def _complete_human_direction_turn(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Complete the REAL human handoff for a direction=human turn.
+
+        The shared escalation chain (internal note, queue return, ownership
+        release, pending-reply cancellation, owner notification) runs here;
+        the turn only ends afterwards. Hermes public publishing is disabled
+        for the case (binding parked, drafts superseded)."""
+        reason = str(turn.get("direction_reason") or "").strip() or "route_direction_human"
+        ticket_id = str(turn.get("zendesk_ticket_id") or payload.event.ticket.id)
+        account_case = (
+            self.repository.get_account_case_by_ticket_id(ticket_id)
+            if self.repository is not None and ticket_id
+            else None
+        )
+        handoff: dict[str, Any] | None = None
+        if isinstance(account_case, dict):
+            handoff = self._escalate_automation_failure(
+                payload,
+                account_case,
+                reason_code=reason,
+                detail=(
+                    "Hermes routed this turn to human review "
+                    f"({reason}); the case was transferred to the human team."
+                ),
+                notification="takeover",
+            )
+        else:
+            try:
+                self.store.record_hermes_turn_work(
+                    payload.turn_id,
+                    work_result={"status": "human_review_required", "reason": reason},
+                )
+            except Exception:
+                pass
+        result = {
+            "engine": "hermes",
+            "turn_id": payload.turn_id,
+            "status": "human_review",
+            "reason": reason,
+            "handoff": handoff,
+        }
+        try:
+            self.store.complete_hermes_agent_turn(payload.turn_id, result=result)
+        except Exception:
+            # A raced terminal state (e.g. cancellation recovery) must not
+            # mask the completed handoff; the binding park is the safety net.
+            LOGGER.exception(
+                "human-direction turn completion failed for %s", payload.turn_id
+            )
+        return result
+
 
     def _fail_route_contract_invalid(self, payload: AgentTurnJobPayload) -> dict[str, Any]:
         """Unified human takeover for an automation turn whose route contract
@@ -1118,7 +1259,8 @@ class HermesAgentTurnProcessor:
         *,
         reason_code: str,
         detail: str,
-    ) -> None:
+        notification: str = "failure",
+    ) -> dict[str, Any] | None:
         from backend.services.automation_hermes_tools import (
             _escalate_uncompleted_automation,
         )
@@ -1133,7 +1275,7 @@ class HermesAgentTurnProcessor:
             )
             or normalized_route
         )
-        _escalate_uncompleted_automation(
+        return _escalate_uncompleted_automation(
             store=self.store,
             repository=self.repository,
             account_case=account_case,
@@ -1142,6 +1284,7 @@ class HermesAgentTurnProcessor:
             automation_handler=automation_handler,
             reason_code=reason_code,
             detail=detail,
+            notification=notification,
         )
 
     # ----------------------------------------------------------------- phases
@@ -1220,6 +1363,15 @@ class HermesAgentTurnProcessor:
                 # case, the engineer's question on an ad-hoc session) is the
                 # turn's content; the stored snapshot alone does not carry it.
                 input_text += f"\n\n--- MESSAGE FOR THIS TURN ---\n{reviewer_feedback}"
+            if phase == HermesTurnPhase.PERSONA.value and str(
+                turn.get("route") or ""
+            ) == CONVERSATION_FOLLOWUP_ROUTE:
+                basis = reply_basis_for_run(turn)
+                if basis:
+                    # The reply-only turn has no engine work run in the
+                    # session; the server-assembled trusted basis travels
+                    # with the persona run input instead.
+                    input_text += f"\n\n--- REPLY BASIS FOR THIS TURN ---\n{basis}"
             try:
                 started = self.client.start_run(
                     session_id=str(binding.get("hermes_session_id") or ""),
@@ -1612,9 +1764,15 @@ class HermesAgentTurnProcessor:
 
 def _event_projection(payload: AgentTurnJobPayload) -> dict[str, Any]:
     event = payload.event
+    snapshot = payload.event.comment_snapshot
     return {
         "event_id": event.event_id,
         "event_type": event.event_type.value,
         "occurred_at": event.occurred_at.isoformat(),
         "ticket": event.ticket.model_dump(mode="json"),
+        # The trigger comment anchors per-turn currency checks (follow-up
+        # reply gates): which comment this turn answers.
+        "trigger_comment_id": (
+            str(snapshot.trigger_comment_id).strip() if snapshot is not None else ""
+        ),
     }

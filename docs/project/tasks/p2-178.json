@@ -1,0 +1,60 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-178",
+  "title": "AppID 追问修复：Hermes 会话知识问句 RAG 答复、进度答复与真实人工交接",
+  "status": "review",
+  "owner": "codex",
+  "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
+  "next_action": "实现与本地定向验证完成，等待规划 thread 独立验收（分支 codex/appid-followup-rag-fix）；通过后 finalize 与 Preproduction 发布；真实 E3 全链跑需另行业务副作用授权。",
+  "acceptance_criteria": [
+    "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
+    "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
+    "direction=human 不再静默结束 turn：接入共享交接服务并回读私有 note comment ID、原 queue/group 与空 assignee、所有权释放、待发回复取消、负责人邮件发送或明确失败状态；技术失败用失败告警邮件、策略分流用语义准确的人工接管通知。",
+    "已回队列但 note 失败不再被报告为全部完成；reconciliation 不因 action/route_status 被覆盖而漏扫；按 turn/incident 幂等、结果未知先回读不盲目重发。",
+    "人工交接完成后，客户补 App ID 不得自动夺回工单（服务端门禁纠正为 human），需人工恢复入口。",
+    "E3 剧本 turn 2/5 断言反映新合同；各等待绑定触发评论/turn/relay request_id/版本/新 comment ID，旧评论与旧 relay 结果不能使新回合通过；E3 显式要求 zendesk_api 通道，通道选错在建单前失败；CLI relay 审批提示字段修正。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "p2-178 定向契约套件（含隔离 PostgreSQL 两例）",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_followup_reply_contract.py",
+      "result": "26 passed（无 PG gate 时 24；RUN_POSTGRES_INTEGRATION=1 时 26，含 turn/draft/work_result 持久化与同评论重放恰好一次）"
+    },
+    {
+      "type": "test",
+      "label": "受影响套件回归",
+      "command": ".venv/bin/python -m pytest -q test_hermes_route_classifier / test_hermes_zendesk_agent(_tools) / test_hermes_tool_failure_handoff / test_route_alignment_hermes_service / test_account_human_review_escalation / test_enablement_auto_failure / test_enablement_auto_relay / test_account_reply_rag_fallback / test_automation_test_scenarios / test_account_failure_alerts",
+      "result": "317 passed（新增/更新断言全绿；test_worker 与 test_enablement_rag_resume 的 15 项失败在干净 main 基线同样失败，为存量问题）"
+    },
+    {
+      "type": "test",
+      "label": "隔离 PostgreSQL 集成",
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<disposable pg 14> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_route_contract_pg.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_hermes_case_workflow_postgres.py",
+      "result": "41 passed（临时 initdb 集群，跑后已删除）"
+    }
+  ],
+  "source_refs": [
+    "backend/services/hermes_route_classifier.py",
+    "backend/services/automation_hermes_tools.py",
+    "backend/services/automation_hermes_agent.py",
+    "backend/services/account_human_review_escalation.py",
+    "backend/services/account_reply_rag_fallback.py",
+    "backend/services/automation_test_scenarios.py",
+    "docs/testing/production_ticket_regression_runbook.md"
+  ],
+  "created_at": "2026-09-28T00:00:00Z",
+  "updated_at": "2026-09-28T12:00:00Z",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "history": [
+    {
+      "at": "2026-09-28T12:00:00Z",
+      "note": "实现完成未 finalize：分类门禁/受限答复/真实交接/not-found 回复/E3 与 CLI 重写全部落地并本地验证，等待独立验收。"
+    }
+  ]
+}

@@ -68,23 +68,25 @@ def reconcile_account_human_review_queue_mismatches(
     reconciliation pass so cases created by an older failure branch (such as a
     reply job that was only marked ``manual_attention``) receive the same
     idempotent handoff as new failures.
+
+    p2-178: the scan must NOT filter on ``route_status`` or on the case's
+    ``execution_action``/``route`` still reading as an active subcategory —
+    the escalation path itself overwrites ``route_status`` (and earlier
+    direction recordings overwrote ``execution_action``) before the note and
+    queue-return steps run, which made a partially-failed handoff invisible
+    to this pass. The durable signals are ``automation_status`` and the
+    recorded Zendesk ownership state.
     """
     normalized_profile = str(processing_profile or "").strip().lower()
     if not is_live_account_processing_profile(normalized_profile):
         return []
     cases = repository.list_account_cases(
         limit=max(1, min(int(limit), 100)),
-        route_status="automated",
         processing_profile=normalized_profile,
     )
     results: list[AccountHumanReviewEscalationResult] = []
     for case in cases or []:
         if not isinstance(case, dict):
-            continue
-        action = canonical_automation_subcategory(
-            case.get("execution_action") or case.get("route") or ""
-        )
-        if action not in ACTIVE_AUTOMATION_SUBCATEGORIES:
             continue
         if str(case.get("automation_status") or "").strip().lower() != "human_review_required":
             continue
@@ -101,13 +103,22 @@ def reconcile_account_human_review_queue_mismatches(
         ).strip().lower()
         if handoff_status in {"queued", "already_human_owned", "outcome_unknown"}:
             continue
+        action = canonical_automation_subcategory(
+            case.get("execution_action") or case.get("route") or ""
+        )
+        handler = str(
+            case.get("automation_handler")
+            or escalation.get("handler")
+            or action
+            or "automation"
+        ).strip().lower() or "automation"
         ticket_id = str(case.get("client_ticket_id") or "").strip()
         failure_code = str(case.get("failure_code") or "account_human_review_reconciliation").strip()
         results.append(
             escalate_account_case_to_human_review(
                 account_case=case,
                 ticket_id=ticket_id,
-                handler=str(case.get("automation_handler") or action),
+                handler=handler,
                 failure_stage=str(case.get("failure_stage") or "reconciliation"),
                 failure_code=failure_code,
                 reason="Persisted Human Review state still had automated Zendesk routing.",
@@ -243,8 +254,33 @@ def _deliver_internal_note(
     if not claim.get("created"):
         existing = claim.get("response_payload") if isinstance(claim, dict) else None
         if isinstance(existing, dict):
+            replayed_status = str(existing.get("status") or "in_progress")
+            if replayed_status == "outcome_unknown":
+                # Result unknown: READ BACK before anything else — the note
+                # may already be on the ticket. Never blindly resend (p2-178).
+                try:
+                    readback, _solved_seen = read_ticket_comment_audit(
+                        ticket_id=zendesk_ticket_id,
+                        body=body,
+                        public=False,
+                    )
+                except ZendeskCommentError:
+                    return "outcome_unknown", None, str(existing.get("error_code") or "")
+                if readback is not None:
+                    comment_id = str(readback.comment_id or "").strip() or None
+                    payload = {
+                        "status": "sent",
+                        "comment_id": comment_id,
+                        "idempotent_replay": True,
+                        "resolved_by": "readback",
+                    }
+                    _persist_note_result(
+                        repository, key=key, payload=payload, status="sent", timestamp=timestamp
+                    )
+                    return "sent", comment_id, None
+                return "outcome_unknown", None, str(existing.get("error_code") or "")
             return (
-                str(existing.get("status") or "in_progress"),
+                replayed_status,
                 str(existing.get("comment_id") or "").strip() or None,
                 str(existing.get("error_code") or "").strip() or None,
             )
@@ -346,18 +382,32 @@ def escalate_account_case_to_human_review(
         or ""
     ).strip().lower()
     if prior_handoff in {"queued", "already_human_owned", "outcome_unknown"}:
-        terminal_status = "degraded" if prior_handoff == "outcome_unknown" else "completed"
+        # The Zendesk side already ran; never re-run note/queue side effects.
+        # p2-178: report honestly — "queued" only means the queue return
+        # succeeded; a prior note failure must surface as degraded, not as a
+        # completed handoff.
+        prior_note = str(prior_escalation.get("internal_note_status") or "").strip()
+        prior_route = str(
+            prior_escalation.get("route_back_status") or prior_handoff
+        ).strip()
+        note_ok = prior_note in {
+            "sent",
+            "skipped_not_production",
+            "skipped_missing_zendesk_ticket",
+        }
+        route_ok = prior_route in {"queued", "already_human_owned"}
+        terminal_status = (
+            "completed"
+            if prior_handoff != "outcome_unknown" and note_ok and route_ok
+            else "degraded"
+        )
         return AccountHumanReviewEscalationResult(
             status=terminal_status,
             account_case_id=account_case_id,
             handler=normalized_handler,
             zendesk_ticket_id=_zendesk_ticket_id(account_case, ticket_id) or None,
-            internal_note_status=str(
-                prior_escalation.get("internal_note_status") or "already_reconciled"
-            ),
-            route_back_status=str(
-                prior_escalation.get("route_back_status") or prior_handoff
-            ),
+            internal_note_status=prior_note or "already_reconciled",
+            route_back_status=prior_route,
             handoff_status=prior_handoff,
             note_comment_id=str(prior_escalation.get("note_comment_id") or "").strip() or None,
             failure_code=str(prior_escalation.get("failure_code") or "").strip() or None,

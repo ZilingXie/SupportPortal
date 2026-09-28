@@ -154,21 +154,25 @@ def tool_record_direction(
             "phase_mismatch", "direction may only be recorded during the route phase"
         )
     normalized_route = str(route or "").strip() or None
+    hermes_proposed_direction = normalized_direction
     normalized_classification: dict[str, Any] | None = None
     if classification is not None:
         from backend.services.hermes_route_classifier import (
             HermesRouteClassificationError,
             normalize_hermes_route_classification,
         )
+        from backend.services.automation_hermes_followup_reply import (
+            latest_assistant_message_before_trigger,
+        )
 
         latest_assistant_message_present = None
-        snapshot = turn.get("input_snapshot")
-        if isinstance(snapshot, dict):
-            latest_assistant_message_present = any(
-                str(item.get("role") or "").strip().lower() in {"assistant", "agent", "staff"}
-                for item in snapshot.get("conversation") or []
-                if isinstance(item, dict)
-            )
+        if isinstance(turn.get("input_snapshot"), dict):
+            # The snapshot writes the comment author under ``author.role``;
+            # only PUBLIC assistant replies authored before the trigger
+            # comment are conversation history for this turn (13733: reading
+            # a non-existent top-level ``role`` made every mid-session
+            # follow-up look like a forbidden new-ticket follow-up).
+            latest_assistant_message_present = latest_assistant_message_before_trigger(turn)
         try:
             normalized_classification = normalize_hermes_route_classification(
                 classification,
@@ -183,8 +187,36 @@ def tool_record_direction(
         normalized_reason = str(
             normalized_classification.get("route_reason_code") or normalized_reason
         )
+        # The server, not the model, makes the final call for the reply-only
+        # route and for any automation proposal on a case already handed to a
+        # human; the correction (and the raw proposal) stay on the record.
+        correction_reason = _server_direction_correction(
+            store,
+            repository,
+            turn,
+            normalized_direction,
+            normalized_route,
+            normalized_classification,
+        )
+        if correction_reason:
+            normalized_classification = _correct_classification_to_human(
+                normalized_classification,
+                correction_reason=correction_reason,
+                hermes_proposed_direction=hermes_proposed_direction,
+            )
+            normalized_direction = "human"
+            normalized_route = None
+            normalized_reason = correction_reason
+        else:
+            normalized_classification.setdefault(
+                "hermes_proposed_direction", hermes_proposed_direction
+            )
+            normalized_classification.setdefault("server_correction_reason", None)
     if normalized_direction == "automation":
         from backend.services.account_automation_handlers import account_automation_handler
+        from backend.services.automation_hermes_followup_reply import (
+            CONVERSATION_FOLLOWUP_ROUTE,
+        )
 
         # 13650: an automation decision without a route is incomplete and must
         # be rejected BEFORE any decision state is written — an empty route
@@ -195,7 +227,10 @@ def tool_record_direction(
                 "route_required_for_automation",
                 "direction=automation requires a registered automation route",
             )
-        if account_automation_handler(normalized_route) is None:
+        if (
+            normalized_route != CONVERSATION_FOLLOWUP_ROUTE
+            and account_automation_handler(normalized_route) is None
+        ):
             raise HermesToolError(
                 "invalid_route", f"route {normalized_route} has no registered automation handler"
             )
@@ -203,13 +238,20 @@ def tool_record_direction(
         turn_id, direction=normalized_direction, route=normalized_route, reason=normalized_reason
     )
     account_case = _require_account_case(context)
-    if normalized_direction == "automation":
+    from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
+
+    # A reply-only turn never rewrites the case's registered business route;
+    # a human direction keeps it too — reconcile/reroute still need it after
+    # the handoff (overwriting execution_action with "human_review_required"
+    # made the human-review reconciliation miss these cases entirely).
+    if normalized_direction == "automation" and normalized_route != CONVERSATION_FOLLOWUP_ROUTE:
         account_case["route"] = normalized_route or account_case.get("route")
         account_case["execution_action"] = normalized_route or account_case.get("execution_action")
     if normalized_classification is not None:
         account_case["route_classification"] = dict(normalized_classification)
-        account_case["route_family"] = normalized_classification.get("route_family")
-        account_case["execution_action"] = normalized_classification.get("execution_action")
+        if normalized_direction == "automation" and normalized_route != CONVERSATION_FOLLOWUP_ROUTE:
+            account_case["route_family"] = normalized_classification.get("route_family")
+            account_case["execution_action"] = normalized_classification.get("execution_action")
     account_case["automation_status"] = (
         "automation" if normalized_direction == "automation" else "human_review_required"
     )
@@ -221,6 +263,91 @@ def tool_record_direction(
         "route": normalized_route,
         "classification": normalized_classification,
     }
+
+
+def _server_direction_correction(
+    store: AutomationEcsStore,
+    repository: Any,
+    turn: dict[str, Any],
+    direction: str,
+    route: str | None,
+    classification: dict[str, Any],
+) -> str | None:
+    """Business-state verification for automation proposals. Returns a
+    correction reason when the server must override the proposal to human,
+    or None to accept it."""
+    if direction != "automation":
+        return None
+    from backend.services.automation_hermes_followup_reply import (
+        CONVERSATION_FOLLOWUP_ROUTE,
+        followup_reply_state_gate,
+    )
+
+    ticket_id = str(turn.get("zendesk_ticket_id") or "")
+    account_case = (
+        repository.get_account_case_by_ticket_id(ticket_id)
+        if repository is not None and ticket_id
+        else None
+    )
+    # A completed human handoff is terminal for automation: a later customer
+    # comment must not let the engine re-claim the ticket. Restoring the case
+    # requires the explicit human entry (reroute/rerun).
+    if not isinstance(account_case, dict):
+        return None
+    if str(account_case.get("automation_status") or "").strip() == "human_review_required":
+        return "case_human_review_active"
+    context = account_case.get("automation_context")
+    context = context if isinstance(context, dict) else {}
+    ownership = context.get("zendesk_ownership")
+    ownership = ownership if isinstance(ownership, dict) else {}
+    if str(ownership.get("state") or "").strip().lower() in {
+        "released_to_queue",
+        "human_reassigned",
+        "human_replied",
+    }:
+        return f"case_human_review_active:ownership_{ownership.get('state')}"
+    if route == CONVERSATION_FOLLOWUP_ROUTE:
+        gate = followup_reply_state_gate(
+            store,
+            repository,
+            turn,
+            subcategory=str(classification.get("conversation_subcategory") or ""),
+        )
+        if not gate["ok"]:
+            return gate["reason"]
+    return None
+
+
+def _correct_classification_to_human(
+    classification: dict[str, Any],
+    *,
+    correction_reason: str,
+    hermes_proposed_direction: str,
+) -> dict[str, Any]:
+    """Rewrite a provisional automation classification to the human decision
+    while preserving the model's raw proposal and the correction reason."""
+    from backend.services.account_route_pipeline import classification_labels
+
+    corrected = dict(classification)
+    corrected.update(
+        {
+            "direction": "human",
+            "route": None,
+            "route_target": "human_review",
+            "route_family": "human_review",
+            "execution_action": "human_review_required",
+            "automation_eligibility": "ineligible",
+            "handler_binding_status": None,
+            "route_reason_code": correction_reason,
+            "human_review_reason": correction_reason,
+            "hermes_proposed_direction": hermes_proposed_direction,
+            "server_correction_reason": correction_reason,
+        }
+    )
+    primary, secondary = classification_labels(corrected)
+    corrected["primary_label"] = primary
+    corrected["secondary_label"] = secondary
+    return corrected
 
 
 async def tool_execute_automation_action(
@@ -704,16 +831,24 @@ def _escalate_uncompleted_automation(
     automation_handler: str,
     reason_code: str,
     detail: str,
+    notification: str = "failure",
 ) -> dict[str, Any]:
-    """Unified failure handoff for a business action that could not complete.
+    """Unified human handoff for a turn the automation could not complete.
 
     Runs the existing chain (internal Zendesk note, route back to the human
-    queue, ownership release, idempotent owner alert email) and parks the
-    hermes binding.  NEVER a customer-facing failure narrative: the tool
-    result tells the agent the case is escalated, and the publication gate
-    skips persona/publication for human-review turns (ticket 13567).
+    queue, ownership release, pending-reply cancellation, idempotent owner
+    notification) and parks the hermes binding.  ``notification`` selects the
+    owner email semantics: ``failure`` (technical incident) keeps the
+    failure alert; ``takeover`` (policy routing — the human team should
+    simply take over) sends the semantically accurate takeover notice.
+    NEVER a customer-facing failure narrative: the tool result tells the
+    agent the case is escalated, and the publication gate skips
+    persona/publication for human-review turns (ticket 13567).
     """
-    from backend.services.account_failure_alerts import notify_account_failure
+    from backend.services.account_failure_alerts import (
+        notify_account_failure,
+        notify_account_human_takeover,
+    )
     from backend.services.account_human_review_escalation import (
         escalate_account_case_to_human_review,
     )
@@ -744,7 +879,8 @@ def _escalate_uncompleted_automation(
     # email AND skipped the park (ticket 13580).
     # Per-step outcomes: one failing step must never mask the others, and a
     # partial handoff must be visible as partial (never reported as success).
-    handoff_steps: dict[str, str] = {}
+    handoff_steps: dict[str, Any] = {}
+    handoff_evidence: dict[str, Any] = {}
     try:
         escalation = escalate_account_case_to_human_review(
             account_case=account_case,
@@ -758,16 +894,32 @@ def _escalate_uncompleted_automation(
         # Acceptance gap #8: record the real outcome, not just the absence of
         # an exception — a degraded escalation (note or queue failed) must
         # never read as a clean "ok".
-        if str(getattr(escalation, "status", "") or "") == "completed":
+        escalation_status = str(getattr(escalation, "status", "") or "")
+        if escalation_status == "completed":
             handoff_steps["internal_note_queue_ownership"] = "ok"
-        elif str(getattr(escalation, "status", "") or ""):
+        elif escalation_status:
             handoff_steps["internal_note_queue_ownership"] = (
-                f"{getattr(escalation, 'status', 'unknown')}:"
+                f"{escalation_status}:"
                 f"note={getattr(escalation, 'internal_note_status', 'unknown')},"
                 f"queue={getattr(escalation, 'route_back_status', 'unknown')}"
             )
         else:
             handoff_steps["internal_note_queue_ownership"] = "unknown_return"
+        # Verifiable readback for every acceptance check: the private note's
+        # comment id, the queue/assignee the ticket went back to, and the
+        # handoff status the shared chain recorded.
+        handoff_evidence["internal_note_status"] = str(
+            getattr(escalation, "internal_note_status", "") or ""
+        )
+        note_comment_id = str(getattr(escalation, "note_comment_id", "") or "").strip()
+        if note_comment_id:
+            handoff_evidence["note_comment_id"] = note_comment_id
+        handoff_evidence["route_back_status"] = str(
+            getattr(escalation, "route_back_status", "") or ""
+        )
+        handoff_evidence["handoff_status"] = str(
+            getattr(escalation, "handoff_status", "") or ""
+        )
     except Exception as exc:
         handoff_steps["internal_note_queue_ownership"] = f"failed:{type(exc).__name__}"
     account_case_id = str(
@@ -776,16 +928,36 @@ def _escalate_uncompleted_automation(
     from backend.services.automation_account_intake import _now_iso
 
     try:
-        notify_result = notify_account_failure(
+        cancelled_reply_jobs = repository.cancel_pending_account_reply_jobs(
+            str(ticket_id or "").strip(),
+            updated_at=str(account_case.get("updated_at") or _now_iso()),
+        )
+        handoff_evidence["cancelled_reply_jobs"] = int(cancelled_reply_jobs or 0)
+    except Exception as exc:
+        handoff_evidence["cancelled_reply_jobs"] = f"failed:{type(exc).__name__}"
+    incident_id = (
+        f"account-automation:{account_case_id}:hermes_tool:{reason_code}"
+        if notification == "failure"
+        else f"account-takeover:{account_case_id}:hermes:{turn_id}:{reason_code}"
+    )
+    try:
+        notify_kwargs = dict(
             repository=repository,
-            incident_id=f"account-automation:{account_case_id}:hermes_tool:{reason_code}",
+            incident_id=incident_id,
             stage="hermes_tool",
             code=reason_code,
             ticket_id=ticket_id,
             account_case_id=account_case_id,
-            detail=detail[:500],
             now=str(account_case.get("updated_at") or _now_iso()),
         )
+        if notification == "takeover":
+            notify_result = notify_account_human_takeover(
+                **notify_kwargs, detail=detail[:500]
+            )
+        else:
+            notify_result = notify_account_failure(
+                **notify_kwargs, detail=detail[:500]
+            )
         notify_status = str((notify_result or {}).get("status") or "").strip()
         if notify_status in {"sent", "sent_unpersisted"}:
             handoff_steps["owner_email"] = "ok"
@@ -803,8 +975,10 @@ def _escalate_uncompleted_automation(
             handoff_steps["owner_email"] = notify_status
         else:
             handoff_steps["owner_email"] = "unknown_return"
+        handoff_evidence["owner_email_status"] = handoff_steps["owner_email"]
     except Exception as exc:
         handoff_steps["owner_email"] = f"failed:{type(exc).__name__}"
+        handoff_evidence["owner_email_status"] = handoff_steps["owner_email"]
     try:
         store.escalate_hermes_case(turn_id, reason=reason_code)
         handoff_steps["binding_park"] = "ok"
@@ -819,6 +993,8 @@ def _escalate_uncompleted_automation(
                 "turn_id": turn_id,
                 "reason_code": reason_code,
                 "steps": handoff_steps,
+                "evidence": handoff_evidence,
+                "notification": notification,
                 "attempted_at": _now_iso(),
             },
         )
@@ -833,6 +1009,7 @@ def _escalate_uncompleted_automation(
                 "route": automation_handler,
                 "executed_actions": [],
                 "handoff_steps": handoff_steps,
+                "handoff_evidence": handoff_evidence,
             },
         )
     except Exception:
@@ -843,6 +1020,7 @@ def _escalate_uncompleted_automation(
         "route": automation_handler,
         "executed_actions": [],
         "handoff_steps": handoff_steps,
+        "handoff_evidence": handoff_evidence,
     }
 
 
@@ -916,6 +1094,21 @@ def tool_save_reply_draft(
     normalized_content = apply_greeting_projection(normalized_content, greeting_name)
     investigation = binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
     work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else None
+    from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
+    from backend.services.account_reply_rag_fallback import format_rag_fallback_references
+
+    if (
+        str(turn.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE
+        and isinstance(work_result, dict)
+        and str(work_result.get("followup_kind") or "") == "knowledge_question"
+    ):
+        # The trusted reference list is appended deterministically (the same
+        # contract as the legacy RAG fallback reply) — the persona renders
+        # core content only, so the guardrail below validates the final text.
+        references = [
+            str(item) for item in list(work_result.get("references") or []) if str(item).strip()
+        ]
+        normalized_content = normalized_content + format_rag_fallback_references(references)
     guardrail = run_engineer_guardrail_final(
         draft_customer_reply=normalized_content,
         reply_readiness={
@@ -990,6 +1183,61 @@ def publication_decision_for_turn(
     updated = store.request_hermes_draft_publish(draft["draft_id"])
     if str(updated.get("publish_policy")) != "auto":
         return {"status": "awaiting_approval", "queued": False, "draft_id": draft["draft_id"]}
+    # Pre-publish re-verification for auto-approved drafts (p2-178): the
+    # conversation must not have moved past this draft's comment version,
+    # and the case must still be AI-held in Zendesk. The manual-approval
+    # path already carries the staleness fence (approve_hermes_case_draft).
+    binding = context["binding"]
+    if int(binding.get("conversation_version") or 0) > int(draft.get("conversation_version") or 0) + 1:
+        try:
+            store.supersede_hermes_draft(draft["draft_id"])
+        except Exception:
+            pass
+        store.fail_hermes_agent_turn(
+            turn_id,
+            status="failed",
+            error_code="draft_stale_before_publish",
+            error_message="a newer customer input advanced the conversation before publication",
+        )
+        return {
+            "status": "human_review",
+            "queued": False,
+            "reason": "draft_stale_before_publish",
+            "draft_id": draft["draft_id"],
+        }
+    account_case = context.get("account_case")
+    if isinstance(account_case, dict):
+        automation_context = account_case.get("automation_context")
+        automation_context = automation_context if isinstance(automation_context, dict) else {}
+        ownership = automation_context.get("zendesk_ownership")
+        ownership = ownership if isinstance(ownership, dict) else {}
+        ownership_state = str(ownership.get("state") or "").strip().lower()
+        live_profile = str(account_case.get("processing_profile") or "").strip().lower() in {
+            "preproduction",
+            "production",
+        }
+        if live_profile and ownership_state not in {"", "assigned"}:
+            # Ownership was released or taken by a human between the draft
+            # and publication: never publish over a human-owned ticket.
+            try:
+                store.supersede_hermes_draft(draft["draft_id"])
+            except Exception:
+                pass
+            store.fail_hermes_agent_turn(
+                turn_id,
+                status="failed",
+                error_code="ownership_lost_before_publish",
+                error_message=(
+                    f"zendesk ownership state is {ownership_state or 'missing'}; "
+                    "the draft was not published"
+                ),
+            )
+            return {
+                "status": "human_review",
+                "queued": False,
+                "reason": "ownership_lost_before_publish",
+                "draft_id": draft["draft_id"],
+            }
     if not zendesk_side_effects_enabled:
         return {"status": "approved", "queued": False, "reason": "zendesk_side_effects_disabled"}
     # Auto-approved drafts enter the same async delivery-preparation flow as

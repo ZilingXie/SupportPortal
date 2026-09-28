@@ -29,9 +29,40 @@ from backend.services.automation_routing import AUTOMATED_ROUTE_FAMILY, is_regis
 from backend.services.enablement_automation import is_supported_enablement_feature
 
 
-HERMES_ROUTE_CLASSIFICATION_VERSION = "hermes-route-aligned-v1"
+HERMES_ROUTE_CLASSIFICATION_VERSION = "hermes-route-aligned-v2"
 _INTENTS = {"conversation", "agora", "uncertain"}
 _CONVERSATION_ACTIONS = {"resolve", "follow_up", "human_review"}
+# Mid-session follow-up flavors. knowledge_question and progress_inquiry are
+# answerable in-turn by the server-controlled reply-only path (business-state
+# gates run in tool_record_direction); priority_request explicitly asks a
+# human to decide priority and always stays human.
+_CONVERSATION_SUBCATEGORIES = {"knowledge_question", "progress_inquiry", "priority_request"}
+# Operation verbs that constitute a NEW enablement execution request. A status
+# query or nudge ("check", "any update", "faster") is not a new `enable`
+# execution even when the model wraps it in backend_operation.
+_ENABLEMENT_EXECUTION_VERBS = frozenset(
+    {
+        "enable",
+        "enables",
+        "enabled",
+        "enabling",
+        "turn on",
+        "activate",
+        "activates",
+        "activated",
+        "activating",
+        "provision",
+        "provisions",
+        "provisioned",
+        "provisioning",
+        "grant",
+        "grants",
+        "granted",
+        "open",
+        "opens",
+        "opened",
+    }
+)
 _AGORA_ROUTES = {
     "technical",
     "security_compliance",
@@ -53,6 +84,11 @@ class HermesRouteClassificationError(ValueError):
 
 def _text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip().lower()
+
+
+def _enablement_execution_verb(action: str) -> bool:
+    normalized = _text(action).replace("_", " ").replace("-", " ")
+    return normalized in _ENABLEMENT_EXECUTION_VERBS
 
 
 def _confidence(value: Any, *, default: float | None = None) -> float:
@@ -86,6 +122,7 @@ def _base(payload: Mapping[str, Any], *, confidence: float, reason: str) -> dict
         "classification_version": HERMES_ROUTE_CLASSIFICATION_VERSION,
         "intent_class": _text(payload.get("intent_class")) or "uncertain",
         "conversation_action": None,
+        "conversation_subcategory": None,
         "agora_route": None,
         "automation_subcategory": None,
         "account_billing_subcategory": None,
@@ -188,6 +225,12 @@ def normalize_hermes_route_classification(
         action = _text(payload.get("conversation_action"))
         if action not in _CONVERSATION_ACTIONS:
             raise HermesRouteClassificationError("invalid_conversation_action", "conversation_action is not supported")
+        subcategory = _text(payload.get("conversation_subcategory")) or None
+        if subcategory is not None and subcategory not in _CONVERSATION_SUBCATEGORIES:
+            raise HermesRouteClassificationError(
+                "invalid_conversation_subcategory",
+                "conversation_subcategory is not supported",
+            )
         action_confidence = _confidence(payload.get("action_confidence"))
         has_assistant = latest_assistant_message_present
         if has_assistant is None and "latest_assistant_message_present" in payload:
@@ -198,12 +241,41 @@ def normalize_hermes_route_classification(
         elif action_confidence < _threshold():
             action = "human_review"
             reason = "low_conversation_action_confidence"
+        elif action == "follow_up" and subcategory == "priority_request":
+            # The customer explicitly asks a human to decide priority; the
+            # reply-only path must not answer it.
+            action = "human_review"
+            reason = "conversation_priority_request"
+        elif action == "follow_up" and subcategory in {"knowledge_question", "progress_inquiry"}:
+            # Provisional reply-only route: the state gates in
+            # tool_record_direction (trigger comment currency, AI-held
+            # enablement case, per-subcategory business state) make the final
+            # server decision and may correct it back to human.
+            classification.update(
+                conversation_action="follow_up",
+                conversation_subcategory=subcategory,
+                route_target="conversation_reply",
+                route_family="conversation",
+                execution_action="followup_reply",
+                automation_eligibility="eligible",
+            )
+            return _finish(
+                classification,
+                direction="automation",
+                route="conversation_followup",
+                reason=f"conversation_followup_{subcategory}",
+                direction_hint=direction_hint,
+                route_hint=route_hint,
+            )
         else:
             reason = {
                 "resolve": "conversation_resolution",
                 "follow_up": "conversation_follow_up",
                 "human_review": "conversation_requires_review",
             }[action]
+        classification["conversation_subcategory"] = (
+            subcategory if action == "follow_up" else None
+        )
         classification.update(
             conversation_action=action,
             route_family="conversation" if action != "human_review" else "human_review",
@@ -355,18 +427,32 @@ def normalize_hermes_route_classification(
         raise HermesRouteClassificationError("invalid_backend_operation_subcategory", "backend operation subcategory is not supported")
     operation = _backend_operation(payload.get("backend_operation"))
     target = _text(operation.get("target")) if operation else ""
+    execution_verb = bool(operation) and _enablement_execution_verb(str(operation.get("action") or ""))
     if operation is None:
         subcategory = "unregistered"
         reason = "insufficient_backend_operation_evidence"
     classification["backend_operation_subcategory"] = subcategory
     classification["backend_operation"] = operation
-    eligible = subcategory == "enablement" and bool(target) and is_supported_enablement_feature(target)
+    eligible = (
+        subcategory == "enablement"
+        and bool(target)
+        and execution_verb
+        and is_supported_enablement_feature(target)
+    )
     if subcategory == "quota":
         reason = "registered_quota"
     elif subcategory == "enablement":
-        reason = "registered_enablement" if eligible else (
-            "unsupported_enablement_feature" if target else "insufficient_backend_operation_evidence"
-        )
+        if eligible:
+            reason = "registered_enablement"
+        elif not target:
+            reason = "insufficient_backend_operation_evidence"
+        elif not is_supported_enablement_feature(target):
+            reason = "unsupported_enablement_feature"
+        else:
+            # A non-execution verb (status query / nudge) must never start a
+            # new enablement execution; only a human or the follow-up reply
+            # path (conversation classification) may respond to it.
+            reason = "backend_operation_non_execution_verb"
     else:
         reason = "no_registered_subcategory" if operation is not None else "insufficient_backend_operation_evidence"
     classification.update(

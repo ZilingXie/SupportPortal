@@ -160,5 +160,108 @@ class RelayFailureChainTests(unittest.TestCase):
         self.assertIn("enablement_relay_failure", events)
 
 
+class RelayProjectNotFoundReplyTests(unittest.TestCase):
+    """p2-178: a clean project_not_found result answers the customer with the
+    dedicated not-found reply and keeps the case automation-owned."""
+
+    def setUp(self) -> None:
+        self.repository = InMemoryTicketRepository()
+        self.case = relay_helpers._seed_auto_case(self.repository)
+        self.request_id = relay_helpers._seed_gated_request(self.repository, self.case)
+        self.repository._enablement_relay_requests[self.request_id]["status"] = "dispatched"
+
+    def _apply(self, *, write_attempted: bool) -> dict:
+        from types import SimpleNamespace
+
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        result = {
+            "outcome": "project_not_found",
+            "write_attempted": write_attempted,
+            "created_at": "2026-09-24T11:00:00+00:00",
+            "detail": "no archer project for this app id",
+        }
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+        ):
+            WORKER._apply_enablement_relay_result(
+                request=request,
+                result=result,
+                client=Mock(),
+                task_detail={"task": {"task_id": "task-1"}},
+            )
+        return self.repository.get_enablement_relay_request(self.request_id)
+
+    def test_clean_not_found_queues_dedicated_reply_without_handoff(self) -> None:
+        request = self._apply(write_attempted=False)
+        # The dedicated not-found reply job was queued exactly once.
+        job = self.repository.get_account_reply_job(
+            f"enablement-relay-notfound-{self.request_id}"
+        )
+        self.assertIsNotNone(job)
+        self.assertEqual(
+            job["payload"]["reply_intent"], "enablement_appid_not_found"
+        )
+        self.assertFalse(job["payload"]["close_after_publish"])
+        # The request ended failed-but-recoverable and the case stayed
+        # automation-owned: no human_review_required, no failure incident.
+        self.assertEqual(request["status"], "failed")
+        self.assertEqual(request.get("suppression_reason"), "project_not_found")
+        case = self.repository.get_account_case(self.case["account_case_id"])
+        self.assertNotEqual(case.get("automation_status"), "human_review_required")
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_project_not_found_reply_queued", events)
+        self.assertNotIn("enablement_relay_failure", events)
+
+    def test_write_attempted_not_found_still_takes_the_failure_chain(self) -> None:
+        chain_globals = WORKER._record_execution_failure.__globals__
+        escalate_globals = chain_globals["escalate_account_case_to_human_review"].__globals__
+        patches = [
+            patch.dict("os.environ", RELAY_ENV, clear=False),
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch.dict(
+                escalate_globals,
+                {
+                    "_deliver_internal_note": Mock(return_value=("sent", "note-x", None)),
+                    "route_ticket_back_to_queue": Mock(
+                        return_value=type("NS", (), {"status": "queued"})()
+                    ),
+                },
+            ),
+            patch("backend.services.account_failure_alerts.send_graph_mail"),
+        ]
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+        request = self._apply(write_attempted=True)
+        self.assertEqual(request["status"], "failed")
+        self.assertNotEqual(request.get("suppression_reason"), "project_not_found")
+        case = self.repository.get_account_case(self.case["account_case_id"])
+        self.assertEqual(case.get("automation_status"), "human_review_required")
+
+    def test_replayed_result_never_queues_a_second_reply(self) -> None:
+        self._apply(write_attempted=False)
+        saved_before = dict(
+            self.repository.get_account_reply_job(
+                f"enablement-relay-notfound-{self.request_id}"
+            )
+        )
+        # A duplicate result application for the same request is idempotent:
+        # the deterministic job id and the terminal request state keep the
+        # reply single.
+        self._apply(write_attempted=False)
+        saved_after = self.repository.get_account_reply_job(
+            f"enablement-relay-notfound-{self.request_id}"
+        )
+        self.assertEqual(saved_before["job_id"], saved_after["job_id"])
+        self.assertEqual(
+            saved_before["payload"]["automation_delivery_key"],
+            saved_after["payload"]["automation_delivery_key"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

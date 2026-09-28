@@ -107,6 +107,171 @@ def _alert_delivery_outcome(exc: BaseException) -> str:
     return "outcome_unknown"
 
 
+def _build_human_takeover_alert(
+    *,
+    incident_id: str,
+    stage: str,
+    code: str,
+    ticket_id: str | None = None,
+    account_case_id: str | None = None,
+    detail: Any = "",
+) -> tuple[str, str]:
+    subject = f"[SupportPortal][Human takeover] {_safe_detail(stage, limit=120)}"
+    lines = [
+        "A SupportPortal case was routed to the human team and is waiting for pickup.",
+        "This is a policy handoff, not a system failure.",
+        f"Incident: {_safe_detail(incident_id, limit=120)}",
+        f"Stage: {_safe_detail(stage, limit=120)}",
+        f"Reason: {_safe_code(code)}",
+        f"Ticket: {_safe_detail(ticket_id, limit=120) or '<unknown>'}",
+        f"Account Case: {_safe_detail(account_case_id, limit=120) or '<unknown>'}",
+        f"Detail: {_safe_detail(detail) or '<none>'}",
+        "The internal note, queue return, and ownership release already ran;",
+        "pending automated replies were cancelled.",
+        "Action: continue the case in Zendesk. Restore automation only through the",
+        "explicit human entry if that is intended.",
+    ]
+    return subject, "\n".join(lines)
+
+
+def _send_incident_mail(
+    *,
+    repository: Any,
+    scope: str,
+    incident_id: str,
+    subject: str,
+    body: str,
+    now: str,
+) -> dict[str, Any]:
+    """One idempotent mail per incident with preserved delivery evidence."""
+    key = f"{scope}:{incident_id}"
+    try:
+        claim = repository.begin_idempotent_request(
+            scope,
+            key,
+            created_at=now,
+            retry_failed=True,
+        )
+    except Exception as exc:
+        LOGGER.exception("Could not claim %s incident %s", scope, incident_id)
+        return {"status": "claim_failed", "incident_id": incident_id, "error": _safe_detail(exc)}
+    if not claim.get("created"):
+        previous_payload = claim.get("response_payload")
+        previous_status = ""
+        if isinstance(previous_payload, dict):
+            previous_status = str(previous_payload.get("status") or "").strip()
+        if not previous_status:
+            previous_status = str(claim.get("state") or "").strip()
+        return {
+            "status": "already_claimed",
+            "incident_id": incident_id,
+            "previous_status": previous_status,
+        }
+    try:
+        send_graph_mail(
+            to_address=ACCOUNT_FAILURE_ALERT_RECIPIENT,
+            subject=subject,
+            body=body,
+            content_type="Text",
+        )
+    except Exception as exc:
+        error = _safe_detail(exc)
+        outcome = _alert_delivery_outcome(exc)
+        if outcome == "outcome_unknown":
+            LOGGER.exception("%s delivery outcome unknown for %s", scope, incident_id)
+            try:
+                repository.record_workspace_audit_event(
+                    f"{scope}_delivery_outcome_unknown",
+                    actor_id="account-system",
+                    target_id=incident_id,
+                    payload={"incident_id": incident_id, "error": error, "recipient": ACCOUNT_FAILURE_ALERT_RECIPIENT},
+                    created_at=now,
+                )
+            except Exception:
+                LOGGER.exception("Could not record %s unknown outcome for %s", scope, incident_id)
+            try:
+                repository.complete_idempotent_request(
+                    scope,
+                    key,
+                    response_payload={
+                        "status": "delivery_outcome_unknown",
+                        "incident_id": incident_id,
+                        "error": error,
+                    },
+                    updated_at=now,
+                )
+            except Exception:
+                LOGGER.exception("Could not persist %s unknown outcome for %s", scope, incident_id)
+            return {"status": "delivery_outcome_unknown", "incident_id": incident_id, "error": error}
+        LOGGER.exception("%s delivery failed for %s", scope, incident_id)
+        try:
+            repository.record_workspace_audit_event(
+                f"{scope}_delivery_failed",
+                actor_id="account-system",
+                target_id=incident_id,
+                payload={"incident_id": incident_id, "error": error, "recipient": ACCOUNT_FAILURE_ALERT_RECIPIENT},
+                created_at=now,
+            )
+        except Exception:
+            LOGGER.exception("Could not record %s delivery failure for %s", scope, incident_id)
+        try:
+            repository.fail_idempotent_request(
+                scope,
+                key,
+                response_payload={"status": "delivery_failed", "incident_id": incident_id, "error": error},
+                updated_at=now,
+            )
+        except Exception:
+            LOGGER.exception("Could not release %s claim for %s", scope, incident_id)
+        return {"status": "delivery_failed", "incident_id": incident_id, "error": error}
+    try:
+        repository.complete_idempotent_request(
+            scope,
+            key,
+            response_payload={"status": "sent", "incident_id": incident_id},
+            updated_at=now,
+        )
+    except Exception as exc:
+        LOGGER.exception("%s sent but completion was not persisted for %s", scope, incident_id)
+        return {"status": "sent_unpersisted", "incident_id": incident_id, "error": _safe_detail(exc)}
+    return {"status": "sent", "incident_id": incident_id}
+
+
+def notify_account_human_takeover(
+    *,
+    repository: Any,
+    incident_id: str,
+    stage: str,
+    code: str,
+    ticket_id: str | None = None,
+    account_case_id: str | None = None,
+    detail: Any = "",
+    now: str,
+) -> dict[str, Any]:
+    """Send one redacted human-takeover notice per incident (policy routing).
+
+    Semantically accurate for direction=human and reply-path policy outcomes:
+    the system decided a human should own the case; nothing failed. Delivery
+    evidence and idempotency follow the failure-alert contract.
+    """
+    subject, body = _build_human_takeover_alert(
+        incident_id=incident_id,
+        stage=stage,
+        code=code,
+        ticket_id=ticket_id,
+        account_case_id=account_case_id,
+        detail=detail,
+    )
+    return _send_incident_mail(
+        repository=repository,
+        scope="account_human_takeover_alert",
+        incident_id=incident_id,
+        subject=subject,
+        body=body,
+        now=now,
+    )
+
+
 def notify_account_failure(
     *,
     repository: Any,
