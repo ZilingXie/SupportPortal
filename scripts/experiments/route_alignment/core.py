@@ -31,6 +31,9 @@ COMPARISON_FIELDS = (
     "execution_action",
     "automation_eligibility",
 )
+BASELINE_OPTIONAL_DERIVED_FIELDS = frozenset(
+    {"route_family", "execution_action", "automation_eligibility"}
+)
 _SENSITIVE_KEY = re.compile(
     r"(?:authorization|token|secret|password|cookie|api[_-]?key|app[_-]?id|email|requester|customer)",
     re.IGNORECASE,
@@ -86,6 +89,7 @@ class ComparisonResult:
     disagreement: bool
     disagreement_fields: dict[str, list[str]]
     review_required: bool
+    baseline_unavailable_fields: list[str] = field(default_factory=list)
 
 
 def _text(value: Any, limit: int | None = None) -> str:
@@ -226,13 +230,19 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
         differences["production"] = ["baseline_missing"]
     for name, result in candidate_map.items():
         if result.status != "ok" or result.normalized is None:
-            differences[name] = ["candidate_error"]
             review_required = True
             continue
         if not snapshot.baseline_available:
             continue
         candidate_key = comparison_key(result.normalized)
-        fields = [field for field in COMPARISON_FIELDS if baseline_key.get(field) != candidate_key.get(field)]
+        unavailable = set(BASELINE_OPTIONAL_DERIVED_FIELDS).intersection(
+            field for field in COMPARISON_FIELDS if baseline_key.get(field) is None
+        )
+        fields = [
+            field
+            for field in COMPARISON_FIELDS
+            if field not in unavailable and baseline_key.get(field) != candidate_key.get(field)
+        ]
         if fields:
             differences[name] = fields
             review_required = True
@@ -244,6 +254,9 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
         disagreement=bool(differences),
         disagreement_fields=differences,
         review_required=review_required,
+        baseline_unavailable_fields=sorted(
+            field for field in BASELINE_OPTIONAL_DERIVED_FIELDS if baseline_key.get(field) is None
+        ) if snapshot.baseline_available else [],
     )
 
 
@@ -279,6 +292,7 @@ def result_to_dict(
         },
         "disagreement": result.disagreement,
         "disagreement_fields": result.disagreement_fields,
+        "baseline_unavailable_fields": result.baseline_unavailable_fields,
         "review_required": result.review_required,
     }
     if run_id:
@@ -309,7 +323,11 @@ def write_disagreement_csv(
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
         for result in results:
-            if not result.review_required:
+            if (
+                not result.disagreement
+                or result.baseline_status != "available"
+                or any(candidate.status != "ok" or candidate.normalized is None for candidate in result.candidates.values())
+            ):
                 continue
             levels = sorted({field for values in result.disagreement_fields.values() for field in values})
             writer.writerow(
@@ -340,6 +358,45 @@ def write_disagreement_csv(
                     "human_judgment": "",
                 }
             )
+    path.chmod(0o600)
+
+
+def write_candidate_error_csv(
+    path: Path,
+    results: Iterable[ComparisonResult],
+    *,
+    run_id: str | None = None,
+    dataset_id: str | None = None,
+) -> None:
+    """Write candidate failures separately from valid classification disagreements."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fields = [
+        "run_id", "dataset_id", "case_alias", "baseline_status", "candidate", "error_code",
+        "status", "call_count", "latency_ms", "requested_model", "returned_model", "diagnostics",
+        "baseline_input_alignment",
+    ]
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        for result in results:
+            for candidate in result.candidates.values():
+                if candidate.status == "ok":
+                    continue
+                writer.writerow({
+                    "run_id": run_id or "",
+                    "dataset_id": dataset_id or "",
+                    "case_alias": result.alias,
+                    "baseline_status": result.baseline_status,
+                    "candidate": candidate.candidate,
+                    "error_code": candidate.error_code or candidate.error or "candidate_error",
+                    "status": candidate.status,
+                    "call_count": candidate.call_count,
+                    "latency_ms": candidate.latency_ms,
+                    "requested_model": candidate.requested_model,
+                    "returned_model": candidate.returned_model,
+                    "diagnostics": json.dumps(candidate.metadata.get("diagnostics", {}), ensure_ascii=False, sort_keys=True),
+                    "baseline_input_alignment": candidate.metadata.get("baseline_input_alignment", "unknown"),
+                })
     path.chmod(0o600)
 
 

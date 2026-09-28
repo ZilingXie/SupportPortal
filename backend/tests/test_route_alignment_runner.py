@@ -213,9 +213,48 @@ def test_default_artifacts_never_store_backend_evidence_text(tmp_path: Path, mon
     assert summary["candidates"]["hermes"]["model_identity_unverified_count"] == 0
 
 
-def test_oversized_shared_input_rejects_both_candidates_before_calls(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_candidate_errors_are_separate_from_disagreements(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    fixture = tmp_path / "cases.jsonl"
+    _write_fixture(fixture, [_row()])
+
+    def jev(_snapshot):
+        return CandidateResult(
+            candidate="jev", status="error", error="invalid_model_json",
+            error_code="invalid_model_json", call_count=1,
+            metadata={"diagnostics": {"text_length": 0}},
+        )
+
+    def hermes(snapshot):
+        return CandidateResult(
+            candidate="hermes", status="ok", normalized=snapshot.baseline,
+            call_count=1, requested_model="hermes-model", returned_model="hermes-model",
+            metadata={"actual_model_verified": True},
+        )
+
+    monkeypatch.setenv("ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED", "1")
+    monkeypatch.setenv("TYPESAFE_API_KEY", "fake-test-key")
+    monkeypatch.setenv("HERMES_EXPERIMENT_TOKEN", "fake-test-token")
+    monkeypatch.setattr(runner, "_candidate_functions", lambda _args: [("jev", jev), ("hermes", hermes)])
+    output = tmp_path / "results"
+    assert runner.main([
+        "--fixture", str(fixture), "--live-candidates", "--jev-direct",
+        "--hermes-endpoint", "http://127.0.0.1:8765/route-alignment/v1/classify",
+        "--output-dir", str(output),
+    ]) == 0
+
+    summary = json.loads((output / "summary.json").read_text(encoding="utf-8"))
+    assert summary["formal_experiment_ready"] is False
+    assert summary["candidates"]["jev"]["invalid_json_count"] == 1
+    assert summary["candidates"]["jev"]["valid_comparison_count"] == 0
+    disagreement = output / summary["artifacts"]["disagreement_report"]
+    errors = output / summary["artifacts"]["candidate_error_report"]
+    assert "case-001" not in disagreement.read_text(encoding="utf-8")
+    assert "case-001" in errors.read_text(encoding="utf-8")
+
+
+def test_oversized_input_is_checked_per_candidate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     row = _row()
-    row["messages"] = [{"role": "user", "content": "customer words " * 1200}]
+    row["messages"] = [{"role": "user", "content": "customer words " * 1000}]
     fixture = tmp_path / "cases.jsonl"
     _write_fixture(fixture, [row])
     calls: list[str] = []
@@ -226,13 +265,17 @@ def test_oversized_shared_input_rejects_both_candidates_before_calls(tmp_path: P
             raise AssertionError("candidate must not run")
         return invoke
 
+    def hermes_ok(_snapshot):
+        calls.append("hermes")
+        return CandidateResult(candidate="hermes", status="ok", normalized=_row()["route_classification"], call_count=1)
+
     monkeypatch.setenv("ROUTE_EXPERIMENT_DATA_PROCESSING_APPROVED", "1")
     monkeypatch.setenv("TYPESAFE_API_KEY", "fake-test-key")
     monkeypatch.setenv("HERMES_EXPERIMENT_TOKEN", "fake-test-token")
     monkeypatch.setattr(
         runner,
         "_candidate_functions",
-        lambda _args: [("jev", forbidden("jev")), ("hermes", forbidden("hermes"))],
+        lambda _args: [("jev", forbidden("jev")), ("hermes", hermes_ok)],
     )
     output = tmp_path / "results"
 
@@ -243,10 +286,11 @@ def test_oversized_shared_input_rejects_both_candidates_before_calls(tmp_path: P
         "--hermes-endpoint", "http://127.0.0.1:8765/route-alignment/v1/classify",
         "--output-dir", str(output),
     ]) == 0
-    assert calls == []
+    assert calls == ["hermes"]
     records = json.loads((output / "normalized_comparison.jsonl").read_text(encoding="utf-8"))
-    assert {item["error_code"] for item in records["candidates"].values()} == {"input_too_large"}
-    assert {item["call_count"] for item in records["candidates"].values()} == {0}
+    assert records["candidates"]["jev"]["error_code"] == "input_too_large"
+    assert records["candidates"]["jev"]["call_count"] == 0
+    assert records["candidates"]["hermes"]["status"] == "ok"
 
 
 @pytest.mark.parametrize(
@@ -352,6 +396,7 @@ def test_real_llm_factory_authentication_error_aborts_complete_run(
         (502, b'{"error":{"message":"Unauthorized"}}', "http_error", 2, None),
         (502, b'{"error":[]}', "http_error", 2, None),
         (502, b'not-json', "http_error", 2, None),
+        (422, b'{"error":"invalid_model_json","diagnostics":{"response_status":"completed","text_length":0}}', "invalid_model_json", 2, None),
     ],
 )
 def test_http_error_bodies_remain_controlled_and_status_wins(
@@ -427,6 +472,10 @@ def test_http_error_bodies_remain_controlled_and_status_wins(
         ]
         assert len(records) == 2
         assert records[0]["candidates"]["hermes"]["error_code"] == expected_code
+        if status == 422:
+            diagnostics = records[0]["candidates"]["hermes"]["metadata"]["diagnostics"]
+            assert diagnostics["wrapper_http_status"] == 422
+            assert diagnostics["response_status"] == "completed"
         assert (output / summary["artifacts"]["disagreement_report"]).exists()
     finally:
         server.shutdown()

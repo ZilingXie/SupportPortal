@@ -13,9 +13,10 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable
 
-from .adapters import fetch_production_snapshots, fixture_candidate, http_candidate, load_fixture_snapshots
-from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_disagreement_csv, write_jsonl
+from .adapters import fetch_production_snapshots, fixture_candidate, gateway_capabilities, http_candidate, load_fixture_snapshots
+from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_candidate_error_csv, write_disagreement_csv, write_jsonl
 from .dataset import dataset_id_for, load_frozen_dataset, write_frozen_dataset
+from .provenance import source_code_commit
 
 
 EXPERIMENT_VERSION = "route-alignment-v2"
@@ -44,6 +45,8 @@ def _field_agreement(results: list[Any], snapshots: list[CaseSnapshot]) -> dict[
             if result.baseline_status != "available" or candidate is None or candidate.status != "ok" or candidate.normalized is None:
                 continue
             for field in COMPARISON_FIELDS:
+                if field in result.baseline_unavailable_fields:
+                    continue
                 scopes["historical_label"][field]["compared"] += 1
                 if result.baseline.get(field) == candidate.normalized.get(field):
                     scopes["historical_label"][field]["agreed"] += 1
@@ -144,6 +147,11 @@ def _preflight(args: argparse.Namespace) -> None:
         raise SystemExit("--jev-direct requires TYPESAFE_API_KEY")
     if not os.getenv("HERMES_EXPERIMENT_TOKEN", "").strip():
         raise SystemExit("live Hermes candidate requires HERMES_EXPERIMENT_TOKEN")
+    if args.hermes_endpoint.endswith("/v1/route-alignment/responses"):
+        try:
+            gateway_capabilities(args.hermes_endpoint, headers=_candidate_headers("HERMES_EXPERIMENT_TOKEN"))
+        except Exception as exc:
+            raise SystemExit(f"Hermes route-alignment gateway preflight failed: {exc}") from exc
 
 
 def _source_snapshots(args: argparse.Namespace) -> tuple[str, list[CaseSnapshot]]:
@@ -161,10 +169,7 @@ def _source_snapshots(args: argparse.Namespace) -> tuple[str, list[CaseSnapshot]
 
 
 def _code_commit() -> str:
-    try:
-        return subprocess.check_output(["git", "rev-parse", "HEAD"], text=True, stderr=subprocess.DEVNULL).strip()
-    except (OSError, subprocess.SubprocessError):
-        return "unverified"
+    return source_code_commit(__file__)
 
 
 def _candidate_functions(args: argparse.Namespace) -> list[tuple[str, Callable[[CaseSnapshot], CandidateResult]]]:
@@ -190,13 +195,46 @@ def _not_run(name: str, reason: str) -> CandidateResult:
 def _candidate_summary(results: list[Any], name: str) -> dict[str, Any]:
     candidates = [item.candidates[name] for item in results if name in item.candidates]
     input_tokens = sum(int(item.usage.get("input_tokens") or 0) for item in candidates)
+    success_count = sum(item.status == "ok" and item.normalized is not None for item in candidates)
+    attempted_count = sum(item.call_count > 0 for item in candidates)
+    error_codes = [item.error_code for item in candidates]
     output = {
+        "attempted_count": attempted_count,
+        "success_count": success_count,
         "error_count": sum(item.status != "ok" for item in candidates),
+        "valid_comparison_count": sum(
+            item.status == "ok" and item.normalized is not None and result.baseline_status == "available"
+            for result in results
+            for item in [result.candidates.get(name)]
+            if item is not None
+        ),
+        "completion_rate": round(success_count / attempted_count, 6) if attempted_count else None,
+        "incomplete_output_count": error_codes.count("incomplete_output"),
+        "empty_output_count": error_codes.count("empty_model_output"),
+        "invalid_json_count": error_codes.count("invalid_model_json"),
+        "input_too_large_count": error_codes.count("input_too_large"),
         "abstention_count": sum(bool(item.metadata.get("abstentions")) for item in candidates),
         "call_count": sum(item.call_count for item in candidates),
         "latency_ms": _latency_summary([item.latency_ms for item in candidates if item.latency_ms is not None]),
         "requested_models": sorted({item.requested_model for item in candidates if item.requested_model}),
         "returned_models": sorted({item.returned_model for item in candidates if item.returned_model}),
+        "config_versions": sorted({item.metadata.get("config_version") for item in candidates if item.metadata.get("config_version")}),
+        "reasoning_efforts": sorted({item.metadata.get("reasoning_effort") for item in candidates if item.metadata.get("reasoning_effort")}),
+        "max_output_tokens": sorted({item.metadata.get("max_output_tokens") for item in candidates if item.metadata.get("max_output_tokens") is not None}),
+        "implementation_commits": sorted({item.metadata.get("implementation_commit") for item in candidates if item.metadata.get("implementation_commit")}),
+        "schema_versions": sorted({item.metadata.get("schema_version") for item in candidates if item.metadata.get("schema_version")}),
+        "route_manual_versions": sorted({
+            item.metadata.get("hermes_route_manual_version")
+            for item in candidates if item.metadata.get("hermes_route_manual_version")
+        }),
+        "route_manual_hashes": sorted({
+            item.metadata.get("hermes_route_manual_hash")
+            for item in candidates if item.metadata.get("hermes_route_manual_hash")
+        }),
+        "normalizer_versions": sorted({
+            item.metadata.get("normalizer_version")
+            for item in candidates if item.metadata.get("normalizer_version")
+        }),
         "model_identity_unverified_count": sum(
             item.error_code == "model_identity_unverified"
             or item.metadata.get("actual_model_verified") is False
@@ -209,15 +247,17 @@ def _candidate_summary(results: list[Any], name: str) -> dict[str, Any]:
     return output
 
 
-def _shared_input_error(snapshot: CaseSnapshot) -> str | None:
-    """Reject a case for both candidates if either exact request exceeds its limit."""
+def _candidate_input_error(name: str, snapshot: CaseSnapshot) -> str | None:
+    """Validate one candidate's exact request without affecting the other candidate."""
     from .dataset import DatasetError
     from .hermes_classifier import HermesExperimentError, validate_hermes_request_size
     from .jev import JevAdapterError, prepare_jev_request
 
     try:
-        prepare_jev_request(snapshot)
-        validate_hermes_request_size(snapshot)
+        if name == "jev":
+            prepare_jev_request(snapshot)
+        elif name == "hermes":
+            validate_hermes_request_size(snapshot)
     except (DatasetError, JevAdapterError, HermesExperimentError) as exc:
         if str(exc).startswith("input_too_large"):
             return "input_too_large"
@@ -248,8 +288,8 @@ def main(argv: list[str] | None = None) -> int:
     abort_reason: str | None = None
     for snapshot in snapshots:
         candidate_results: list[CandidateResult] = []
-        input_error = _shared_input_error(snapshot)
         for name, invoke in candidates:
+            input_error = _candidate_input_error(name, snapshot) if args.live_candidates else None
             if input_error:
                 result = _not_run(name, input_error)
             elif abort_reason:
@@ -284,7 +324,9 @@ def main(argv: list[str] | None = None) -> int:
     write_jsonl(args.output_dir / "raw_results.jsonl", evidence_records)
     write_jsonl(args.output_dir / "normalized_comparison.jsonl", (result_to_dict(item, run_id=run_id, dataset_id=dataset_id) for item in results))
     disagreement_filename = f"disagreement_report.{run_id}.csv"
+    candidate_error_filename = f"candidate_error_report.{run_id}.csv"
     write_disagreement_csv(args.output_dir / disagreement_filename, results, run_id=run_id, dataset_id=dataset_id)
+    write_candidate_error_csv(args.output_dir / candidate_error_filename, results, run_id=run_id, dataset_id=dataset_id)
     candidate_names = sorted({name for item in results for name in item.candidates})
     candidate_summaries = {name: _candidate_summary(results, name) for name in candidate_names}
     alignment_counts = {state: sum(item.metadata.get("baseline_input_alignment", "unknown") == state for item in snapshots) for state in ("matched", "mismatch", "unknown")}
@@ -293,9 +335,13 @@ def main(argv: list[str] | None = None) -> int:
         "dataset_id": dataset_id,
         "experiment": EXPERIMENT_VERSION,
         "code_commit": _code_commit(),
+        "runner_code_commit": _code_commit(),
         "run_status": "failed" if abort_reason else ("completed_with_errors" if any(candidate.status != "ok" for item in results for candidate in item.candidates.values()) else "completed"),
         "abort_reason": abort_reason,
-        "artifacts": {"disagreement_report": disagreement_filename},
+        "artifacts": {
+            "disagreement_report": disagreement_filename,
+            "candidate_error_report": candidate_error_filename,
+        },
         "case_count": len(results),
         "review_required_count": sum(item.review_required for item in results),
         "baseline_missing_count": sum(item.baseline_status != "available" for item in results),
@@ -303,7 +349,29 @@ def main(argv: list[str] | None = None) -> int:
         "same_input_agreement_available": alignment_counts["matched"] > 0,
         "candidate_names": candidate_names,
         "candidates": candidate_summaries,
-        "formal_experiment_ready": bool(args.live_candidates) and all(
+        "provenance": {
+            "runner_code_commit": _code_commit(),
+            "candidate_implementation_commits": {
+                name: candidate_summaries[name]["implementation_commits"] for name in candidate_names
+            },
+            "candidate_schema_versions": {
+                name: candidate_summaries[name]["schema_versions"] for name in candidate_names
+            },
+            "candidate_config_versions": {
+                name: candidate_summaries[name]["config_versions"] for name in candidate_names
+            },
+            "candidate_prompt_versions": {
+                name: sorted({
+                    item.prompt_version for result in results
+                    for item in [result.candidates.get(name)]
+                    if item is not None and item.prompt_version
+                }) for name in candidate_names
+            },
+        },
+        "formal_experiment_ready": bool(args.live_candidates) and not any(
+            item.baseline_status != "available" or any(candidate.status != "ok" for candidate in item.candidates.values())
+            for item in results
+        ) and all(
             summary["error_count"] == 0 and summary["model_identity_unverified_count"] == 0
             for summary in candidate_summaries.values()
         ),

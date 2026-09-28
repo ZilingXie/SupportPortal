@@ -12,8 +12,10 @@ from typing import Any
 
 from .hermes_classifier import (
     HermesExperimentError,
+    HERMES_DEFAULT_MAX_OUTPUT_TOKENS,
     build_experiment_profile,
     classify_case_snapshot,
+    validate_max_output_tokens,
     validate_normalizer_environment,
 )
 
@@ -21,6 +23,16 @@ from .hermes_classifier import (
 _PATH = "/route-alignment/v1/classify"
 _MAX_REQUEST_BYTES = 1_000_000
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost"})
+_DIAGNOSTIC_KEYS = frozenset(
+    {
+        "provider_http_status", "response_status", "incomplete_reason", "message_status", "requested_model",
+        "actual_model", "input_tokens", "output_tokens", "reasoning_tokens", "text_length",
+        "max_output_tokens", "reasoning_effort", "config_version", "normalization_code",
+        "implementation_commit", "schema_version", "prompt_version", "hermes_route_manual_version",
+        "hermes_route_manual_hash", "normalizer_version", "normalizer_policy_version",
+        "normalizer_confidence_threshold",
+    }
+)
 
 
 def _json_bytes(payload: Mapping[str, Any]) -> bytes:
@@ -83,7 +95,18 @@ def create_server(
                 response = classifier(payload.get("case_snapshot"))
             except HermesExperimentError as exc:
                 status = 502 if exc.code in {"authentication_error", "rate_limited"} else 422
-                self._write(status, {"contract": "route-alignment-v1", "error": exc.code})
+                self._write(
+                    status,
+                    {
+                        "contract": "route-alignment-v1",
+                        "error": exc.code,
+                        "diagnostics": {
+                            str(key): value
+                            for key, value in exc.diagnostics.items()
+                            if str(key) in _DIAGNOSTIC_KEYS
+                        },
+                    },
+                )
                 return
             except Exception:
                 self._write(500, {"contract": "route-alignment-v1", "error": "classification_failed"})
@@ -111,6 +134,15 @@ def _required_env(name: str) -> str:
     return value
 
 
+def _max_output_tokens_env() -> int:
+    raw = os.getenv("HERMES_ROUTE_EXPERIMENT_MAX_OUTPUT_TOKENS", str(HERMES_DEFAULT_MAX_OUTPUT_TOKENS)).strip()
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise HermesExperimentError("invalid_output_configuration") from exc
+    return validate_max_output_tokens(value)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1")
@@ -124,11 +156,16 @@ def main(argv: list[str] | None = None) -> int:
         model=_required_env("HERMES_ROUTE_EXPERIMENT_MODEL"),
         reasoning_effort=_required_env("HERMES_ROUTE_EXPERIMENT_REASONING_EFFORT"),
     )
+    max_output_tokens = _max_output_tokens_env()
     server = create_server(
         host=args.host,
         port=args.port,
         token=token,
-        classifier=lambda snapshot: classify_case_snapshot(snapshot, profile=profile),
+        classifier=lambda snapshot: classify_case_snapshot(
+            snapshot,
+            profile=profile,
+            max_output_tokens=max_output_tokens,
+        ),
     )
     try:
         server.serve_forever()

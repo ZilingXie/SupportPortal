@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import json
 import os
 import threading
@@ -12,7 +14,13 @@ import pytest
 
 from backend.services.llm_factory import LlmTextResult
 from scripts.experiments.route_alignment.adapters import http_candidate
-from scripts.experiments.route_alignment.core import CaseSnapshot
+from scripts.experiments.route_alignment.core import (
+    CaseSnapshot,
+    compare_case,
+    result_to_dict,
+    write_candidate_error_csv,
+    write_jsonl,
+)
 from scripts.experiments.route_alignment.hermes_classifier import (
     HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION,
     HermesExperimentError,
@@ -20,6 +28,7 @@ from scripts.experiments.route_alignment.hermes_classifier import (
     classify_case_snapshot,
 )
 from scripts.experiments.route_alignment.hermes_service import create_server
+from scripts.experiments.route_alignment.runner import _candidate_summary
 
 
 def _snapshot(alias: str = "case-001", revision: str = "rev-001") -> dict:
@@ -120,6 +129,11 @@ def test_classifier_executes_one_stateless_model_call_and_records_metadata() -> 
     assert response["actual_model"] == "actual-model"
     assert response["returned_model"] == "actual-model"
     assert response["actual_model_verified"] is True
+    assert response["implementation_commit"]
+    assert response["schema_version"] == "hermes-route-experiment-schema-v1"
+    assert response["config_version"].endswith(":medium:1600")
+    assert len(response["hermes_route_manual_hash"]) == 64
+    assert response["normalizer_version"]
     assert response["prompt_version"] == HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION
     assert response["usage"] == {
         "input_tokens": 31,
@@ -171,6 +185,63 @@ def test_classifier_rejects_malformed_model_output(result, code) -> None:
     ) as exc_info:
         classify_case_snapshot(_snapshot(), profile=_profile(), invoke=lambda **_: result)
     assert exc_info.value.code == code
+
+
+@pytest.mark.parametrize(
+    ("raw_payload", "text", "expected_code"),
+    [
+        (
+            {
+                "model": "actual-model",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "status": "incomplete"}],
+            },
+            "",
+            "incomplete_output",
+        ),
+        (
+            {"model": "actual-model", "status": "completed", "output": []},
+            "",
+            "empty_model_output",
+        ),
+    ],
+)
+def test_classifier_preserves_controlled_output_diagnostics(raw_payload, text, expected_code) -> None:
+    result = _result(text=text)
+    result = LlmTextResult(
+        text=result.text,
+        model_name=result.model_name,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=1600,
+        reasoning_tokens=result.reasoning_tokens,
+        raw_payload=raw_payload,
+        provider_name=result.provider_name,
+    )
+    with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None), pytest.raises(
+        HermesExperimentError
+    ) as exc_info:
+        classify_case_snapshot(_snapshot(), profile=_profile(), invoke=lambda **_: result)
+    assert exc_info.value.code == expected_code
+    assert exc_info.value.diagnostics["response_status"] == raw_payload["status"]
+    assert exc_info.value.diagnostics["max_output_tokens"] == 1600
+    assert "text" not in exc_info.value.diagnostics
+
+
+def test_classifier_passes_explicit_output_budget_to_provider_and_response() -> None:
+    calls = []
+
+    def invoke(**kwargs):
+        calls.append(kwargs)
+        return _result()
+
+    with patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None):
+        response = classify_case_snapshot(
+            _snapshot(), profile=_profile(), max_output_tokens=3200, invoke=invoke
+        )
+    assert calls[0]["extra_payload"]["max_output_tokens"] == 3200
+    assert response["max_output_tokens"] == 3200
+    assert response["diagnostics"]["config_version"].endswith(":medium:3200")
 
 
 def test_classifier_rejects_ambient_trace_before_model_call() -> None:
@@ -297,6 +368,273 @@ def test_http_success_executes_exactly_one_mock_llm_call() -> None:
         thread.join(timeout=2)
 
 
+def test_http_error_returns_allowlisted_diagnostics_without_model_text() -> None:
+    diagnostics = {
+        "response_status": "incomplete",
+        "incomplete_reason": "max_output_tokens",
+        "text_length": 0,
+        "max_output_tokens": 1600,
+        "customer_text": "must-not-appear",
+    }
+
+    def classifier(_snapshot):
+        raise HermesExperimentError("incomplete_output", diagnostics=diagnostics)
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, body = _post(
+            server.server_address[1],
+            {"contract": "route-alignment-v1", "case_snapshot": _snapshot()},
+        )
+        assert status == 422
+        assert body["error"] == "incomplete_output"
+        assert body["diagnostics"] == {
+            key: value for key, value in diagnostics.items() if key != "customer_text"
+        }
+        assert "text" not in body["diagnostics"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+@pytest.mark.parametrize(
+    ("provider_payload", "provider_error", "expected_code", "wrapper_status", "provider_status"),
+    [
+        (
+            {
+                "model": "actual-model",
+                "status": "incomplete",
+                "incomplete_details": {"reason": "max_output_tokens"},
+                "output": [{"type": "message", "status": "incomplete", "content": []}],
+                "usage": {"input_tokens": 41, "output_tokens": 1600},
+            },
+            None,
+            "incomplete_output",
+            422,
+            None,
+        ),
+        (
+            {
+                "model": "actual-model",
+                "status": "completed",
+                "output": [],
+                "usage": {"input_tokens": 37, "output_tokens": 0},
+            },
+            None,
+            "empty_model_output",
+            422,
+            None,
+        ),
+        (
+            None,
+            (403, b'{"error":{"message":"Model is not available for this API key"}}'),
+            "authentication_error",
+            502,
+            403,
+        ),
+        (None, (400, b'{"error":{"message":"Unsupported parameter"}}'), "provider_http_error", 422, 400),
+        (None, (404, b'{"error":{"message":"Endpoint not found"}}'), "provider_http_error", 422, 404),
+        (None, (422, b'{"error":{"message":"Schema rejected"}}'), "provider_http_error", 422, 422),
+        (None, (501, b'{"error":{"message":"Not implemented"}}'), "provider_http_error", 422, 501),
+    ],
+)
+def test_http_adapter_service_classifier_error_chain_preserves_safe_diagnostics(
+    tmp_path,
+    provider_payload,
+    provider_error,
+    expected_code,
+    wrapper_status,
+    provider_status,
+) -> None:
+    provider_calls = []
+
+    class ProviderResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(provider_payload).encode("utf-8")
+
+    def provider_urlopen(request, timeout):
+        provider_calls.append((request.full_url, timeout))
+        if provider_error is not None:
+            status, body = provider_error
+            raise urllib.error.HTTPError(request.full_url, status, "provider error", {}, io.BytesIO(body))
+        return ProviderResponse()
+
+    def classifier(snapshot):
+        with (
+            patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=provider_urlopen),
+            patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None),
+        ):
+            return classify_case_snapshot(snapshot, profile=_profile())
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    customer_marker = "synthetic-customer-text-must-not-appear"
+    snapshot = CaseSnapshot(
+        alias="case-001",
+        ticket_id="",
+        case_revision="rev-001",
+        subject="SDK question",
+        messages=({"role": "user", "content": customer_marker},),
+        baseline={},
+        baseline_available=False,
+        baseline_status="missing",
+    )
+    try:
+        candidate = http_candidate(
+            "hermes",
+            f"http://127.0.0.1:{server.server_address[1]}/route-alignment/v1/classify",
+            headers={"Authorization": "Bearer service-secret"},
+        )(snapshot)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert candidate.status == "error"
+    assert len(provider_calls) == 1
+    assert candidate.error_code == expected_code
+    diagnostics = candidate.metadata["diagnostics"]
+    assert diagnostics["wrapper_http_status"] == wrapper_status
+    assert diagnostics.get("provider_http_status") == provider_status
+    assert diagnostics["requested_model"] == "fixed-hermes-model"
+    assert diagnostics["reasoning_effort"] == "medium"
+    assert diagnostics["max_output_tokens"] == 1600
+    assert diagnostics["implementation_commit"]
+    assert diagnostics["schema_version"] == "hermes-route-experiment-schema-v1"
+    assert len(diagnostics["hermes_route_manual_hash"]) == 64
+    assert diagnostics["normalizer_version"]
+    assert candidate.metadata["config_version"].endswith(":medium:1600")
+    assert candidate.prompt_version == HERMES_ROUTE_EXPERIMENT_PROMPT_VERSION
+
+    comparison = compare_case(snapshot, [candidate])
+    csv_path = tmp_path / "candidate-errors.csv"
+    write_candidate_error_csv(csv_path, [comparison], run_id="run-1", dataset_id="dataset-1")
+    csv_row = next(csv.DictReader(csv_path.open(encoding="utf-8")))
+    csv_diagnostics = json.loads(csv_row["diagnostics"])
+    assert csv_diagnostics == diagnostics
+    summary = _candidate_summary([comparison], "hermes")
+    assert summary["implementation_commits"] == [diagnostics["implementation_commit"]]
+    assert summary["schema_versions"] == [diagnostics["schema_version"]]
+    assert summary["config_versions"] == [diagnostics["config_version"]]
+    assert summary["route_manual_hashes"] == [diagnostics["hermes_route_manual_hash"]]
+    assert summary["normalizer_versions"] == [diagnostics["normalizer_version"]]
+    artifacts = json.dumps(
+        {"normalized": result_to_dict(comparison), "candidate_error": csv_row},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    assert customer_marker not in artifacts
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid_value"),
+    [
+        ("intent_class", {}),
+        ("conversation_action", []),
+        ("agora_route", {}),
+        ("account_billing_subcategory", []),
+        ("backend_operation_subcategory", {}),
+        ("reason_code", []),
+    ],
+)
+def test_http_error_artifacts_preserve_diagnostics_for_invalid_enum_types(tmp_path, field, invalid_value) -> None:
+    provider_calls = []
+    classification = _classification(**{field: invalid_value})
+    provider_payload = {
+        "model": "actual-model",
+        "status": "completed",
+        "output_text": json.dumps(classification),
+        "usage": {"input_tokens": 31, "output_tokens": 17},
+    }
+
+    class ProviderResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def read(self):
+            return json.dumps(provider_payload).encode("utf-8")
+
+    def provider_urlopen(request, timeout):
+        provider_calls.append((request.full_url, timeout))
+        return ProviderResponse()
+
+    def classifier(snapshot):
+        with (
+            patch("backend.services.llm_factory.urllib.request.urlopen", side_effect=provider_urlopen),
+            patch("backend.services.openai_agent_tracing.current_trace_ref", return_value=None),
+        ):
+            return classify_case_snapshot(snapshot, profile=_profile())
+
+    server = create_server(host="127.0.0.1", port=0, token="service-secret", classifier=classifier)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    snapshot = CaseSnapshot(
+        alias="case-001",
+        ticket_id="",
+        case_revision="rev-001",
+        subject="SDK question",
+        messages=({"role": "user", "content": "synthetic input"},),
+        baseline={},
+        baseline_available=False,
+        baseline_status="missing",
+    )
+    try:
+        candidate = http_candidate(
+            "hermes",
+            f"http://127.0.0.1:{server.server_address[1]}/route-alignment/v1/classify",
+            headers={"Authorization": "Bearer service-secret"},
+        )(snapshot)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert len(provider_calls) == 1
+    assert candidate.status == "error"
+    assert candidate.error_code == "invalid_model_classification"
+    diagnostics = candidate.metadata["diagnostics"]
+    assert diagnostics["wrapper_http_status"] == 422
+    assert diagnostics["actual_model"] == "actual-model"
+    assert diagnostics["input_tokens"] == 31
+    assert diagnostics["output_tokens"] == 17
+    assert diagnostics["implementation_commit"]
+    assert diagnostics["schema_version"] == "hermes-route-experiment-schema-v1"
+    assert diagnostics["config_version"].endswith(":medium:1600")
+    assert len(diagnostics["hermes_route_manual_hash"]) == 64
+
+    comparison = compare_case(snapshot, [candidate])
+    jsonl_path = tmp_path / "normalized-comparison.jsonl"
+    write_jsonl(jsonl_path, [result_to_dict(comparison, run_id="run-1", dataset_id="dataset-1")])
+    jsonl_record = json.loads(jsonl_path.read_text(encoding="utf-8"))
+    jsonl_diagnostics = jsonl_record["candidates"]["hermes"]["metadata"]["diagnostics"]
+    assert jsonl_diagnostics == diagnostics
+
+    csv_path = tmp_path / "candidate-errors.csv"
+    write_candidate_error_csv(csv_path, [comparison], run_id="run-1", dataset_id="dataset-1")
+    csv_row = next(csv.DictReader(csv_path.open(encoding="utf-8")))
+    assert json.loads(csv_row["diagnostics"]) == diagnostics
+
+    summary = _candidate_summary([comparison], "hermes")
+    assert summary["implementation_commits"] == [diagnostics["implementation_commit"]]
+    assert summary["schema_versions"] == [diagnostics["schema_version"]]
+    assert summary["config_versions"] == [diagnostics["config_version"]]
+    assert summary["route_manual_hashes"] == [diagnostics["hermes_route_manual_hash"]]
+    assert summary["normalizer_versions"] == [diagnostics["normalizer_version"]]
+
+
 def test_http_candidate_waits_for_slow_service_response() -> None:
     def classifier(snapshot):
         time.sleep(0.05)
@@ -333,6 +671,7 @@ def test_http_candidate_waits_for_slow_service_response() -> None:
         )
         assert result.status == "ok"
         assert result.latency_ms is not None and result.latency_ms >= 40
+        assert result.metadata["diagnostics"]["wrapper_http_status"] == 200
     finally:
         server.shutdown()
         server.server_close()
