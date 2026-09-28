@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-28T03:26:07Z",
-  "source_base_commit": "d97287571a0ca985acf6da206c1993c131e0ad84",
-  "registry_digest": "6fdbfa2778874d581c358eba3f75a781a5f5debdae2a7f267f3c6508d4079af7",
+  "generated_at": "2026-09-28T03:50:36Z",
+  "source_base_commit": "74db4926d1346ac38d6af5fd0d1050ce10efc7c9",
+  "registry_digest": "350520134bcbf20238c902a7cd21e1f108907b073c59815e5e6e68f5f3fbe4c9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -12335,7 +12335,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "decision",
           "label": "Plan2 route-alignment architecture boundary",
-          "details": "Plan2 使用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses。SupportPortal Preproduction 不提供公网 route-alignment-v1 endpoint；Plan1 只负责证明 Preproduction Hermes/凭证可供实验 runner 使用。route-alignment-v1 的 case-snapshot、Jev 调用和 frozen 100-case Production 数据实验均属于 Plan2。"
+          "details": "Plan2 使用 EC2 runner → 本地 wrapper → Preproduction 专用 hermes-route-inference-v1 gateway（/v1/route-alignment/responses）；普通 Hermes /v1/responses 不作为实验入口。SupportPortal Preproduction 不提供公网 route-alignment-v1 endpoint；Plan1 只负责证明 Preproduction Hermes/凭证可供实验 runner 使用。route-alignment-v1 的 case-snapshot、Jev 调用和 frozen 100-case Production 数据实验均属于 Plan2。"
         },
         {
           "type": "test",

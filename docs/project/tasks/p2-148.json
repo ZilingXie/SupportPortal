@@ -218,7 +218,7 @@
     {
       "type": "decision",
       "label": "Plan2 route-alignment architecture boundary",
-      "details": "Plan2 使用 EC2 runner → 本地 loopback Hermes wrapper → Preproduction Hermes /responses。SupportPortal Preproduction 不提供公网 route-alignment-v1 endpoint；Plan1 只负责证明 Preproduction Hermes/凭证可供实验 runner 使用。route-alignment-v1 的 case-snapshot、Jev 调用和 frozen 100-case Production 数据实验均属于 Plan2。"
+      "details": "Plan2 使用 EC2 runner → 本地 wrapper → Preproduction 专用 hermes-route-inference-v1 gateway（/v1/route-alignment/responses）；普通 Hermes /v1/responses 不作为实验入口。SupportPortal Preproduction 不提供公网 route-alignment-v1 endpoint；Plan1 只负责证明 Preproduction Hermes/凭证可供实验 runner 使用。route-alignment-v1 的 case-snapshot、Jev 调用和 frozen 100-case Production 数据实验均属于 Plan2。"
     },
     {
       "type": "test",
