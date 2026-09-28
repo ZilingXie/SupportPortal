@@ -193,3 +193,30 @@
   分流到 preprod；preprod 四服务 healthy。
 - **黄金参照**：ticket 13605（r20260920-e11abda，2026-09-20 全链零缺陷）。
 - 注意：`--scenario all` 会包含 E1P 与旧剧本；对 preprod 只跑 E1P。
+
+### E3：Enablement 全生命周期（preproduction）
+
+> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测钉死各回合合同。
+> 客户旅程：缺 AppID 追问（草稿管线）→ 提问停人工（新工单对话追问被禁）→ 31 位格式错
+> 拒绝 → 32 位有效格式提交进 review → 催促停人工（conversation_requires_review）→
+> relay 查无项目（project_not_found，等待 Mac 审批）→ 客户更正 AppID → 真实 archer 开通 + solved。
+>
+> 与旧链差异（产品发现，探针实证）：①首回合追问=hermes 草稿（数秒送达，非 reply job）；
+> ②线程内提问与催促均停人工审核，**无自动 RAG 答案、无自动"还在 review"回复**
+> （direction_reason 分别为 new_ticket_conversation_follow_up_forbidden /
+> conversation_requires_review），下回合提交字段即恢复自动化（已验证）；
+> ③客户回合驱动默认走 Zendesk API 代发评论（`AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
+> + `AUTOMATION_TEST_ZENDESK_AUTH`=SSM zendesk-basic-auth）——163 邮箱路径在当前环境断链
+> （无 requester 通知邮件、加号寻址不进单），勿用 email transport。
+
+- **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
+  两次 `approve_execution`（relay 任务在确认回复送达后派发）。
+- **AppID 夹具**（模块常量）：`8cb7...0247`（31 位，格式错）/ `8cb7...2475`（32 位，
+  archer 查无项目）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，
+  **终段会真实写入 archer**，load=10 等目标参数）。
+- **时长**：回复各含设计延迟，回合 1-5 约 30-50 分钟；relay 等待上限默认 240 分钟
+  （`AUTOMATION_TEST_RELAY_TIMEOUT_MIN` 或 CLI `--relay-timeout-min` 覆盖）。
+- **运行**：与 E1P 同环境变量，`--scenario E3 --yes`。CLI 会在 relay 段打印
+  `approval_required` 提示（工单链接 + Mac 审批指引）。
+- **终态断言**：`enablement_archer_enabled` 完成回复（内容含 media relay + enabled +
+  关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
