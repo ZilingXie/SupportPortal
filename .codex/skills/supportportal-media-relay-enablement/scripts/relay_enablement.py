@@ -125,17 +125,22 @@ def _ownership(request: dict[str, Any]) -> dict[str, Any]:
     payload = _pilot(
         "archer", "appid", "--email", email, "--url", TARGET_PARAMS["archer_url"], "-o", "json"
     )
-    if payload.get("_exit_code") != 0 or not isinstance(payload.get("projects"), list):
+    projects = payload.get("projects")
+    if not isinstance(projects, list):
+        projects = payload.get("data")
+    if payload.get("_exit_code") != 0 or not isinstance(projects, list):
         markers = json.dumps(payload).lower()
         if any(marker in markers for marker in SSO_EXPIRY_MARKERS):
             return {"ok": False, "reason": "pilot_sso_login_required", "payload": payload}
         return {"ok": False, "reason": "ownership_lookup_failed", "payload": payload}
     app_id = str(request.get("app_id") or "").lower()
     matched = None
-    for project in payload["projects"]:
+    for project in projects:
         if not isinstance(project, dict):
             continue
-        if str(project.get("appid") or project.get("app_id") or "").lower() == app_id:
+        if str(
+            project.get("appid") or project.get("app_id") or project.get("appId") or ""
+        ).lower() == app_id:
             matched = project
             break
     if matched is None:
@@ -144,7 +149,9 @@ def _ownership(request: dict[str, Any]) -> dict[str, Any]:
         "ok": True,
         "project": {
             "appid": app_id,
-            "project_name": matched.get("project") or matched.get("name"),
+            "project_name": (
+                matched.get("project") or matched.get("name") or matched.get("projectName")
+            ),
             "project_id": matched.get("projectId") or matched.get("project_id"),
             "company_id": matched.get("companyId") or matched.get("company_id"),
         },
@@ -186,11 +193,38 @@ def _dry_run(app_id: str) -> dict[str, Any]:
     )
 
 
-def _readback_state(status_payload: dict[str, Any]) -> dict[str, Any] | None:
+def _readback_state(
+    status_payload: dict[str, Any], app_id: str | None = None
+) -> dict[str, Any] | None:
     for key in ("state", "status"):
         value = status_payload.get(key)
         if isinstance(value, dict):
             return value
+    data = status_payload.get("data")
+    if isinstance(data, dict):
+        data_app_id = str(
+            data.get("appid") or data.get("app_id") or data.get("appId") or ""
+        ).lower()
+        if app_id and data_app_id and data_app_id != app_id.lower():
+            return None
+        return data
+    if isinstance(data, list):
+        candidates = [item for item in data if isinstance(item, dict)]
+        if app_id:
+            expected = app_id.lower()
+            for item in candidates:
+                item_app_id = str(
+                    item.get("appid") or item.get("app_id") or item.get("appId") or ""
+                ).lower()
+                if item_app_id == expected:
+                    return item
+            if any(
+                item.get("appid") or item.get("app_id") or item.get("appId")
+                for item in candidates
+            ):
+                return None
+        if len(candidates) == 1:
+            return candidates[0]
     return None
 
 
@@ -334,7 +368,7 @@ def _classify_precheck(request: dict[str, Any]) -> dict[str, Any]:
         )
     app_id = str(request.get("app_id") or "")
     status_payload = _status(app_id)
-    readback = _readback_state(status_payload)
+    readback = _readback_state(status_payload, app_id)
     if readback is None:
         if _pilot_unavailable(status_payload):
             return _with_digest(
@@ -530,7 +564,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
             "approval.report_digest does not match the current precheck report; "
             "the request, parameters, state or dry-run plan changed — re-approve"
         )
-    if precheck.get("recommendation") != "execute":
+    if precheck.get("recommendation") not in {"execute", "already_satisfied"}:
         raise SystemExit(
             f"precheck no longer recommends execution: {precheck.get('recommendation')}/"
             f"{precheck.get('outcome')}"
@@ -619,7 +653,7 @@ def cmd_execute(args: argparse.Namespace) -> int:
         # read-back upgrades even an unknown write outcome to enabled, and an
         # unconfirmed read-back never reports success.
         status_payload = _status(app_id)
-        readback = _readback_state(status_payload)
+        readback = _readback_state(status_payload, app_id)
         matches, normalized = _matches_target(readback)
         result["readback"] = {**normalized, "verified_at": _now()}
         if matches:

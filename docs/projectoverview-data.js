@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-24T05:50:42Z",
-  "source_base_commit": "e4bd6d274c4b2eb74dc861480bbb2102fd393405",
-  "registry_digest": "dfbf3db00fc92f804fd4aaef40ed0d68c13cf4fd5d06d32d7f49107f53a46160",
+  "generated_at": "2026-09-28T03:26:07Z",
+  "source_base_commit": "d97287571a0ca985acf6da206c1993c131e0ad84",
+  "registry_digest": "6fdbfa2778874d581c358eba3f75a781a5f5debdae2a7f267f3c6508d4079af7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1285,6 +1285,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Relay listener stale-epoch backoff (worker)",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py",
           "details": "32 passed（新增 3：连续 stale 409 后重注册被退避窗口拦住、退避过期后恢复注册并清零计数、非 stale 网络错误不武装退避且 epoch 保持）。backend/worker.py 监听器状态增 stale_rejections/register_backoff_until 两键，_ensure_enablement_relay_listener 退避窗口内跳过注册、注册成功重置；publish/pull 两处 stale 判定统一收敛进 _note_enablement_relay_stale。对照验证：test_worker.py 14 failed 在干净 main(1b049558) stash 对照同数复现，非本改动引入。"
+        },
+        {
+          "type": "test",
+          "label": "Pilot current-schema and already-satisfied compatibility",
+          "command": "python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py",
+          "details": "24 passed / 5 subtests。兼容 Pilot 当前 ownership data[].appId 与 status data[] 响应；按目标 AppID 选择状态；already_satisfied 经服务端申请有效性门禁后生成零写入结果。真实只读预检对 13687 返回 state=enabled、region=2、maxSubscribeLoad=10、write_planned=false；未调用 Archer 写入或 AgentRelay mutation。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay success reply information isolation",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。Relay 完整 readback 与 approval_ref 继续参与服务端成功门禁；completion job 改用 enablement_archer_enabled，仅保留 Media Relay+completed 客户事实，source_facts 为空且无 AppID suffix/readback/write 字段。Persona 确定性拒绝 region、subscribe load、capacity、configuration/write 细节，并覆盖重写后安全发布。13687 不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay completion intent consistency",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
         },
         {
           "type": "test",
@@ -12107,9 +12125,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-08",
-      "updated_at": "2026-09-22",
+      "updated_at": "2026-09-24",
       "summary": "在 /automation/preproduction 新增 Hermes 原生会话引擎：新 Zendesk ticket 由 route worker 分叉绑定逻辑会话（automation_hermes_case_bindings），事件以 agent_turn 持久任务驱动 Hermes /v1/runs（显式 session_id + 稳定 Idempotency-Key + 每案例 one-running 围栏），Automation 与调查共用同一会话且零 Engineer Case；业务动作通过带专用 token 的 SupportPortal 工具端点复用既有验证/执行器，客户回复保存为不可变草稿并经 guardrail、版本围栏与（调查路径）dashboard 人工批准后走 source='hermes' 的既有 Zendesk delivery ledger 发布；Tencent 插件补丁提供 team/agent 身份映射、原始对话采集默认禁用与 memory_tencentdb_write_knowledge 整理知识直接写入。",
-      "next_action": "Plan1 代码、Prompt Release 和 Preproduction 运行发布已完成；Plan2 先通过专用 Preproduction hermes-route-inference-v1 gateway 的 capabilities、零工具/零持久化/单次无 fallback 合同验收，再执行 Hermes smoke、参数矩阵和 frozen 100-case 对比。普通 /v1/responses 不作为实验入口；验收前不开放网络、不读取 Production 工单、不调用 Jev、不创建 Case/Turn/Job/Draft 或发送客户回复。",
+      "next_action": "Preproduction 已恢复 Route=hermes、Enablement=archer；Plan2 先通过专用 Preproduction hermes-route-inference-v1 gateway 的 capabilities、零工具/零持久化/单次无 fallback 合同验收，再执行 Hermes smoke、参数矩阵和 frozen 100-case 对比。普通 /v1/responses 不作为实验入口；验收前不开放网络、不读取 Production 工单、不调用 Jev、不创建 Case/Turn/Job/Draft 或发送客户回复。",
       "acceptance_criteria": [
         "hermes 引擎的新 Zendesk Case 全生命周期零 Engineer Case 新建，Automation 与调查共用同一逻辑会话与 hermes session id，重复事件/重启不产生重复业务动作或客户回复。",
         "每案例同时只有一个 running agent turn（partial unique 强制），run 提交被拒时 turn 立即 failed 不得挂 running。",
@@ -12323,6 +12341,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Official local stack post-merge verification",
           "details": "inspect_single_host_stack_mode.sh 确认 official project=deployment、auxiliary_stack_present=false、build provenance matched；当前 root main 已推进至 47e69bb175de6e1d04669f2f5b8e65ec3d7a625f，官方栈 /health=ok、ticket_storage=postgres、knowledge_storage=postgres、rag_service=ok、app_build.ref=47e69bb175de。用户早先指定的 403251bec marker 未再使用，因为仓库重启脚本要求 root main 与 origin/main 同步，且 47e69bb 仅包含重启脚本/测试的发布门禁修复；因此没有把 47e 栈标记为 403 栈。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes/Archer runtime configuration restored",
+          "details": "2026-09-24 对 13686 做只读追踪确认：该工单正确分类为 Enablement，但当时 Preproduction 运行在 AUTOMATION_CASE_ENGINE=legacy、ENABLEMENT_WORKFLOW_MODE=manual，因此只进入 enablement_manual_workflow（email_released）并发送内部邮件和 submission confirmation；support_enablement_relay_requests 与 enablement_relay 事件均为零，本地 AgentRelay 没有漏收。随后复用 immutable release r20260922-47e69bb（source git=47e69bb175de6e1d04669f2f5b8e65ec3d7a625f）和 active Prompt Release pr-fe1f5a21205e，通过完整 check-only preflight 与正式 deploy 恢复配置。运行读回：API :71、Route :70、Worker :71 均 1/1/0、rollout COMPLETED、digest 与 Manifest 一致；API/Worker ENABLEMENT_WORKFLOW_MODE=archer，Route AUTOMATION_CASE_ENGINE=hermes；public live/release、heartbeats、provider probe、CloudWatch、Terraform pre/post zero-drift、Prompt sync/activation 全部通过，evidence status=complete。滚动窗口内 readiness epoch 409 按退避恢复，服务收敛后最近 5 分钟 Worker ERROR=0、enablement relay 告警=0；本地 zac-agent listener 进程与 v0.6 agent card 可读。13686 未补派发、未重跑、未创建 relay task，等待用户用新工单验证真实派发链路。"
         }
       ],
       "legacy_ids": [],
@@ -13366,7 +13389,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "八轮（relay 热循环预防修复）：worker 监听器对 stale_readiness_epoch/recovery_not_allowed 加指数退避+jitter（5/10/20/40s 封顶 60s+0-2s 抖动，注册成功重置；register 无条件接管 epoch 的多实例互顶在 09-20 部署风暴实测 ~2.2s 节拍乒乓 409，热循环已停但滚动部署会复发）。修复后按既有链路部署 preprod 并复测 E1P/畸形参数单（#1269 route manual v3 + fail-closed 已在 main）。后续仍按七轮遗留：三时点关闭验收+四段受控+Mac 10:00 触发+Mac token→真实 Mac 审批开通→Production 授权。七轮（收件绑定核验，两库分支待独立验收）：AgentRelay(34b3fb02 基线 feat/inbox-handoff-binding) 修正交接绑定合同（metadata 仅取 current_message_id 对应 Message 的 project_hermes；缺失/null=不适用，显式 {}=存在但空，不再 ||{} 伪造；绑定字段用源名 task_kind/human_event_id/local_task_id；task_id/current_message_id/Relay 状态精确匹配保留）+关联任务规则改为允许只读核实、仅确认冲突或无法判定才暂停；模板同步。真实入口测试（persistTaskWorkspace/resyncLocalTask/rebuildTaskIndex）覆盖 7 场景+既有断言更新，node --test 全套 262 pass。SupportPortal(e11abda3 基线 codex/p2-163-inbox-binding-verification) SKILL.md 增收件绑定核验固定顺序（解析当前 Message→只读端点核对四元组→dispatched+ticket_valid→同 AppID 关联申请六行处理表），不自动关闭/回复另一条 Task；场景验收两层：pytest=文档检查+底层回归（21 passed）；行为验收=一次性隔离运行三场景全符合（evidence/p2-163-skill-behavior：s1 排除旧申请仅预检当前零写/s2 预检前零调用暂停报告两者/s3 预检前零调用停止报告原因）。两库停在未合码提交交独立验收；通过后本地启用（授权更新+确认进程加载+13605 定向 resync）。再后：三时点关闭验收+四段受控+Mac token→真实 Mac 审批开通→Production 授权。",
+      "next_action": "发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13477,6 +13500,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Relay listener stale-epoch backoff (worker)",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_auto_relay.py",
           "details": "32 passed（新增 3：连续 stale 409 后重注册被退避窗口拦住、退避过期后恢复注册并清零计数、非 stale 网络错误不武装退避且 epoch 保持）。backend/worker.py 监听器状态增 stale_rejections/register_backoff_until 两键，_ensure_enablement_relay_listener 退避窗口内跳过注册、注册成功重置；publish/pull 两处 stale 判定统一收敛进 _note_enablement_relay_stale。对照验证：test_worker.py 14 failed 在干净 main(1b049558) stash 对照同数复现，非本改动引入。"
+        },
+        {
+          "type": "test",
+          "label": "Pilot current-schema and already-satisfied compatibility",
+          "command": "python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py",
+          "details": "24 passed / 5 subtests。兼容 Pilot 当前 ownership data[].appId 与 status data[] 响应；按目标 AppID 选择状态；already_satisfied 经服务端申请有效性门禁后生成零写入结果。真实只读预检对 13687 返回 state=enabled、region=2、maxSubscribeLoad=10、write_planned=false；未调用 Archer 写入或 AgentRelay mutation。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay success reply information isolation",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。Relay 完整 readback 与 approval_ref 继续参与服务端成功门禁；completion job 改用 enablement_archer_enabled，仅保留 Media Relay+completed 客户事实，source_facts 为空且无 AppID suffix/readback/write 字段。Persona 确定性拒绝 region、subscribe load、capacity、configuration/write 细节，并覆盖重写后安全发布。13687 不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "AgentRelay completion intent consistency",
+          "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
+          "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
         }
       ],
       "source_refs": [
@@ -13500,7 +13541,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         ".codex/skills/supportportal-media-relay-enablement/"
       ],
       "created_at": "2026-09-16",
-      "updated_at": "2026-09-20",
+      "updated_at": "2026-09-24",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -13619,6 +13660,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-20",
           "event": "behavior_acceptance_via_isolated_agent_runs",
           "summary": "独立验收指出 pytest 场景仍是关键词检查+测试自导决策（反向探针：内存篡改判定表规则后三场景仍全过）。补齐方式=一次性隔离行为运行：三个独立 subagent 各自加载新版 SKILL.md，在 mock 状态服务（本地 18742 只读端点，场景化响应+查询日志）与 pilot shim（记录调用、拒绝写）下自主决策，全部按判定表行事（s1 排除取消旧申请后仅预检当前；s2/s3 预检前零调用暂停/停止并报告）。pytest 重定位为文档检查+底层回归，记录已如实更正。"
+        },
+        {
+          "at": "2026-09-24",
+          "event": "pilot_current_schema_compatibility",
+          "summary": "13687 首次真实本地预检发现 Pilot 已从 projects[].appid/state 对象切换为 data[].appId/data[]；旧解析器把成功归属误判失败，也无法到达 already_satisfied 零写入分支。修复兼容新旧响应、按目标 AppID 选取状态，并允许有效申请的 already_satisfied 结果落盘；未放宽未配置项目的 dry-run 参数门禁。"
+        },
+        {
+          "at": "2026-09-24",
+          "event": "relay_success_reply_information_isolation",
+          "summary": "13687 客户回复暴露 region=2、maxSubscribeLoad=10 和 no-write 事实，定位为 Relay 成功路径使用通用 completion intent 并把 detail/readback 注入 Persona。修复为专用 enablement_archer_enabled intent，客户 facts 仅保留 Media Relay+completed，机器 readback/approval 校验和审计证据不变；发布合同新增内部配置与写入细节拒绝。"
+        },
+        {
+          "at": "2026-09-24",
+          "event": "relay_completion_intent_consistency_fix",
+          "summary": "13693 受控验收中 AgentRelay 结果已 delivered、申请 completed，但完成回复在 account_reply_contract 以 account_reply_intent_conflict 停车。根因是 job 的 reply_facts.reply_intent 已切换为 enablement_archer_enabled，而 payload.reply_intent 遗留 enablement_completed_and_close。修复统一两层 intent 并以共享合同归一化回归锁定；失败工单不重放，发布后使用新受控工单复验。"
         }
       ]
     },

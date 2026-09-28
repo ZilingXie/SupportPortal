@@ -64,6 +64,10 @@ _SAFETY_FEEDBACK = {
     "automation_persona_suspension_close_claim_forbidden": "Do not claim that this suspension ticket closes, archives, or can be reopened.",
     "automation_persona_completion_contract_failed_enabled_state": "Do not describe an already-completed enablement as future work.",
     "automation_persona_completion_contract_failed_archive": "Do not describe an already-completed case closure as future work.",
+    "automation_persona_archer_internal_configuration_disclosure": (
+        "Remove region, subscribe load, capacity, configuration, and write/no-write details. "
+        "State only that Media Relay is already enabled."
+    ),
     "automation_persona_archer_error_overclaim": "Do not claim enablement, handoff, an SLA, or closure for this recoverable App ID error.",
 }
 
@@ -487,6 +491,16 @@ _FUTURE_ARCHIVE_CLAIM_RE = re.compile(
     r"|\b(?:archiv|clos)\w*\s+(?:the\s+)?(?:case|ticket)\s+(?:tomorrow|later|soon|next\s+\w+)\b"
 )
 _IMMEDIATE_CLAUSE_RE = re.compile(r"(?i)\b(?:now|currently|already|immediately)\b")
+_ARCHER_INTERNAL_DETAIL_RE = re.compile(
+    r"(?i)\bregions?\b"
+    r"|\b(?:maximum|max)\s+subscribe\s+load\b"
+    r"|\bsubscribe\s+load\b"
+    r"|\bcapacity(?:\s+(?:number|limit|setting)s?)?\b"
+    r"|\b(?:internal\s+)?configuration(?:\s+(?:detail|setting|value|write|change)s?)?\b"
+    r"|\b(?:no|without)\s+(?:configuration\s+)?write\b"
+    r"|\bwrite[_ -]?attempted\b"
+    r"|\bmaxSubscribeLoad\b"
+)
 
 
 def _has_misleading_future_claim(reply: str, pattern: re.Pattern[str]) -> bool:
@@ -510,6 +524,10 @@ def _assert_enablement_completion_contract(reply: str, facts: dict[str, Any]) ->
 
 def _assert_enablement_archer_enabled_contract(reply: str, facts: dict[str, Any]) -> None:
     _assert_enablement_completion_contract(reply, facts)
+    if _ARCHER_INTERNAL_DETAIL_RE.search(str(reply or "")):
+        raise AutomationPersonaError(
+            "automation_persona_archer_internal_configuration_disclosure"
+        )
 
 
 def _assert_no_enablement_error_overclaim(reply: str) -> None:
