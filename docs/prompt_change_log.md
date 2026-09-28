@@ -4808,3 +4808,9 @@ For each new entry, record:
 - Reason: run-002 出现空模型输出、incomplete message 和 `invalid_model_json`；实验必须区分 provider 输出状态、候选错误与有效分类分歧。
 - Tooling and behavior changes: Hermes 只返回 allowlisted output telemetry；Jev/Hermes 输入预检独立；candidate error report 与 disagreement report 分离；错误候选不进入 agreement 分母。失败链路统一使用脱敏后的 `metadata.diagnostics`，区分 wrapper/provider HTTP 状态，保留所有 provider 4xx/5xx 状态，并让非法枚举类型进入受控 `invalid_model_classification`；这些错误均保留模型参数、token、implementation/schema/config、Route Manual 内容 hash 与 normalizer provenance。
 - Verification: 离线 Hermes service、runner、experiment、Jev targeted tests；真实 frozen dataset 参数矩阵另行执行并保存到独立 output 目录。
+
+## 2026-09-28 - 调查 Wiki 检索工具（p2-177）
+
+- Prompt 内容和模型不变；Hermes `common` 工具集新增 `wiki_search`、`wiki_read_page`，随 investigation/ad-hoc Work 回合加载。
+- 工具描述要求保留 Wiki/页面来源，并说明历史工单文章不能单独证明当前 SDK 最新版本。工具只允许已绑定 Wiki 的搜索和读页。
+- 本地 7 项工具合同测试通过；Preproduction revision 35 的技术调查 Work 实际完成 `wiki_search` 与 `wiki_read_page`，运行事件均无错误，引用短句与 Knowledge 页面正文一致。真实客户工单未重放。
