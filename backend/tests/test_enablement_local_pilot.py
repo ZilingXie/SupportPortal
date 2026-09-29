@@ -354,15 +354,37 @@ class ExecuteApprovalBindingTests(unittest.TestCase):
         self.request_path = _write_request(self.tmp.name)
         MODULE.STATE_DIR = Path(self.tmp.name) / "state"
 
+    RELAY_TASK_ID = "task_local_pilot_fixture"
+
     def _execute(self, approval_text, side_effect=None, live_status=None):
         side_effect = side_effect or _sane_pilot_side_effect()
-        argv = ["execute", "--request", self.request_path, "--approval-ref", approval_text]
+        argv = [
+            "execute", "--request", self.request_path,
+            "--approval-ref", approval_text,
+            "--relay-task-id", self.RELAY_TASK_ID,
+        ]
         live = live_status or {
             "status": "dispatched",
             "ticket_valid": True,
             "ticket_status": "open",
-            "zendesk_ticket_id": "13601",
+            "request_id": REQUEST["request_id"],
+            "request_version": 1,
+            "zendesk_ticket_id": "9001",
+            "relay_task_id": self.RELAY_TASK_ID,
         }
+        if live_status is not None:
+            # Preserve caller-specified fields while filling the four-field
+            # binding defaults so single-field overrides stay meaningful.
+            live = {
+                "request_id": REQUEST["request_id"],
+                "request_version": 1,
+                "zendesk_ticket_id": "9001",
+                "relay_task_id": self.RELAY_TASK_ID,
+                "status": "dispatched",
+                "ticket_valid": True,
+                "ticket_status": "open",
+                **live_status,
+            }
         with patch.object(MODULE.subprocess, "run", side_effect=side_effect) as run, \
                 patch.object(MODULE, "_fetch_request_status", return_value=live):
             try:
@@ -378,12 +400,7 @@ class ExecuteApprovalBindingTests(unittest.TestCase):
         exc, run = self._execute(
             _approval(entry),
             side_effect=_sane_pilot_side_effect(),
-            live_status={
-                "status": "cancelled",
-                "ticket_valid": True,
-                "ticket_status": "open",
-                "zendesk_ticket_id": "13601",
-            },
+            live_status={"status": "cancelled"},
         )
         self.assertIsNotNone(exc)
         self.assertEqual(
@@ -399,12 +416,7 @@ class ExecuteApprovalBindingTests(unittest.TestCase):
         exc, run = self._execute(
             _approval(entry),
             side_effect=_sane_pilot_side_effect(),
-            live_status={
-                "status": "dispatched",
-                "ticket_valid": False,
-                "ticket_status": "solved",
-                "zendesk_ticket_id": "13601",
-            },
+            live_status={"ticket_valid": False, "ticket_status": "solved"},
         )
         self.assertIsNotNone(exc)
         self.assertEqual(
@@ -498,7 +510,11 @@ class TimeoutClassificationTests(unittest.TestCase):
                 return _pilot_result(payload)
             return _sane_pilot_side_effect()(cmd)
 
-        argv = ["execute", "--request", self.request_path, "--approval-ref", _approval(entry)]
+        argv = [
+            "execute", "--request", self.request_path,
+            "--approval-ref", _approval(entry),
+            "--relay-task-id", "task_timeout_fixture",
+        ]
         with patch.object(MODULE.subprocess, "run", side_effect=run), patch.object(
             MODULE,
             "_fetch_request_status",
@@ -506,7 +522,10 @@ class TimeoutClassificationTests(unittest.TestCase):
                 "status": "dispatched",
                 "ticket_valid": True,
                 "ticket_status": "open",
-                "zendesk_ticket_id": "13601",
+                "request_id": REQUEST["request_id"],
+                "request_version": 1,
+                "zendesk_ticket_id": "9001",
+                "relay_task_id": "task_timeout_fixture",
             },
         ):
             MODULE.main(argv)
@@ -530,7 +549,11 @@ class TimeoutClassificationTests(unittest.TestCase):
                 return _pilot_result({"state": {"state": "not-configured"}})
             return _sane_pilot_side_effect()(cmd)
 
-        argv = ["execute", "--request", self.request_path, "--approval-ref", _approval(entry)]
+        argv = [
+            "execute", "--request", self.request_path,
+            "--approval-ref", _approval(entry),
+            "--relay-task-id", "task_timeout_fixture",
+        ]
         with patch.object(MODULE.subprocess, "run", side_effect=run), patch.object(
             MODULE,
             "_fetch_request_status",
@@ -538,7 +561,10 @@ class TimeoutClassificationTests(unittest.TestCase):
                 "status": "dispatched",
                 "ticket_valid": True,
                 "ticket_status": "open",
-                "zendesk_ticket_id": "13601",
+                "request_id": REQUEST["request_id"],
+                "request_version": 1,
+                "zendesk_ticket_id": "9001",
+                "relay_task_id": "task_timeout_fixture",
             },
         ):
             MODULE.main(argv)

@@ -813,6 +813,23 @@ def _update_claimed_account_reply_job(
     ) is not None
 
 
+def _account_reply_currency_gate_blocks(
+    job_payload: dict[str, Any], ticket: dict[str, Any], job: dict[str, Any]
+) -> bool:
+    """Claim-time customer-currency fence.
+
+    A reply job triggered by an INTERNAL resolution (relay result, internal
+    email) is not bound to the latest customer message and must bypass the
+    fence; a customer-triggered job whose trigger timestamp is no longer the
+    latest customer message is stale and blocks (live 13751: the not-found
+    reply was wrongly cancelled before internal_resolution was set)."""
+    if job_payload.get("internal_resolution"):
+        return False
+    return not _account_reply_trigger_is_latest(
+        ticket, str(job.get("trigger_message_created_at") or "")
+    )
+
+
 def _cancel_stale_account_reply_job(
     job: dict[str, Any],
     *,
@@ -991,9 +1008,7 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
         _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
     job_payload_gate = dict(job.get("payload") or {})
-    if not job_payload_gate.get("internal_resolution") and not _account_reply_trigger_is_latest(
-        ticket, str(job.get("trigger_message_created_at") or "")
-    ):
+    if _account_reply_currency_gate_blocks(job_payload_gate, ticket, job):
         _cancel_stale_account_reply_job(job, expected_status=claimed_status)
         return
 
@@ -1135,10 +1150,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     )
     if (
         existing_message is None
-        and not dict(payload).get("internal_resolution")
-        and not _account_reply_trigger_is_latest(
-            ticket, str(job.get("trigger_message_created_at") or "")
-        )
+        and _account_reply_currency_gate_blocks(dict(payload), ticket, job)
     ):
         _cancel_stale_account_reply_job(current_job, expected_status=claimed_status)
         return

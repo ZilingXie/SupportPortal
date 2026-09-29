@@ -269,3 +269,132 @@ class RelayProjectNotFoundReplyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RelayNotFoundReplyClaimGateTests(unittest.TestCase):
+    """Real claim-path currency-fence tests (review round 1 gap).
+
+    The not-found reply job is triggered by the relay result, not by the
+    latest customer message: before the internal_resolution fix the worker
+    cancelled it at claim time (live 13751). These tests drive the REAL
+    _prepare_account_reply_job_impl through the InMemory repository.
+    """
+
+    def setUp(self) -> None:
+        from backend.tests.test_enablement_auto_relay import WORKER
+
+        self.WORKER = WORKER
+        self.repository = InMemoryTicketRepository()
+        self.repository.save_ticket(
+            {
+                "ticket_id": "13751",
+                "customer_id": "xieziling97@163.com",
+                "requester": "xieziling97@163.com",
+                "subject": "Enable media relay",
+                "status": "open",
+                "created_at": "2026-09-29T04:53:00+00:00",
+                "updated_at": "2026-09-29T05:04:00+00:00",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Any update? Could it be faster?",
+                        # The LATEST customer message (the nudge) — deliberately
+                        # different from the relay-result trigger below.
+                        "created_at": "2026-09-29T05:04:40+00:00",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+
+    def _notfound_job(self, *, internal_resolution: bool) -> dict:
+        payload = {
+            "draft_content": "",
+            "reply_facts": {
+                "behavior": "enablement",
+                "reply_intent": "enablement_appid_not_found",
+                "known_information": {
+                    "requested_feature": "media_relay",
+                    "archer_outcome": "project_not_found",
+                },
+                "missing_information": ["app_id"],
+                "resolution_status": "awaiting_customer",
+            },
+            "reply_pipeline": "account_reply_persona_v8",
+            "asked_field_keys": ["app_id"],
+            "visibility": "account_only",
+            "close_after_publish": False,
+            "reply_intent": "enablement_appid_not_found",
+            "automation_delivery_key": "enablement-relay-notfound:enr-AC-13751-v1",
+        }
+        if internal_resolution:
+            payload["internal_resolution"] = True
+        return {
+            "job_id": "enablement-relay-notfound-enr-AC-13751-v1",
+            "ticket_id": "13751",
+            # Trigger = the relay result timestamp, NOT the customer nudge.
+            "trigger_message_created_at": "2026-09-29T07:44:45+00:00",
+            "status": "persona_v8_preparing",
+            "scheduled_for": "2026-09-29T07:52:46+00:00",
+            "payload": payload,
+            "attempt_count": 0,
+            "claimed_at": "2026-09-29T07:52:46+00:00",
+            "published_at": None,
+            "created_at": "2026-09-29T07:44:45+00:00",
+            "updated_at": "2026-09-29T07:52:46+00:00",
+        }
+
+    def _run_claim(self, job: dict) -> dict:
+        """Drive the REAL publish-stage claim where the live cancellation
+        happened (persona_v8 pipeline: prepare renders, publish claims and
+        applies the currency gate). The job enters as claimed for publish."""
+        job = dict(job)
+        job["status"] = "persona_v8_publishing"
+        self.repository.save_account_reply_job(job)
+        with patch.object(self.WORKER, "ticket_repository", self.repository):
+            try:
+                self.WORKER._publish_account_reply_job(dict(job))
+            except Exception:
+                # Post-gate failures (persona/publish transports are not
+                # under test) must not mask the gate decision recorded on
+                # the repository row.
+                pass
+        return self.repository.get_account_reply_job(job["job_id"]) or {}
+
+    def test_gate_helper_blocks_customer_triggered_stale_job(self) -> None:
+        ticket = {"messages": [
+            {"role": "customer", "created_at": "2026-09-29T09:00:00+00:00"}
+        ]}
+        job = {"trigger_message_created_at": "2026-09-29T05:00:00+00:00"}
+        self.assertTrue(
+            self.WORKER._account_reply_currency_gate_blocks({}, ticket, job)
+        )
+
+    def test_gate_helper_passes_internal_resolution(self) -> None:
+        ticket = {"messages": [
+            {"role": "customer", "created_at": "2026-09-29T09:00:00+00:00"}
+        ]}
+        job = {"trigger_message_created_at": "2026-09-29T05:00:00+00:00"}
+        self.assertFalse(
+            self.WORKER._account_reply_currency_gate_blocks(
+                {"internal_resolution": True}, ticket, job
+            )
+        )
+
+    def test_notfound_job_without_flag_is_cancelled_at_claim(self) -> None:
+        """Mechanical reproduction of the live 13751 cancellation."""
+        job = self._run_claim(self._notfound_job(internal_resolution=False))
+        self.assertEqual(job.get("status"), "cancelled")
+        self.assertEqual(
+            (job.get("payload") or {}).get("cancel_reason"), "stale_customer_revision"
+        )
+
+    def test_notfound_job_with_flag_survives_the_claim_gate(self) -> None:
+        """The fixed job must NOT be cancelled as stale."""
+        job = self._run_claim(self._notfound_job(internal_resolution=True))
+        self.assertNotEqual(job.get("status"), "cancelled")
+        self.assertIsNone((job.get("payload") or {}).get("cancel_reason"))
+
+
+if __name__ == "__main__":
+    unittest.main()
