@@ -27,15 +27,19 @@ from typing import Any, Callable
 
 from backend.services.automation_test_scenarios import (
     AutomationTestScenarioError,
-    E3_APPID_VALID,
     ScenarioContext,
     _enablement_enabled_content_check,
 )
 
-# Quick and Full share the same enableable App ID (plan decision, 2026-09-28):
-# once Quick has really enabled it, Full's legal terminal state is
-# already_satisfied with zero new Archer writes.
-PP_APP_ID = E3_APPID_VALID
+# Quick and Full share the same enableable App ID. The original fixture
+# (4b7634a0…, E3_APPID_VALID) is NOT among the projects owned by the test
+# requester email, so the skill's ownership precheck blocks every run with
+# ownership_mismatch (verified live 2026-09-29, run enr-AC-13764-v1).
+# a06094d1a21042ff98afc54306789e9d IS owned by the test requester
+# (project appbuilder-c9e012754061eb9fa4a4) and had Media Relay disabled at
+# decision time, so Quick performs a real enabled write on it; afterwards
+# Full's legal terminal state is already_satisfied with zero new writes.
+PP_APP_ID = "a06094d1a21042ff98afc54306789e9d"
 
 RELAY_REQUEST_SCHEMA = "enablement-relay-request-v1"
 RELAY_RESULT_SCHEMA = "enablement-relay-result-v1"
