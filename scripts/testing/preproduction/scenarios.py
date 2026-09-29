@@ -532,6 +532,9 @@ def default_skill_runner(
             # The skill reads --approval-ref as inline JSON unless it starts
             # with "@"; a bare path would fail JSON parsing.
             "--approval-ref", f"@{approval_file}",
+            # Required binding: the AgentRelay Task from the handoff; the
+            # skill's server readback must match it before any pilot write.
+            "--relay-task-id", str(request_row.get("relay_task_id") or ""),
         ],
         env,
     )
