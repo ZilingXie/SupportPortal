@@ -322,7 +322,7 @@ previous_image_id="$(podman inspect --format '{{.Image}}' deployment_api_1 2>/de
 # tag may be a rollback-<ref>-<pid> label, and exporting that whole tag as
 # APP_BUILD_REF pollutes health provenance and cascades across runs.
 previous_ref="$(
-  podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' deployment_api_1 2>/dev/null \
+  { podman inspect --format '{{range .Config.Env}}{{println .}}{{end}}' deployment_api_1 2>/dev/null || true; } \
     | awk -F= '$1 == "APP_BUILD_REF" {sub(/^[^=]*=/, ""); print; exit}'
 )"
 if [[ -z "$previous_ref" ]]; then
