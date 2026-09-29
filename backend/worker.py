@@ -4221,6 +4221,11 @@ def _apply_enablement_relay_project_not_found(
             "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
             "asked_field_keys": ["app_id"],
             "visibility": "account_only",
+            # Same claim-time gate bypass as the relay completion job: the
+            # not-found reply is triggered by the relay result, not by the
+            # latest customer message, so the customer-currency fence would
+            # cancel it as stale when the worker claims it (live 13751).
+            "internal_resolution": True,
             "close_after_publish": False,
             "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
             "automation_delivery_key": f"enablement-relay-notfound:{request_id}",
