@@ -7,6 +7,13 @@ precheck report digest, while every server-side gate (approval binding,
 request freshness, ticket validity, independent Archer readback) stays
 exactly as production uses it. The approval method is recorded as
 ``test_auto_approve`` and never reported as a human approval.
+
+Before executing, the scenario performs the SKILL.md inbox-binding
+verification in its fixed order (server request readback with
+relay_task_id/ticket cross-check, dispatch + ticket validity, same-AppID
+conflict table); after executing, it replies the ``enablement-relay-result-v1``
+JSON back to the dispatched AgentRelay task as the local client identity, so
+the ECS worker can apply the result.
 """
 
 from __future__ import annotations
@@ -31,10 +38,12 @@ from backend.services.automation_test_scenarios import (
 PP_APP_ID = E3_APPID_VALID
 
 RELAY_REQUEST_SCHEMA = "enablement-relay-request-v1"
+RELAY_RESULT_SCHEMA = "enablement-relay-result-v1"
 DEFAULT_SKILL_SCRIPT = (
     Path(__file__).resolve().parents[3]
     / ".codex" / "skills" / "supportportal-media-relay-enablement" / "scripts" / "relay_enablement.py"
 )
+DEFAULT_RELAY_CLIENT_ENV = Path.home() / "Desktop" / "agentRelay" / "agent-relay-mcp" / ".env"
 
 
 def redact_app_id(value: str) -> str:
@@ -60,13 +69,81 @@ def redact_text(text: str, *, app_id: str = "", email: str = "") -> str:
     return out
 
 
+def redact_report(value: Any, *, app_id: str = "", email: str = "") -> Any:
+    """Recursively mask the App ID and sender email in a report structure."""
+    if isinstance(value, str):
+        return redact_text(value, app_id=app_id, email=email)
+    if isinstance(value, dict):
+        return {key: redact_report(item, app_id=app_id, email=email) for key, item in value.items()}
+    if isinstance(value, list):
+        return [redact_report(item, app_id=app_id, email=email) for item in value]
+    return value
+
+
+def _http_json(url: str, *, method: str = "GET", payload: dict | None = None,
+               token: str = "", headers: dict[str, str] | None = None) -> dict:
+    import urllib.request
+
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else None,
+        method=method,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "supportportal-automation/1.0",
+            **({"Content-Type": "application/json"} if payload is not None else {}),
+            **(headers or {}),
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:
+        body = response.read()
+    return json.loads(body) if body else {}
+
+
+def load_relay_client_identity(env_path: Path | None = None) -> dict[str, str]:
+    """Load the local relay client identity (AgentRelay server credentials).
+
+    Defaults to the agent-relay MCP env file used by the Mac client; every
+    value may be overridden via SUPPORTPORTAL_RELAY_CLIENT_* environment
+    variables.
+    """
+    path = Path(
+        os.environ.get("SUPPORTPORTAL_RELAY_CLIENT_ENV") or env_path or DEFAULT_RELAY_CLIENT_ENV
+    )
+    values: dict[str, str] = {}
+    if path.exists():
+        for raw_line in path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    identity = {
+        "base_url": os.environ.get("SUPPORTPORTAL_RELAY_CLIENT_BASE_URL")
+        or values.get("AGENTRELAY_BASE_URL", ""),
+        "agent_id": os.environ.get("SUPPORTPORTAL_RELAY_CLIENT_AGENT_ID")
+        or values.get("AGENTRELAY_AGENT_ID", ""),
+        "username": os.environ.get("SUPPORTPORTAL_RELAY_CLIENT_USERNAME")
+        or values.get("AGENTRELAY_USERNAME", ""),
+        "token": os.environ.get("SUPPORTPORTAL_RELAY_CLIENT_TOKEN")
+        or values.get("AGENTRELAY_TOKEN", ""),
+    }
+    missing = [k for k, v in identity.items() if not v]
+    if missing:
+        raise AutomationTestScenarioError(
+            "relay client identity incomplete (missing: "
+            f"{', '.join(missing)}); configure {path} or SUPPORTPORTAL_RELAY_CLIENT_*"
+        )
+    return identity
+
+
 def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: str) -> dict:
     """Wait until the worker dispatches the relay request (post-readback gate)."""
 
     def probe():
         rows = engine.db_query(
             "SELECT request_id, status, dispatch_status, app_id, request_version, "
-            "customer_email, target_params "
+            "customer_email, target_params, relay_task_id "
             "FROM support_enablement_relay_requests "
             "WHERE ticket_id = %s ORDER BY created_at DESC LIMIT 1",
             (ctx.client_ticket_id,),
@@ -88,6 +165,72 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
         f"request={row.get('request_id')} dispatch_status={row.get('dispatch_status')}",
     )
     return row
+
+
+def verify_relay_binding(
+    engine: Any,
+    ctx: ScenarioContext,
+    request_row: dict,
+    *,
+    relay_api_base: str,
+    relay_token: str,
+    fetch_json: Callable[..., dict] = _http_json,
+) -> dict:
+    """SKILL.md inbox-binding verification, fixed order, read-only.
+
+    1. Server request readback must match this application exactly
+       (request_id / request_version / zendesk_ticket_id / relay_task_id).
+    2. The request must be ``dispatched`` with ``ticket_valid=true``.
+    3. Same-AppID conflict table: any other non-terminal request for the
+       same App ID pauses the scenario (never auto-resolved).
+    """
+    request_id = str(request_row.get("request_id") or "")
+    app_id = str(request_row.get("app_id") or "")
+    url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
+    try:
+        server = fetch_json(url, token=relay_token)
+    except Exception as exc:  # noqa: BLE001 - verification failures stop the scenario
+        raise AutomationTestScenarioError(
+            f"relay request status unreadable ({exc}); refusing to execute"
+        ) from exc
+    expected = {
+        "request_id": request_id,
+        "request_version": int(request_row.get("request_version") or 1),
+        "zendesk_ticket_id": str(ctx.zendesk_ticket_id),
+        "relay_task_id": str(request_row.get("relay_task_id") or ""),
+    }
+    mismatches = [
+        f"{field}: server={server.get(field)!r} != local={value!r}"
+        for field, value in expected.items()
+        if str(server.get(field) or "") != str(value)
+    ]
+    if mismatches:
+        raise AutomationTestScenarioError(
+            "relay request readback does not match the local application; "
+            f"refusing to execute ({'; '.join(mismatches)})"
+        )
+    if str(server.get("status") or "") != "dispatched" or server.get("ticket_valid") is not True:
+        raise AutomationTestScenarioError(
+            f"relay request is not executable (status={server.get('status')!r} "
+            f"ticket_valid={server.get('ticket_valid')!r}); refusing to execute"
+        )
+
+    others = engine.db_query(
+        "SELECT request_id, status, zendesk_ticket_id FROM support_enablement_relay_requests "
+        "WHERE app_id = %s AND request_id <> %s "
+        "AND status NOT IN ('completed','failed','expired','cancelled')",
+        (app_id, request_id),
+    )
+    if others:
+        listing = ", ".join(
+            f"{row.get('request_id')}({row.get('status')},ticket={row.get('zendesk_ticket_id')})"
+            for row in others
+        )
+        raise AutomationTestScenarioError(
+            "same-AppID conflict: other active requests exist for app "
+            f"{redact_app_id(app_id)}; pausing per the binding contract ({listing})"
+        )
+    return server
 
 
 def build_relay_request_file(request_row: dict, workdir: Path) -> Path:
@@ -173,7 +316,9 @@ def default_skill_runner(
         [
             *base_cmd, "execute",
             "--request", str(request_file),
-            "--approval-ref", str(approval_file),
+            # The skill reads --approval-ref as inline JSON unless it starts
+            # with "@"; a bare path would fail JSON parsing.
+            "--approval-ref", f"@{approval_file}",
         ],
         env,
     )
@@ -181,6 +326,61 @@ def default_skill_runner(
         "approval_method": "test_auto_approve",
         "precheck_recommendation": recommendation,
         "result": result,
+    }
+
+
+def reply_result_to_relay_task(
+    ctx: ScenarioContext,
+    request_row: dict,
+    result: dict,
+    *,
+    identity: dict[str, str],
+    post_json: Callable[..., dict] = _http_json,
+    get_json: Callable[..., dict] = _http_json,
+) -> dict:
+    """Reply the execution result to the dispatched AgentRelay task.
+
+    The skill only saves/prints the result locally; without this reply the
+    ECS worker never receives ``enablement-relay-result-v1`` and the chain
+    stalls. Fencing values come from a fresh GET /tasks/{id}; the reply is
+    posted as the local client identity (strict turn-taking makes it the
+    current to_agent after dispatch).
+    """
+    task_id = str(request_row.get("relay_task_id") or "")
+    if not task_id:
+        raise AutomationTestScenarioError(
+            f"request {request_row.get('request_id')} has no relay_task_id; cannot reply"
+        )
+    identity_headers = {
+        "X-AgentRelay-Agent-Id": identity["agent_id"],
+        "X-AgentRelay-Username": identity["username"],
+    }
+    base = identity["base_url"].rstrip("/")
+    task = get_json(
+        f"{base}/tasks/{task_id}",
+        token=identity["token"],
+        headers=dict(identity_headers),
+    )
+    payload = {
+        "actor_agent_id": identity["agent_id"],
+        "task_id": task_id,
+        "turn_sequence": int(task.get("turn_sequence") or 1),
+        "expected_task_version": int(task.get("task_version") or 1),
+        "idempotency_key": f"pp-quick-result:{request_row.get('request_id')}",
+        "parts": [{"kind": "text", "text": json.dumps(result)}],
+    }
+    response = post_json(
+        f"{base}/tasks/{task_id}/messages",
+        method="POST",
+        payload=payload,
+        token=identity["token"],
+        headers=dict(identity_headers),
+    )
+    return {
+        "replied": True,
+        "task_id": task_id,
+        "response": response,
+        "detail": f"task={task_id} actor={identity['agent_id']}",
     }
 
 
@@ -192,11 +392,15 @@ def run_pp_en_quick(
     pilot_bin: str = "pilot",
     relay_base: str = "",
     relay_token: str = "",
+    relay_client_identity: dict[str, str] | None = None,
+    fetch_json: Callable[..., dict] = _http_json,
+    post_json: Callable[..., dict] = _http_json,
+    get_json: Callable[..., dict] = _http_json,
     workdir: Path | None = None,
 ) -> dict:
     """PP-EN-QUICK: one valid App ID → confirmation → relay → enabled → solved."""
     skill_runner = skill_runner or default_skill_runner
-    workdir = Path(workdir or Path(tempfile_mkdtemp()))
+    workdir = Path(workdir or tempfile_mkdtemp())
     ctx = ScenarioContext("PP-EN-QUICK")
     engine.start_ticket(
         ctx,
@@ -212,7 +416,25 @@ def run_pp_en_quick(
     engine.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
     engine.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
     engine.wait_enablement_relay_request(ctx, "relay request created after confirmation")
-    request_row = wait_enablement_relay_dispatched(ctx=ctx, engine=engine, step="relay request dispatched to the local client")
+    request_row = wait_enablement_relay_dispatched(
+        engine=engine, ctx=ctx, step="relay request dispatched to the local client"
+    )
+
+    binding = verify_relay_binding(
+        engine,
+        ctx,
+        request_row,
+        relay_api_base=relay_base,
+        relay_token=relay_token,
+        fetch_json=fetch_json,
+    )
+    engine.record(
+        ctx,
+        "inbox binding verified (server readback + same-AppID table)",
+        True,
+        f"relay_task={binding.get('relay_task_id')} status={binding.get('status')} "
+        f"ticket_valid={binding.get('ticket_valid')}",
+    )
 
     engine.emit(
         "approval_required",
@@ -253,6 +475,21 @@ def run_pp_en_quick(
         f"precheck={approval.get('precheck_recommendation')}",
     )
 
+    reply = reply_result_to_relay_task(
+        ctx,
+        request_row,
+        result,
+        identity=relay_client_identity or load_relay_client_identity(),
+        post_json=post_json,
+        get_json=get_json,
+    )
+    engine.record(
+        ctx,
+        "result replied to relay task (enablement-relay-result-v1)",
+        bool(reply.get("replied")),
+        reply.get("detail", ""),
+    )
+
     engine.wait_enablement_relay_result(
         ctx, {"enabled", "already_satisfied"}, "relay result applied (enabled/already_satisfied)"
     )
@@ -274,10 +511,12 @@ def run_pp_en_quick(
         "account_case_id": ctx.account_case_id,
         "relay_request_id": str(request_row.get("request_id") or ""),
         "relay_request_version": int(request_row.get("request_version") or 1),
+        "relay_task_id": str(request_row.get("relay_task_id") or ""),
         "approval_method": approval.get("approval_method"),
         "precheck_recommendation": approval.get("precheck_recommendation"),
         "relay_outcome": outcome,
         "archer_write_attempted": write_attempted,
+        "reply": {"task_id": reply.get("task_id")},
         "steps": [step.as_dict() for step in engine.steps],
     }
 
@@ -292,8 +531,9 @@ PP_SCENARIOS: dict[str, dict[str, Any]] = {
     "PP-EN-QUICK": {
         "label": "Media Relay quick enablement (preproduction)",
         "description": (
-            "one valid App ID → confirmation → relay dispatch → test auto-approval + real "
-            "pilot leg → enabled/already_satisfied → completion reply → solved"
+            "one valid App ID → confirmation → relay dispatch → binding verification → "
+            "test auto-approval + real pilot leg → result reply → enabled/already_satisfied "
+            "→ completion reply → solved"
         ),
         "run": run_pp_en_quick,
     },

@@ -70,18 +70,18 @@ def _ssm_value(name: str) -> str:
 
 
 def _ensure_preprod_db_env() -> None:
-    """Default the engine to the Preproduction ticket DB unless overridden.
+    """Force the engine onto the Preproduction ticket DB.
 
-    The root .env points at the legacy production schema; PP scenarios are
-    Preproduction-only, so DSN/schema/profile come from the Preproduction
-    SSM parameters unless explicitly provided in the environment.
+    PP scenarios are Preproduction-only and the root .env points at the
+    legacy production schema, so the schema/profile are overridden
+    unconditionally and the DSN always comes from the Preproduction SSM
+    parameter — an inherited .env value must never silently win.
     """
-    os.environ.setdefault("TICKET_DB_SCHEMA", "supportportal_preproduction")
-    os.environ.setdefault("AUTOMATION_TEST_PROCESSING_PROFILE", "preproduction")
-    if not os.environ.get("AUTOMATION_TEST_DB_DSN"):
-        os.environ["AUTOMATION_TEST_DB_DSN"] = _ssm_value(
-            "/supportportal/preproduction/automation-db-dsn"
-        )
+    os.environ["TICKET_DB_SCHEMA"] = "supportportal_preproduction"
+    os.environ["AUTOMATION_TEST_PROCESSING_PROFILE"] = "preproduction"
+    os.environ["AUTOMATION_TEST_DB_DSN"] = _ssm_value(
+        "/supportportal/preproduction/automation-db-dsn"
+    )
 
 
 def _ensure_relay_env() -> tuple[str, str]:
@@ -135,6 +135,19 @@ def run_check() -> int:
     except SystemExit as exc:
         report["relay_base_configured"] = False
         report["relay_env_error"] = str(exc)
+    try:
+        from scripts.testing.preproduction.scenarios import load_relay_client_identity
+
+        identity = load_relay_client_identity()
+        report["relay_client_identity"] = {
+            "base_url": identity["base_url"],
+            "agent_id": identity["agent_id"],
+            "username": identity["username"],
+            # The token itself is never printed.
+            "token_configured": bool(identity["token"]),
+        }
+    except Exception as exc:  # noqa: BLE001
+        report["relay_client_identity"] = {"error": str(exc)[:200]}
     print(json.dumps(report, ensure_ascii=False, indent=2))
     ok = (
         report["preprod_release"].get("ok")
@@ -142,7 +155,10 @@ def run_check() -> int:
         and report["pilot_bin_exists"]
         and "connectivity" in report
         and report.get("processing_profile") == "preproduction"
+        and report.get("db_schema") == "supportportal_preproduction"
         and report.get("relay_base_configured") is True
+        and isinstance(report.get("relay_client_identity"), dict)
+        and report["relay_client_identity"].get("token_configured") is True
     )
     return 0 if ok else 1
 
@@ -226,13 +242,18 @@ def main() -> int:
             "sender": pp.redact_email(engine.sender),
         }
     except Exception as exc:  # noqa: BLE001 - report and fail with the matrix
-        log(f"scenario {args.scenario} aborted: {exc}")
+        log(f"scenario {args.scenario} aborted: {pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400]}")
         report = {
             "scenario": args.scenario,
-            "aborted": str(exc)[:400],
+            "aborted": pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400],
             "steps": [step.as_dict() for step in engine.steps],
         }
         exit_code = 2
+
+    # Redact the whole report (steps detail included) before printing/saving:
+    # shared engine waiters embed the full App ID and sender email in their
+    # step details, so key-level redaction alone would leak them.
+    report = pp.redact_report(report, app_id=pp.PP_APP_ID, email=engine.sender)
 
     print("\n================ PP SCENARIO REPORT ================")
     for step in report.get("steps", []):
