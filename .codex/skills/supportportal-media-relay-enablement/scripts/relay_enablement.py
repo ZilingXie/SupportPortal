@@ -701,7 +701,8 @@ def _pilot_auth_readiness() -> dict[str, Any]:
     """Read-only Pilot login readiness probe (pilot auth status).
 
     Classification: ready | login_required | unavailable. Never performs or
-    triggers a login; the owner runs `pilot auth login --device` personally.
+    triggers a login; the owner runs `pilot auth login` (browser SSO flow;
+    the --device flow 404s on the Ferry side) personally.
     """
     payload = _pilot("auth", "status")
     exit_code = payload.get("_exit_code")
@@ -719,13 +720,13 @@ def _pilot_auth_readiness() -> dict[str, Any]:
     if exit_code == 0 and ("expired" in status_text.lower() or has_sso is False):
         record.update(
             state="login_required",
-            next_action="owner runs `pilot auth login --device` and completes the browser/device authorization; then rerun preflight",
+            next_action="owner runs `pilot auth login` (browser SSO flow) and completes the authorization; then rerun preflight",
         )
         return record
     if any(marker in markers for marker in SSO_EXPIRY_MARKERS):
         record.update(
             state="login_required",
-            next_action="owner runs `pilot auth login --device` and completes the browser/device authorization; then rerun preflight",
+            next_action="owner runs `pilot auth login` (browser SSO flow) and completes the authorization; then rerun preflight",
         )
         return record
     record.update(

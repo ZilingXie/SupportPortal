@@ -208,7 +208,7 @@ class SkillPreflightTests(unittest.TestCase):
                 "sso_expires_at": "2026-09-24T17:02:01+08:00",
                 "pilot_status": "SSO token present, Ferry JWT expired",
                 "has_sso": True,
-                "next_action": "owner runs `pilot auth login --device`",
+                "next_action": "owner runs `pilot auth login` (browser SSO flow)",
             },
             server_payload={
                 "request_id": "enr-AC-13751-v1",
@@ -222,7 +222,7 @@ class SkillPreflightTests(unittest.TestCase):
         self.assertFalse(report["ok"])
         codes = [item["code"] for item in report["blockers"]]
         self.assertEqual(codes, ["pilot_sso_login_required"])
-        self.assertIn("pilot auth login --device", report["blockers"][0]["next_action"])
+        self.assertIn("pilot auth login` (browser SSO flow", report["blockers"][0]["next_action"])
         self.assertEqual(report["request"]["status"], "dispatched")
 
     def test_cancelled_request_blocks_execution_with_next_action(self) -> None:
@@ -310,7 +310,7 @@ class SkillPreflightTests(unittest.TestCase):
         ):
             record = skill._pilot_auth_readiness()
         self.assertEqual(record["state"], "login_required")
-        self.assertIn("pilot auth login --device", record["next_action"])
+        self.assertIn("pilot auth login` (browser SSO flow", record["next_action"])
 
     def test_auth_readiness_ready(self) -> None:
         skill = _load_skill()

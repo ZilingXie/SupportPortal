@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T07:19:46Z",
-  "source_base_commit": "048f3037b622824e722f3110aeb53e1ecd1cd236",
-  "registry_digest": "1bb7e3e9f71ae1891f6b6391984ca1cce1db429d04599a117a4bcc0ce4f2f4ed",
+  "generated_at": "2026-09-29T07:35:25Z",
+  "source_base_commit": "7a2ce1199c6971fd40aae8d229659ac95cdabc42",
+  "registry_digest": "701179097791a25506712a6dbb9bcb1de1aa3043ce8cae8f783d943ad313eda7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -14625,13 +14625,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/deploy_automation_ecs_release.md"
       ],
       "created_at": "2026-09-29T15:30:00Z",
-      "updated_at": "2026-09-29T15:30:00Z",
+      "updated_at": "2026-09-29T15:45:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "legacy_ids": [],
       "legacy_refs": [],
-      "history": []
+      "history": [
+        {
+          "at": "2026-09-29T15:45:00Z",
+          "note": "实测修正：pilot auth login --device 在 Ferry 设备授权端点 404，浏览器 PKCE 流（pilot auth login）为已验证可用路径；mcp PR#97 + 本提交同步修正指引与测试。"
+        }
+      ]
     },
     {
       "schema_version": 2,
