@@ -237,12 +237,15 @@
 ### PP-EN-QUICK：Media Relay 快速开通（真实全链）
 
 - **合同**：一轮提交有效 App ID → 确认回复投递 → relay request gated→dispatched →
-  **收件绑定核验**（SKILL.md 固定顺序：服务端 request readback 逐字段核对
-  request_id/version/zendesk_ticket_id/relay_task_id + dispatched/ticket_valid +
-  同 AppID 其他有效申请即暂停）→ **测试专用自动批准**（skill precheck digest 绑定，
+  **收件绑定核验**（SKILL.md 固定顺序：①派发 Task 的**当前 Message** 解析
+  enablement-relay-request-v1 并核对发送方=ECS 身份/接收方=本机/request_id/version；
+  ②服务端 request readback 逐字段核对 request_id/version/zendesk_ticket_id/relay_task_id；
+  ③dispatched + ticket_valid；④同 AppID 其他有效申请即暂停）→ **测试专用自动批准**（skill precheck digest 绑定，
   p2-163 全部服务端门禁原样生效；`approval_method=test_auto_approve`，绝不记为人工批准）→
   真实 pilot 写入 + 独立回读 → **结果回传 AgentRelay Task**（以本机客户端身份
-  POST /tasks/{id}/messages，fencing 取 fresh GET）→ enabled/already_satisfied →
+  POST /tasks/{id}/messages——payload 带 `message_id`（=current_message_id），
+  fencing（turn_sequence/task_version）取 fresh GET 且**缺失即 fail-closed**（不回退默认值，
+  防错误 fencing 409 stale）；GET 响应兼容 `{"task": {...}}` 嵌套）→ enabled/already_satisfied →
   完成回复投递 → solved。Archer 新写入次数如实记录（0 或 1）。
 - **前置**：`PILOT_BIN`（默认 `~/.local/bin/pilot`）+ pilot SSO 登录态有效 +
   本机 relay 客户端身份文件（默认 `~/Desktop/agentRelay/agent-relay-mcp/.env`，

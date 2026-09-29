@@ -103,6 +103,48 @@ def _identity() -> dict:
     }
 
 
+ECS_AGENT_ID = "supportportal-preproduction"
+
+
+def _request_message(message_id: str, *, request_id: str = "enr-AC-13900-v1", version: int = 1) -> dict:
+    return {
+        "message_id": message_id,
+        "from_agent_id": ECS_AGENT_ID,
+        "to_agent_id": "zac-agent",
+        "parts": [{
+            "kind": "text",
+            "text": json.dumps({
+                "schema_version": "enablement-relay-request-v1",
+                "request_id": request_id,
+                "request_version": version,
+                "app_id": APP_ID,
+            }),
+        }],
+    }
+
+
+def _relay_task_response(
+    *,
+    request_id: str = "enr-AC-13900-v1",
+    with_task_version: bool = True,
+    nested: bool = True,
+) -> dict:
+    """Real-shaped GET /tasks/{id} response (v0.5/v0.6 mutation contract)."""
+    task = {
+        "task_id": "task-42",
+        "current_message_id": "m-1",
+        "turn_sequence": 3,
+        "max_turns": 12,
+        "messages": [
+            _request_message("m-0", request_id=request_id),
+            _request_message("m-1", request_id=request_id),
+        ],
+    }
+    if with_task_version:
+        task["task_version"] = 5
+    return {"task": task} if nested else task
+
+
 def _happy_queue(engine: FakeEngine, *, outcome: str, write: bool) -> None:
     engine.db_queue = [
         ("FROM support_account_cases", [
@@ -180,15 +222,16 @@ class PpEnQuickTests(unittest.TestCase):
         calls: list = []
         fetch, fetch_calls = _fake_fetch(dict(_SERVER_REQUEST))
         posts: list = []
-        task_payload = {"task_id": "task-42", "turn_sequence": 3, "task_version": 5}
+        gets: list = []
 
         def post(url, *, method="GET", payload=None, token="", headers=None):
             posts.append({"url": url, "method": method, "payload": payload, "headers": headers, "token": token})
             return {"message_id": "m-9"}
 
         def get(url, **kwargs):
+            gets.append(url)
             assert url.endswith("/tasks/task-42")
-            return dict(task_payload)
+            return _relay_task_response()
 
         report = pp.run_pp_en_quick(
             engine,
@@ -196,6 +239,7 @@ class PpEnQuickTests(unittest.TestCase):
             relay_base="https://preprod.example.test/automation/preproduction",
             relay_token="intake-token",
             relay_client_identity=_identity(),
+            ecs_agent_id=ECS_AGENT_ID,
             fetch_json=fetch,
             post_json=post,
             get_json=get,
@@ -205,14 +249,17 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertEqual(report["relay_outcome"], "enabled")
         self.assertTrue(report["archer_write_attempted"])
         self.assertEqual(report["relay_task_id"], "task-42")
-        # Binding verification hit the server readback once, with the intake token.
+        # Binding verification: task current-message GET + server readback.
         self.assertEqual(len(fetch_calls), 1)
         self.assertIn("/v1/enablement-relay/requests/enr-AC-13900-v1", fetch_calls[0]["url"])
         self.assertEqual(fetch_calls[0]["token"], "intake-token")
-        # Result reply: fencing from the fresh task GET, identity headers set.
+        self.assertEqual(len(gets), 2, "task fetched once for binding, once for the reply")
+        # Result reply: real mutation contract — nested task envelope unwrapped,
+        # current message id included, fencing from the fresh GET.
         self.assertEqual(len(posts), 1)
         payload = posts[0]["payload"]
         self.assertEqual(payload["actor_agent_id"], "zac-agent")
+        self.assertEqual(payload["message_id"], "m-1")
         self.assertEqual(payload["turn_sequence"], 3)
         self.assertEqual(payload["expected_task_version"], 5)
         self.assertEqual(payload["parts"][0]["kind"], "text")
@@ -226,6 +273,73 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertIn("inbox binding verified (server readback + same-AppID table)", step_names)
         self.assertIn("result replied to relay task (enablement-relay-result-v1)", step_names)
 
+    def test_current_message_mismatch_stops_before_skill(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        # The dispatched task's current message carries a DIFFERENT request.
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            return _relay_task_response(request_id="enr-OTHER-v9")
+
+        with self.assertRaises(AutomationTestScenarioError):
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertEqual(calls, [], "skill must never run on a current-message mismatch")
+
+    def test_missing_fencing_fails_closed(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            return _relay_task_response(with_task_version=False)
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("missing fencing", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_listener_redacts_live_output(self) -> None:
+        from scripts.testing.preproduction import __main__ as cli
+
+        printed: list = []
+        listener = cli._build_listener(printed.append, app_id=APP_ID, email="xieziling97@163.com")
+        # A shared-engine record() emits the step detail with the full App ID.
+        listener("step", {
+            "step": "relay request created",
+            "status": "PASS",
+            "detail": f"request=enr-1 status=gated app_id={APP_ID} v1",
+        })
+        listener("info", {"message": f"linked case for xieziling97@163.com app {APP_ID}"})
+        rendered = "\n".join(printed)
+        self.assertNotIn(APP_ID, rendered)
+        self.assertNotIn("xieziling97@163.com", rendered)
+        self.assertIn(pp.redact_app_id(APP_ID), rendered)
+
     def test_already_satisfied_zero_writes(self) -> None:
         engine = FakeEngine()
         _happy_queue(engine, outcome="already_satisfied", write=False)
@@ -237,9 +351,10 @@ class PpEnQuickTests(unittest.TestCase):
             relay_base="https://preprod.example.test/automation/preproduction",
             relay_token="intake-token",
             relay_client_identity=_identity(),
+            ecs_agent_id=ECS_AGENT_ID,
             fetch_json=fetch,
             post_json=lambda *a, **k: {"ok": True},
-            get_json=lambda *a, **k: {"task_id": "task-42", "turn_sequence": 1, "task_version": 1},
+            get_json=lambda *a, **k: _relay_task_response(),
             workdir=self._workdir(),
         )
         self.assertTrue(engine.all_passed())
@@ -261,7 +376,9 @@ class PpEnQuickTests(unittest.TestCase):
                 relay_base="https://preprod.example.test/automation/preproduction",
                 relay_token="intake-token",
                 relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
                 fetch_json=fetch,
+                get_json=lambda *a, **k: _relay_task_response(),
                 workdir=self._workdir(),
             )
         self.assertEqual(calls, [], "skill must never run on a binding mismatch")
@@ -287,7 +404,9 @@ class PpEnQuickTests(unittest.TestCase):
                 relay_base="https://preprod.example.test/automation/preproduction",
                 relay_token="intake-token",
                 relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
                 fetch_json=fetch,
+                get_json=lambda *a, **k: _relay_task_response(),
                 workdir=self._workdir(),
             )
         self.assertIn("same-AppID conflict", str(ctx.exception))

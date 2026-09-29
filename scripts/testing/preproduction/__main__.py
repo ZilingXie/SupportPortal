@@ -179,6 +179,38 @@ def _which(binary: str) -> str | None:
     return which(binary) or (binary if Path(binary).exists() else None)
 
 
+def _build_listener(log_fn, *, app_id: str, email: str):
+    """Build the engine listener with live-output redaction applied.
+
+    Shared engine waiters embed the full App ID and sender email in step
+    details and info messages; every payload printed here is redacted before
+    it reaches the terminal (final report redaction alone is too late for
+    streaming output).
+    """
+    from scripts.testing.preproduction import scenarios as pp
+
+    def listener(kind: str, data: dict) -> None:
+        data = pp.redact_report(data or {}, app_id=app_id, email=email)
+        if kind == "info":
+            log_fn(data.get("message") or "")
+        elif kind == "step":
+            mark = "✓" if data.get("status") == "PASS" else "✗"
+            log_fn(
+                f"[{mark}] {data.get('step')}"
+                + (f" — {data.get('detail')}" if data.get("detail") else "")
+            )
+        elif kind == "waiting":
+            suffix = f" (last error: {data['last_error']})" if data.get("last_error") else ""
+            log_fn(f"… waiting for {data['description']} ({data.get('waited_seconds')}s){suffix}")
+        elif kind == "approval_required":
+            print("\n" + "=" * 72)
+            print(f"[{data.get('kind')}] {data.get('instruction')}")
+            print(f"  Zendesk ticket : {data.get('zendesk_ticket_url')}")
+            print("=" * 72 + "\n", flush=True)
+
+    return listener
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=sorted(_scenario_ids()))
@@ -211,20 +243,9 @@ def main() -> int:
             print("aborted.")
             return 1
 
-    def listener(kind: str, data: dict) -> None:
-        if kind == "info":
-            log(data.get("message") or "")
-        elif kind == "waiting":
-            suffix = f" (last error: {data['last_error']})" if data.get("last_error") else ""
-            log(f"… waiting for {data['description']} ({data.get('waited_seconds')}s){suffix}")
-        elif kind == "approval_required":
-            print("\n" + "=" * 72)
-            print(f"[{data.get('kind')}] {data.get('instruction')}")
-            print(f"  Zendesk ticket : {data.get('zendesk_ticket_url')}")
-            print("=" * 72 + "\n", flush=True)
-
-    engine.listener = listener
     from scripts.testing.preproduction import scenarios as pp
+
+    engine.listener = _build_listener(log, app_id=pp.PP_APP_ID, email=engine.sender)
 
     log(f"========== scenario {args.scenario} ==========")
     runner = pp.PP_SCENARIOS[args.scenario]["run"]
@@ -236,6 +257,7 @@ def main() -> int:
             pilot_bin=args.pilot_bin or _pilot_bin(),
             relay_base=relay_base,
             relay_token=relay_token,
+            ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
         )
         report["redacted"] = {
             "app_id": pp.redact_app_id(pp.PP_APP_ID),
