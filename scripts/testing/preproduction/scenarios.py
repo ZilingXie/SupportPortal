@@ -31,15 +31,17 @@ from backend.services.automation_test_scenarios import (
     _enablement_enabled_content_check,
 )
 
-# Quick and Full share the same enableable App ID. The original fixture
-# (4b7634a0…, E3_APPID_VALID) is NOT among the projects owned by the test
-# requester email, so the skill's ownership precheck blocks every run with
-# ownership_mismatch (verified live 2026-09-29, run enr-AC-13764-v1).
-# a06094d1a21042ff98afc54306789e9d IS owned by the test requester
-# (project appbuilder-c9e012754061eb9fa4a4) and had Media Relay disabled at
-# decision time, so Quick performs a real enabled write on it; afterwards
-# Full's legal terminal state is already_satisfied with zero new writes.
-PP_APP_ID = "a06094d1a21042ff98afc54306789e9d"
+# Quick and Full share the same enableable App ID. Fixture history:
+# 4b7634a0… (E3_APPID_VALID) is NOT owned by the test requester email, so the
+# ownership precheck blocks every run (verified live, enr-AC-13764-v1).
+# a06094d1… IS owned but carries a stale disabled UAP config, and Archer
+# rejects the enable POST with "该项目的 UAP 配置已存在" (enr-AC-13768-v1) —
+# a fresh enable write is impossible until that config is removed manually.
+# User decision (2026-09-29, option A): run Quick against the golden project
+# fcd0dab1…36fc (test3, ticket 13605) which is enabled with exactly the
+# target params (region=2, maxSubscribeLoad=10), so the scenario validates
+# the full chain with outcome already_satisfied and ZERO new Archer writes.
+PP_APP_ID = "fcd0dab13017495bbe25a63bfdb236fc"
 
 RELAY_REQUEST_SCHEMA = "enablement-relay-request-v1"
 RELAY_RESULT_SCHEMA = "enablement-relay-result-v1"
