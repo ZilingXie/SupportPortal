@@ -637,11 +637,22 @@ class PpEnQuickTests(unittest.TestCase):
 
     def test_request_file_shape(self) -> None:
         workdir = self._workdir()
-        request_file = pp.build_relay_request_file(_request_row("dispatched"), workdir)
+        request_file = pp.build_relay_request_file(
+            _request_row("dispatched"), workdir, zendesk_ticket_id="13900"
+        )
         payload = json.loads(request_file.read_text(encoding="utf-8"))
         self.assertEqual(payload["schema_version"], "enablement-relay-request-v1")
         self.assertEqual(payload["app_id"], APP_ID)
+        self.assertEqual(payload["zendesk_ticket_id"], "13900")
         self.assertEqual(payload["target_params"], {"typeId": 6, "region": 2, "maxSubscribeLoad": 10})
+
+    def test_request_row_zendesk_ticket_id_wins_over_fallback(self) -> None:
+        workdir = self._workdir()
+        row = _request_row("dispatched")
+        row["zendesk_ticket_id"] = "13900"
+        request_file = pp.build_relay_request_file(row, workdir, zendesk_ticket_id="ignored")
+        payload = json.loads(request_file.read_text(encoding="utf-8"))
+        self.assertEqual(payload["zendesk_ticket_id"], "13900")
 
     def test_redact_report_covers_steps(self) -> None:
         report = {

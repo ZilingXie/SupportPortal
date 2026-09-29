@@ -149,7 +149,7 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
     def probe():
         rows = engine.db_query(
             "SELECT request_id, status, dispatch_status, app_id, request_version, "
-            "customer_email, target_params, relay_task_id "
+            "customer_email, target_params, relay_task_id, zendesk_ticket_id "
             "FROM support_enablement_relay_requests "
             "WHERE ticket_id = %s ORDER BY created_at DESC LIMIT 1",
             (ctx.client_ticket_id,),
@@ -434,13 +434,21 @@ def verify_relay_binding(
     return server
 
 
-def build_relay_request_file(request_row: dict, workdir: Path) -> Path:
+def build_relay_request_file(
+    request_row: dict, workdir: Path, *, zendesk_ticket_id: str = ""
+) -> Path:
+    # The skill requires the four binding fields PRESENT, including
+    # zendesk_ticket_id — a request file without it is rejected before any
+    # pilot call.
     payload = {
         "schema_version": RELAY_REQUEST_SCHEMA,
         "request_id": str(request_row.get("request_id") or ""),
         "request_version": int(request_row.get("request_version") or 1),
         "app_id": str(request_row.get("app_id") or ""),
         "customer_email": str(request_row.get("customer_email") or ""),
+        "zendesk_ticket_id": str(
+            request_row.get("zendesk_ticket_id") or zendesk_ticket_id or ""
+        ),
         "target_params": dict(request_row.get("target_params") or {}),
     }
     path = workdir / "relay-request.json"
@@ -485,7 +493,11 @@ def default_skill_runner(
     """
     if not skill_script.exists():
         raise AutomationTestScenarioError(f"relay skill script not found: {skill_script}")
-    request_file = build_relay_request_file(request_row, workdir)
+    request_file = build_relay_request_file(
+        request_row,
+        workdir,
+        zendesk_ticket_id=str((ctx.zendesk_ticket_id if ctx else "") or ""),
+    )
     env = {
         **os.environ,
         "PILOT_BIN": pilot_bin,
