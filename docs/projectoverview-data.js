@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T05:12:27Z",
-  "source_base_commit": "0f854ef685dac659ddf951d88ec20579bfaea1df",
-  "registry_digest": "a148c0ad92527cfca59172040a914bcbfe669c5ad25c99251e79776e8c1f3e7b",
+  "generated_at": "2026-09-29T07:19:46Z",
+  "source_base_commit": "048f3037b622824e722f3110aeb53e1ecd1cd236",
+  "registry_digest": "1bb7e3e9f71ae1891f6b6391984ca1cce1db429d04599a117a4bcc0ce4f2f4ed",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1354,6 +1354,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "agent-relay-mcp 分阶段 handoff 测试",
+          "command": "npm run check（agent-relay-mcp @ 9d6c7b6，PR #96）",
+          "result": "285 passed（新增 3 例：enablement profile、普通任务不变、历史消息不翻转）"
+        },
+        {
+          "type": "test",
+          "label": "SupportPortal skill preflight 测试",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py test_enablement_relay_inbox_binding_scenarios.py test_enablement_local_pilot.py test_enablement_auto_relay.py test_enablement_auto_failure.py",
+          "result": "70 passed, 5 subtests（新增 7 例 preflight blocker 分类）"
+        },
+        {
+          "type": "deployment",
+          "label": "真实 13751 preflight 验证（只读）",
+          "command": "relay_enablement.py preflight --request \u003cenr-AC-13751-v1>",
+          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；唯一 blocker=pilot_sso_login_required（owner 待执行 pilot auth login --device）；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1459,7 +1477,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 39,
+      "task_count": 40,
       "done_count": 20,
       "blocked_count": 0
     },
@@ -14563,6 +14581,57 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "note": "第二轮复验通过后完成 A 方案收尾：合码、两次 Preproduction 发布（首次发现 prompt 版本回退缺陷并修复）、三条真实验证 PASS。测试工单 13750（首次发布误分类已人工交接）/13751（relay 申请留 pending）/13753（已交接）留待 Zendesk 清理。"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-179",
+      "title": "AgentRelay 本地 Enablement 执行闭环修复：分阶段 handoff + 结构化 preflight",
+      "status": "review",
+      "owner": "codex",
+      "summary": "修复 13751 类 enablement relay 任务在本地执行层停摆的问题：agent-relay-mcp 新增 enablement-relay-request-v1 专用分阶段 handoff（本地只读预检放行、只门禁 Archer 写入与 AgentRelay 回传、两次本地审批、ownership/project_not_found 免执行审批直接起草失败结果，PR #96）；SupportPortal skill 新增 preflight 命令作为首个本地步骤（Pilot 登录态 probe + 服务端 request readback + 结构化 blocker 报告，含 certifi CA 回退修复系统 python 读回失败）；本地一次性配置 SUPPORTPORTAL_RELAY_API_BASE/TOKEN（SSM preproduction intake shared token，仅存在于受保护本地环境）。普通 AgentRelay 任务行为不变。",
+      "next_action": "实现与本地验证完成；等待 owner 完成 pilot auth login --device 后按新流程重跑 13751（resync 后进入本地预检）。max_turns=1 语义已澄清（只限 Relay 回复数，不限本地审批轮数）。",
+      "acceptance_criteria": [
+        "普通 AgentRelay Task 的 handoff 行为不变（默认 explain-then-approve 边界保留）。",
+        "当前消息携带 enablement-relay-request-v1 JSON 的任务自动生成分阶段 handoff 并引用专用 skill；历史消息携带该 schema 不翻转 profile；不可信 payload 不进 prompt。",
+        "第一次批准前：无 Archer 写入、无 AgentRelay 回传；本地只读预检（登录态/绑定/readback/归属/状态/dry-run）允许且必须。",
+        "缺 env、SSO 过期、ownership 不匹配、重复 AppID、request 已取消输出结构化 blocker（含 next_action），不再判任务无法开始。",
+        "第一次批准后最多一次 archer open 且必须独立 status 回读；第二次批准后仅发送一条绑定正确的结果 JSON。",
+        "结果异常时 SupportPortal 失败链（internal note/回 queue/负责人通知/人工接管）不变。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "agent-relay-mcp 分阶段 handoff 测试",
+          "command": "npm run check（agent-relay-mcp @ 9d6c7b6，PR #96）",
+          "result": "285 passed（新增 3 例：enablement profile、普通任务不变、历史消息不翻转）"
+        },
+        {
+          "type": "test",
+          "label": "SupportPortal skill preflight 测试",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py test_enablement_relay_inbox_binding_scenarios.py test_enablement_local_pilot.py test_enablement_auto_relay.py test_enablement_auto_failure.py",
+          "result": "70 passed, 5 subtests（新增 7 例 preflight blocker 分类）"
+        },
+        {
+          "type": "deployment",
+          "label": "真实 13751 preflight 验证（只读）",
+          "command": "relay_enablement.py preflight --request \u003cenr-AC-13751-v1>",
+          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；唯一 blocker=pilot_sso_login_required（owner 待执行 pilot auth login --device）；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
+        }
+      ],
+      "source_refs": [
+        ".codex/skills/supportportal-media-relay-enablement/SKILL.md",
+        ".codex/skills/supportportal-media-relay-enablement/scripts/relay_enablement.py",
+        "docs/deploy_automation_ecs_release.md"
+      ],
+      "created_at": "2026-09-29T15:30:00Z",
+      "updated_at": "2026-09-29T15:30:00Z",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": []
     },
     {
       "schema_version": 2,
