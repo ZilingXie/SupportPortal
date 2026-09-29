@@ -707,6 +707,27 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertNotIn("AWS_SESSION_TOKEN", child_env)
         self.assertEqual(child_env.get("AWS_REGION"), "us-east-1")
 
+    def test_relay_env_uses_ecs_api_base_and_intake_token(self) -> None:
+        """SKILL.md contract: SUPPORTPORTAL_RELAY_API_BASE is the SupportPortal
+        API base and the token is the intake bearer — NOT the AgentRelay server
+        (that identity lives in the client env file)."""
+        from scripts.testing.preproduction import __main__ as cli
+
+        with patch.dict(os.environ, {}, clear=False), patch.object(
+            cli,
+            "_ssm_value",
+            return_value="intake-token-value",
+        ) as ssm:
+            os.environ.pop("SUPPORTPORTAL_RELAY_API_BASE", None)
+            os.environ.pop("SUPPORTPORTAL_RELAY_TOKEN", None)
+            base, token = cli._ensure_relay_env()
+        self.assertEqual(base, cli.PREPROD_API_BASE)
+        self.assertIn("/automation/preproduction", base)
+        self.assertEqual(token, "intake-token-value")
+        ssm.assert_called_once_with("/supportportal/preproduction/automation-intake-shared-token")
+        os.environ.pop("SUPPORTPORTAL_RELAY_API_BASE", None)
+        os.environ.pop("SUPPORTPORTAL_RELAY_TOKEN", None)
+
     def _skill_stub(self):
         import tempfile
         from pathlib import Path

@@ -104,15 +104,20 @@ def _ensure_preprod_db_env() -> None:
     )
 
 
+PREPROD_API_BASE = "https://supportcenter.stellarix.space/automation/preproduction"
+
+
 def _ensure_relay_env() -> tuple[str, str]:
-    base = os.environ.get("SUPPORTPORTAL_RELAY_API_BASE") or ""
-    token = os.environ.get("SUPPORTPORTAL_RELAY_TOKEN") or ""
-    if not base:
-        base = _ssm_value("/supportportal/preproduction/agentrelay-base-url")
-        os.environ["SUPPORTPORTAL_RELAY_API_BASE"] = base
-    if not token:
-        token = _ssm_value("/supportportal/preproduction/agentrelay-token")
-        os.environ["SUPPORTPORTAL_RELAY_TOKEN"] = token
+    """Skill credentials for the ECS request-status endpoint (SKILL.md):
+    SUPPORTPORTAL_RELAY_API_BASE is the SupportPortal API base (NOT the
+    AgentRelay server — that identity lives in the client env file) and
+    SUPPORTPORTAL_RELAY_TOKEN is the environment's intake bearer token."""
+    base = os.environ.get("SUPPORTPORTAL_RELAY_API_BASE") or PREPROD_API_BASE
+    token = os.environ.get("SUPPORTPORTAL_RELAY_TOKEN") or _ssm_value(
+        "/supportportal/preproduction/automation-intake-shared-token"
+    )
+    os.environ["SUPPORTPORTAL_RELAY_API_BASE"] = base
+    os.environ["SUPPORTPORTAL_RELAY_TOKEN"] = token
     return base, token
 
 
