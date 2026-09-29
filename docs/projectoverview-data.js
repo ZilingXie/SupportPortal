@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T09:45:50Z",
-  "source_base_commit": "433ce9e10e78ae736cc0cdd777841a38cc657b6f",
-  "registry_digest": "966787efbf24815d192dd041bba4b2bbc3bc0e7a3f35ee989edcb8195a95aeb0",
+  "generated_at": "2026-09-29T10:11:14Z",
+  "source_base_commit": "f835f916382e63e1ebc8fafa1f306df2db847818",
+  "registry_digest": "81e9a1f2203f040f5d0e4e9364c82b3164a345f835ca58a8d056f6e1641887c5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1361,26 +1361,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "agent-relay-mcp 分阶段 handoff 测试",
-          "command": "npm run check（agent-relay-mcp：分阶段 profile #96/9d6c7b6 → 登录流 #97/25f80cc → 多 part 扫描 #98/03737b7）",
-          "result": "287 passed（新增 2 例：schema 在后续 part 仍识别、全 schema-less JSON 回落默认 profile）"
+          "command": "cd ~/Desktop/agentRelay/agent-relay-mcp && npm run check",
+          "result": "287 passed（提交链 #96/9d6c7b6 → #97/25f80cc → #98/03737b7；含分阶段 profile、普通任务不变、历史消息不翻转、schema 在后续 part 仍识别、全 schema-less JSON 回落默认 profile）"
         },
         {
           "type": "test",
-          "label": "SupportPortal skill preflight 测试",
+          "label": "SupportPortal skill 全量定向（含 preflight、四字段 fail-closed、领取门禁链）",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
-          "result": "70 passed, 5 subtests（新增 7 例 preflight blocker 分类）"
+          "result": "85 passed, 5 subtests passed（实测 2026-09-29，main c8a85786；含双缺字段/单侧逐字段缺失/缺 version 不默认/请求缺字段拒绝/单字段 mismatch/execute 前置拒绝/publish 真实门禁链）"
         },
         {
           "type": "deployment",
           "label": "真实 13751 preflight 验证（只读）",
-          "command": "relay_enablement.py preflight --request \u003crequest.json> --relay-task-id \u003ctask_id>",
-          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；唯一 blocker=pilot_sso_login_required（owner 待执行 pilot auth login --device）；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
+          "command": "relay_enablement.py preflight --request \u003crequest.json> --relay-task-id task_484ba2f93cd44c40ac8eae490945b610",
+          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；当时唯一 blocker=pilot_sso_login_required，owner 已用 pilot auth login（浏览器 PKCE 流）完成后 preflight 全绿；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
         },
         {
-          "type": "test",
-          "label": "复审第一/二轮：四字段绑定门禁（fail-closed）+ 真实领取门禁链",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
-          "result": "81 passed, 5 subtests（含：双缺字段/单侧缺字段/缺 version 不默认/请求缺字段拒绝 + 单字段 mismatch + execute 前置拒绝 + publish 真实门禁链）"
+          "type": "deployment",
+          "label": "官方栈运行时验证（worker.py 门禁提取变更）",
+          "command": "scripts/workflow/restart_single_host_stack.sh --mode full + scripts/workflow/inspect_single_host_stack_mode.sh + curl /health",
+          "result": "重启成功；build_provenance_status=matched（app_build.ref=c8a857861270=root main）；/health ok（ticket/knowledge=postgres、rag=ok）；无辅助栈（2026-09-29 实测）"
         },
         {
           "type": "test",
@@ -14610,12 +14610,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "AgentRelay 本地 Enablement 执行闭环修复：分阶段 handoff + 结构化 preflight",
       "status": "review",
       "owner": "codex",
-      "summary": "修复 13751 类 enablement relay 任务在本地执行层停摆的问题：agent-relay-mcp 新增 enablement-relay-request-v1 专用分阶段 handoff（本地只读预检放行、只门禁 Archer 写入与 AgentRelay 回传、两次本地审批、ownership/project_not_found 免执行审批直接起草失败结果，PR #96）；SupportPortal skill 新增 preflight 命令作为首个本地步骤（Pilot 登录态 probe + 服务端 request readback + 结构化 blocker 报告，含 certifi CA 回退修复系统 python 读回失败）；本地一次性配置 SUPPORTPORTAL_RELAY_API_BASE/TOKEN（SSM preproduction intake shared token，仅存在于受保护本地环境）。普通 AgentRelay 任务行为不变。",
-      "next_action": "复审第二轮 P1（空字段 fail-open）已修复；worker.py 运行时代码变更将按规则完成官方栈重启与 live 验证后申请复验。owner 使用 pilot auth login（浏览器 PKCE 流；--device 在 Ferry 设备端点 404）。",
+      "summary": "修复 13751 类 enablement relay 任务在本地执行层停摆的问题：agent-relay-mcp 新增 enablement-relay-request-v1 专用分阶段 handoff（本地只读预检放行、只门禁 Archer 写入与 AgentRelay 回传、两次本地审批、ownership/project_not_found 免执行审批直接起草失败结果，PR #96 + #97 + #98）；SupportPortal skill 新增 preflight 命令作为首个本地步骤（Pilot 登录态 probe + 服务端 request readback + 结构化 blocker 报告 + 四字段 fail-closed 绑定门禁，含 certifi CA 回退）；本地一次性配置 SUPPORTPORTAL_RELAY_API_BASE/TOKEN（SSM preproduction intake shared token，仅存在于受保护本地环境）。普通 AgentRelay 任务行为不变。",
+      "next_action": "复审第三轮：证据记录已同步为当前实测（85 passed、浏览器登录、完整命令）；等待整体复验。owner 登录命令为 pilot auth login（浏览器 PKCE 流；--device 在 Ferry 设备端点 404）。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变（默认 explain-then-approve 边界保留）。",
         "当前消息携带 enablement-relay-request-v1 JSON 的任务自动生成分阶段 handoff 并引用专用 skill；历史消息携带该 schema 不翻转 profile；不可信 payload 不进 prompt。",
         "第一次批准前：无 Archer 写入、无 AgentRelay 回传；本地只读预检（登录态/绑定/readback/归属/状态/dry-run）允许且必须。",
+        "服务端 readback 四字段（request_id/request_version/zendesk_ticket_id/relay_task_id）全部存在且精确相等才通过；任一侧缺失即阻断，双缺不算匹配，request_version 缺失不默认为 1。",
         "缺 env、SSO 过期、ownership 不匹配、重复 AppID、request 已取消输出结构化 blocker（含 next_action），不再判任务无法开始。",
         "第一次批准后最多一次 archer open 且必须独立 status 回读；第二次批准后仅发送一条绑定正确的结果 JSON。",
         "结果异常时 SupportPortal 失败链（internal note/回 queue/负责人通知/人工接管）不变。"
@@ -14625,35 +14626,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "agent-relay-mcp 分阶段 handoff 测试",
-          "command": "npm run check（agent-relay-mcp：分阶段 profile #96/9d6c7b6 → 登录流 #97/25f80cc → 多 part 扫描 #98/03737b7）",
-          "result": "287 passed（新增 2 例：schema 在后续 part 仍识别、全 schema-less JSON 回落默认 profile）"
+          "command": "cd ~/Desktop/agentRelay/agent-relay-mcp && npm run check",
+          "result": "287 passed（提交链 #96/9d6c7b6 → #97/25f80cc → #98/03737b7；含分阶段 profile、普通任务不变、历史消息不翻转、schema 在后续 part 仍识别、全 schema-less JSON 回落默认 profile）"
         },
         {
           "type": "test",
-          "label": "SupportPortal skill preflight 测试",
+          "label": "SupportPortal skill 全量定向（含 preflight、四字段 fail-closed、领取门禁链）",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
-          "result": "70 passed, 5 subtests（新增 7 例 preflight blocker 分类）"
+          "result": "85 passed, 5 subtests passed（实测 2026-09-29，main c8a85786；含双缺字段/单侧逐字段缺失/缺 version 不默认/请求缺字段拒绝/单字段 mismatch/execute 前置拒绝/publish 真实门禁链）"
         },
         {
           "type": "deployment",
           "label": "真实 13751 preflight 验证（只读）",
-          "command": "relay_enablement.py preflight --request \u003crequest.json> --relay-task-id \u003ctask_id>",
-          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；唯一 blocker=pilot_sso_login_required（owner 待执行 pilot auth login --device）；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
+          "command": "relay_enablement.py preflight --request \u003crequest.json> --relay-task-id task_484ba2f93cd44c40ac8eae490945b610",
+          "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；当时唯一 blocker=pilot_sso_login_required，owner 已用 pilot auth login（浏览器 PKCE 流）完成后 preflight 全绿；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
         },
         {
-          "type": "test",
-          "label": "复审第一/二轮：四字段绑定门禁（fail-closed）+ 真实领取门禁链",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
-          "result": "81 passed, 5 subtests（含：双缺字段/单侧缺字段/缺 version 不默认/请求缺字段拒绝 + 单字段 mismatch + execute 前置拒绝 + publish 真实门禁链）"
+          "type": "deployment",
+          "label": "官方栈运行时验证（worker.py 门禁提取变更）",
+          "command": "scripts/workflow/restart_single_host_stack.sh --mode full + scripts/workflow/inspect_single_host_stack_mode.sh + curl /health",
+          "result": "重启成功；build_provenance_status=matched（app_build.ref=c8a857861270=root main）；/health ok（ticket/knowledge=postgres、rag=ok）；无辅助栈（2026-09-29 实测）"
         }
       ],
       "source_refs": [
         ".codex/skills/supportportal-media-relay-enablement/SKILL.md",
         ".codex/skills/supportportal-media-relay-enablement/scripts/relay_enablement.py",
+        "backend/worker.py",
         "docs/deploy_automation_ecs_release.md"
       ],
       "created_at": "2026-09-29T15:30:00Z",
-      "updated_at": "2026-09-29T19:00:00Z",
+      "updated_at": "2026-09-29T20:00:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -14662,15 +14664,19 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "history": [
         {
           "at": "2026-09-29T15:45:00Z",
-          "note": "实测修正：pilot auth login --device 在 Ferry 设备授权端点 404，浏览器 PKCE 流（pilot auth login）为已验证可用路径；mcp PR#97 + 本提交同步修正指引与测试。"
+          "note": "实测修正：pilot auth login --device 在 Ferry 设备授权端点 404，浏览器 PKCE 流（pilot auth login）为已验证可用路径；mcp PR#97 + SP 同步修正指引与测试。"
         },
         {
           "at": "2026-09-29T17:30:00Z",
-          "note": "复审第一轮未通过后修复：P1 服务端 readback 四字段（request_id/request_version/zendesk_ticket_id/relay_task_id）全匹配，execute 门禁移至任何 pilot 调用之前且 --relay-task-id 必填；P2 agent-relay-mcp 多 part schema 扫描（schema-less JSON 前导不再截断扫描）；领取门禁提取为 _account_reply_currency_gate_blocks 并经真实 _publish_account_reply_job 路径测试（复现 13751 取消、验证修复存活）。"
+          "note": "复审第一轮：四字段绑定 + execute 前置门禁 + 多 part 扫描修复 + 真实领取门禁链测试（PR#1305）。"
         },
         {
           "at": "2026-09-29T19:00:00Z",
-          "note": "复审第二轮：_verify_server_binding 改为四字段均需存在且精确相等（双缺不算匹配、request_version 缺失不默认为 1），_load_request 拒绝缺绑定字段的派发请求；补四类 fail-closed 测试。worker.py 的门禁提取属运行时代码，将完成官方栈重启验证。"
+          "note": "复审第二轮：_verify_server_binding fail-closed（双缺不算匹配、version 缺失不默认 1）、_load_request 拒绝缺绑定字段请求（PR#1306）；官方栈重启验证 matched。"
+        },
+        {
+          "at": "2026-09-29T20:00:00Z",
+          "note": "复审第三轮：证据区全面重写为当前实测（85 passed、浏览器登录、完整可复跑命令、官方栈验证入证据），消除 70/81/--device 等过期记录。"
         }
       ]
     },
