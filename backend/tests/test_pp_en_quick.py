@@ -634,6 +634,10 @@ class PpEnQuickTests(unittest.TestCase):
         execute_args = captured[1]
         self.assertIn("--approval-ref", execute_args)
         self.assertTrue(execute_args[execute_args.index("--approval-ref") + 1].startswith("@"))
+        self.assertIn("--relay-task-id", execute_args)
+        self.assertEqual(
+            execute_args[execute_args.index("--relay-task-id") + 1], "task-42"
+        )
 
     def test_request_file_shape(self) -> None:
         workdir = self._workdir()
