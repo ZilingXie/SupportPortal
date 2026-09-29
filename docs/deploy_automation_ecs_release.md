@@ -51,6 +51,21 @@ pipeline使用当前main上的部署工具，同时创建clean detached release 
 `docs/**`、`AGENTS.md`、`CLAUDE.md`、`REASONIX.md`变化；backend、ui、deployment、
 infra、依赖或其他路径任一变化都要求新CodeBuild release。
 
+### Prompt 内容变更必须显式 schedule（2026-09-29 p2-178 教训）
+
+`sync_prompt_catalog` 只为**新增** prompt key 播种 v1；**既有 key 的代码目录内容变更
+不会自动进入版本表**。若直接 `prompt_release prepare`，release 会对未 schedule 的 key
+回落到源库当前 active 版本——r20260929-bf89be2 首次发布因此把 Preproduction 的
+hermes-route-manual 从 v3 降级回 v2（旧弱文本），真实模型首回合即违反分类合同
+（`backend_operation` 形状错误）。正确流程：prepare 之前，对每个代码内容与 active
+release 不同的 key 执行 `PromptVersionService.create_draft(...)` + `schedule(...)`
+（或经管理 UI 建 draft 并 schedule），再 prepare/validate；同一 commit 需要更换
+Prompt Release 时，pipeline checkpoint 按 (commit, prompt id, mode) 绑定且目录名含
+日期与 commit，不支持原地重跑——用一个 docs-only 提交推进 release commit 后重建发布
+（本次即采用该路径）。另注意：`prompt_release` CLI 的 current/pending/prepare 会执行
+`repo.initialize()`；当源库 schema 版本落后于代码时会对生产库跑 bootstrap DDL（死锁
+风险），prompt 记账操作应改用跳过 initialize 的 service 层调用。
+
 ### CodeBuild Direct Production
 
 紧急修复可在单独Production授权下跳过Preproduction ECS，但不跳过不可变镜像和Production门禁：

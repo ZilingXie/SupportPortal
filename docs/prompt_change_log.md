@@ -4831,3 +4831,10 @@ For each new entry, record:
 - 终局失败交接：路由阶段提交/轮询失败（不可重试）、终局 run 状态、`missing_direction` 统一接入共享人工交接链（note/queue/ownership/待发回复取消/失败告警邮件）；可重试状态（outcome_unknown/interrupted）保留延迟重试路径不交接。
 - `notify_account_failure` 的 `mail_sender` 改为调用时解析（可测试性修复：默认参数绑定使模块级 patch 失效，单测曾可能触达真实 Graph 发信路径）。
 - Verification: 21 套件 421 passed + 隔离 PG 61 passed；评审复现样例（backend_operation/check + hints automation/enablement）三种 hint 组合均落 automation/conversation_followup/progress_inquiry。
+
+## 2026-09-29 - 发布执行教训：代码 prompt 内容变更必须显式 schedule（p2-178 发布链）
+
+- r20260929-bf89be2 首次发布携带的 Prompt Release pr-21ea73ad7a2d 对既有 prompt key 回落到源库 active 旧版本（hermes-route-manual 降级 v3→v2），真实 Hermes 首回合即出现非合同分类输出（`backend_operation:{"operation":...}`、reason 塞 JSON）。
+- 根因：`sync_prompt_catalog` 只为新 key 播种 v1，既有 key 的代码内容变更需显式 `create_draft`+`schedule` 后才会进入下一次 release。
+- 处置：对全部代码内容漂移 key（route-manual v6、reply-contract v3、persona-manual v5 等共 11 个）draft+schedule，prepare 出 pr-8126b7cd21ab 并 validate 通过，随 docs-only 推进的新 release commit 重新部署 Preproduction。
+- 文档：ECS Runbook 新增「Prompt 内容变更必须显式 schedule」小节（含 checkpoint 按 commit+prompt id 绑定、CLI initialize 对生产库的 DDL 风险两条注意事项）。
