@@ -227,3 +227,22 @@
   关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
 - **待实跑确认**：回合 6（not-found 专门回复）与回合 7 终段的实跑合同来自 p2-178 实现
   与本地钉死测试，首次授权 E3 实跑后如与实况不符，先修断言再定稿。
+
+## 9. Preproduction PP 剧本（独立 CLI，不进 legacy 控制台）
+
+> 2026-09-28 新增（Preproduction新链回归计划）。PP-* 剧本故意**不注册**进共享
+> `SCENARIOS`（legacy `/automation/test` 控制台会自动列举并把 API 指向旧 production 栈），
+> 只经 CLI 驱动：`.venv/bin/python -m scripts.testing.preproduction`。
+
+### PP-EN-QUICK：Media Relay 快速开通（真实全链）
+
+- **合同**：一轮提交有效 App ID → 确认回复投递 → relay request gated→dispatched →
+  **测试专用自动批准**（skill precheck digest 绑定，p2-163 全部服务端门禁原样生效；
+  `approval_method=test_auto_approve`，绝不记为人工批准）→ 真实 pilot 写入 + 独立回读 →
+  enabled/already_satisfied → 完成回复投递 → solved。Archer 新写入次数如实记录（0 或 1）。
+- **前置**：E1P 同款环境变量 + `SUPPORTPORTAL_RELAY_API_BASE/TOKEN`（缺省自动从 SSM
+  `/supportportal/preproduction/agentrelay-{base-url,token}` 取）+ `PILOT_BIN`（默认
+  `~/.local/bin/pilot`）+ pilot SSO 登录态有效。
+- **预检**：`--check`（只读：preprod release readback、DB/SMTP/IMAP、profile、relay 配置、pilot 二进制）。
+- **运行**：`--scenario PP-EN-QUICK --yes --report-file <path>`（报告脱敏：App ID/邮箱掩码）。
+- **与 p2-163 的关系**：技术闭环证据并入 p2-163 受控验收；人工审批门禁由本次测试覆盖情况单独标注。
