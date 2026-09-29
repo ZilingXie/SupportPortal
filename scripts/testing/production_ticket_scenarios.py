@@ -44,6 +44,25 @@ def load_env_into_process() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+def print_approval_banner(data: dict) -> None:
+    """Print one MANUAL APPROVAL banner for either approval flavor.
+
+    Relay approvals (kind=enablement_relay) carry an instruction instead of
+    the internal-email reply fields; the email-reply hint must not print for
+    them (and previously crashed the listener on the missing fields)."""
+    print("\n" + "=" * 72)
+    print("MANUAL APPROVAL REQUIRED")
+    print(f"  Zendesk ticket : {data['zendesk_ticket_url']}")
+    if data.get("kind") == "enablement_relay":
+        print(f"  Instruction    : {data.get('instruction') or ''}")
+    else:
+        print(f"  Reply (from YOUR mailbox) to the internal email whose subject starts")
+        print(f"  with \"{data['internal_email_subject_prefix']}\" and include a sentence such as:")
+        print(f"      {data['suggested_reply']}")
+    print(f"  Waiting up to {data['timeout_min']} minutes…")
+    print("=" * 72 + "\n", flush=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "D1", "E1P", "E3", "all"])
@@ -79,12 +98,29 @@ def main() -> int:
         engine.relay_timeout_min = args.relay_timeout_min
 
     if args.check:
-        for channel, result in engine.connectivity_check().items():
+        try:
+            channels = engine.connectivity_check()
+        except Exception as exc:  # noqa: BLE001 - surface a clean failure
+            print(f"connectivity check failed: {exc}", file=sys.stderr)
+            return 1
+        for channel, result in channels.items():
             log(f"{channel.upper()}: {result}")
         log("all channels reachable; no emails were sent.")
         return 0
 
     selected = list(ScenarioEngine.SCENARIOS) if args.scenario == "all" else [args.scenario]
+    # Fail BEFORE any ticket is created when a scenario's required
+    # customer-turn channel is not the selected one (E3 needs the Zendesk
+    # API channel; the 163 email path is unusable on preproduction).
+    for scenario_id in selected:
+        if scenario_id == "E3" and engine.customer_turn_transport != "zendesk_api":
+            print(
+                f"scenario {scenario_id} requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT="
+                "zendesk_api plus AUTOMATION_TEST_ZENDESK_AUTH; aborting before any "
+                "ticket is created.",
+                file=sys.stderr,
+            )
+            return 1
     if not args.yes:
         print(
             "This will send REAL emails from "
@@ -101,14 +137,7 @@ def main() -> int:
             suffix = f" (last error: {data['last_error']})" if data.get("last_error") else ""
             log(f"… waiting for {data['description']} ({data.get('waited_seconds')}s){suffix}")
         elif kind == "approval_required":
-            print("\n" + "=" * 72)
-            print("MANUAL APPROVAL REQUIRED")
-            print(f"  Zendesk ticket : {data['zendesk_ticket_url']}")
-            print(f"  Reply (from YOUR mailbox) to the internal email whose subject starts")
-            print(f"  with \"{data['internal_email_subject_prefix']}\" and include a sentence such as:")
-            print(f"      {data['suggested_reply']}")
-            print(f"  Waiting up to {data['timeout_min']} minutes…")
-            print("=" * 72 + "\n", flush=True)
+            print_approval_banner(data)
 
     engine.listener = cli_listener
     all_ok = True

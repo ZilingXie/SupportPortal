@@ -105,6 +105,50 @@ def _ask_appid_content_check(content: str) -> str | None:
     return None
 
 
+def _knowledge_answer_content_check(content: str) -> str | None:
+    """Acceptance check (turn 2): the in-session knowledge answer must
+    answer the App ID question and carry the trusted reference block."""
+    lowered = str(content or "").casefold()
+    if "app id" not in lowered:
+        return "answer does not mention App ID"
+    if "references:" not in lowered:
+        return "answer carries no trusted references block"
+    if "docs.agora.io" not in lowered:
+        return "answer references a non-docs source"
+    return None
+
+
+_NO_ACCELERATION_CLAIM_RE = re.compile(
+    r"(?i)\b(?:will|can|we'll|we will|have)\s+(?:expedite|prioriti[sz]e|speed|accelerate|fast[- ]track)\b"
+    r"|sooner than|right away|immediately"
+)
+
+
+def _progress_answer_content_check(content: str) -> str | None:
+    """Acceptance check (turn 5): the progress answer states the recorded
+    review status and promises no acceleration or completion date."""
+    lowered = str(content or "").casefold()
+    if not any(word in lowered for word in ("review", "in progress", "under review")):
+        return "answer does not state the review status"
+    claim = _NO_ACCELERATION_CLAIM_RE.search(str(content or ""))
+    if claim:
+        return f"acceleration promise: {claim.group(0)}"
+    return None
+
+
+def _appid_not_found_content_check(content: str) -> str | None:
+    """Acceptance check (turn 6): the dedicated not-found reply asks the
+    customer to check the App ID and promises no enablement."""
+    lowered = str(content or "").casefold()
+    if "app id" not in lowered:
+        return "reply does not mention the App ID"
+    if not any(word in lowered for word in ("not find", "not found", "no project", "check", "verify", "double-check")):
+        return "reply does not ask the customer to check the App ID"
+    if any(word in lowered for word in ("enabled", "activated", "turned on")):
+        return "reply claims enablement"
+    return None
+
+
 def _submission_confirmation_content_check(content: str) -> str | None:
     """Acceptance check: confirmation must mention review and promise no deadline."""
     lowered = str(content or "").casefold()
@@ -213,6 +257,25 @@ class ScenarioContext:
     account_case_id: str = ""
     client_ticket_id: str = ""
     turn_started_at: datetime = field(default_factory=now_utc)
+    # Per-run binding watermarks (p2-178): every wait must observe NEW
+    # entities for the current turn — a turn, reply job, relay request, or
+    # delivered comment from a PREVIOUS leg must never satisfy the wait.
+    # "seen" grows as waits observe entities; "baseline" snapshots it at each
+    # customer-turn boundary, so two waits inside the SAME turn may observe
+    # the same entity while a later turn cannot reuse it.
+    seen_turn_ids: set = field(default_factory=set)
+    seen_reply_job_ids: set = field(default_factory=set)
+    seen_comment_ids: set = field(default_factory=set)
+    baseline_turn_ids: set = field(default_factory=set)
+    baseline_reply_job_ids: set = field(default_factory=set)
+    baseline_comment_ids: set = field(default_factory=set)
+    last_relay_request_version: int = 0
+    bound_relay_request_id: str = ""
+
+    def stamp_turn_baseline(self) -> None:
+        self.baseline_turn_ids = set(self.seen_turn_ids)
+        self.baseline_reply_job_ids = set(self.seen_reply_job_ids)
+        self.baseline_comment_ids = set(self.seen_comment_ids)
 
 
 class ScenarioEngine:
@@ -487,6 +550,7 @@ class ScenarioEngine:
     def start_ticket(self, ctx: ScenarioContext, subject: str, body: str) -> None:
         ctx.subject = self.tagged(subject)
         ctx.turn_started_at = now_utc()
+        ctx.stamp_turn_baseline()
         self.emit("ticket_started", {"subject": ctx.subject})
         self.send_email(ctx.subject, body, ZENDESK_SUPPORT_ADDRESS)
 
@@ -555,7 +619,7 @@ class ScenarioEngine:
 
         def probe():
             rows = self.db_query(
-                "SELECT status, payload->>'reply_intent' AS reply_intent, "
+                "SELECT job_id, status, payload->>'reply_intent' AS reply_intent, "
                 "(payload->>'close_after_publish') AS close_after_publish "
                 "FROM support_account_reply_jobs "
                 "WHERE ticket_id = %s AND created_at >= %s "
@@ -565,6 +629,9 @@ class ScenarioEngine:
             if not rows:
                 return None
             job = rows[0]
+            job_id = str(job.get("job_id") or "")
+            if job_id and job_id in ctx.baseline_reply_job_ids:
+                return None
             if job["status"] in {"published", "failed", "manual_attention", "cancelled"}:
                 return job
             return None
@@ -574,6 +641,7 @@ class ScenarioEngine:
             probe,
             self.turn_timeout_min * 60,
         )
+        ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         intent = str(job.get("reply_intent") or "")
         published = job["status"] == "published"
         ok = intent in expected_intents and published
@@ -583,6 +651,7 @@ class ScenarioEngine:
         )
         if not ok:
             raise AssertionError(f"unexpected reply job: intent={intent} status={job['status']}")
+        return job
 
     def wait_published_reply_content(
         self,
@@ -603,7 +672,7 @@ class ScenarioEngine:
 
         def probe():
             rows = self.db_query(
-                "SELECT jobs.status, messages.content "
+                "SELECT jobs.job_id, jobs.status, messages.content "
                 "FROM support_account_reply_jobs jobs "
                 "JOIN support_ticket_messages messages ON messages.ticket_id = jobs.ticket_id "
                 "AND messages.meta->>'account_reply_job_id' = jobs.job_id "
@@ -615,6 +684,9 @@ class ScenarioEngine:
             if not rows:
                 return None
             job = rows[0]
+            job_id = str(job.get("job_id") or "")
+            if job_id and job_id in ctx.baseline_reply_job_ids:
+                return None
             if job["status"] == "published":
                 return job
             return None
@@ -624,6 +696,7 @@ class ScenarioEngine:
             probe,
             self.turn_timeout_min * 60,
         )
+        ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         content = str(job.get("content") or "")
         problem = check(content)
         if problem:
@@ -729,6 +802,7 @@ class ScenarioEngine:
 
     def zendesk_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
         ctx.turn_started_at = now_utc()
+        ctx.stamp_turn_baseline()
         ticket = self._zendesk_request(f"/tickets/{ctx.zendesk_ticket_id}.json")
         requester_id = (ticket.get("ticket") or {}).get("requester_id")
         if not requester_id:
@@ -759,6 +833,7 @@ class ScenarioEngine:
             self.zendesk_customer_turn(ctx, body)
             return
         ctx.turn_started_at = now_utc()
+        ctx.stamp_turn_baseline()
         since_date = (ctx.turn_started_at - timedelta(days=1)).strftime("%d-%b-%Y")
         notification = None
         if ctx.zendesk_ticket_id:
@@ -868,14 +943,18 @@ class ScenarioEngine:
                 "ORDER BY created_at DESC LIMIT 1",
                 (ctx.account_case_id,),
             )
-            if rows and str(rows[0].get("status") or "") == "delivered":
-                return rows[0]
-            return None
+            if not rows or str(rows[0].get("status") or "") != "delivered":
+                return None
+            comment_id = str(rows[0].get("zendesk_comment_id") or "")
+            if comment_id and comment_id in ctx.baseline_comment_ids:
+                return None
+            return rows[0]
 
         try:
             row = self.wait_for(
                 "public zendesk comment delivered", probe, self.turn_timeout_min * 60
             )
+            ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
             self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
         except TimeoutError as exc:
             self.record(ctx, step, False, str(exc))
@@ -883,35 +962,44 @@ class ScenarioEngine:
 
     def wait_hermes_turn_direction(
         self, ctx: ScenarioContext, expected_direction: str, step: str,
-        *, reason_contains: str | None = None,
+        *, reason_contains: str | None = None, route_equals: str | None = None,
     ) -> dict:
         since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
 
         def probe():
             rows = self.db_query(
-                "SELECT direction, direction_reason, status "
+                "SELECT turn_id, direction, route, direction_reason, status "
                 "FROM automation_hermes_agent_turns "
                 "WHERE zendesk_ticket_id = %s AND created_at >= %s "
                 "ORDER BY created_at DESC LIMIT 1",
                 (ctx.zendesk_ticket_id, since),
             )
             row = rows[0] if rows else None
-            if row and str(row.get("status") or "") in {"completed", "failed", "human_review"}:
+            if not row:
+                return None
+            turn_id = str(row.get("turn_id") or "")
+            if turn_id and turn_id in ctx.baseline_turn_ids:
+                return None
+            if str(row.get("status") or "") in {"completed", "failed", "human_review"}:
                 return row
             return None
 
         row = self.wait_for(
             f"hermes turn direction={expected_direction}", probe, self.turn_timeout_min * 60
         )
+        ctx.seen_turn_ids.add(str(row.get("turn_id") or ""))
         direction = str(row.get("direction") or "")
+        route = str(row.get("route") or "")
         reason = str(row.get("direction_reason") or "")
         ok = direction == expected_direction and (
             reason_contains is None or reason_contains in reason
+        ) and (route_equals is None or route == route_equals)
+        self.record(
+            ctx, step, ok, f"direction={direction} route={route} reason={reason}"
         )
-        self.record(ctx, step, ok, f"direction={direction} reason={reason}")
         if not ok:
             raise AssertionError(
-                f"unexpected hermes turn: direction={direction} reason={reason}"
+                f"unexpected hermes turn: direction={direction} route={route} reason={reason}"
             )
         return row
 
@@ -933,13 +1021,20 @@ class ScenarioEngine:
                 (ctx.zendesk_ticket_id, since),
             )
             row = rows[0] if rows else None
-            if row and str(row.get("delivery_status") or "") == "delivered":
-                return row
-            return None
+            if not row or str(row.get("delivery_status") or "") != "delivered":
+                return None
+            comment_id = str(row.get("zendesk_comment_id") or "")
+            if comment_id and comment_id in ctx.baseline_comment_ids:
+                # The -2min window can straddle the previous leg's delivery:
+                # only a comment id from THIS turn satisfies the wait (rows
+                # without an id are not bound — legacy scripted fixtures).
+                return None
+            return row
 
         row = self.wait_for(
             "hermes draft reply delivered", probe, self.turn_timeout_min * 60
         )
+        ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
         ok = True
         detail = (
             f"draft={row.get('draft_status')} comment={row.get('zendesk_comment_id')}"
@@ -970,7 +1065,12 @@ class ScenarioEngine:
             },
         )
 
-    def wait_enablement_relay_request(self, ctx: ScenarioContext, step: str) -> dict:
+    def wait_enablement_relay_request(
+        self, ctx: ScenarioContext, step: str, *, after_version: int | None = None
+    ) -> dict:
+        """Wait for a relay request; bound to a version watermark so the
+        corrected-App-ID leg can only match the NEW application (v+1)."""
+
         def probe():
             rows = self.db_query(
                 "SELECT request_id, status, app_id, request_version "
@@ -978,12 +1078,19 @@ class ScenarioEngine:
                 "WHERE ticket_id = %s ORDER BY created_at DESC LIMIT 1",
                 (ctx.client_ticket_id,),
             )
-            return rows[0] if rows else None
+            if not rows:
+                return None
+            version = int(rows[0].get("request_version") or 0)
+            if after_version is not None and version <= int(after_version):
+                return None
+            return rows[0]
 
         try:
             row = self.wait_for(
                 "enablement relay request created", probe, self.turn_timeout_min * 60
             )
+            ctx.last_relay_request_version = int(row.get("request_version") or 0)
+            ctx.bound_relay_request_id = str(row.get("request_id") or "")
             self.record(
                 ctx, step, True,
                 f"request={row.get('request_id')} status={row.get('status')} "
@@ -994,17 +1101,73 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
-    def wait_enablement_relay_result(
-        self, ctx: ScenarioContext, expected_outcomes: set[str], step: str
+    def relay_request_count(self, ctx: ScenarioContext) -> int:
+        rows = self.db_query(
+            "SELECT COUNT(*) AS n FROM support_enablement_relay_requests "
+            "WHERE ticket_id = %s",
+            (ctx.client_ticket_id,),
+        )
+        return int(rows[0].get("n") or 0) if rows else 0
+
+    def wait_bound_relay_request_active(
+        self, ctx: ScenarioContext, request_id: str, step: str
     ) -> dict:
+        """Assert the bound relay request is still in an active (pending)
+        state — the progress reply must never create, release, or finish it."""
+
         def probe():
             rows = self.db_query(
-                "SELECT res.outcome, res.write_attempted, req.status AS request_status "
-                "FROM support_enablement_relay_results res "
-                "JOIN support_enablement_relay_requests req ON req.request_id = res.request_id "
-                "WHERE req.ticket_id = %s ORDER BY res.created_at DESC LIMIT 1",
-                (ctx.client_ticket_id,),
+                "SELECT request_id, status, request_version "
+                "FROM support_enablement_relay_requests "
+                "WHERE request_id = %s",
+                (request_id,),
             )
+            if not rows:
+                return None
+            if str(rows[0].get("status") or "") in {
+                "gated", "dispatch_pending", "dispatching", "dispatched",
+            }:
+                return rows[0]
+            return None
+
+        try:
+            row = self.wait_for(
+                f"relay request {request_id} still active", probe, self.turn_timeout_min * 60
+            )
+            self.record(
+                ctx, step, True,
+                f"request={row.get('request_id')} status={row.get('status')} "
+                f"v{row.get('request_version')}",
+            )
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
+    def wait_enablement_relay_result(
+        self, ctx: ScenarioContext, expected_outcomes: set[str], step: str,
+        *, request_id: str | None = None,
+    ) -> dict:
+        """Wait for a relay result; bound to the given request when provided,
+        so an older application's result can never satisfy this leg."""
+
+        def probe():
+            if request_id:
+                rows = self.db_query(
+                    "SELECT res.outcome, res.write_attempted, req.status AS request_status "
+                    "FROM support_enablement_relay_results res "
+                    "JOIN support_enablement_relay_requests req ON req.request_id = res.request_id "
+                    "WHERE res.request_id = %s ORDER BY res.created_at DESC LIMIT 1",
+                    (request_id,),
+                )
+            else:
+                rows = self.db_query(
+                    "SELECT res.outcome, res.write_attempted, req.status AS request_status "
+                    "FROM support_enablement_relay_results res "
+                    "JOIN support_enablement_relay_requests req ON req.request_id = res.request_id "
+                    "WHERE req.ticket_id = %s ORDER BY res.created_at DESC LIMIT 1",
+                    (ctx.client_ticket_id,),
+                )
             return rows[0] if rows else None
 
         try:
@@ -1039,25 +1202,42 @@ class ScenarioEngine:
 
         def probe():
             jobs = self.db_query(
-                "SELECT status, payload->>'reply_intent' AS reply_intent, created_at "
+                "SELECT job_id, status, payload->>'reply_intent' AS reply_intent, created_at "
                 "FROM support_account_reply_jobs "
                 "WHERE ticket_id = %s AND created_at >= %s "
                 "ORDER BY created_at DESC LIMIT 1",
                 (ctx.client_ticket_id, since),
             )
-            if jobs and str(jobs[0].get("status") or "") in {
-                "published", "failed", "manual_attention", "cancelled",
-            }:
-                return {"kind": "reply_job", **jobs[0]}
+            if (
+                jobs
+                and (
+                    not str(jobs[0].get("job_id") or "")
+                    or str(jobs[0].get("job_id") or "") not in ctx.baseline_reply_job_ids
+                )
+                and str(jobs[0].get("status") or "") in {
+                    "published", "failed", "manual_attention", "cancelled",
+                }
+            ):
+                found = {"kind": "reply_job", **jobs[0]}
+                ctx.seen_reply_job_ids.add(str(jobs[0].get("job_id") or ""))
+                return found
             turns = self.db_query(
-                "SELECT status, direction, created_at "
+                "SELECT turn_id, status, direction, created_at "
                 "FROM automation_hermes_agent_turns "
                 "WHERE zendesk_ticket_id = %s AND created_at >= %s "
                 "ORDER BY created_at DESC LIMIT 1",
                 (ctx.zendesk_ticket_id, since),
             )
-            if turns:
-                return {"kind": "hermes_turn", **turns[0]}
+            if (
+                turns
+                and (
+                    not str(turns[0].get("turn_id") or "")
+                    or str(turns[0].get("turn_id") or "") not in ctx.baseline_turn_ids
+                )
+            ):
+                found = {"kind": "hermes_turn", **turns[0]}
+                ctx.seen_turn_ids.add(str(turns[0].get("turn_id") or ""))
+                return found
             return None
 
         try:
@@ -1105,13 +1285,24 @@ class ScenarioEngine:
     def run_e3(self) -> None:
         """Preproduction enablement full lifecycle (E3).
 
-        Walks the whole customer-visible arc of the hermes auto/relay chain:
-        missing App ID -> RAG fallback -> invalid App ID -> valid-format submit
-        (relay review) -> review nudge -> archer project_not_found result ->
-        corrected App ID -> real enablement + solved. Turns 5 and 6 start in
-        discovery mode (wait_next_customer_visible_reply) until their live
-        contracts are pinned from probe runs; pin them here afterwards.
+        Walks the whole customer-visible arc of the hermes auto/relay chain
+        under the p2-178 contracts: missing App ID ask -> in-session RAG
+        knowledge answer -> invalid App ID -> valid-format submit (relay
+        review) -> progress nudge answered from the bound relay request ->
+        archer project_not_found (dedicated not-found reply) -> corrected
+        App ID (new request version) -> real enablement + solved. Turn 6/7
+        contracts beyond the local pinned implementation still need the
+        first live run for final confirmation (see the runbook).
         """
+        if self.customer_turn_transport != "zendesk_api":
+            # Fail BEFORE any ticket is created: the 163 email path is broken
+            # in the preproduction test setup (no requester notifications,
+            # plus-address replies never attach to the ticket).
+            raise AutomationTestScenarioError(
+                "E3 requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api "
+                "and AUTOMATION_TEST_ZENDESK_AUTH (the email transport is not "
+                "usable for preproduction customer turns)"
+            )
         ctx = ScenarioContext("E3")
         self.start_ticket(
             ctx,
@@ -1133,13 +1324,28 @@ class ScenarioEngine:
             ctx,
             "What is the App ID? I am not sure where to find it in the console.",
         )
-        # Turn 2 contract (probe 13733): a mid-thread question parks to human
-        # review (new_ticket_conversation_follow_up_forbidden) — the legacy
-        # RAG auto-answer no longer fires; recovery happens on the next field
-        # submission (verified by turn 3).
+        # Turn 2 contract (p2-178): an in-session knowledge question is a
+        # conversation_followup turn answered from the trusted docs search —
+        # one public answer via the hermes draft pipeline, automation
+        # ownership retained, no new relay application.
         self.wait_hermes_turn_direction(
-            ctx, "human", "question parks to human review (turn 2, no auto RAG answer)",
-            reason_contains="follow_up_forbidden",
+            ctx, "automation", "knowledge question answered in-turn (turn 2)",
+            route_equals="conversation_followup",
+            reason_contains="knowledge_question",
+        )
+        self.wait_hermes_draft_delivered(
+            ctx, "knowledge answer delivered with references (turn 2)",
+            content_check=_knowledge_answer_content_check,
+        )
+        self.wait_case_field(
+            ctx, "automation_status", "automation",
+            "case stays automation-owned after the knowledge answer (turn 2)",
+        )
+        relay_requests_after_turn2 = self.relay_request_count(ctx)
+        self.record(
+            ctx, "knowledge answer creates no relay application (turn 2)",
+            relay_requests_after_turn2 == 0,
+            f"relay_request_count={relay_requests_after_turn2}",
         )
         self.next_customer_turn(ctx, f"My App ID is {E3_APPID_INVALID}")
         self.wait_reply_intent(
@@ -1159,38 +1365,80 @@ class ScenarioEngine:
             check=_submission_confirmation_content_check,
             step="confirmation content mentions review without a deadline promise",
         )
-        self.wait_enablement_relay_request(ctx, "relay request created after confirmation")
+        turn4_request = self.wait_enablement_relay_request(
+            ctx, "relay request created after confirmation"
+        )
+        turn4_request_id = str(turn4_request.get("request_id") or "")
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
 
         self.next_customer_turn(ctx, E3_NUDGE_BODY)
-        # Turn 5 contract (probe 13733): a review-wait nudge parks to human
-        # review (conversation_requires_review) — no automatic "still in
-        # review" reply in the current product contract.
+        # Turn 5 contract (p2-178): a polite review nudge is a progress
+        # inquiry answered from the BOUND relay request's actual state —
+        # no acceleration promise, no new application, no release, and the
+        # case never flips to human review.
         self.wait_hermes_turn_direction(
-            ctx, "human", "review nudge parks to human review (turn 5, no auto reply)",
-            reason_contains="conversation_requires_review",
+            ctx, "automation", "review nudge answered from bound relay state (turn 5)",
+            route_equals="conversation_followup",
+            reason_contains="progress_inquiry",
+        )
+        self.wait_bound_relay_request_active(
+            ctx, turn4_request_id,
+            "nudge leaves the bound relay application untouched (turn 5)",
+        )
+        relay_requests_after_turn5 = self.relay_request_count(ctx)
+        self.record(
+            ctx, "nudge creates no second relay application (turn 5)",
+            relay_requests_after_turn5 == 1,
+            f"relay_request_count={relay_requests_after_turn5}",
+        )
+        self.wait_hermes_draft_delivered(
+            ctx, "progress answer delivered (turn 5)",
+            content_check=_progress_answer_content_check,
         )
         self.wait_case_field(
-            ctx, "automation_status", "human_review_required",
-            "nudge escalates case to human review",
+            ctx, "automation_status", "automation",
+            "case stays automation-owned after the nudge (turn 5)",
         )
 
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
         self.wait_enablement_relay_result(
-            ctx, {"project_not_found"}, "relay result: project not found (turn 6 leg)"
+            ctx, {"project_not_found"}, "relay result: project not found (turn 6 leg)",
+            request_id=turn4_request_id,
         )
-        # Discovery mode: what does the customer see for the not-found result?
-        self.wait_next_customer_visible_reply(
-            ctx, "project-not-found customer product (turn 6, discovery)"
+        # Turn 6 contract (p2-178 implementation): a clean project_not_found
+        # result answers the customer with the dedicated not-found reply and
+        # keeps the case automation-owned for the corrected-App-ID turn.
+        self.wait_reply_intent(
+            ctx, {"enablement_appid_not_found"},
+            "dedicated project-not-found reply (turn 6)",
+        )
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="enablement_appid_not_found",
+            check=_appid_not_found_content_check,
+            step="not-found content asks to double-check the App ID, no enablement claim",
         )
 
         self.next_customer_turn(ctx, f"Thanks. The correct App ID is {E3_APPID_VALID}")
         self.wait_reply_intent(
             ctx, {"submission_confirmation"}, "re-submission confirmation (turn 7)"
         )
+        # The corrected App ID must open a NEW application version, never
+        # reuse the not-found v1 request.
+        turn7_request = self.wait_enablement_relay_request(
+            ctx, "corrected App ID opens a new request version (turn 7)",
+            after_version=int(turn4_request.get("request_version") or 0),
+        )
+        turn7_request_id = str(turn7_request.get("request_id") or "")
+        self.record(
+            ctx, "corrected submission creates a distinct request (turn 7)",
+            turn7_request_id != turn4_request_id,
+            f"v1={turn4_request_id} v2={turn7_request_id}",
+        )
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
         self.wait_enablement_relay_result(
-            ctx, {"enabled", "already_satisfied"}, "relay result: enabled (turn 7 leg)"
+            ctx, {"enabled", "already_satisfied"}, "relay result: enabled (turn 7 leg)",
+            request_id=turn7_request_id,
         )
         self.wait_reply_intent(
             ctx, {"enablement_archer_enabled"}, "enablement completion reply (turn 7)"
@@ -1374,9 +1622,11 @@ class ScenarioEngine:
         "E3": {
             "label": "Enablement full lifecycle (preproduction)",
             "description": (
-                "missing App ID → RAG fallback → invalid App ID → review submit → nudge → "
-                "project not found → corrected App ID → real enablement + solved "
-                "(requires the Mac relay client and two approve_execution approvals)"
+                "missing App ID ask → in-session RAG knowledge answer → invalid App ID → "
+                "review submit → progress nudge answered from the bound relay request → "
+                "project not found (dedicated reply) → corrected App ID (new request "
+                "version) → real enablement + solved (requires the Mac relay client, two "
+                "approve_execution approvals, and the zendesk_api customer-turn channel)"
             ),
             "run": run_e3,
         },
@@ -1431,18 +1681,28 @@ class ScenarioEngine:
     # -- connectivity --------------------------------------------------------
 
     def connectivity_check(self) -> dict[str, str]:
-        """Verify DB/SMTP/IMAP reachability without sending anything."""
+        """Verify DB plus the SELECTED customer-turn channel without sending
+        any customer-visible traffic."""
         results: dict[str, str] = {}
         rows = self.db_query("SELECT COUNT(*) AS n FROM support_account_cases", ())
         results["db"] = f"ok (support_account_cases rows={rows[0]['n']})"
-        with smtplib.SMTP_SSL(
-            self.smtp_host, self.smtp_port, timeout=15, context=ssl.create_default_context()
-        ) as server:
-            server.login(self.sender, self.smtp_password)
-        results["smtp"] = "ok"
-        with self.imap_connect() as imap:
-            status, _ = imap.select("INBOX", readonly=True)
-            if status != "OK":
-                raise RuntimeError(f"IMAP select INBOX failed: {status}")
-        results["imap"] = "ok"
+        if self.customer_turn_transport == "zendesk_api":
+            # The selected channel posts public comments through the Zendesk
+            # API as the requester; validate its credentials with a read-only
+            # lookup instead of touching the 163 mailbox path.
+            me = self._zendesk_request("/users/me.json")
+            results["zendesk_api"] = (
+                f"ok (authenticated as {str((me.get('user') or {}).get('email') or 'unknown')})"
+            )
+        else:
+            with smtplib.SMTP_SSL(
+                self.smtp_host, self.smtp_port, timeout=15, context=ssl.create_default_context()
+            ) as server:
+                server.login(self.sender, self.smtp_password)
+            results["smtp"] = "ok"
+            with self.imap_connect() as imap:
+                status, _ = imap.select("INBOX", readonly=True)
+                if status != "OK":
+                    raise RuntimeError(f"IMAP select INBOX failed: {status}")
+            results["imap"] = "ok"
         return results

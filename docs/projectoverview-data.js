@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-28T05:18:01Z",
-  "source_base_commit": "bdac4cd0246937d2d6a6fe7569c0557b1034c4c2",
-  "registry_digest": "0a419b152b895cd784ee3d64530e93638a33f62b8788ccfe2a5298ecbbc52c54",
+  "generated_at": "2026-09-29T02:59:17Z",
+  "source_base_commit": "a266b4c3c719adcaf9d24050e9ee161c109540df",
+  "registry_digest": "ea7a91dc9aa128d581cc76b2875ace8e66b016098b73c14570ab4fe48114c5c2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1306,6 +1306,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "p2-178 定向契约套件（含隔离 PostgreSQL 两例）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_followup_reply_contract.py",
+          "result": "26 passed（无 PG gate 时 24；RUN_POSTGRES_INTEGRATION=1 时 26，含 turn/draft/work_result 持久化与同评论重放恰好一次）"
+        },
+        {
+          "type": "test",
+          "label": "受影响套件回归",
+          "command": ".venv/bin/python -m pytest -q test_hermes_route_classifier / test_hermes_zendesk_agent(_tools) / test_hermes_tool_failure_handoff / test_route_alignment_hermes_service / test_account_human_review_escalation / test_enablement_auto_failure / test_enablement_auto_relay / test_account_reply_rag_fallback / test_automation_test_scenarios / test_account_failure_alerts",
+          "result": "317 passed（新增/更新断言全绿；test_worker 与 test_enablement_rag_resume 的 15 项失败在干净 main 基线同样失败，为存量问题）"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 集成",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003cdisposable pg 14> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_route_contract_pg.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_hermes_case_workflow_postgres.py",
+          "result": "41 passed（临时 initdb 集群，跑后已删除）"
+        },
+        {
+          "type": "test",
+          "label": "复审修复定向套件（兜底/冲突覆盖/终局失败交接）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_followup_reply_contract.py",
+          "result": "46 passed（含 processor 级催促误报全链、冲突覆盖、路由提交失败交接、missing_direction 交接）"
+        },
+        {
+          "type": "test",
+          "label": "复审后全量受影响回归 + 隔离 PostgreSQL",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 initdb PG14，跑后进程数 0 已验证）",
+          "result": "421 passed, 2 skipped + 61 passed"
+        },
+        {
+          "type": "test",
+          "label": "复审第二轮修复验证",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 PG14，跑后进程 0）",
+          "result": "421 passed, 2 skipped + 61 passed；兜底路径断言 server_correction_reason=deterministic_fallback:backend_operation_query_verb 与 hermes_proposed_direction 留档"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1411,7 +1447,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 38,
+      "task_count": 39,
       "done_count": 19,
       "blocked_count": 0
     },
@@ -14416,6 +14452,92 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-178",
+      "title": "AppID 追问修复：Hermes 会话知识问句 RAG 答复、进度答复与真实人工交接",
+      "status": "review",
+      "owner": "codex",
+      "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
+      "next_action": "复审第二轮 P2（兜底未写 server_correction_reason）已修复；三个原阻塞复核通过、A 方案获采纳。等待规划 thread 复验本提交；通过后按既有授权 finalize→合并→Preproduction 发布，并做三条真实验证（知识问句 RAG 答复投递/真实催促邮件进度答复/错误分类与工具失败完整交接）。",
+      "acceptance_criteria": [
+        "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
+        "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
+        "direction=human 不再静默结束 turn：接入共享交接服务并回读私有 note comment ID、原 queue/group 与空 assignee、所有权释放、待发回复取消、负责人邮件发送或明确失败状态；技术失败用失败告警邮件、策略分流用语义准确的人工接管通知。",
+        "已回队列但 note 失败不再被报告为全部完成；reconciliation 不因 action/route_status 被覆盖而漏扫；按 turn/incident 幂等、结果未知先回读不盲目重发。",
+        "人工交接完成后，客户补 App ID 不得自动夺回工单（服务端门禁纠正为 human），需人工恢复入口。",
+        "E3 剧本 turn 2/5 断言反映新合同；各等待绑定触发评论/turn/relay request_id/版本/新 comment ID，旧评论与旧 relay 结果不能使新回合通过；E3 显式要求 zendesk_api 通道，通道选错在建单前失败；CLI relay 审批提示字段修正。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "p2-178 定向契约套件（含隔离 PostgreSQL 两例）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_followup_reply_contract.py",
+          "result": "26 passed（无 PG gate 时 24；RUN_POSTGRES_INTEGRATION=1 时 26，含 turn/draft/work_result 持久化与同评论重放恰好一次）"
+        },
+        {
+          "type": "test",
+          "label": "受影响套件回归",
+          "command": ".venv/bin/python -m pytest -q test_hermes_route_classifier / test_hermes_zendesk_agent(_tools) / test_hermes_tool_failure_handoff / test_route_alignment_hermes_service / test_account_human_review_escalation / test_enablement_auto_failure / test_enablement_auto_relay / test_account_reply_rag_fallback / test_automation_test_scenarios / test_account_failure_alerts",
+          "result": "317 passed（新增/更新断言全绿；test_worker 与 test_enablement_rag_resume 的 15 项失败在干净 main 基线同样失败，为存量问题）"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 集成",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003cdisposable pg 14> .venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_route_contract_pg.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_hermes_case_workflow_postgres.py",
+          "result": "41 passed（临时 initdb 集群，跑后已删除）"
+        },
+        {
+          "type": "test",
+          "label": "复审修复定向套件（兜底/冲突覆盖/终局失败交接）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_followup_reply_contract.py",
+          "result": "46 passed（含 processor 级催促误报全链、冲突覆盖、路由提交失败交接、missing_direction 交接）"
+        },
+        {
+          "type": "test",
+          "label": "复审后全量受影响回归 + 隔离 PostgreSQL",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 initdb PG14，跑后进程数 0 已验证）",
+          "result": "421 passed, 2 skipped + 61 passed"
+        },
+        {
+          "type": "test",
+          "label": "复审第二轮修复验证",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 PG14，跑后进程 0）",
+          "result": "421 passed, 2 skipped + 61 passed；兜底路径断言 server_correction_reason=deterministic_fallback:backend_operation_query_verb 与 hermes_proposed_direction 留档"
+        }
+      ],
+      "source_refs": [
+        "backend/services/hermes_route_classifier.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/account_human_review_escalation.py",
+        "backend/services/account_reply_rag_fallback.py",
+        "backend/services/automation_test_scenarios.py",
+        "docs/testing/production_ticket_regression_runbook.md"
+      ],
+      "created_at": "2026-09-28T00:00:00Z",
+      "updated_at": "2026-09-29T12:00:00Z",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-09-28T12:00:00Z",
+          "note": "实现完成未 finalize：分类门禁/受限答复/真实交接/not-found 回复/E3 与 CLI 重写全部落地并本地验证，等待独立验收。"
+        },
+        {
+          "at": "2026-09-29T00:00:00Z",
+          "note": "复审未通过后修复三阻塞：确定性催促兜底、direction/route 冲突服务端覆盖、终局路由失败/missing_direction 统一人工交接；清理评审遗留 PG 集群 /tmp/codex-review-pg-178-data。"
+        },
+        {
+          "at": "2026-09-29T12:00:00Z",
+          "note": "复审第二轮（证据不足）：补齐确定性兜底的 server_correction_reason 审计字段并加断言；三阻塞复核通过；采纳 A 方案（复验通过→发布→三条真实验证）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -19749,6 +19871,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
+        "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]

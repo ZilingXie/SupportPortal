@@ -72,6 +72,7 @@ from backend.services.account_reply_jobs import (
     account_reply_persona_status_for_stage,
     create_account_reply_job,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
@@ -4151,6 +4152,108 @@ def _enablement_relay_failure_stage() -> str:
     return "enablement_relay"
 
 
+def _apply_enablement_relay_project_not_found(
+    request: dict[str, Any], result: dict[str, Any]
+) -> bool:
+    """Queue the dedicated project-not-found customer reply (p2-178).
+
+    The relay reviewers found no Archer project for the submitted App ID and
+    no write was attempted: the correct customer-visible outcome is the
+    existing dedicated not-found reply asking them to double-check the App
+    ID, NOT a failure handoff. The case stays automation-owned so the
+    corrected-App-ID turn opens request version +1 through the normal
+    enablement dispatch. Returns True when the deterministic reply job was
+    queued; any error returns False so the caller falls back to the unified
+    failure chain.
+    """
+    request_id = str(request.get("request_id") or "").strip()
+    ticket_id = str(request.get("ticket_id") or "").strip()
+    account_case_id = str(request.get("account_case_id") or "").strip()
+    if not request_id or not ticket_id or not account_case_id:
+        return False
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if not isinstance(account_case, dict):
+        return False
+    if str(account_case.get("automation_status") or "") == "human_review_required":
+        # Taken over by a human: evidence only, no automatic customer reply.
+        return False
+    timestamp = str(result.get("created_at") or now_iso())
+    canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
+    reply_facts = build_automation_reply_facts(
+        behavior="enablement",
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+        known_information={
+            "requested_feature": "media_relay",
+            "archer_outcome": "project_not_found",
+        },
+        missing_information=["app_id"],
+        resolution_status="awaiting_customer",
+        customer_name=_account_greeting_customer_name(
+            account_case, ticket_id, canonical_ticket=canonical_ticket
+        ),
+    )
+    try:
+        normalized_facts, _intent, _close = normalize_account_reply_contract(
+            reply_facts,
+            reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+            close_after_publish=False,
+        )
+    except AccountReplyContractError as exc:
+        LOGGER.warning(
+            "enablement relay not-found contract failed for %s: %s", request_id, exc
+        )
+        return False
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    not_found_job = {
+        "job_id": f"enablement-relay-notfound-{request_id}",
+        "ticket_id": ticket_id,
+        "trigger_message_created_at": timestamp,
+        "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        "scheduled_for": (
+            datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+            + timedelta(seconds=delay_seconds)
+        ).isoformat(),
+        "payload": {
+            "draft_content": "",
+            "reply_facts": normalized_facts,
+            "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+            "asked_field_keys": ["app_id"],
+            "visibility": "account_only",
+            "close_after_publish": False,
+            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+            "automation_delivery_key": f"enablement-relay-notfound:{request_id}",
+        },
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
+    ticket_repository.save_account_reply_job(not_found_job)
+    ticket_repository.finish_enablement_relay_request(
+        request_id=request_id,
+        status="failed",
+        now=now_iso(),
+        reason="project_not_found",
+    )
+    _mirror_enablement_auto_workflow_state(
+        account_case_id, state="appid_not_found", now=now_iso()
+    )
+    ticket_repository.record_event(
+        ticket_id or None,
+        "enablement_relay_project_not_found_reply_queued",
+        {
+            "request_id": request_id,
+            "reply_job_id": not_found_job["job_id"],
+            "attempted_at": now_iso(),
+        },
+    )
+    return True
+
+
 def _record_enablement_relay_failure(
     request: dict[str, Any],
     *,
@@ -4896,6 +4999,18 @@ def _apply_enablement_relay_result(
             request_id=request_id, applied_status="applied", now=now_iso()
         )
         write_attempted = bool(result.get("write_attempted"))
+        if (
+            outcome == "project_not_found"
+            and not write_attempted
+            and _apply_enablement_relay_project_not_found(request, result)
+        ):
+            # Dedicated recoverable outcome: the dedicated not-found reply
+            # asks the customer to check the App ID; the case stays
+            # automation-owned so a corrected App ID opens request v+1
+            # (no handoff, no revival protection conflict). Any failure in
+            # creating that reply falls through to the unified failure chain.
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
         if outcome == "outcome_unknown":
             detail = (
                 "Relay execution reported an unknown outcome; the local skill may "

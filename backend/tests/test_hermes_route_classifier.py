@@ -28,7 +28,7 @@ def test_technical_route_normalizes_to_investigation_without_state() -> None:
     assert result["route_family"] == "rag_product_support"
     assert result["primary_label"] == "Agora"
     assert result["secondary_label"] == "Agora Technical"
-    assert result["classification_version"] == "hermes-route-aligned-v1"
+    assert result["classification_version"] == "hermes-route-aligned-v2"
 
 
 def test_detailed_invoice_is_human_review() -> None:

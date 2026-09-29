@@ -29,7 +29,7 @@ Invariants that hold in every phase:
   to the customer's language before sending; you never translate."""
 
 
-HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v3"
+HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v4"
 
 
 def build_hermes_route_manual() -> str:
@@ -41,7 +41,9 @@ then call the direction tool exactly once with the classification object.
 
 The classification object must contain JSON fields:
 `intent_class` (conversation|agora|uncertain), `conversation_action` (resolve,
-follow_up, human_review, or null), `intent_confidence`, `agora_confidence`, and
+follow_up, human_review, or null), `conversation_subcategory`
+(knowledge_question, progress_inquiry, priority_request, or null),
+`intent_confidence`, `agora_confidence`, and
 `action_confidence` (numbers from 0 to 1), `agora_route` (technical,
 security_compliance, account_billing, backend_operation, uncategorized, or
 null), `account_billing_subcategory` (account_suspension, fraud_account,
@@ -58,10 +60,22 @@ Fill the fields by `intent_class`:
   `conversation_action` (one of resolve/follow_up/human_review) and
   `action_confidence` (0 to 1). For conversation follow-up, confirm that the
   snapshot contains an earlier assistant message; a new ticket cannot be
-  classified as follow-up.
+  classified as follow-up. When `conversation_action=follow_up`, also fill
+  `conversation_subcategory` to say what kind of follow-up the CURRENT
+  customer message is: `knowledge_question` when the customer asks what or
+  where something is (for example "What is the App ID / where do I find
+  it?"); `progress_inquiry` when the customer asks about the status or
+  timing of the request already in flight, including a polite nudge or
+  asking whether it can be completed sooner; `priority_request` when the
+  customer explicitly asks a human to decide or escalate priority; null when
+  the message is a generic conversational reply.
 - `agora`: set `agora_route` to one of the enum values above (never null).
   When `agora_route=backend_operation`, provide `backend_operation_subcategory`;
   when `agora_route=account_billing`, provide `account_billing_subcategory`.
+  The `backend_operation.action` verb must be the operation the customer is
+  asking the team to perform (for example enable). A status question or
+  nudge is NOT a new operation: classify those as conversation follow-up
+  (progress_inquiry), never as a backend_operation execution.
 - `uncertain`: set `agora_route` to null and carry no automation-triggering
   backend_operation combination; leave `conversation_action` null.
 
@@ -98,7 +112,11 @@ The server is authoritative for labels, handler registration, automation
 eligibility, and the final direction. Do not invent a route outside the enum.
 Technical Agora cases normally become investigation; only a registered and
 policy-eligible automation becomes automation; uncertain, security/compliance,
-quota, unregistered, mixed, or low-confidence cases become human review.
+quota, unregistered, mixed, or low-confidence cases become human review. A
+mid-session follow-up tagged knowledge_question or progress_inquiry proposes
+automation with route `conversation_followup`: the server answers it in-turn
+from trusted sources after re-verifying the business state, and may override
+the proposal to human review — never argue the direction in `reason`.
 An automation direction always requires a registered route; the tool rejects
 automation decisions without one.
 
@@ -216,7 +234,7 @@ Hard limits:
 - Publication policy is decided by the server; do not discuss it."""
 
 
-HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v1"
+HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v2"
 
 
 def build_hermes_reply_contract() -> str:
@@ -224,6 +242,21 @@ def build_hermes_reply_contract() -> str:
 
 Apply ONLY the section matching the case's direction/route from the
 snapshot; ignore the other sections.
+
+## conversation_followup (route=conversation_followup)
+- The reply basis for this turn is the server-provided REPLY BASIS block
+  (a trusted docs answer with references, or the recorded state of this
+  case's enablement review). Render only what it states; never add facts,
+  steps, or URLs from anywhere else, and never invent a status.
+- Do not restate identifiers the customer already supplied (App IDs) and do
+  not attach references yourself — the server appends the trusted reference
+  list after your reply.
+- For a progress basis: state the recorded review status plainly, thank the
+  customer for their patience, and never promise acceleration, a faster
+  timeline, or a completion date the basis does not state. Do not announce
+  any new action being taken on the request.
+- If the basis reports no answer or unreadable state, do not guess: the
+  turn has already been routed to the human team (no reply is drafted).
 
 ## investigation (direction=investigation)
 - Answer from the investigation conclusion: what was checked, what is known,
@@ -285,6 +318,22 @@ its result is the source of truth.
 
 
 HERMES_AUTOMATION_VERIFICATION_MANUAL_VERSION = "hermes-automation-verification-manual-v1"
+
+
+HERMES_CONVERSATION_REPLY_MANUAL_VERSION = "hermes-conversation-reply-manual-v1"
+
+
+def build_hermes_conversation_reply_manual() -> str:
+    return """Conversation Follow-up Manual (work phase, route=conversation_followup)
+
+This work phase is SERVER-CONTROLLED: the answer basis (trusted docs search
+or the bound enablement review state) is assembled by the server before the
+persona phase. Do not call the automation action tool — this turn never
+executes a business action, never creates or releases an enablement
+application, and never drafts the customer reply in the work phase. If you
+are seeing this manual, answer only from the case context tools and save an
+investigation-progress note; the persona phase renders the actual reply from
+the server-provided basis."""
 
 
 def build_hermes_automation_verification_manual() -> str:

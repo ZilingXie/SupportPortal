@@ -299,14 +299,28 @@ def test_media_relay_reaches_automation_enablement():
 
 def test_backend_operation_missing_evidence_degrades_to_human_no_writes():
     """backend_operation=null is schema-valid; the normalizer degrades it to
-    human review, and because direction=automation was requested the direction
-    conflict is raised BEFORE any decision write."""
+    human review. Since p2-178 the direction conflict is resolved as a
+    SERVER OVERRIDE (recorded on the classification) instead of bouncing the
+    tool call, and no automation decision is ever written."""
     store, repository, turn_id, before_case, result, error = _record(
         "automation", "enablement", _BACKEND_OP_MISSING_EVIDENCE
     )
-    assert error is not None
-    assert error.code == "direction_conflict"
-    _assert_no_partial_write(store, repository, turn_id, before_case)
+    assert error is None
+    assert result["direction"] == "human"
+    assert result["route"] is None
+    assert result["classification"]["route_reason_code"] == (
+        "insufficient_backend_operation_evidence"
+    )
+    assert result["classification"]["server_correction_reason"].startswith(
+        "direction_conflict:server_override:automation->human"
+    )
+    # No AUTOMATION decision was written: the turn records the fail-closed
+    # human direction and the case never flips to automation.
+    turn = store.get_hermes_turn(turn_id)
+    assert turn.get("direction") == "human"
+    assert turn.get("route") in (None, "")
+    after_case = repository.get_account_case("AC-123")
+    assert after_case["automation_status"] != "automation"
 
 
 def test_billing_invalid_subtype_reason_maps_to_other_invalid_output():

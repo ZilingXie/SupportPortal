@@ -245,15 +245,14 @@ class RouteToolContractIntegrationTests(unittest.TestCase):
                 "classification": classification,
             }
         )
-        # The server rejected the incomplete automation decision (13650
-        # shape: classification without backend_operation, route missing →
-        # normalizer degrades to human, conflicting with direction=automation).
-        # Either rejection code is contract-compliant; the decision state
-        # must be untouched.
-        self.assertIsNotNone(server_error)
+        # The incomplete automation decision (13650 shape: classification
+        # without backend_operation, route missing) can never become an
+        # automation write. Since p2-178 the direction conflict resolves as a
+        # recorded server override to human instead of a 422 bounce; either
+        # way the decision state never records automation.
         self.assertIn(
-            server_error.code,
-            {"route_required_for_automation", "direction_conflict"},
+            server_error.code if server_error else None,
+            {None, "route_required_for_automation", "direction_conflict"},
         )
         turn = self.store.get_hermes_turn(self.turn_id)
         self.assertNotEqual(turn.get("direction"), "automation")

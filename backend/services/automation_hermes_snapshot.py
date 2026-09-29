@@ -74,7 +74,7 @@ def build_case_snapshot(
         for item in comments
     ]
     snapshot: dict[str, Any] = {
-        "schema": "hermes-case-snapshot-v1",
+        "schema": "hermes-case-snapshot-v2",
         "zendesk_ticket_id": zendesk_ticket_id,
         "case_revision": case_revision,
         "ticket": dict(current_event.get("ticket") or {}),
@@ -82,6 +82,7 @@ def build_case_snapshot(
             "event_id": current_event.get("event_id"),
             "event_type": current_event.get("event_type"),
             "occurred_at": current_event.get("occurred_at"),
+            "trigger_comment_id": current_event.get("trigger_comment_id"),
         },
         "active_customer": dict(mirror.get("active_customer") or {}),
         "greeting_name": None,

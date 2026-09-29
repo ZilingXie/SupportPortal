@@ -151,6 +151,136 @@ class AccountHumanReviewEscalationTests(unittest.TestCase):
         add_comment.assert_not_called()
         self.assertEqual(route.call_count, 2)
 
+
+    def test_prior_queued_with_failed_note_reports_degraded(self) -> None:
+        """p2-178: a note failure behind a successful queue return must never
+        read as a completed handoff (the old early-return said completed)."""
+        self.case["automation_context"] = {
+            "zendesk_ownership": {"state": "released_to_queue", "source_group_id": "2721"},
+            "human_review_escalation": {
+                "incident_id": "AC-123:reply_worker:persona_render_failed",
+                "handoff_status": "queued",
+                "internal_note_status": "failed:zendesk_api_error",
+                "route_back_status": "queued",
+                "note_comment_id": None,
+                "failure_code": "persona_render_failed",
+            },
+        }
+
+        result, _case = self._escalate()
+
+        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.internal_note_status, "failed:zendesk_api_error")
+        self.assertEqual(result.route_back_status, "queued")
+        self.assertEqual(result.handoff_status, "queued")
+
+    def test_prior_queued_with_sent_note_reports_completed(self) -> None:
+        self.case["automation_context"] = {
+            "zendesk_ownership": {"state": "released_to_queue", "source_group_id": "2721"},
+            "human_review_escalation": {
+                "incident_id": "AC-123:reply_worker:persona_render_failed",
+                "handoff_status": "queued",
+                "internal_note_status": "sent",
+                "route_back_status": "queued",
+                "note_comment_id": "comment-9",
+                "failure_code": "persona_render_failed",
+            },
+        }
+
+        result, _case = self._escalate()
+
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(result.note_comment_id, "comment-9")
+
+    @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
+    @patch("backend.services.account_human_review_escalation.add_ticket_comment")
+    @patch("backend.services.account_human_review_escalation.read_ticket_comment_audit")
+    def test_reconciliation_catches_overwritten_action_and_route_status(
+        self, audit, add_comment, route
+    ) -> None:
+        """p2-178: execution_action/route_status overwritten by earlier
+        recordings must not hide a still-AI-routed review case."""
+        audit.return_value = (None, False)
+        add_comment.return_value = SimpleNamespace(comment_id="reconciled-note")
+        route.return_value = SimpleNamespace(status="queued")
+        self.repository.list_account_cases.return_value = [
+            {
+                **self.case,
+                "automation_status": "human_review_required",
+                # Overwritten by a direction recording / earlier escalation.
+                "execution_action": "human_review_required",
+                "route_status": "not_automated",
+                "automation_handler": "enablement",
+                "automation_context": {
+                    "zendesk_ownership": {
+                        **self.case["automation_context"]["zendesk_ownership"],
+                        "state": "assigned",
+                    }
+                },
+            }
+        ]
+
+        results = reconcile_account_human_review_queue_mismatches(
+            repository=self.repository,
+            processing_profile="production",
+            timestamp="2026-08-24T00:00:00+00:00",
+        )
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].route_back_status, "queued")
+        add_comment.assert_called_once()
+
+    @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
+    @patch("backend.services.account_human_review_escalation.add_ticket_comment")
+    @patch("backend.services.account_human_review_escalation.read_ticket_comment_audit")
+    def test_outcome_unknown_note_resolves_by_readback(
+        self, audit, add_comment, route
+    ) -> None:
+        """p2-178: a replayed outcome-unknown note reads the ticket back
+        first; found -> sent with the comment id, never resent."""
+        # First delivery lands outcome_unknown.
+        audit.side_effect = [
+            ZendeskCommentError("outcome_unknown", error_code="audit_unknown"),
+            (SimpleNamespace(comment_id="comment-42"), set()),
+        ]
+        route.return_value = SimpleNamespace(status="queued")
+        first, _ = self._escalate()
+        self.assertEqual(first.internal_note_status, "outcome_unknown")
+
+        # The replay reads the ticket back and finds the note.
+        self.repository.begin_idempotent_request.return_value = {
+            "created": False,
+            "response_payload": {
+                "status": "outcome_unknown",
+                "error_code": "audit_unknown",
+            },
+        }
+        second, _ = self._escalate()
+        self.assertEqual(second.internal_note_status, "sent")
+        self.assertEqual(second.note_comment_id, "comment-42")
+        add_comment.assert_not_called()
+
+    @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
+    @patch("backend.services.account_human_review_escalation.add_ticket_comment")
+    @patch("backend.services.account_human_review_escalation.read_ticket_comment_audit")
+    def test_outcome_unknown_note_readback_miss_stays_unknown(
+        self, audit, add_comment, route
+    ) -> None:
+        audit.return_value = (None, set())
+        route.return_value = SimpleNamespace(status="queued")
+        self.repository.begin_idempotent_request.return_value = {
+            "created": False,
+            "response_payload": {
+                "status": "outcome_unknown",
+                "error_code": "audit_unknown",
+            },
+        }
+
+        result, _ = self._escalate()
+
+        self.assertEqual(result.internal_note_status, "outcome_unknown")
+        add_comment.assert_not_called()
+
     @patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue")
     @patch("backend.services.account_human_review_escalation.add_ticket_comment")
     @patch("backend.services.account_human_review_escalation.read_ticket_comment_audit")
@@ -186,7 +316,6 @@ class AccountHumanReviewEscalationTests(unittest.TestCase):
         self.assertEqual(results[0].route_back_status, "queued")
         self.repository.list_account_cases.assert_called_once_with(
             limit=25,
-            route_status="automated",
             processing_profile="production",
         )
         route.assert_called_once_with(ticket_id="123", source_group_id="2721")
