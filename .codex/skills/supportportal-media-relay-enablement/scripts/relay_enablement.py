@@ -307,13 +307,18 @@ def _dry_run_params_sane(dry_payload: dict[str, Any]) -> tuple[bool, str]:
 
     Returns (sane, reason).  Missing or unparsable plan fields are NOT sane
     (fail closed): an exit-0 dry-run whose planned object cannot be verified
-    must never turn into a real write.
+    must never turn into a real write.  The pilot's current output nests the
+    planned write body in ``data.wouldBody``, so that container is part of
+    the search set too.
     """
     candidates = [dry_payload]
-    for key in ("plan", "dry_run", "params", "result", "data"):
+    for key in ("plan", "dry_run", "params", "result", "data", "wouldBody"):
         value = dry_payload.get(key)
         if isinstance(value, dict):
             candidates.append(value)
+    data = dry_payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("wouldBody"), dict):
+        candidates.append(data["wouldBody"])
 
     def find(name: str) -> Any:
         aliases = {

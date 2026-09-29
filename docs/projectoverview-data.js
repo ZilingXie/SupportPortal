@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T07:58:42Z",
-  "source_base_commit": "01007c93717e02c28f770123342708150ad08f16",
-  "registry_digest": "32644f22c76682cb4d85ab7d9c15e510c5a1501cbd03ce8a0c5c990ff416cde2",
+  "generated_at": "2026-09-29T08:53:50Z",
+  "source_base_commit": "9f9e316acc177c3e94e84f869374fcb6f31a5888",
+  "registry_digest": "bd80bdb4b9f342693c5cdc9a44ded10800a5b9680930adc8d8269d46a27a5aa2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1303,6 +1303,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "AgentRelay completion intent consistency",
           "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
           "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "Skill dry-run wouldBody parsing (local pilot)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_local_pilot.py",
+          "details": "19 passed（新增 2：data.wouldBody 嵌套计划体被正确核验且匹配→execute、嵌套错参→dry_run_params_mismatch 仍阻断）。修复=候选集加 wouldBody 键（顶层与 data.wouldBody 均收录），不弱化 fail-closed 语义。实测动机：preprod 13767（2026-09-29）exit-0 dry-run 参数齐全但判 unverified。"
         },
         {
           "type": "test",
@@ -13476,7 +13482,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
+      "next_action": "dry-run 解析修复：pilot 当前输出把计划体嵌在 data.wouldBody，skill _dry_run_params_sane 的候选集未覆盖导致 exit-0 参数齐全仍判 dry_run_params_unverified（13767 实测阻断）；候选集补 wouldBody（data.wouldBody 亦收录），新增嵌套形状匹配/错参仍拦两用例，19 绿。发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13605,6 +13611,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "AgentRelay completion intent consistency",
           "command": ".venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_persona.py backend/tests/test_account_automation_delivery.py backend/tests/test_account_reply_version_fence.py && .venv/bin/python -B -m pytest -p no:cacheprovider -q backend/tests/test_worker.py -k 'enablement or persona'",
           "details": "133 passed / 82 subtests，加 worker 定向回归 44 passed / 15 subtests。13693 的 Relay 结果和服务端校验成功，但 completion job 的 nested intent 为 enablement_archer_enabled、顶层 intent 仍为 enablement_completed_and_close，发布合同以 account_reply_intent_conflict 正确停车且零客户回复。修复将顶层 intent 对齐专用 intent，并新增 job 创建后共享合同归一化断言。13687 与 13693 均不修改、不重放。"
+        },
+        {
+          "type": "test",
+          "label": "Skill dry-run wouldBody parsing (local pilot)",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_local_pilot.py",
+          "details": "19 passed（新增 2：data.wouldBody 嵌套计划体被正确核验且匹配→execute、嵌套错参→dry_run_params_mismatch 仍阻断）。修复=候选集加 wouldBody 键（顶层与 data.wouldBody 均收录），不弱化 fail-closed 语义。实测动机：preprod 13767（2026-09-29）exit-0 dry-run 参数齐全但判 unverified。"
         }
       ],
       "source_refs": [
