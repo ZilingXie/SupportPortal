@@ -126,7 +126,10 @@ def run_check() -> int:
         report["connectivity"] = engine.connectivity_check()
         report["processing_profile"] = engine.processing_profile
         report["db_schema"] = engine.db_schema
-        report["sender"] = engine.sender
+        # Live preflight output must not leak the full test sender either.
+        from scripts.testing.preproduction.scenarios import redact_email
+
+        report["sender"] = redact_email(engine.sender)
     except Exception as exc:  # noqa: BLE001
         report["engine_error"] = str(exc)[:300]
     try:
@@ -233,17 +236,17 @@ def main() -> int:
     if args.relay_timeout_min:
         engine.relay_timeout_min = args.relay_timeout_min
 
+    from scripts.testing.preproduction import scenarios as pp
+
     print(
         "This will send a REAL email from "
-        f"{engine.sender}, create a REAL Preproduction Zendesk ticket and run the REAL "
+        f"{pp.redact_email(engine.sender)}, create a REAL Preproduction Zendesk ticket and run the REAL "
         "pilot enablement leg (test auto-approval; p2-163 gates stay active)."
     )
     if not args.yes:
         if input("Continue? [yes/N] ").strip().lower() != "yes":
             print("aborted.")
             return 1
-
-    from scripts.testing.preproduction import scenarios as pp
 
     engine.listener = _build_listener(log, app_id=pp.PP_APP_ID, email=engine.sender)
 

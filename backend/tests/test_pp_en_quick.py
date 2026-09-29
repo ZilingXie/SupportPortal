@@ -106,21 +106,34 @@ def _identity() -> dict:
 ECS_AGENT_ID = "supportportal-preproduction"
 
 
-def _request_message(message_id: str, *, request_id: str = "enr-AC-13900-v1", version: int = 1) -> dict:
-    return {
+def _request_message(
+    message_id: str,
+    *,
+    request_id: str = "enr-AC-13900-v1",
+    version: int = 1,
+    delivery_status: str = "delivered",
+    zendesk_ticket_id: str = "13900",
+    with_receiver: bool = True,
+) -> dict:
+    message = {
         "message_id": message_id,
         "from_agent_id": ECS_AGENT_ID,
-        "to_agent_id": "zac-agent",
+        "delivery_status": delivery_status,
         "parts": [{
             "kind": "text",
             "text": json.dumps({
                 "schema_version": "enablement-relay-request-v1",
                 "request_id": request_id,
                 "request_version": version,
+                "ticket_id": zendesk_ticket_id,
+                "zendesk_ticket_id": zendesk_ticket_id,
                 "app_id": APP_ID,
             }),
         }],
     }
+    if with_receiver:
+        message["to_agent_id"] = "zac-agent"
+    return message
 
 
 def _relay_task_response(
@@ -128,21 +141,37 @@ def _relay_task_response(
     request_id: str = "enr-AC-13900-v1",
     with_task_version: bool = True,
     nested: bool = True,
+    delivery_status: str = "delivered",
+    to_agent_id: str = "zac-agent",
+    task_status: str = "open",
+    zendesk_ticket_id: str = "13900",
 ) -> dict:
-    """Real-shaped GET /tasks/{id} response (v0.5/v0.6 mutation contract)."""
+    """Canonical GET /tasks/{id} response: ``messages`` is a SIBLING of
+    ``task`` (agentrelay-task-context-sync unwrapTask merge), matching the
+    repo's own relay test fixtures."""
     task = {
         "task_id": "task-42",
         "current_message_id": "m-1",
         "turn_sequence": 3,
         "max_turns": 12,
-        "messages": [
-            _request_message("m-0", request_id=request_id),
-            _request_message("m-1", request_id=request_id),
-        ],
+        "status": task_status,
+        "to_agent_id": to_agent_id,
+        "requester_agent_id": ECS_AGENT_ID,
     }
     if with_task_version:
         task["task_version"] = 5
-    return {"task": task} if nested else task
+    messages = [
+        _request_message(
+            "m-0", request_id=request_id, zendesk_ticket_id=zendesk_ticket_id
+        ),
+        _request_message(
+            "m-1", request_id=request_id, zendesk_ticket_id=zendesk_ticket_id,
+            delivery_status=delivery_status,
+        ),
+    ]
+    if nested:
+        return {"task": task, "messages": messages}
+    return {**task, "messages": messages}
 
 
 def _happy_queue(engine: FakeEngine, *, outcome: str, write: bool) -> None:
@@ -297,6 +326,109 @@ class PpEnQuickTests(unittest.TestCase):
                 workdir=self._workdir(),
             )
         self.assertEqual(calls, [], "skill must never run on a current-message mismatch")
+
+    def test_pending_message_stops_before_pilot(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            return _relay_task_response(delivery_status="pending")
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("not delivered", str(ctx.exception))
+        self.assertEqual(calls, [], "no pilot write while the current message is undelivered")
+
+    def test_turn_not_ours_stops_before_pilot(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            return _relay_task_response(to_agent_id="someone-else")
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("not this client's turn", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_message_ticket_mismatch_stops_before_skill(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            # Same request id/version but bound to another Zendesk ticket.
+            return _relay_task_response(zendesk_ticket_id="99999")
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("zendesk_ticket_id", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_receiver_missing_fails_closed(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            task = _relay_task_response()
+            task["messages"][1].pop("to_agent_id")
+            return task
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("receiver", str(ctx.exception))
+        self.assertEqual(calls, [])
 
     def test_missing_fencing_fails_closed(self) -> None:
         engine = FakeEngine()
