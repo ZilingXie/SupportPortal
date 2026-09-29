@@ -504,6 +504,39 @@ def _validate_approval(request: dict[str, Any], approval: Any) -> None:
         raise SystemExit("approval.report_digest is required (take it from the current precheck report)")
 
 
+def _verify_server_binding(
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    relay_task_id: str = "",
+) -> list[str]:
+    """Full four-field request binding per SKILL.md: the server-side readback
+    must match request_id, request_version, zendesk_ticket_id, AND
+    relay_task_id. ``relay_task_id`` is the AgentRelay Task the handoff named;
+    pass it via --relay-task-id. Returns the list of mismatched field names
+    (empty = bound). A missing expected task id is itself a mismatch
+    (``relay_task_id`` cannot be verified)."""
+    mismatches: list[str] = []
+    if str(payload.get("request_id") or "") != str(request.get("request_id") or ""):
+        mismatches.append("request_id")
+    if _safe_int(payload.get("request_version")) != int(request.get("request_version") or 1):
+        mismatches.append("request_version")
+    expected_ticket = str(request.get("zendesk_ticket_id") or request.get("ticket_id") or "").strip()
+    if str(payload.get("zendesk_ticket_id") or "").strip() != expected_ticket:
+        mismatches.append("zendesk_ticket_id")
+    expected_task = str(relay_task_id or "").strip()
+    if not expected_task or str(payload.get("relay_task_id") or "").strip() != expected_task:
+        mismatches.append("relay_task_id")
+    return mismatches
+
+
+def _binding_refusal(mismatches: list[str]) -> SystemExit:
+    return SystemExit(
+        "server-side request binding mismatch on "
+        f"{', '.join(mismatches)}; refusing to run — report the mismatch and "
+        "use read-only resync for the named Task"
+    )
+
+
 def _fetch_request_status(request: dict[str, Any]) -> dict[str, Any]:
     """Live server-side request state (13601 gap #7).
 
@@ -585,6 +618,31 @@ def cmd_execute(args: argparse.Namespace) -> int:
         print(json.dumps(previous, ensure_ascii=False, indent=2))
         return 0
 
+    # Server-side binding and freshness gate FIRST — before any pilot call,
+    # including the read-only precheck re-run: a readback naming a different
+    # ticket or Relay Task means this approval belongs to another application
+    # and must never reach a pilot write. The full four-field binding
+    # (request_id, request_version, zendesk_ticket_id, relay_task_id) is
+    # verified; the request must still be dispatched AND the live Zendesk
+    # ticket must still be open — the request row alone stays "dispatched"
+    # until the sweep converges it, so the executor gates on ticket_valid
+    # too. Any refusal here must precede the pilot write, which cannot be
+    # undone.
+    live_status = _fetch_request_status(request)
+    mismatches = _verify_server_binding(request, live_status, getattr(args, "relay_task_id", "") or "")
+    if mismatches:
+        raise _binding_refusal(mismatches)
+    if str(live_status.get("status") or "") != "dispatched":
+        raise SystemExit(
+            f"relay request {request.get('request_id')} is no longer active "
+            f"(status={live_status.get('status')}); refusing to execute"
+        )
+    if live_status.get("ticket_valid") is not True:
+        raise SystemExit(
+            f"zendesk ticket {live_status.get('zendesk_ticket_id')} is not open "
+            f"(status={live_status.get('ticket_status')}); refusing to execute"
+        )
+
     # Re-run the precheck NOW and bind the approval to the fresh report: the
     # digest covers the request identity, parameters, current state and the
     # dry-run plan, so any drift since the report invalidates the approval.
@@ -598,23 +656,6 @@ def cmd_execute(args: argparse.Namespace) -> int:
         raise SystemExit(
             f"precheck no longer recommends execution: {precheck.get('recommendation')}/"
             f"{precheck.get('outcome')}"
-        )
-
-    # Server-side freshness gate: the request must still be dispatched AND the
-    # live Zendesk ticket must still be open — the request row alone stays
-    # "dispatched" until the sweep converges it, so the executor gates on
-    # ticket_valid too. Any refusal here must precede the pilot write, which
-    # cannot be undone.
-    live_status = _fetch_request_status(request)
-    if str(live_status.get("status") or "") != "dispatched":
-        raise SystemExit(
-            f"relay request {request.get('request_id')} is no longer active "
-            f"(status={live_status.get('status')}); refusing to execute"
-        )
-    if live_status.get("ticket_valid") is not True:
-        raise SystemExit(
-            f"zendesk ticket {live_status.get('zendesk_ticket_id')} is not open "
-            f"(status={live_status.get('ticket_status')}); refusing to execute"
         )
 
     result = {
@@ -803,15 +844,19 @@ def cmd_preflight(args: argparse.Namespace) -> int:
                     "status": payload.get("status"),
                     "ticket_valid": payload.get("ticket_valid"),
                 }
-                identity_ok = (
-                    str(payload.get("request_id") or "") == str(request.get("request_id") or "")
-                    and _safe_int(payload.get("request_version")) == int(request.get("request_version") or 1)
+                # Full four-field binding per SKILL.md: request_id,
+                # request_version, zendesk_ticket_id, relay_task_id.
+                mismatches = _verify_server_binding(
+                    request, payload, args.relay_task_id or ""
                 )
-                if not identity_ok:
+                if mismatches:
                     blockers.append(
                         {
                             "code": "request_identity_mismatch",
-                            "detail": "server-side request identity differs from the dispatched request",
+                            "detail": (
+                                "server-side request binding differs from the dispatched "
+                                f"request on: {', '.join(mismatches)}"
+                            ),
                             "next_action": "stop; report the mismatch and use read-only resync for the named Task",
                         }
                     )
@@ -859,10 +904,12 @@ def main(argv: list[str] | None = None) -> int:
     pre.set_defaults(func=cmd_precheck)
     pf = sub.add_parser("preflight", help="structured local preflight: env + pilot auth + optional request readback (read-only)")
     pf.add_argument("--request", default=None, help="optional enablement-relay-request-v1 JSON file for the server-side readback")
+    pf.add_argument("--relay-task-id", default=None, help="the AgentRelay Task id from the handoff; required for the full four-field binding check")
     pf.set_defaults(func=cmd_preflight)
     exe = sub.add_parser("execute", help="approved execution + independent read-back")
     exe.add_argument("--request", required=True)
     exe.add_argument("--approval-ref", required=True, help="JSON (or @file) from the first approval")
+    exe.add_argument("--relay-task-id", required=True, help="the AgentRelay Task id from the handoff; the server readback must match it before any pilot write")
     exe.set_defaults(func=cmd_execute)
     rb = sub.add_parser("readback", help="independent status query")
     rb.add_argument("--appid", required=True)

@@ -135,6 +135,15 @@ class SkillPreflightTests(unittest.TestCase):
             "maxSubscribeLoad": 10,
         },
     }
+    RELAY_TASK_ID = "task_484ba2f93cd44c40ac8eae490945b610"
+    GOOD_SERVER_PAYLOAD = {
+        "request_id": "enr-AC-13751-v1",
+        "request_version": 1,
+        "zendesk_ticket_id": "13751",
+        "relay_task_id": "task_484ba2f93cd44c40ac8eae490945b610",
+        "status": "dispatched",
+        "ticket_valid": True,
+    }
 
     def _run(self, skill, *, env_overrides=None, pilot_auth=None, server_payload=None, with_request=True):
         import io
@@ -155,6 +164,7 @@ class SkillPreflightTests(unittest.TestCase):
             handle.close()
             request_path = handle.name
         argv = ["preflight"] + (["--request", request_path] if request_path else [])
+        argv += (["--relay-task-id", self.RELAY_TASK_ID] if getattr(self, "relay_task_id", True) else [])
         try:
             with patch.dict(os.environ, env, clear=True):
                 patches = []
@@ -210,14 +220,7 @@ class SkillPreflightTests(unittest.TestCase):
                 "has_sso": True,
                 "next_action": "owner runs `pilot auth login` (browser SSO flow)",
             },
-            server_payload={
-                "request_id": "enr-AC-13751-v1",
-                "request_version": 1,
-                "zendesk_ticket_id": "13751",
-                "relay_task_id": "task_x",
-                "status": "dispatched",
-                "ticket_valid": True,
-            },
+            server_payload=self.GOOD_SERVER_PAYLOAD,
         )
         self.assertFalse(report["ok"])
         codes = [item["code"] for item in report["blockers"]]
@@ -234,14 +237,7 @@ class SkillPreflightTests(unittest.TestCase):
                 "SUPPORTPORTAL_RELAY_TOKEN": "token",
             },
             pilot_auth={"state": "ready"},
-            server_payload={
-                "request_id": "enr-AC-13751-v1",
-                "request_version": 1,
-                "zendesk_ticket_id": "13751",
-                "relay_task_id": "task_x",
-                "status": "cancelled",
-                "ticket_valid": True,
-            },
+            server_payload={**self.GOOD_SERVER_PAYLOAD, "status": "cancelled"},
         )
         self.assertFalse(report["ok"])
         codes = [item["code"] for item in report["blockers"]]
@@ -256,17 +252,110 @@ class SkillPreflightTests(unittest.TestCase):
                 "SUPPORTPORTAL_RELAY_TOKEN": "token",
             },
             pilot_auth={"state": "ready"},
-            server_payload={
-                "request_id": "enr-AC-OTHER-v9",
-                "request_version": 9,
-                "zendesk_ticket_id": "99999",
-                "relay_task_id": "task_y",
-                "status": "dispatched",
-                "ticket_valid": True,
-            },
+            server_payload={**self.GOOD_SERVER_PAYLOAD, "request_id": "enr-AC-OTHER-v9", "request_version": 9},
         )
         codes = [item["code"] for item in report["blockers"]]
         self.assertIn("request_identity_mismatch", codes)
+
+    def test_wrong_zendesk_ticket_only_blocks(self) -> None:
+        """Single-field mismatch: only the ticket differs — still a blocker."""
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={"state": "ready"},
+            server_payload={**self.GOOD_SERVER_PAYLOAD, "zendesk_ticket_id": "99999"},
+        )
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertEqual(codes, ["request_identity_mismatch"])
+        self.assertIn("zendesk_ticket_id", report["blockers"][0]["detail"])
+
+    def test_wrong_relay_task_only_blocks(self) -> None:
+        """Single-field mismatch: only the Relay Task differs — still a blocker."""
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={"state": "ready"},
+            server_payload={**self.GOOD_SERVER_PAYLOAD, "relay_task_id": "task_wrong"},
+        )
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertEqual(codes, ["request_identity_mismatch"])
+        self.assertIn("relay_task_id", report["blockers"][0]["detail"])
+
+    def test_missing_relay_task_id_argument_blocks(self) -> None:
+        """No --relay-task-id: relay_task_id cannot be verified — blocker."""
+        skill = _load_skill()
+        self.relay_task_id = False
+        try:
+            report = self._run(
+                skill,
+                env_overrides={
+                    "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                    "SUPPORTPORTAL_RELAY_TOKEN": "token",
+                },
+                pilot_auth={"state": "ready"},
+                server_payload=self.GOOD_SERVER_PAYLOAD,
+            )
+        finally:
+            self.relay_task_id = True
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertEqual(codes, ["request_identity_mismatch"])
+        self.assertIn("relay_task_id", report["blockers"][0]["detail"])
+
+    def test_execute_refuses_on_wrong_ticket_before_any_pilot_call(self) -> None:
+        """Execute-time four-field gate: wrong ticket refuses BEFORE pilot."""
+        import tempfile
+
+        skill = _load_skill()
+        env = {
+            "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+            "SUPPORTPORTAL_RELAY_TOKEN": "token",
+        }
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+            json.dump(self.REQUEST, handle)
+            request_path = handle.name
+        approval = {
+            "action": "approve_execution",
+            "request_id": "enr-AC-13751-v1",
+            "request_version": 1,
+            "report_digest": "irrelevant-the-binding-gate-fires-first" ,
+        }
+        try:
+            with patch.dict(os.environ, env, clear=False):
+                with patch.object(
+                    skill,
+                    "_fetch_request_status",
+                    return_value={**self.GOOD_SERVER_PAYLOAD, "zendesk_ticket_id": "99999"},
+                ) as fetch, patch.object(skill, "_pilot") as pilot:
+                    with self.assertRaises(SystemExit) as ctx:
+                        skill.main([
+                            "execute",
+                            "--request", request_path,
+                            "--approval-ref", json.dumps(approval),
+                            "--relay-task-id", self.RELAY_TASK_ID,
+                        ])
+                    self.assertIn("zendesk_ticket_id", str(ctx.exception))
+                    fetch.assert_called_once()
+                    pilot.assert_not_called()
+        finally:
+            Path(request_path).unlink(missing_ok=True)
+
+    def test_execute_requires_relay_task_id_argument(self) -> None:
+        skill = _load_skill()
+        with self.assertRaises(SystemExit):
+            skill.main([
+                "execute",
+                "--request", "/dev/null",
+                "--approval-ref", "{}",
+                # no --relay-task-id
+            ])
 
     def test_all_green_preflight_passes(self) -> None:
         skill = _load_skill()
@@ -277,14 +366,7 @@ class SkillPreflightTests(unittest.TestCase):
                 "SUPPORTPORTAL_RELAY_TOKEN": "token",
             },
             pilot_auth={"state": "ready"},
-            server_payload={
-                "request_id": "enr-AC-13751-v1",
-                "request_version": 1,
-                "zendesk_ticket_id": "13751",
-                "relay_task_id": "task_x",
-                "status": "dispatched",
-                "ticket_valid": True,
-            },
+            server_payload=self.GOOD_SERVER_PAYLOAD,
         )
         self.assertTrue(report["ok"])
         self.assertEqual(report["blockers"], [])

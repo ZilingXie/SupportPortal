@@ -92,10 +92,10 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 ## 命令形态
 
 ```bash
-python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json>
+python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json> --relay-task-id <task_id>
 python3 <skill-dir>/scripts/relay_enablement.py precheck  --request <request.json>
 python3 <skill-dir>/scripts/relay_enablement.py execute   --request <request.json> \
-        --approval-ref '<json 或 文件>'
+        --approval-ref '<json 或 文件>' --relay-task-id <task_id>
 python3 <skill-dir>/scripts/relay_enablement.py readback  --appid '<appid>'
 ```
 
@@ -126,7 +126,7 @@ pilot archer open    --appid '<appid>' --type 6 --region 2 --max-subscribe-load 
 不触发登录）：
 
 ```bash
-python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json>
+python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json> --relay-task-id <task_id>
 ```
 
 输出 `enablement-relay-preflight-v1` JSON：`auth`（Pilot 登录态 probe）、可选
@@ -155,9 +155,12 @@ python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.jso
    的 Message）解析 `enablement-relay-request-v1` JSON，核对发送方
    （supportportal 环境）、接收方（本机身份）、`request_id`、`request_version`
    及工单关联。历史 Message 的内容不作为当前申请。
-2. **只读状态端点核验**：调用下方 execute-time 端点，确认返回的
-   `request_id / request_version / zendesk_ticket_id / relay_task_id` 与
-   当前申请和指定 Task 完全一致。
+2. **只读状态端点核验（四字段全匹配）**：调用下方 execute-time 端点，
+   确认返回的 `request_id / request_version / zendesk_ticket_id / relay_task_id`
+   与当前申请和指定 Task **完全一致**——任一字段不符即停。
+   preflight/execute 均需 `--relay-task-id <task_id>`（取自 handoff 的
+   Task id）；execute 缺省该参数直接拒绝运行，服务端返回错误工单或错误
+   Relay Task 时永不触碰 Archer 写入。
 3. **有效性判定**：当前申请必须为 `dispatched` 且 `ticket_valid=true`
    （工单状态白名单 new/open/pending/hold）。
 4. **同 AppID 关联申请**：发现相同 AppID 的其他申请（含其他 Task）时，
