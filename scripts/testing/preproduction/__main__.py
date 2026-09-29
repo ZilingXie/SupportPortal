@@ -48,14 +48,40 @@ def load_env_into_process() -> None:
 
 
 def _ssm_value(name: str) -> str:
-    out = subprocess.run(
-        ["aws", "ssm", "get-parameter", "--name", name, "--with-decryption",
-         "--query", "Parameter.Value", "--output", "text"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
-    if out.returncode != 0:
-        raise SystemExit(f"could not read SSM parameter {name}: {out.stderr.strip()[:200]}")
-    return out.stdout.strip()
+    import time
+
+    # Concurrent deploy threads cycle the shared AWS credential between
+    # identities; a single read can transiently hit AccessDenied (observed
+    # 2026-09-28), so retry briefly before failing.
+    last_error = ""
+    for _ in range(3):
+        out = subprocess.run(
+            ["aws", "ssm", "get-parameter", "--name", name, "--with-decryption",
+             "--query", "Parameter.Value", "--output", "text"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip()
+        last_error = out.stderr.strip()[:200]
+        if "AccessDenied" not in last_error:
+            break
+        time.sleep(2)
+    raise SystemExit(f"could not read SSM parameter {name}: {last_error}")
+
+
+def _ensure_preprod_db_env() -> None:
+    """Default the engine to the Preproduction ticket DB unless overridden.
+
+    The root .env points at the legacy production schema; PP scenarios are
+    Preproduction-only, so DSN/schema/profile come from the Preproduction
+    SSM parameters unless explicitly provided in the environment.
+    """
+    os.environ.setdefault("TICKET_DB_SCHEMA", "supportportal_preproduction")
+    os.environ.setdefault("AUTOMATION_TEST_PROCESSING_PROFILE", "preproduction")
+    if not os.environ.get("AUTOMATION_TEST_DB_DSN"):
+        os.environ["AUTOMATION_TEST_DB_DSN"] = _ssm_value(
+            "/supportportal/preproduction/automation-db-dsn"
+        )
 
 
 def _ensure_relay_env() -> tuple[str, str]:
@@ -86,6 +112,7 @@ def _readback_preprod_release() -> dict:
 
 def run_check() -> int:
     load_env_into_process()
+    _ensure_preprod_db_env()
     from backend.services.automation_test_scenarios import ScenarioEngine
 
     report: dict = {
@@ -147,6 +174,7 @@ def main() -> int:
     args = parser.parse_args()
 
     load_env_into_process()
+    _ensure_preprod_db_env()
     from backend.services.automation_test_scenarios import ScenarioEngine
 
     if args.check or not args.scenario:
