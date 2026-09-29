@@ -92,6 +92,7 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 ## 命令形态
 
 ```bash
+python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json>
 python3 <skill-dir>/scripts/relay_enablement.py precheck  --request <request.json>
 python3 <skill-dir>/scripts/relay_enablement.py execute   --request <request.json> \
         --approval-ref '<json 或 文件>'
@@ -118,6 +119,32 @@ pilot archer open    --appid '<appid>' --type 6 --region 2 --max-subscribe-load 
   汇总入口均可）；Listener 保持持续接收并持久化后及时 ACK，不等到 10:00。
 - 有未完成的汇总任务时优先继续，避免重复领取；恢复连接后补收。
 - Relay Task 有效期 14 个自然日（覆盖周末与审批等待），到期由 ECS 侧按失败收尾，本地不再执行。
+
+## 本地预检（首个本地步骤，结构化，只读）
+
+收到 enablement 任务后的**第一个本地动作**是运行结构化 preflight（不写任何东西、
+不触发登录）：
+
+```bash
+python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.json>
+```
+
+输出 `enablement-relay-preflight-v1` JSON：`auth`（Pilot 登录态 probe）、可选
+`request`（服务端 readback）与 `blockers` 列表。**blocker 不是任务失败**——每条
+带 `code` 与 `next_action`，向 owner 报告并等待处理后重跑 preflight：
+
+| blocker code | 含义 | 下一步 |
+| --- | --- | --- |
+| `missing_relay_env` | 本地缺 `SUPPORTPORTAL_RELAY_API_BASE/TOKEN` | 一次性配置受保护本地环境（绝不写入 prompt/报告/Relay 消息） |
+| `pilot_sso_login_required` | Pilot 会话过期/缺失 | owner 本机运行 `pilot auth login --device` 完成浏览器/设备授权 |
+| `pilot_unavailable` | pilot CLI 不可用 | 检查 `PILOT_BIN` 安装后重跑 |
+| `request_status_unreadable` | 服务端 readback 不可读 | 稍后重跑；不可核实绝不执行 |
+| `request_identity_mismatch` | 服务端申请身份与派发不一致 | 停止，报告不匹配证据，只读 resync 指定 Task |
+| `request_not_active` | 申请非 dispatched | 不执行，按结果契约起草失败结果 |
+| `request_ticket_invalid` | 工单不在可操作白名单 | 不执行，按结果契约起草失败结果 |
+
+`auth.state=ready` 且无 blocker 才进入收件绑定核验。Pilot 登录态只报告、
+不代登录：浏览器/设备授权永远由 owner 本人完成。
 
 ## 收件绑定核验（Pilot 预检之前，固定顺序）
 

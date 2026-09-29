@@ -115,3 +115,215 @@ class SkillRequestValidityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SkillPreflightTests(unittest.TestCase):
+    """preflight: structured blockers, never task failure (p2-178 follow-up)."""
+
+    REQUEST = {
+        "schema_version": "enablement-relay-request-v1",
+        "request_id": "enr-AC-13751-v1",
+        "request_version": 1,
+        "app_id": "8cb7aea984c4457daad802e6960e2475",
+        "customer_email": "customer@example.com",
+        "zendesk_ticket_id": "13751",
+        "target_params": {
+            "archer_url": "https://archer.agora.io",
+            "typeId": 6,
+            "status": 1,
+            "region": 2,
+            "maxSubscribeLoad": 10,
+        },
+    }
+
+    def _run(self, skill, *, env_overrides=None, pilot_auth=None, server_payload=None, with_request=True):
+        import io
+        import contextlib
+
+        env = {
+            k: v
+            for k, v in os.environ.items()
+            if not k.startswith("SUPPORTPORTAL_RELAY_")
+        }
+        env.update(env_overrides or {})
+        request_path = None
+        if with_request:
+            import tempfile
+
+            handle = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+            json.dump(self.REQUEST, handle)
+            handle.close()
+            request_path = handle.name
+        argv = ["preflight"] + (["--request", request_path] if request_path else [])
+        try:
+            with patch.dict(os.environ, env, clear=True):
+                patches = []
+                if pilot_auth is not None:
+                    patches.append(patch.object(skill, "_pilot_auth_readiness", return_value=pilot_auth))
+                if server_payload is not None:
+                    patches.append(
+                        patch(
+                            "urllib.request.urlopen",
+                            return_value=_FakeResponse(server_payload),
+                        )
+                    )
+                for item in patches:
+                    item.start()
+                try:
+                    buffer = io.StringIO()
+                    with contextlib.redirect_stdout(buffer):
+                        skill.main(argv)
+                finally:
+                    for item in patches:
+                        item.stop()
+            return json.loads(buffer.getvalue())
+        finally:
+            if request_path:
+                Path(request_path).unlink(missing_ok=True)
+
+    def test_missing_env_is_a_structured_blocker_not_failure(self) -> None:
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            pilot_auth={"state": "ready", "sso_expires_at": None, "pilot_status": None, "has_sso": True},
+        )
+        self.assertFalse(report["ok"])
+        codes = [item["code"] for item in report["blockers"]]
+        # Missing env is the single accurate blocker; the readback note only
+        # applies when the env exists but the request could not be read back.
+        self.assertEqual(codes, ["missing_relay_env"])
+        self.assertTrue(report["blockers"][0].get("next_action"))
+        self.assertIsNone(report["request"])
+
+    def test_sso_expired_is_a_structured_blocker_with_login_action(self) -> None:
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={
+                "state": "login_required",
+                "sso_expires_at": "2026-09-24T17:02:01+08:00",
+                "pilot_status": "SSO token present, Ferry JWT expired",
+                "has_sso": True,
+                "next_action": "owner runs `pilot auth login --device`",
+            },
+            server_payload={
+                "request_id": "enr-AC-13751-v1",
+                "request_version": 1,
+                "zendesk_ticket_id": "13751",
+                "relay_task_id": "task_x",
+                "status": "dispatched",
+                "ticket_valid": True,
+            },
+        )
+        self.assertFalse(report["ok"])
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertEqual(codes, ["pilot_sso_login_required"])
+        self.assertIn("pilot auth login --device", report["blockers"][0]["next_action"])
+        self.assertEqual(report["request"]["status"], "dispatched")
+
+    def test_cancelled_request_blocks_execution_with_next_action(self) -> None:
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={"state": "ready"},
+            server_payload={
+                "request_id": "enr-AC-13751-v1",
+                "request_version": 1,
+                "zendesk_ticket_id": "13751",
+                "relay_task_id": "task_x",
+                "status": "cancelled",
+                "ticket_valid": True,
+            },
+        )
+        self.assertFalse(report["ok"])
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertEqual(codes, ["request_not_active"])
+
+    def test_identity_mismatch_blocks(self) -> None:
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={"state": "ready"},
+            server_payload={
+                "request_id": "enr-AC-OTHER-v9",
+                "request_version": 9,
+                "zendesk_ticket_id": "99999",
+                "relay_task_id": "task_y",
+                "status": "dispatched",
+                "ticket_valid": True,
+            },
+        )
+        codes = [item["code"] for item in report["blockers"]]
+        self.assertIn("request_identity_mismatch", codes)
+
+    def test_all_green_preflight_passes(self) -> None:
+        skill = _load_skill()
+        report = self._run(
+            skill,
+            env_overrides={
+                "SUPPORTPORTAL_RELAY_API_BASE": "https://supportcenter.stellarix.space/automation/preproduction",
+                "SUPPORTPORTAL_RELAY_TOKEN": "token",
+            },
+            pilot_auth={"state": "ready"},
+            server_payload={
+                "request_id": "enr-AC-13751-v1",
+                "request_version": 1,
+                "zendesk_ticket_id": "13751",
+                "relay_task_id": "task_x",
+                "status": "dispatched",
+                "ticket_valid": True,
+            },
+        )
+        self.assertTrue(report["ok"])
+        self.assertEqual(report["blockers"], [])
+        self.assertEqual(report["auth"]["state"], "ready")
+        self.assertEqual(report["schema_version"], "enablement-relay-preflight-v1")
+
+    def test_auth_readiness_classifies_expired_ferry_jwt(self) -> None:
+        skill = _load_skill()
+        readiness = skill._pilot_auth_readiness.__wrapped__ if hasattr(
+            skill._pilot_auth_readiness, "__wrapped__"
+        ) else None
+        # Direct classification test through _pilot with a scripted payload.
+        with patch.object(
+            skill,
+            "_pilot",
+            return_value={
+                "_exit_code": 0,
+                "_stderr": "",
+                "has_sso": True,
+                "sso_expires_at": "2026-09-24T17:02:01+08:00",
+                "status": "SSO token present, Ferry JWT expired",
+            },
+        ):
+            record = skill._pilot_auth_readiness()
+        self.assertEqual(record["state"], "login_required")
+        self.assertIn("pilot auth login --device", record["next_action"])
+
+    def test_auth_readiness_ready(self) -> None:
+        skill = _load_skill()
+        with patch.object(
+            skill,
+            "_pilot",
+            return_value={
+                "_exit_code": 0,
+                "_stderr": "",
+                "has_sso": True,
+                "sso_expires_at": "2099-01-01T00:00:00+08:00",
+                "status": "authenticated",
+            },
+        ):
+            record = skill._pilot_auth_readiness()
+        self.assertEqual(record["state"], "ready")

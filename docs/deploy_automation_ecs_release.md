@@ -344,6 +344,11 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 - **archer（auto）**：回复先行门禁确认送达后，每个申请派发一个 AgentRelay Task；Mac 工作日
   10:00 汇总预检（归属/状态/dry-run）→ 两次人工审批 → `pilot` 执行（typeId=6/region=2/
   maxSubscribeLoad=10，独立回读为准，已有 50 不降配）→ 结果回传；ECS 持久化后关闭 Task。
+  本地收件侧（2026-09-29 p2-179）：`enablement-relay-request-v1` 任务自动加载分阶段 handoff
+  （本地只读预检放行，只门禁 Archer 写入与 Relay 回传；`max_turns` 只限回传消息数，不限本地
+  审批轮数）；首个本地步骤为 skill `preflight`（Pilot 登录态 + 服务端 request readback +
+  结构化 blocker 报告），`SUPPORTPORTAL_RELAY_API_BASE/TOKEN`（= preproduction intake shared
+  token）只配置在受保护本地环境。
 - **auto 失败**统一进通用 automation 失败链（internal note + 人工接管 + 通知邮件），
   不自动转 manual、不发 manual 开通邮件。**切换到 manual = 故障缓解**：停止新 auto 派发，
   在途申请按 runbook 表收尾。
