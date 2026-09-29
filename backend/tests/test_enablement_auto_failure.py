@@ -206,6 +206,10 @@ class RelayProjectNotFoundReplyTests(unittest.TestCase):
             job["payload"]["reply_intent"], "enablement_appid_not_found"
         )
         self.assertFalse(job["payload"]["close_after_publish"])
+        # Live 13751 regression: the not-found reply is triggered by the relay
+        # result, not the latest customer message; without this flag the
+        # worker's customer-currency fence cancels the job at claim time.
+        self.assertTrue(job["payload"]["internal_resolution"])
         # The request ended failed-but-recoverable and the case stayed
         # automation-owned: no human_review_required, no failure incident.
         self.assertEqual(request["status"], "failed")
