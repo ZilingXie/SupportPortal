@@ -676,6 +676,37 @@ class PpEnQuickTests(unittest.TestCase):
             self.assertEqual(os.environ["AUTOMATION_TEST_DB_DSN"], "postgresql://preprod/db")
         ssm.assert_called_once_with("/supportportal/preproduction/automation-db-dsn")
 
+    def test_ssm_value_strips_env_aws_credentials(self) -> None:
+        """The .env static keys (zac-support) must not hijack aws CLI
+        subprocesses: environment credentials outrank the default SSO
+        profile, so _ssm_value strips them and falls back to user/Zac."""
+        from types import SimpleNamespace
+
+        from scripts.testing.preproduction import __main__ as cli
+
+        env = {
+            "AWS_ACCESS_KEY_ID": "AKIAEXAMPLE",
+            "AWS_SECRET_ACCESS_KEY": "secret",
+            "AWS_SESSION_TOKEN": "token",
+            "AWS_REGION": "us-east-1",
+        }
+        captured: list = []
+
+        def fake_run(args, **kwargs):
+            captured.append(kwargs.get("env"))
+            return SimpleNamespace(returncode=0, stdout="postgresql://preprod/db\n", stderr="")
+
+        with patch.dict(os.environ, env), patch.object(
+            cli.subprocess, "run", side_effect=fake_run
+        ):
+            value = cli._ssm_value("/supportportal/preproduction/automation-db-dsn")
+        self.assertEqual(value, "postgresql://preprod/db")
+        child_env = captured[0]
+        self.assertNotIn("AWS_ACCESS_KEY_ID", child_env)
+        self.assertNotIn("AWS_SECRET_ACCESS_KEY", child_env)
+        self.assertNotIn("AWS_SESSION_TOKEN", child_env)
+        self.assertEqual(child_env.get("AWS_REGION"), "us-east-1")
+
     def _skill_stub(self):
         import tempfile
         from pathlib import Path
