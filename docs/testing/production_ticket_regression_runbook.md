@@ -240,7 +240,10 @@
   **收件绑定核验**（SKILL.md 固定顺序：①派发 Task 的**当前 Message** 解析
   enablement-relay-request-v1 并核对发送方=ECS 身份/接收方=本机/request_id/version；
   ②服务端 request readback 逐字段核对 request_id/version/zendesk_ticket_id/relay_task_id；
-  ③dispatched + ticket_valid；④同 AppID 其他有效申请即暂停）→ **测试专用自动批准**（skill precheck digest 绑定，
+  ③dispatched + ticket_valid + **回复就绪**（task open、当前消息 delivery_status=delivered、
+  task.to_agent_id=本机——防「先写入后回传失败」）；④同 AppID 其他有效申请即暂停）。
+  当前 Message 的工单关联（ticket_id/zendesk_ticket_id）与本地工单逐一核对，
+  接收方缺失即 fail-closed。→ **测试专用自动批准**（skill precheck digest 绑定，
   p2-163 全部服务端门禁原样生效；`approval_method=test_auto_approve`，绝不记为人工批准）→
   真实 pilot 写入 + 独立回读 → **结果回传 AgentRelay Task**（以本机客户端身份
   POST /tasks/{id}/messages——payload 带 `message_id`（=current_message_id），

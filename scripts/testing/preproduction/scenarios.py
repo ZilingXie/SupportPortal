@@ -173,12 +173,14 @@ def _fetch_relay_task(
     identity: dict[str, str],
     get_json: Callable[..., dict],
 ) -> dict:
-    """GET the relay task and unwrap the ``task`` envelope if present.
+    """GET the relay task and normalize it to one merged task object.
 
-    The relay server may answer ``{"task": {...}}``; the real client reads
-    ``payload.task || payload``. Fencing fields are required positive ints —
-    a missing value must fail closed instead of silently degrading to 1
-    (wrong fencing would 409 as stale).
+    Mirrors the real client's ``unwrapTask`` (agentrelay-task-context-sync):
+    the server answers ``{"data"?: {"task": {...}, "messages": [...]}}`` where
+    ``messages`` is a SIBLING of ``task`` for v0.5/v0.6 tasks — the merged
+    view combines task fields with the sibling message list. Fencing fields
+    are required positive ints; a missing value must fail closed instead of
+    silently degrading to 1 (wrong fencing would 409 as stale).
     """
     raw = get_json(
         f"{identity['base_url'].rstrip('/')}/tasks/{relay_task_id}",
@@ -188,8 +190,21 @@ def _fetch_relay_task(
             "X-AgentRelay-Username": identity["username"],
         },
     )
-    task = raw.get("task") if isinstance(raw, dict) else None
-    task = task if isinstance(task, dict) else raw
+    if not isinstance(raw, dict):
+        raise AutomationTestScenarioError(
+            f"relay task {relay_task_id} response is not an object; refusing to continue"
+        )
+    envelope = raw["data"] if isinstance(raw.get("data"), dict) else raw
+    task = envelope["task"] if isinstance(envelope.get("task"), dict) else envelope
+    if not isinstance(task, dict) or not task:
+        raise AutomationTestScenarioError(
+            f"relay task {relay_task_id} response carries no task object"
+        )
+    sibling_messages = (
+        envelope["messages"] if isinstance(envelope.get("messages"), list) else None
+    )
+    if sibling_messages is not None:
+        task = {**task, "messages": sibling_messages}
     fencing = {
         "current_message_id": str(task.get("current_message_id") or task.get("currentMessageId") or ""),
         "turn_sequence": task.get("turn_sequence") or task.get("turnSequence"),
@@ -226,10 +241,13 @@ def _verify_current_task_message(
     *,
     identity: dict[str, str],
     ecs_agent_id: str,
+    zendesk_ticket_id: str,
+    client_ticket_id: str,
 ) -> dict:
     """SKILL.md step 1: parse the current Message's request JSON and match
-    sender (the ECS environment identity), receiver (this client) and the
-    application identity against the local request row."""
+    sender (the ECS environment identity), receiver (this client — required,
+    it proves the turn is ours), the ticket association and the application
+    identity against the local request row."""
     text = "\n".join(
         str(part.get("text") or "")
         for part in message.get("parts") or []
@@ -253,20 +271,14 @@ def _verify_current_task_message(
             "relay task's current message does not carry an "
             f"{RELAY_REQUEST_SCHEMA} payload; refusing to execute"
         )
-    sender = str(
-        message.get("from_agent_id")
-        or message.get("fromAgentId")
-        or ""
-    )
-    receiver = str(
-        message.get("to_agent_id")
-        or message.get("toAgentId")
-        or ""
-    )
+    sender = str(message.get("from_agent_id") or message.get("fromAgentId") or "")
+    receiver = str(message.get("to_agent_id") or message.get("toAgentId") or "")
     problems = []
     if ecs_agent_id and sender != ecs_agent_id:
         problems.append(f"sender={sender!r} != ecs={ecs_agent_id!r}")
-    if receiver and receiver != identity["agent_id"]:
+    # The receiver proves the turn is ours; a missing receiver can never be
+    # verified, so it fails closed instead of passing silently.
+    if receiver != identity["agent_id"]:
         problems.append(f"receiver={receiver!r} != client={identity['agent_id']!r}")
     if str(payload.get("request_id") or "") != str(request_row.get("request_id") or ""):
         problems.append(
@@ -276,6 +288,18 @@ def _verify_current_task_message(
         problems.append(
             f"message request_version={payload.get('request_version')!r} != local "
             f"{request_row.get('request_version')!r}"
+        )
+    # Ticket association: the dispatch message binds the request to one Zendesk
+    # ticket; a same-id/different-ticket application must never execute.
+    message_zendesk = str(payload.get("zendesk_ticket_id") or "")
+    message_ticket = str(payload.get("ticket_id") or "")
+    if message_zendesk != str(zendesk_ticket_id):
+        problems.append(
+            f"message zendesk_ticket_id={message_zendesk!r} != local {zendesk_ticket_id!r}"
+        )
+    if message_ticket and message_ticket != str(client_ticket_id):
+        problems.append(
+            f"message ticket_id={message_ticket!r} != local {client_ticket_id!r}"
         )
     if problems:
         raise AutomationTestScenarioError(
@@ -317,13 +341,36 @@ def verify_relay_binding(
             f"request {request_id} has no relay_task_id; refusing to execute"
         )
     task_detail = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
-    current_message = _current_task_message(task_detail["task"], task_detail["fencing"])
+    task = task_detail["task"]
+    current_message = _current_task_message(task, task_detail["fencing"])
     _verify_current_task_message(
         current_message,
         request_row,
         identity=identity,
         ecs_agent_id=ecs_agent_id,
+        zendesk_ticket_id=str(ctx.zendesk_ticket_id),
+        client_ticket_id=str(ctx.client_ticket_id),
     )
+
+    # Reply-readiness gates (agentrelay-v05 contract): replying an undelivered
+    # message or out-of-turn would only fail AFTER the irreversible pilot
+    # write, so both are verified here — before the skill runs.
+    if str(task.get("status") or "") != "open":
+        raise AutomationTestScenarioError(
+            f"relay task is terminal (status={task.get('status')!r}); refusing to execute"
+        )
+    if str(current_message.get("delivery_status") or "") != "delivered":
+        raise AutomationTestScenarioError(
+            "current message is not delivered yet "
+            f"(delivery_status={current_message.get('delivery_status')!r}); "
+            "refusing to execute before the reply is possible"
+        )
+    task_to_agent = str(task.get("to_agent_id") or task.get("toAgentId") or "")
+    if task_to_agent != identity["agent_id"]:
+        raise AutomationTestScenarioError(
+            f"it is not this client's turn (task to_agent_id={task_to_agent!r} "
+            f"!= client={identity['agent_id']!r}); refusing to execute"
+        )
 
     url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
     try:
