@@ -47,18 +47,38 @@ def load_env_into_process() -> None:
         os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
 
 
+_AWS_CREDENTIAL_ENV_KEYS = ("AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+
+
+def _aws_cli_env() -> dict[str, str]:
+    """Subprocess env for aws CLI calls with .env credentials stripped.
+
+    The root .env carries the local app stack's static AWS keys
+    (arn:user/zac-support), which lack Preproduction SSM read permission.
+    load_env_into_process() injects them into os.environ, and environment
+    credentials outrank the default profile — so without stripping, every
+    aws subprocess would resolve as zac-support and fail with AccessDenied
+    no matter how often the operator re-runs `aws login`. Stripping the
+    three credential keys makes the aws CLI fall back to the default SSO
+    profile (user/Zac).
+    """
+    return {
+        key: value
+        for key, value in os.environ.items()
+        if key not in _AWS_CREDENTIAL_ENV_KEYS
+    }
+
+
 def _ssm_value(name: str) -> str:
     import time
 
-    # Concurrent deploy threads cycle the shared AWS credential between
-    # identities; a single read can transiently hit AccessDenied (observed
-    # 2026-09-28), so retry briefly before failing.
     last_error = ""
     for _ in range(3):
         out = subprocess.run(
             ["aws", "ssm", "get-parameter", "--name", name, "--with-decryption",
              "--query", "Parameter.Value", "--output", "text"],
             capture_output=True, text=True, timeout=30, check=False,
+            env=_aws_cli_env(),
         )
         if out.returncode == 0:
             return out.stdout.strip()
