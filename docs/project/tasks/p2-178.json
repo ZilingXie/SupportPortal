@@ -2,10 +2,10 @@
   "schema_version": 2,
   "task_id": "p2-178",
   "title": "AppID 追问修复：Hermes 会话知识问句 RAG 答复、进度答复与真实人工交接",
-  "status": "review",
+  "status": "done",
   "owner": "codex",
   "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
-  "next_action": "复审第二轮 P2（兜底未写 server_correction_reason）已修复；三个原阻塞复核通过、A 方案获采纳。等待规划 thread 复验本提交；通过后按既有授权 finalize→合并→Preproduction 发布，并做三条真实验证（知识问句 RAG 答复投递/真实催促邮件进度答复/错误分类与工具失败完整交接）。",
+  "next_action": "已完成：独立验收（三轮）通过后合码（PR #1281/#1285），Preproduction 发布 r20260929-0f854ef（Prompt Release pr-8126b7cd21ab），三条真实验证全部 PASS。Production 晋级与真实 E3 全链（Mac relay 双审批+archer 写入）须另行授权。",
   "acceptance_criteria": [
     "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
     "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
@@ -51,6 +51,18 @@
       "label": "复审第二轮修复验证",
       "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 PG14，跑后进程 0）",
       "result": "421 passed, 2 skipped + 61 passed；兜底路径断言 server_correction_reason=deterministic_fallback:backend_operation_query_verb 与 hermes_proposed_direction 留档"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction 发布与运行验证",
+      "command": "release_automation_ecs_pipeline --release-commit 0f854ef6 --prompt-release-id pr-8126b7cd21ab --through preproduction",
+      "result": "r20260929-0f854ef 全阶段 passed（public_health/heartbeats/provider_probe/prompt active/零漂移×2）；首次发布 r20260929-bf89be2 曾因未 schedule 的 prompt 内容回落旧版（route-manual v3→v2）致真实模型首回合误分类，已通过 draft+schedule 11 个漂移 key + docs-only PR #1285 推进 commit 重建发布修复（教训已入 ECS Runbook）"
+    },
+    {
+      "type": "test",
+      "label": "Preproduction 三条真实验证（评审 A 方案，新测试工单 13751/13753）",
+      "command": "ScenarioEngine 驱动（zendesk_api 客户回合，驱动脚本为本轮临时件未入库）",
+      "result": "A1 知识问句→conversation_followup/knowledge_question→一次公开 RAGFlow 答案（含 docs.agora.io 引用，comment 54037381461396，未新建 relay 申请）；A2 催促→progress_inquiry→绑定申请实际状态答复（enr-AC-13751-v1 保持 dispatched/v1，无加速承诺）；B 优先级请求→conversation_priority_request→真实人工交接（note 54037553482260、回 queue、owner email ok、无公开回复）"
     }
   ],
   "source_refs": [
@@ -63,7 +75,7 @@
     "docs/testing/production_ticket_regression_runbook.md"
   ],
   "created_at": "2026-09-28T00:00:00Z",
-  "updated_at": "2026-09-29T12:00:00Z",
+  "updated_at": "2026-09-29T13:30:00Z",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
@@ -81,6 +93,10 @@
     {
       "at": "2026-09-29T12:00:00Z",
       "note": "复审第二轮（证据不足）：补齐确定性兜底的 server_correction_reason 审计字段并加断言；三阻塞复核通过；采纳 A 方案（复验通过→发布→三条真实验证）。"
+    },
+    {
+      "at": "2026-09-29T13:30:00Z",
+      "note": "第二轮复验通过后完成 A 方案收尾：合码、两次 Preproduction 发布（首次发现 prompt 版本回退缺陷并修复）、三条真实验证 PASS。测试工单 13750（首次发布误分类已人工交接）/13751（relay 申请留 pending）/13753（已交接）留待 Zendesk 清理。"
     }
   ]
 }
