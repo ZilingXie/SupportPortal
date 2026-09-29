@@ -7,14 +7,17 @@ an explicit approval reference is supplied; success is judged ONLY by the
 post-write independent status query.
 
 Usage:
+  relay_enablement.py preflight --request <request.json>   # first local step (read-only)
   relay_enablement.py precheck  --request <request.json>
   relay_enablement.py execute   --request <request.json> --approval-ref <json-or-@file>
   relay_enablement.py readback  --appid <appid>
 
 Input requests are `enablement-relay-request-v1` JSON messages dispatched by
 the SupportPortal ECS worker through AgentRelay.  Outputs are JSON on stdout:
-precheck emits the first-approval report entry; execute emits the
-`enablement-relay-result-v1` payload for the second-approval draft.
+preflight emits a structured readiness report (env, pilot login, request
+readback) whose blockers are never task failure; precheck emits the
+first-approval report entry; execute emits the `enablement-relay-result-v1`
+payload for the second-approval draft.
 """
 
 from __future__ import annotations
@@ -503,6 +506,7 @@ def _fetch_request_status(request: dict[str, Any]) -> dict[str, Any]:
     with the SUPPORTPORTAL_RELAY_TOKEN bearer. Fail closed on any missing
     configuration or unreadable response.
     """
+    import ssl
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -520,11 +524,32 @@ def _fetch_request_status(request: dict[str, Any]) -> dict[str, Any]:
         url,
         headers={"Authorization": f"Bearer {token}", "User-Agent": "supportportal-relay-skill/1.0"},
     )
+    # Certificate resolution: some local python builds ship without a usable
+    # system CA bundle (SSL: CERTIFICATE_VERIFY_FAILED against a perfectly
+    # valid endpoint). certifi, when installed, is the deterministic fallback;
+    # verification is NEVER disabled.
+    contexts = [ssl.create_default_context()]
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-        raise SystemExit(f"could not verify request status from the server ({exc}); refusing to run")
+        import certifi
+
+        contexts.append(ssl.create_default_context(cafile=certifi.where()))
+    except ImportError:
+        pass
+    payload = None
+    last_error: Exception | None = None
+    for context in contexts:
+        try:
+            with urllib.request.urlopen(
+                req, timeout=15, context=context
+            ) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+            break
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            last_error = exc
+    if payload is None:
+        raise SystemExit(
+            f"could not verify request status from the server ({last_error}); refusing to run"
+        )
     if not isinstance(payload, dict) or not payload.get("status"):
         raise SystemExit("server returned an unreadable request status; refusing to run")
     return payload
@@ -672,12 +697,163 @@ def cmd_execute(args: argparse.Namespace) -> int:
     return 0
 
 
+def _pilot_auth_readiness() -> dict[str, Any]:
+    """Read-only Pilot login readiness probe (pilot auth status).
+
+    Classification: ready | login_required | unavailable. Never performs or
+    triggers a login; the owner runs `pilot auth login --device` personally.
+    """
+    payload = _pilot("auth", "status")
+    exit_code = payload.get("_exit_code")
+    status_text = str(payload.get("status") or "").strip()
+    has_sso = payload.get("has_sso")
+    record = {
+        "sso_expires_at": payload.get("sso_expires_at"),
+        "pilot_status": status_text or None,
+        "has_sso": has_sso if isinstance(has_sso, bool) else None,
+    }
+    markers = json.dumps(payload).lower()
+    if exit_code == 0 and has_sso is True and "expired" not in status_text.lower():
+        record.update(state="ready")
+        return record
+    if exit_code == 0 and ("expired" in status_text.lower() or has_sso is False):
+        record.update(
+            state="login_required",
+            next_action="owner runs `pilot auth login --device` and completes the browser/device authorization; then rerun preflight",
+        )
+        return record
+    if any(marker in markers for marker in SSO_EXPIRY_MARKERS):
+        record.update(
+            state="login_required",
+            next_action="owner runs `pilot auth login --device` and completes the browser/device authorization; then rerun preflight",
+        )
+        return record
+    record.update(
+        state="unavailable",
+        detail=payload.get("_stderr") or "pilot auth status did not return a readable state",
+        next_action="verify the pilot CLI is installed (PILOT_BIN) and rerun preflight",
+    )
+    return record
+
+
+def cmd_preflight(args: argparse.Namespace) -> int:
+    """Structured local preflight: env, Pilot login, optional request readback.
+
+    Emits a JSON report with explicit blockers instead of aborting: the
+    enablement handoff treats these as structured preflight blockers (with
+    next actions), never as reasons to declare the task unstartable.
+    """
+    blockers: list[dict[str, Any]] = []
+    base = str(os.environ.get("SUPPORTPORTAL_RELAY_API_BASE") or "").strip()
+    token = str(os.environ.get("SUPPORTPORTAL_RELAY_TOKEN") or "").strip()
+    missing = [name for name, value in (("SUPPORTPORTAL_RELAY_API_BASE", base), ("SUPPORTPORTAL_RELAY_TOKEN", token)) if not value]
+    if missing:
+        blockers.append(
+            {
+                "code": "missing_relay_env",
+                "detail": f"missing local environment variables: {', '.join(missing)}",
+                "next_action": "configure them once in the protected local environment; they are never written into prompts, reports, or Relay messages",
+            }
+        )
+    auth = _pilot_auth_readiness()
+    if auth.get("state") == "login_required":
+        blockers.append(
+            {
+                "code": "pilot_sso_login_required",
+                "detail": f"pilot session not usable (status: {auth.get('pilot_status')})",
+                "next_action": auth.get("next_action"),
+            }
+        )
+    elif auth.get("state") == "unavailable":
+        blockers.append(
+            {
+                "code": "pilot_unavailable",
+                "detail": auth.get("detail"),
+                "next_action": auth.get("next_action"),
+            }
+        )
+    request_report: dict[str, Any] | None = None
+    if args.request:
+        request = _load_request(args.request)
+        if base and token:
+            try:
+                payload = _fetch_request_status(request)
+            except SystemExit as exc:
+                blockers.append(
+                    {
+                        "code": "request_status_unreadable",
+                        "detail": str(exc),
+                        "next_action": "rerun preflight later; do not execute on an unverifiable request",
+                    }
+                )
+            else:
+                active = str(payload.get("status") or "") == "dispatched"
+                ticket_valid = payload.get("ticket_valid") is True
+                request_report = {
+                    "request_id": payload.get("request_id"),
+                    "request_version": payload.get("request_version"),
+                    "zendesk_ticket_id": payload.get("zendesk_ticket_id"),
+                    "relay_task_id": payload.get("relay_task_id"),
+                    "status": payload.get("status"),
+                    "ticket_valid": payload.get("ticket_valid"),
+                }
+                identity_ok = (
+                    str(payload.get("request_id") or "") == str(request.get("request_id") or "")
+                    and _safe_int(payload.get("request_version")) == int(request.get("request_version") or 1)
+                )
+                if not identity_ok:
+                    blockers.append(
+                        {
+                            "code": "request_identity_mismatch",
+                            "detail": "server-side request identity differs from the dispatched request",
+                            "next_action": "stop; report the mismatch and use read-only resync for the named Task",
+                        }
+                    )
+                elif not active:
+                    blockers.append(
+                        {
+                            "code": "request_not_active",
+                            "detail": f"server-side request status is {payload.get('status')!r}, not dispatched",
+                            "next_action": "do not execute; draft the failure result per the result contract",
+                        }
+                    )
+                elif not ticket_valid:
+                    blockers.append(
+                        {
+                            "code": "request_ticket_invalid",
+                            "detail": "the bound Zendesk ticket is outside the actionable whitelist",
+                            "next_action": "do not execute; draft the failure result per the result contract",
+                        }
+                    )
+        elif not missing:
+            blockers.append(
+                {
+                    "code": "request_readback_skipped",
+                    "detail": "request readback requires SUPPORTPORTAL_RELAY_API_BASE/TOKEN",
+                    "next_action": "configure the local environment and rerun preflight before any execution",
+                }
+            )
+    report = {
+        "schema_version": "enablement-relay-preflight-v1",
+        "ok": not blockers,
+        "auth": auth,
+        "request": request_report,
+        "blockers": blockers,
+        "checked_at": _now(),
+    }
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
     pre = sub.add_parser("precheck", help="ownership + status + dry-run, no writes")
     pre.add_argument("--request", required=True)
     pre.set_defaults(func=cmd_precheck)
+    pf = sub.add_parser("preflight", help="structured local preflight: env + pilot auth + optional request readback (read-only)")
+    pf.add_argument("--request", default=None, help="optional enablement-relay-request-v1 JSON file for the server-side readback")
+    pf.set_defaults(func=cmd_preflight)
     exe = sub.add_parser("execute", help="approved execution + independent read-back")
     exe.add_argument("--request", required=True)
     exe.add_argument("--approval-ref", required=True, help="JSON (or @file) from the first approval")
