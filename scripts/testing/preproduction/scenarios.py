@@ -167,6 +167,125 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
     return row
 
 
+def _fetch_relay_task(
+    relay_task_id: str,
+    *,
+    identity: dict[str, str],
+    get_json: Callable[..., dict],
+) -> dict:
+    """GET the relay task and unwrap the ``task`` envelope if present.
+
+    The relay server may answer ``{"task": {...}}``; the real client reads
+    ``payload.task || payload``. Fencing fields are required positive ints —
+    a missing value must fail closed instead of silently degrading to 1
+    (wrong fencing would 409 as stale).
+    """
+    raw = get_json(
+        f"{identity['base_url'].rstrip('/')}/tasks/{relay_task_id}",
+        token=identity["token"],
+        headers={
+            "X-AgentRelay-Agent-Id": identity["agent_id"],
+            "X-AgentRelay-Username": identity["username"],
+        },
+    )
+    task = raw.get("task") if isinstance(raw, dict) else None
+    task = task if isinstance(task, dict) else raw
+    fencing = {
+        "current_message_id": str(task.get("current_message_id") or task.get("currentMessageId") or ""),
+        "turn_sequence": task.get("turn_sequence") or task.get("turnSequence"),
+        "task_version": task.get("task_version") or task.get("taskVersion"),
+    }
+    missing = [
+        name
+        for name, value in fencing.items()
+        if not value or (name != "current_message_id" and int(value) <= 0)
+    ]
+    if missing:
+        raise AutomationTestScenarioError(
+            f"relay task {relay_task_id} is missing fencing fields "
+            f"({', '.join(missing)}); refusing to continue with default fencing"
+        )
+    return {"task": task, "fencing": fencing}
+
+
+def _current_task_message(task: dict, fencing: dict) -> dict:
+    current_id = fencing["current_message_id"]
+    for message in task.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("message_id") or message.get("messageId") or "") == current_id:
+            return message
+    raise AutomationTestScenarioError(
+        f"relay task's current message {current_id} is not present in the task detail"
+    )
+
+
+def _verify_current_task_message(
+    message: dict,
+    request_row: dict,
+    *,
+    identity: dict[str, str],
+    ecs_agent_id: str,
+) -> dict:
+    """SKILL.md step 1: parse the current Message's request JSON and match
+    sender (the ECS environment identity), receiver (this client) and the
+    application identity against the local request row."""
+    text = "\n".join(
+        str(part.get("text") or "")
+        for part in message.get("parts") or []
+        if isinstance(part, dict) and part.get("kind") == "text"
+    )
+    payload: dict = {}
+    for chunk in text.split("\n"):
+        chunk = chunk.strip()
+        if chunk.startswith("{"):
+            try:
+                candidate = json.loads(chunk)
+            except ValueError:
+                continue
+            if isinstance(candidate, dict) and str(
+                candidate.get("schema_version") or ""
+            ) == RELAY_REQUEST_SCHEMA:
+                payload = candidate
+                break
+    if not payload:
+        raise AutomationTestScenarioError(
+            "relay task's current message does not carry an "
+            f"{RELAY_REQUEST_SCHEMA} payload; refusing to execute"
+        )
+    sender = str(
+        message.get("from_agent_id")
+        or message.get("fromAgentId")
+        or ""
+    )
+    receiver = str(
+        message.get("to_agent_id")
+        or message.get("toAgentId")
+        or ""
+    )
+    problems = []
+    if ecs_agent_id and sender != ecs_agent_id:
+        problems.append(f"sender={sender!r} != ecs={ecs_agent_id!r}")
+    if receiver and receiver != identity["agent_id"]:
+        problems.append(f"receiver={receiver!r} != client={identity['agent_id']!r}")
+    if str(payload.get("request_id") or "") != str(request_row.get("request_id") or ""):
+        problems.append(
+            f"message request_id={payload.get('request_id')!r} != local {request_row.get('request_id')!r}"
+        )
+    if int(payload.get("request_version") or 0) != int(request_row.get("request_version") or 1):
+        problems.append(
+            f"message request_version={payload.get('request_version')!r} != local "
+            f"{request_row.get('request_version')!r}"
+        )
+    if problems:
+        raise AutomationTestScenarioError(
+            "current task message does not match this application; refusing to execute ("
+            + "; ".join(problems)
+            + ")"
+        )
+    return payload
+
+
 def verify_relay_binding(
     engine: Any,
     ctx: ScenarioContext,
@@ -174,18 +293,38 @@ def verify_relay_binding(
     *,
     relay_api_base: str,
     relay_token: str,
+    identity: dict[str, str],
+    ecs_agent_id: str,
     fetch_json: Callable[..., dict] = _http_json,
+    get_json: Callable[..., dict] = _http_json,
 ) -> dict:
     """SKILL.md inbox-binding verification, fixed order, read-only.
 
-    1. Server request readback must match this application exactly
+    1. The dispatched task's CURRENT message carries the request JSON and
+       matches sender (ECS identity), receiver (this client) and the local
+       request identity.
+    2. Server request readback must match this application exactly
        (request_id / request_version / zendesk_ticket_id / relay_task_id).
-    2. The request must be ``dispatched`` with ``ticket_valid=true``.
-    3. Same-AppID conflict table: any other non-terminal request for the
+    3. The request must be ``dispatched`` with ``ticket_valid=true``.
+    4. Same-AppID conflict table: any other non-terminal request for the
        same App ID pauses the scenario (never auto-resolved).
     """
     request_id = str(request_row.get("request_id") or "")
     app_id = str(request_row.get("app_id") or "")
+    relay_task_id = str(request_row.get("relay_task_id") or "")
+    if not relay_task_id:
+        raise AutomationTestScenarioError(
+            f"request {request_id} has no relay_task_id; refusing to execute"
+        )
+    task_detail = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
+    current_message = _current_task_message(task_detail["task"], task_detail["fencing"])
+    _verify_current_task_message(
+        current_message,
+        request_row,
+        identity=identity,
+        ecs_agent_id=ecs_agent_id,
+    )
+
     url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
     try:
         server = fetch_json(url, token=relay_token)
@@ -342,9 +481,11 @@ def reply_result_to_relay_task(
 
     The skill only saves/prints the result locally; without this reply the
     ECS worker never receives ``enablement-relay-result-v1`` and the chain
-    stalls. Fencing values come from a fresh GET /tasks/{id}; the reply is
-    posted as the local client identity (strict turn-taking makes it the
-    current to_agent after dispatch).
+    stalls. The reply uses the v0.5/v0.6 mutation contract: fencing values
+    (current_message_id / turn_sequence / task_version) come from a fresh
+    GET /tasks/{id} — the server may wrap them in a ``task`` envelope, and a
+    missing fencing value fails closed instead of degrading to a wrong
+    default.
     """
     task_id = str(request_row.get("relay_task_id") or "")
     if not task_id:
@@ -355,22 +496,21 @@ def reply_result_to_relay_task(
         "X-AgentRelay-Agent-Id": identity["agent_id"],
         "X-AgentRelay-Username": identity["username"],
     }
-    base = identity["base_url"].rstrip("/")
-    task = get_json(
-        f"{base}/tasks/{task_id}",
-        token=identity["token"],
-        headers=dict(identity_headers),
-    )
+    task_detail = _fetch_relay_task(task_id, identity=identity, get_json=get_json)
+    task = task_detail["task"]
+    fencing = task_detail["fencing"]
     payload = {
         "actor_agent_id": identity["agent_id"],
         "task_id": task_id,
-        "turn_sequence": int(task.get("turn_sequence") or 1),
-        "expected_task_version": int(task.get("task_version") or 1),
+        # The current message being replied to (strict turn-taking).
+        "message_id": fencing["current_message_id"],
+        "turn_sequence": int(fencing["turn_sequence"]),
+        "expected_task_version": int(fencing["task_version"]),
         "idempotency_key": f"pp-quick-result:{request_row.get('request_id')}",
         "parts": [{"kind": "text", "text": json.dumps(result)}],
     }
     response = post_json(
-        f"{base}/tasks/{task_id}/messages",
+        f"{identity['base_url'].rstrip('/')}/tasks/{task_id}/messages",
         method="POST",
         payload=payload,
         token=identity["token"],
@@ -380,7 +520,10 @@ def reply_result_to_relay_task(
         "replied": True,
         "task_id": task_id,
         "response": response,
-        "detail": f"task={task_id} actor={identity['agent_id']}",
+        "detail": (
+            f"task={task_id} actor={identity['agent_id']} "
+            f"message={fencing['current_message_id']} turn={fencing['turn_sequence']}"
+        ),
     }
 
 
@@ -393,6 +536,7 @@ def run_pp_en_quick(
     relay_base: str = "",
     relay_token: str = "",
     relay_client_identity: dict[str, str] | None = None,
+    ecs_agent_id: str = "",
     fetch_json: Callable[..., dict] = _http_json,
     post_json: Callable[..., dict] = _http_json,
     get_json: Callable[..., dict] = _http_json,
@@ -426,7 +570,10 @@ def run_pp_en_quick(
         request_row,
         relay_api_base=relay_base,
         relay_token=relay_token,
+        identity=relay_client_identity or load_relay_client_identity(),
+        ecs_agent_id=ecs_agent_id,
         fetch_json=fetch_json,
+        get_json=get_json,
     )
     engine.record(
         ctx,
