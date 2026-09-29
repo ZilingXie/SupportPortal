@@ -4827,7 +4827,7 @@ For each new entry, record:
 
 - Prompt 版本不变（Route Manual v4 / Reply Contract v2）；服务端归一化行为升级。
 - 分类器确定性兜底：会话内（存在助手历史）的 backend_operation 查询/催促动词（check/status/follow up/expedite 等）即使被模型误报，也直接归一化为 `conversation_followup/progress_inquiry`（escalate/prioritize 类动词归 `priority_request` 停人工）；无会话历史时维持 `backend_operation_non_execution_verb` 停人工。兜底不走 direction/route hint 校验——模型提议形状不再决定结果。
-- `tool_record_direction` 冲突覆盖：`direction_conflict`/`route_conflict` 不再 422 弹回，改为无 hint 重归一化并记录 `server_correction_reason`（含原始提议 `hermes_proposed_direction`）；业务状态门禁纠正仍一律改写为 human。
+- `tool_record_direction` 冲突覆盖：`direction_conflict`/`route_conflict` 不再 422 弹回，改为无 hint 重归一化并记录 `server_correction_reason`（含原始提议 `hermes_proposed_direction`）；业务状态门禁纠正仍一律改写为 human；确定性兜底命中时同样记录 `server_correction_reason=deterministic_fallback:<marker>`（复审第二轮 P2 补齐——兜底是服务端对模型提议的纠正，须留审计痕）。
 - 终局失败交接：路由阶段提交/轮询失败（不可重试）、终局 run 状态、`missing_direction` 统一接入共享人工交接链（note/queue/ownership/待发回复取消/失败告警邮件）；可重试状态（outcome_unknown/interrupted）保留延迟重试路径不交接。
 - `notify_account_failure` 的 `mail_sender` 改为调用时解析（可测试性修复：默认参数绑定使模块级 patch 失效，单测曾可能触达真实 Graph 发信路径）。
 - Verification: 21 套件 421 passed + 隔离 PG 61 passed；评审复现样例（backend_operation/check + hints automation/enablement）三种 hint 组合均落 automation/conversation_followup/progress_inquiry。

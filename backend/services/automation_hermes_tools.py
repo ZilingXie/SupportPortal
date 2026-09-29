@@ -236,7 +236,19 @@ def tool_record_direction(
             normalized_classification.setdefault(
                 "hermes_proposed_direction", hermes_proposed_direction
             )
-            normalized_classification.setdefault("server_correction_reason", None)
+            # The deterministic fallback re-interpreted the model's proposal
+            # (a misreported backend_operation became a conversational
+            # follow-up): the server correction reason must stay on the
+            # record even though no conflict was raised (review round 2).
+            fallback_marker = str(
+                normalized_classification.get("deterministic_fallback") or ""
+            ).strip()
+            if fallback_marker:
+                normalized_classification["server_correction_reason"] = (
+                    f"deterministic_fallback:{fallback_marker}"
+                )
+            else:
+                normalized_classification.setdefault("server_correction_reason", None)
     if normalized_direction == "automation":
         from backend.services.account_automation_handlers import account_automation_handler
         from backend.services.automation_hermes_followup_reply import (

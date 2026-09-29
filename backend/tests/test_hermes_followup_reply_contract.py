@@ -1452,6 +1452,15 @@ class TestDeterministicNudgeFallback:
             )
             assert result["direction"] == "automation"
             assert result["route"] == "conversation_followup"
+            # Review round 2: the deterministic fallback is a server
+            # correction of the model's proposal and must be audited as one.
+            assert (
+                result["classification"]["server_correction_reason"]
+                == "deterministic_fallback:backend_operation_query_verb"
+            )
+            assert (
+                result["classification"]["hermes_proposed_direction"] == "automation"
+            )
 
         client = ScriptedHermesClient(
             store,

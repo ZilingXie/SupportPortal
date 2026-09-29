@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T02:24:53Z",
-  "source_base_commit": "6c5ec1f30f677d2dc0c26e177b88618d7f86325b",
-  "registry_digest": "27a7ce683b1f01d41a439010027c7fda55867c3e9b998b1a5588957077c27be7",
+  "generated_at": "2026-09-29T02:59:17Z",
+  "source_base_commit": "a266b4c3c719adcaf9d24050e9ee161c109540df",
+  "registry_digest": "ea7a91dc9aa128d581cc76b2875ace8e66b016098b73c14570ab4fe48114c5c2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1333,6 +1333,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "复审后全量受影响回归 + 隔离 PostgreSQL",
           "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 initdb PG14，跑后进程数 0 已验证）",
           "result": "421 passed, 2 skipped + 61 passed"
+        },
+        {
+          "type": "test",
+          "label": "复审第二轮修复验证",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 PG14，跑后进程 0）",
+          "result": "421 passed, 2 skipped + 61 passed；兜底路径断言 server_correction_reason=deterministic_fallback:backend_operation_query_verb 与 hermes_proposed_direction 留档"
         },
         {
           "type": "test",
@@ -14451,7 +14457,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
-      "next_action": "复审第一轮三阻塞已修复并本地验证，等待规划 thread 复验；真实 Hermes/RAGFlow 的 Preproduction 验证需先获发布授权（评审要求与发布门禁存在排序冲突，待用户裁决）。",
+      "next_action": "复审第二轮 P2（兜底未写 server_correction_reason）已修复；三个原阻塞复核通过、A 方案获采纳。等待规划 thread 复验本提交；通过后按既有授权 finalize→合并→Preproduction 发布，并做三条真实验证（知识问句 RAG 答复投递/真实催促邮件进度答复/错误分类与工具失败完整交接）。",
       "acceptance_criteria": [
         "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
         "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
@@ -14491,6 +14497,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "复审后全量受影响回归 + 隔离 PostgreSQL",
           "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 initdb PG14，跑后进程数 0 已验证）",
           "result": "421 passed, 2 skipped + 61 passed"
+        },
+        {
+          "type": "test",
+          "label": "复审第二轮修复验证",
+          "command": "21 套件 + RUN_POSTGRES_INTEGRATION=1（临时 PG14，跑后进程 0）",
+          "result": "421 passed, 2 skipped + 61 passed；兜底路径断言 server_correction_reason=deterministic_fallback:backend_operation_query_verb 与 hermes_proposed_direction 留档"
         }
       ],
       "source_refs": [
@@ -14503,7 +14515,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "created_at": "2026-09-28T00:00:00Z",
-      "updated_at": "2026-09-29T00:00:00Z",
+      "updated_at": "2026-09-29T12:00:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -14517,6 +14529,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-29T00:00:00Z",
           "note": "复审未通过后修复三阻塞：确定性催促兜底、direction/route 冲突服务端覆盖、终局路由失败/missing_direction 统一人工交接；清理评审遗留 PG 集群 /tmp/codex-review-pg-178-data。"
+        },
+        {
+          "at": "2026-09-29T12:00:00Z",
+          "note": "复审第二轮（证据不足）：补齐确定性兜底的 server_correction_reason 审计字段并加断言；三阻塞复核通过；采纳 A 方案（复验通过→发布→三条真实验证）。"
         }
       ]
     },
