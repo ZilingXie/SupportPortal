@@ -246,6 +246,60 @@ class PrecheckGatingTests(unittest.TestCase):
         self.assertEqual(entry["recommendation"], "blocked")
         self.assertEqual(entry["outcome"], "dry_run_params_unverified")
 
+    def test_dry_run_wouldbody_nesting_is_verified_and_matching(self):
+        def run(cmd, **_kwargs):
+            args = list(cmd)
+            if "appid" in args:
+                return _pilot_result({"projects": [{"appid": APP_ID, "project": "P", "projectId": "G", "companyId": "C"}]})
+            if "status" in args:
+                return _pilot_result({"state": {"state": "not-configured"}})
+            if "--dry-run" in args:
+                # Current pilot shape: the planned write body nests in
+                # data.wouldBody; the sane check must find it there.
+                return _pilot_result({
+                    "success": True,
+                    "data": {
+                        "appid": APP_ID,
+                        "changed": False,
+                        "dryRun": True,
+                        "maxSubscribeLoad": 10,
+                        "wouldBody": {
+                            "appKey": APP_ID,
+                            "companyId": 1138100,
+                            "maxResolution": "300*500",
+                            "maxSubscribeLoad": "10",
+                            "region": 2,
+                            "status": 1,
+                            "typeId": 6,
+                        },
+                    },
+                })
+            raise AssertionError("write reached in precheck")
+
+        with patch.object(MODULE.subprocess, "run", side_effect=run):
+            entry = MODULE._classify_precheck(dict(REQUEST))
+        self.assertEqual(entry["recommendation"], "execute")
+        self.assertNotIn("dry_run_params", str(entry.get("outcome")))
+
+    def test_dry_run_wouldbody_wrong_params_still_blocks(self):
+        def run(cmd, **_kwargs):
+            args = list(cmd)
+            if "appid" in args:
+                return _pilot_result({"projects": [{"appid": APP_ID, "project": "P", "projectId": "G", "companyId": "C"}]})
+            if "status" in args:
+                return _pilot_result({"state": {"state": "not-configured"}})
+            if "--dry-run" in args:
+                return _pilot_result({
+                    "success": True,
+                    "data": {"dryRun": True, "wouldBody": {"typeId": 6, "status": 1, "region": 9, "maxSubscribeLoad": 999}},
+                })
+            raise AssertionError("write reached in precheck")
+
+        with patch.object(MODULE.subprocess, "run", side_effect=run):
+            entry = MODULE._classify_precheck(dict(REQUEST))
+        self.assertEqual(entry["recommendation"], "blocked")
+        self.assertEqual(entry["outcome"], "dry_run_params_mismatch")
+
     def test_digest_is_deterministic_and_binding_fields_present(self):
         with patch.object(MODULE.subprocess, "run", side_effect=_sane_pilot_side_effect()):
             first = MODULE._classify_precheck(dict(REQUEST))
