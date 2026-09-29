@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T10:11:14Z",
-  "source_base_commit": "f835f916382e63e1ebc8fafa1f306df2db847818",
-  "registry_digest": "81e9a1f2203f040f5d0e4e9364c82b3164a345f835ca58a8d056f6e1641887c5",
+  "generated_at": "2026-09-29T10:24:40Z",
+  "source_base_commit": "0057596252984856108b7b81518d10391e721270",
+  "registry_digest": "eaa56517270f4bafb00fdb507bd6d8441553a2554829271b3b592bf34f506ee9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1490,7 +1490,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 40,
-      "done_count": 19,
+      "done_count": 20,
       "blocked_count": 0
     },
     {
@@ -14608,10 +14608,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-179",
       "title": "AgentRelay 本地 Enablement 执行闭环修复：分阶段 handoff + 结构化 preflight",
-      "status": "review",
+      "status": "done",
       "owner": "codex",
       "summary": "修复 13751 类 enablement relay 任务在本地执行层停摆的问题：agent-relay-mcp 新增 enablement-relay-request-v1 专用分阶段 handoff（本地只读预检放行、只门禁 Archer 写入与 AgentRelay 回传、两次本地审批、ownership/project_not_found 免执行审批直接起草失败结果，PR #96 + #97 + #98）；SupportPortal skill 新增 preflight 命令作为首个本地步骤（Pilot 登录态 probe + 服务端 request readback + 结构化 blocker 报告 + 四字段 fail-closed 绑定门禁，含 certifi CA 回退）；本地一次性配置 SUPPORTPORTAL_RELAY_API_BASE/TOKEN（SSM preproduction intake shared token，仅存在于受保护本地环境）。普通 AgentRelay 任务行为不变。",
-      "next_action": "复审第三轮：证据记录已同步为当前实测（85 passed、浏览器登录、完整命令）；等待整体复验。owner 登录命令为 pilot auth login（浏览器 PKCE 流；--device 在 Ferry 设备端点 404）。",
+      "next_action": "已完成：三轮复验通过（2026-09-29）；本地执行闭环交付（分阶段 handoff + preflight + 四字段 fail-closed 绑定 + 真实领取门禁链测试 + 官方栈验证）。范围限制：不含新的 Preproduction 运行验收、不授权 Production 或真实 Archer 操作。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变（默认 explain-then-approve 边界保留）。",
         "当前消息携带 enablement-relay-request-v1 JSON 的任务自动生成分阶段 handoff 并引用专用 skill；历史消息携带该 schema 不翻转 profile；不可信 payload 不进 prompt。",
@@ -14655,7 +14655,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/deploy_automation_ecs_release.md"
       ],
       "created_at": "2026-09-29T15:30:00Z",
-      "updated_at": "2026-09-29T20:00:00Z",
+      "updated_at": "2026-09-29T21:00:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -14677,6 +14677,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-29T20:00:00Z",
           "note": "复审第三轮：证据区全面重写为当前实测（85 passed、浏览器登录、完整可复跑命令、官方栈验证入证据），消除 70/81/--device 等过期记录。"
+        },
+        {
+          "at": "2026-09-29T21:00:00Z",
+          "note": "第三轮复验通过（评审复核 commit 00575962/03737b7：287+85 passed、证据同步、官方栈 matched）；任务收口 done。遗留范围：Preproduction 未重新部署（本轮无运行时行为变更需求）；E3 终段（工单更正 AppID→v2→真实开通）待 owner 发起。"
         }
       ]
     },
