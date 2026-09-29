@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import unittest
+from unittest.mock import patch
 
 os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
 os.environ.setdefault("SENTIMENT_PROVIDER", "legacy")
@@ -17,6 +18,15 @@ from scripts.testing.preproduction import scenarios as pp
 
 
 APP_ID = pp.PP_APP_ID
+
+_SERVER_REQUEST = {
+    "request_id": "enr-AC-13900-v1",
+    "request_version": 1,
+    "zendesk_ticket_id": "13900",
+    "relay_task_id": "task-42",
+    "status": "dispatched",
+    "ticket_valid": True,
+}
 
 
 class FakeEngine(ScenarioEngine):
@@ -68,10 +78,32 @@ def _request_row(status: str) -> dict:
         "request_version": 1,
         "customer_email": "xieziling97@163.com",
         "target_params": {"typeId": 6, "region": 2, "maxSubscribeLoad": 10},
+        "relay_task_id": "task-42",
     }
 
 
-def _happy_queue(engine: FakeEngine, *, relay_status: str, outcome: str, write: bool) -> None:
+def _fake_fetch(payload=None, error: Exception | None = None):
+    calls: list = []
+
+    def fetch(url, **kwargs):
+        calls.append({"url": url, **kwargs})
+        if error is not None:
+            raise error
+        return payload
+
+    return fetch, calls
+
+
+def _identity() -> dict:
+    return {
+        "base_url": "https://relay.example.test/api",
+        "agent_id": "zac-agent",
+        "username": "zac",
+        "token": "client-token",
+    }
+
+
+def _happy_queue(engine: FakeEngine, *, outcome: str, write: bool) -> None:
     engine.db_queue = [
         ("FROM support_account_cases", [
             {
@@ -93,7 +125,9 @@ def _happy_queue(engine: FakeEngine, *, relay_status: str, outcome: str, write: 
             "zendesk_comment_id": "53830000000001",
         }]),
         ("FROM support_enablement_relay_requests", [_request_row("gated")]),
-        ("FROM support_enablement_relay_requests", [_request_row(relay_status)]),
+        ("FROM support_enablement_relay_requests", [_request_row("dispatched")]),
+        # Same-AppID conflict table query: no other active requests.
+        ("WHERE app_id = %s AND request_id", []),
         ("FROM support_enablement_relay_results", [{
             "outcome": outcome,
             "write_attempted": write,
@@ -128,71 +162,165 @@ def _fake_runner(precheck_rec: str, outcome: str, write: bool, calls: list):
         return {
             "approval_method": "test_auto_approve",
             "precheck_recommendation": precheck_rec,
-            "result": {"outcome": outcome, "write_attempted": write, "detail": ""},
+            "result": {
+                "schema_version": "enablement-relay-result-v1",
+                "outcome": outcome,
+                "write_attempted": write,
+                "detail": "",
+            },
         }
 
     return runner
 
 
 class PpEnQuickTests(unittest.TestCase):
-    def test_happy_path_real_write(self) -> None:
+    def test_happy_path_real_write_with_binding_and_reply(self) -> None:
         engine = FakeEngine()
-        _happy_queue(engine, relay_status="dispatched", outcome="enabled", write=True)
+        _happy_queue(engine, outcome="enabled", write=True)
         calls: list = []
+        fetch, fetch_calls = _fake_fetch(dict(_SERVER_REQUEST))
+        posts: list = []
+        task_payload = {"task_id": "task-42", "turn_sequence": 3, "task_version": 5}
+
+        def post(url, *, method="GET", payload=None, token="", headers=None):
+            posts.append({"url": url, "method": method, "payload": payload, "headers": headers, "token": token})
+            return {"message_id": "m-9"}
+
+        def get(url, **kwargs):
+            assert url.endswith("/tasks/task-42")
+            return dict(task_payload)
+
         report = pp.run_pp_en_quick(
             engine,
             skill_runner=_fake_runner("execute", "enabled", True, calls),
+            relay_base="https://preprod.example.test/automation/preproduction",
+            relay_token="intake-token",
+            relay_client_identity=_identity(),
+            fetch_json=fetch,
+            post_json=post,
+            get_json=get,
             workdir=self._workdir(),
         )
         self.assertTrue(engine.all_passed())
-        self.assertEqual(len(engine.sent_emails), 1)
         self.assertEqual(report["relay_outcome"], "enabled")
         self.assertTrue(report["archer_write_attempted"])
-        self.assertEqual(report["approval_method"], "test_auto_approve")
-        self.assertEqual(report["relay_request_id"], "enr-AC-13900-v1")
-        self.assertEqual(report["zendesk_ticket_id"], "13900")
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["request_row"]["request_id"], "enr-AC-13900-v1")
-        kinds = [kind for kind, _ in engine.events]
-        self.assertIn("approval_required", kinds)
+        self.assertEqual(report["relay_task_id"], "task-42")
+        # Binding verification hit the server readback once, with the intake token.
+        self.assertEqual(len(fetch_calls), 1)
+        self.assertIn("/v1/enablement-relay/requests/enr-AC-13900-v1", fetch_calls[0]["url"])
+        self.assertEqual(fetch_calls[0]["token"], "intake-token")
+        # Result reply: fencing from the fresh task GET, identity headers set.
+        self.assertEqual(len(posts), 1)
+        payload = posts[0]["payload"]
+        self.assertEqual(payload["actor_agent_id"], "zac-agent")
+        self.assertEqual(payload["turn_sequence"], 3)
+        self.assertEqual(payload["expected_task_version"], 5)
+        self.assertEqual(payload["parts"][0]["kind"], "text")
         self.assertEqual(
-            next(data for kind, data in engine.events if kind == "approval_required")["kind"],
-            "test_auto_approve",
+            json.loads(payload["parts"][0]["text"])["schema_version"],
+            "enablement-relay-result-v1",
         )
+        self.assertEqual(posts[0]["headers"]["X-AgentRelay-Agent-Id"], "zac-agent")
+        self.assertEqual(posts[0]["token"], "client-token")
+        step_names = [s["step"] for s in report["steps"]]
+        self.assertIn("inbox binding verified (server readback + same-AppID table)", step_names)
+        self.assertIn("result replied to relay task (enablement-relay-result-v1)", step_names)
 
     def test_already_satisfied_zero_writes(self) -> None:
         engine = FakeEngine()
-        _happy_queue(engine, relay_status="dispatched", outcome="already_satisfied", write=False)
+        _happy_queue(engine, outcome="already_satisfied", write=False)
         calls: list = []
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
         report = pp.run_pp_en_quick(
             engine,
             skill_runner=_fake_runner("already_satisfied", "already_satisfied", False, calls),
+            relay_base="https://preprod.example.test/automation/preproduction",
+            relay_token="intake-token",
+            relay_client_identity=_identity(),
+            fetch_json=fetch,
+            post_json=lambda *a, **k: {"ok": True},
+            get_json=lambda *a, **k: {"task_id": "task-42", "turn_sequence": 1, "task_version": 1},
             workdir=self._workdir(),
         )
         self.assertTrue(engine.all_passed())
         self.assertFalse(report["archer_write_attempted"])
         self.assertEqual(report["relay_outcome"], "already_satisfied")
 
-    def test_blocked_precheck_aborts_before_execute(self) -> None:
+    def test_binding_mismatch_stops_before_skill(self) -> None:
         engine = FakeEngine()
-        _happy_queue(engine, relay_status="dispatched", outcome="enabled", write=True)
-        # Drop the post-approval queue entries: the scenario must never reach them.
+        _happy_queue(engine, outcome="enabled", write=True)
         engine.db_queue = engine.db_queue[:6]
-
-        def blocked_runner(engine, ctx, request_row, **kwargs):
-            raise AutomationTestScenarioError(
-                "precheck blocked auto-approval: blocked/ownership_mismatch"
-            )
-
+        server = dict(_SERVER_REQUEST)
+        server["zendesk_ticket_id"] = "99999"  # bound to a different ticket
+        fetch, _ = _fake_fetch(server)
+        calls: list = []
         with self.assertRaises(AutomationTestScenarioError):
-            pp.run_pp_en_quick(engine, skill_runner=blocked_runner, workdir=self._workdir())
-        # Aborted right after dispatch: every recorded step passed, but the
-        # approval/execution leg and everything after it never ran.
-        step_names = [step.step for step in engine.steps]
-        self.assertNotIn("relay auto-approval executed (test_auto_approve, real pilot leg)", step_names)
-        self.assertNotIn("ticket solved + case closed", step_names)
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                fetch_json=fetch,
+                workdir=self._workdir(),
+            )
+        self.assertEqual(calls, [], "skill must never run on a binding mismatch")
+        self.assertNotIn(
+            "relay auto-approval executed (test_auto_approve, real pilot leg)",
+            [s.step for s in engine.steps],
+        )
 
-    def test_request_file_and_approval_shape(self) -> None:
+    def test_same_appid_conflict_pauses(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        # Same-AppID query returns another active request instead of [].
+        engine.db_queue[6] = (
+            "WHERE app_id = %s AND request_id",
+            [{"request_id": "enr-OTHER", "status": "dispatched", "zendesk_ticket_id": "13950"}],
+        )
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                fetch_json=fetch,
+                workdir=self._workdir(),
+            )
+        self.assertIn("same-AppID conflict", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_skill_runner_passes_file_ref_approval(self) -> None:
+        workdir = self._workdir()
+        request_row = _request_row("dispatched")
+        captured: list[list[str]] = []
+
+        def fake_run(args, env):
+            captured.append(args)
+            if "precheck" in args:
+                return {"recommendation": "execute", "report_digest": "sha256:abc"}
+            return {"outcome": "enabled", "write_attempted": True}
+
+        with patch.object(pp, "_run_skill_subprocess", side_effect=fake_run):
+            result = pp.default_skill_runner(
+                None,
+                None,
+                request_row,
+                skill_script=self._skill_stub(),
+                pilot_bin="pilot",
+                relay_base="https://preprod.example.test",
+                relay_token="intake-token",
+                workdir=workdir,
+            )
+        self.assertEqual(result["result"]["outcome"], "enabled")
+        execute_args = captured[1]
+        self.assertIn("--approval-ref", execute_args)
+        self.assertTrue(execute_args[execute_args.index("--approval-ref") + 1].startswith("@"))
+
+    def test_request_file_shape(self) -> None:
         workdir = self._workdir()
         request_file = pp.build_relay_request_file(_request_row("dispatched"), workdir)
         payload = json.loads(request_file.read_text(encoding="utf-8"))
@@ -200,25 +328,53 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertEqual(payload["app_id"], APP_ID)
         self.assertEqual(payload["target_params"], {"typeId": 6, "region": 2, "maxSubscribeLoad": 10})
 
+    def test_redact_report_covers_steps(self) -> None:
+        report = {
+            "steps": [
+                {"step": "relay request", "detail": f"app_id={APP_ID} for xieziling97@163.com"},
+            ],
+            "aborted": f"boom {APP_ID}",
+        }
+        redacted = pp.redact_report(report, app_id=APP_ID, email="xieziling97@163.com")
+        serialized = json.dumps(redacted)
+        self.assertNotIn(APP_ID, serialized)
+        self.assertNotIn("xieziling97@163.com", serialized)
+
     def test_redaction_helpers(self) -> None:
         self.assertNotIn(APP_ID, pp.redact_app_id(APP_ID))
         self.assertNotIn("xieziling97", pp.redact_email("xieziling97@163.com"))
-        text = pp.redact_text(
-            f"enabled {APP_ID} for xieziling97@163.com",
-            app_id=APP_ID,
-            email="xieziling97@163.com",
-        )
-        self.assertNotIn(APP_ID, text)
-        self.assertNotIn("xieziling97@163.com", text)
+
+    def test_cli_forces_preprod_db_env(self) -> None:
+        from scripts.testing.preproduction import __main__ as cli
+
+        env = {
+            "TICKET_DB_SCHEMA": "supportportal",
+            "AUTOMATION_TEST_PROCESSING_PROFILE": "production",
+            "AUTOMATION_TEST_DB_DSN": "postgresql://legacy/production",
+        }
+        with patch.dict(os.environ, env), patch.object(
+            cli, "_ssm_value", return_value="postgresql://preprod/db"
+        ) as ssm:
+            cli._ensure_preprod_db_env()
+            self.assertEqual(os.environ["TICKET_DB_SCHEMA"], "supportportal_preproduction")
+            self.assertEqual(os.environ["AUTOMATION_TEST_PROCESSING_PROFILE"], "preproduction")
+            self.assertEqual(os.environ["AUTOMATION_TEST_DB_DSN"], "postgresql://preprod/db")
+        ssm.assert_called_once_with("/supportportal/preproduction/automation-db-dsn")
+
+    def _skill_stub(self):
+        import tempfile
+        from pathlib import Path
+
+        d = Path(tempfile.mkdtemp(prefix="pp-skill-"))
+        script = d / "relay_enablement.py"
+        script.write_text("# stub\n")
+        return script
 
     def _workdir(self):
         import tempfile
-
-        d = tempfile.mkdtemp(prefix="pp-test-")
-        self.addCleanup(lambda: None)
         from pathlib import Path
 
-        return Path(d)
+        return Path(tempfile.mkdtemp(prefix="pp-test-"))
 
 
 if __name__ == "__main__":

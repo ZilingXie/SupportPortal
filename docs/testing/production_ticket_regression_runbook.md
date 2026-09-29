@@ -237,12 +237,20 @@
 ### PP-EN-QUICK：Media Relay 快速开通（真实全链）
 
 - **合同**：一轮提交有效 App ID → 确认回复投递 → relay request gated→dispatched →
-  **测试专用自动批准**（skill precheck digest 绑定，p2-163 全部服务端门禁原样生效；
-  `approval_method=test_auto_approve`，绝不记为人工批准）→ 真实 pilot 写入 + 独立回读 →
-  enabled/already_satisfied → 完成回复投递 → solved。Archer 新写入次数如实记录（0 或 1）。
-- **前置**：E1P 同款环境变量 + `SUPPORTPORTAL_RELAY_API_BASE/TOKEN`（缺省自动从 SSM
-  `/supportportal/preproduction/agentrelay-{base-url,token}` 取）+ `PILOT_BIN`（默认
-  `~/.local/bin/pilot`）+ pilot SSO 登录态有效。
+  **收件绑定核验**（SKILL.md 固定顺序：服务端 request readback 逐字段核对
+  request_id/version/zendesk_ticket_id/relay_task_id + dispatched/ticket_valid +
+  同 AppID 其他有效申请即暂停）→ **测试专用自动批准**（skill precheck digest 绑定，
+  p2-163 全部服务端门禁原样生效；`approval_method=test_auto_approve`，绝不记为人工批准）→
+  真实 pilot 写入 + 独立回读 → **结果回传 AgentRelay Task**（以本机客户端身份
+  POST /tasks/{id}/messages，fencing 取 fresh GET）→ enabled/already_satisfied →
+  完成回复投递 → solved。Archer 新写入次数如实记录（0 或 1）。
+- **前置**：`PILOT_BIN`（默认 `~/.local/bin/pilot`）+ pilot SSO 登录态有效 +
+  本机 relay 客户端身份文件（默认 `~/Desktop/agentRelay/agent-relay-mcp/.env`，
+  可用 `SUPPORTPORTAL_RELAY_CLIENT_ENV` 或 `SUPPORTPORTAL_RELAY_CLIENT_{BASE_URL,AGENT_ID,USERNAME,TOKEN}` 覆盖）。
+  DB DSN/schema/profile 由 CLI **强制**指向 Preproduction（SSM + supportportal_preproduction，
+  覆盖根 .env 的 production 值）；relay API base/token 缺省从 SSM agentrelay 参数取。
+  `--check` 的通过条件含 schema/profile/relay 客户端身份配置。
 - **预检**：`--check`（只读：preprod release readback、DB/SMTP/IMAP、profile、relay 配置、pilot 二进制）。
-- **运行**：`--scenario PP-EN-QUICK --yes --report-file <path>`（报告脱敏：App ID/邮箱掩码）。
+- **运行**：`--scenario PP-EN-QUICK --yes --report-file <path>`（整份报告**递归脱敏**后才
+  打印/落盘：steps 明细、aborted 文本里的 App ID/邮箱一律掩码）。
 - **与 p2-163 的关系**：技术闭环证据并入 p2-163 受控验收；人工审批门禁由本次测试覆盖情况单独标注。
