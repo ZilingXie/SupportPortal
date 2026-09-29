@@ -284,10 +284,12 @@ def notify_account_failure(
     attempts: int | None = None,
     detail: Any = "",
     summary: dict[str, Any] | None = None,
-    mail_sender: Callable[..., None] = send_graph_mail,
+    mail_sender: Callable[..., None] | None = None,
     now: str,
 ) -> dict[str, Any]:
     """Send one redacted alert per incident and preserve delivery evidence."""
+    # Resolved at call time so tests can patch the module-level transport.
+    sender = mail_sender or send_graph_mail
     key = f"account-failure:{incident_id}"
     try:
         claim = repository.begin_idempotent_request(
@@ -326,7 +328,7 @@ def notify_account_failure(
         summary=summary,
     )
     try:
-        mail_sender(
+        sender(
             to_address=ACCOUNT_FAILURE_ALERT_RECIPIENT,
             subject=subject,
             body=body,

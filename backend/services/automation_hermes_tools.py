@@ -173,6 +173,7 @@ def tool_record_direction(
             # a non-existent top-level ``role`` made every mid-session
             # follow-up look like a forbidden new-ticket follow-up).
             latest_assistant_message_present = latest_assistant_message_before_trigger(turn)
+        conflict_override: str | None = None
         try:
             normalized_classification = normalize_hermes_route_classification(
                 classification,
@@ -181,7 +182,20 @@ def tool_record_direction(
                 latest_assistant_message_present=latest_assistant_message_present,
             )
         except HermesRouteClassificationError as exc:
-            raise HermesToolError(exc.code, str(exc)) from exc
+            if exc.code not in {"direction_conflict", "route_conflict"}:
+                raise HermesToolError(exc.code, str(exc)) from exc
+            # A hint mismatch is a server-vs-model disagreement, not a
+            # malformed payload: re-normalize WITHOUT the hints (the server
+            # is authoritative) and record the override instead of bouncing
+            # the turn into a 422 retry loop (p2-178 review blocker 1).
+            conflict_override = exc.code
+            try:
+                normalized_classification = normalize_hermes_route_classification(
+                    classification,
+                    latest_assistant_message_present=latest_assistant_message_present,
+                )
+            except HermesRouteClassificationError as retry_exc:
+                raise HermesToolError(retry_exc.code, str(retry_exc)) from retry_exc
         normalized_direction = str(normalized_classification["direction"])
         normalized_route = normalized_classification.get("route")
         normalized_reason = str(
@@ -199,6 +213,7 @@ def tool_record_direction(
             normalized_classification,
         )
         if correction_reason:
+            # Business-state corrections always end in the human direction.
             normalized_classification = _correct_classification_to_human(
                 normalized_classification,
                 correction_reason=correction_reason,
@@ -207,6 +222,16 @@ def tool_record_direction(
             normalized_direction = "human"
             normalized_route = None
             normalized_reason = correction_reason
+        elif conflict_override:
+            # A hint conflict the server resolved: keep the server's
+            # direction (whatever it is) and record the override.
+            normalized_classification.setdefault(
+                "hermes_proposed_direction", hermes_proposed_direction
+            )
+            normalized_classification["server_correction_reason"] = (
+                f"{conflict_override}:server_override:"
+                f"{hermes_proposed_direction}->{normalized_direction}"
+            )
         else:
             normalized_classification.setdefault(
                 "hermes_proposed_direction", hermes_proposed_direction

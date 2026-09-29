@@ -63,6 +63,54 @@ _ENABLEMENT_EXECUTION_VERBS = frozenset(
         "opened",
     }
 )
+# Status/nudge verbs (p2-178 review blocker 1): "any update?", "could it be
+# faster?" wrapped in backend_operation must land in the progress reply path
+# deterministically when the session has assistant history.
+_ENABLEMENT_QUERY_VERBS = frozenset(
+    {
+        "check",
+        "checks",
+        "checked",
+        "checking",
+        "status",
+        "query",
+        "queries",
+        "inquire",
+        "inquiry",
+        "enquire",
+        "enquiry",
+        "follow up",
+        "followup",
+        "update",
+        "updates",
+        "updated",
+        "progress",
+        "ask",
+        "asks",
+        "asking",
+        "expedite",
+        "expedites",
+        "speed",
+        "speed up",
+        "faster",
+        "hurry",
+        "hasten",
+        "sooner",
+    }
+)
+# Explicit human-priority verbs inside an existing session: escalate to the
+# priority_request conversation path (human), never an auto answer.
+_ENABLEMENT_PRIORITY_VERBS = frozenset(
+    {
+        "escalate",
+        "escalates",
+        "escalation",
+        "prioritize",
+        "prioritise",
+        "prioritization",
+        "urgent",
+    }
+)
 _AGORA_ROUTES = {
     "technical",
     "security_compliance",
@@ -89,6 +137,29 @@ def _text(value: Any) -> str:
 def _enablement_execution_verb(action: str) -> bool:
     normalized = _text(action).replace("_", " ").replace("-", " ")
     return normalized in _ENABLEMENT_EXECUTION_VERBS
+
+
+def _normalize_verb(action: str) -> str:
+    return _text(action).replace("_", " ").replace("-", " ")
+
+
+def _enablement_query_verb(action: str) -> bool:
+    """Status/nudge verbs: the customer asks ABOUT the pending operation,
+    not for a new one. In-session (assistant history present) these map
+    deterministically to the progress_inquiry reply path even when the model
+    wraps them in backend_operation — the fix must not depend on prompt
+    compliance (p2-178 review blocker 1)."""
+    return _normalize_verb(action) in _ENABLEMENT_QUERY_VERBS
+
+
+def _enablement_priority_verb(action: str) -> bool:
+    return _normalize_verb(action) in _ENABLEMENT_PRIORITY_VERBS
+
+
+def _session_has_assistant(payload: Mapping[str, Any], latest: bool | None) -> bool:
+    if latest is None and "latest_assistant_message_present" in payload:
+        return payload.get("latest_assistant_message_present") is True
+    return latest is True
 
 
 def _confidence(value: Any, *, default: float | None = None) -> float:
@@ -455,6 +526,60 @@ def normalize_hermes_route_classification(
             reason = "backend_operation_non_execution_verb"
     else:
         reason = "no_registered_subcategory" if operation is not None else "insufficient_backend_operation_evidence"
+    if (
+        not eligible
+        and subcategory == "enablement"
+        and bool(target)
+        and is_supported_enablement_feature(target)
+        and operation is not None
+        and _session_has_assistant(payload, latest_assistant_message_present)
+    ):
+        # Deterministic server fallback (p2-178 review blocker 1): inside an
+        # existing session, a status query or nudge misreported as
+        # backend_operation re-normalizes into the conversational follow-up
+        # taxonomy instead of failing on a direction hint conflict — the
+        # model's proposal shape must never decide the outcome. Hints are
+        # deliberately not checked here: this IS the server override, and
+        # tool_record_direction records the raw proposal plus the override.
+        action_verb = str(operation.get("action") or "")
+        if _enablement_priority_verb(action_verb):
+            classification.update(
+                intent_class="conversation",
+                conversation_action="follow_up",
+                conversation_subcategory="priority_request",
+                route_target="human_review",
+                route_family="human_review",
+                execution_action="human_review_required",
+                automation_eligibility="ineligible",
+                deterministic_fallback="backend_operation_priority_verb",
+            )
+            return _finish(
+                classification,
+                direction="human",
+                reason="conversation_priority_request",
+                route=None,
+                direction_hint=None,
+                route_hint=None,
+            )
+        if _enablement_query_verb(action_verb):
+            classification.update(
+                intent_class="conversation",
+                conversation_action="follow_up",
+                conversation_subcategory="progress_inquiry",
+                route_target="conversation_reply",
+                route_family="conversation",
+                execution_action="followup_reply",
+                automation_eligibility="eligible",
+                deterministic_fallback="backend_operation_query_verb",
+            )
+            return _finish(
+                classification,
+                direction="automation",
+                route="conversation_followup",
+                reason="conversation_followup_progress_inquiry",
+                direction_hint=None,
+                route_hint=None,
+            )
     classification.update(
         route_target="automation" if eligible else "human_review",
         route_family=AUTOMATED_ROUTE_FAMILY if eligible else "human_review",

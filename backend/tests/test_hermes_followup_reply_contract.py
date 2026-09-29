@@ -1331,3 +1331,274 @@ class TestFollowupReplyPostgres:
         assert binding["direction"] == "human"
         case = repository.get_account_case_by_ticket_id("902")
         assert case["automation_status"] == "human_review_required"
+
+
+# ---------------------------------------------------------------------------
+# Review round 1 blockers: deterministic nudge fallback, conflict override,
+# and terminal-failure handoffs (processor level)
+# ---------------------------------------------------------------------------
+
+
+def _backend_operation_check_classification(action: str = "check") -> dict[str, Any]:
+    return {
+        "intent_class": "agora",
+        "agora_route": "backend_operation",
+        "backend_operation_subcategory": "enablement",
+        "backend_operation": {
+            "action": action,
+            "target": "media_relay",
+            "evidence": "any update? could it be faster?",
+        },
+        "intent_confidence": 0.95,
+        "agora_confidence": 0.95,
+        "confidence": 0.95,
+        "reason_code": "registered_enablement",
+    }
+
+
+class TestDeterministicNudgeFallback:
+    def test_backend_operation_check_in_session_routes_to_progress_inquiry(self) -> None:
+        from backend.services.hermes_route_classifier import (
+            normalize_hermes_route_classification,
+        )
+
+        result = normalize_hermes_route_classification(
+            _backend_operation_check_classification(),
+            # The model also proposed direction=automation / route=enablement:
+            # the deterministic fallback ignores those hints instead of
+            # raising direction_conflict / route_conflict.
+            direction_hint="automation",
+            route_hint="enablement",
+            latest_assistant_message_present=True,
+        )
+        assert result["direction"] == "automation"
+        assert result["route"] == "conversation_followup"
+        assert result["conversation_action"] == "follow_up"
+        assert result["conversation_subcategory"] == "progress_inquiry"
+        assert result["deterministic_fallback"] == "backend_operation_query_verb"
+        assert result["route_reason_code"] == "conversation_followup_progress_inquiry"
+
+    def test_backend_operation_check_new_ticket_stays_human(self) -> None:
+        from backend.services.hermes_route_classifier import (
+            normalize_hermes_route_classification,
+        )
+
+        result = normalize_hermes_route_classification(
+            _backend_operation_check_classification(),
+            latest_assistant_message_present=False,
+        )
+        assert result["direction"] == "human"
+        assert result["route_reason_code"] == "backend_operation_non_execution_verb"
+
+    def test_backend_operation_escalate_in_session_is_priority_request(self) -> None:
+        from backend.services.hermes_route_classifier import (
+            normalize_hermes_route_classification,
+        )
+
+        result = normalize_hermes_route_classification(
+            _backend_operation_check_classification(action="escalate"),
+            direction_hint="automation",
+            route_hint="enablement",
+            latest_assistant_message_present=True,
+        )
+        assert result["direction"] == "human"
+        assert result["route_reason_code"] == "conversation_priority_request"
+        assert result["conversation_subcategory"] == "priority_request"
+
+    def test_backend_operation_disable_in_session_gets_no_fallback(self) -> None:
+        from backend.services.hermes_route_classifier import (
+            normalize_hermes_route_classification,
+        )
+
+        result = normalize_hermes_route_classification(
+            _backend_operation_check_classification(action="disable"),
+            latest_assistant_message_present=True,
+        )
+        assert result["direction"] == "human"
+        assert result["route_reason_code"] == "backend_operation_non_execution_verb"
+
+    def test_full_processor_nudge_misroute_lands_progress_reply(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "801", relay_request_id="enr-AC-801-v1",
+                           relay_status="dispatched")
+        _seed_ticket_mirror(repository, "801")
+        comments = [
+            _customer_comment("90", "I want to enable media relay.", "2026-09-24T10:00:00Z"),
+            _assistant_comment("91", "your request is in review", "2026-09-24T10:01:00Z"),
+            _customer_comment(
+                "92",
+                "Hi, any update? could it be faster?",
+                "2026-09-24T10:05:00Z",
+            ),
+        ]
+        event = _comment_event("zendesk:ticket:801:comment:92", "801", comments, "92")
+        handoff, agent_job = _open_turn(store, event)
+
+        def route_call() -> None:
+            # The model misreports the nudge as a backend_operation and
+            # proposes the enablement route — the server must land the turn
+            # in the progress reply path, not reject it.
+            result = tool_record_direction(
+                store,
+                repository,
+                turn_id=handoff["turn_id"],
+                direction="automation",
+                reason="registered_enablement",
+                route="enablement",
+                classification=_backend_operation_check_classification(),
+            )
+            assert result["direction"] == "automation"
+            assert result["route"] == "conversation_followup"
+
+        client = ScriptedHermesClient(
+            store,
+            repository,
+            handoff,
+            route_call=route_call,
+            draft_content=(
+                "Hi Ziling, thanks for checking in. Your Media Relay request is "
+                "with our reviewing engineer and we will follow up once it completes."
+            ),
+        )
+        processor = _processor(store, repository, client, rag_client=FakeRagClient())
+        result = processor.process(agent_job)
+        assert result["status"] == "completed"
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["route"] == "conversation_followup"
+        assert turn["work_result"]["followup_kind"] == "progress_inquiry"
+        # The bound application is untouched and no new one was created.
+        request = repository.get_enablement_relay_request("enr-AC-801-v1")
+        assert request["status"] == "dispatched"
+        assert len(repository._enablement_relay_requests) == 1
+        case = repository.get_account_case_by_ticket_id("801")
+        assert case["automation_status"] == "automation"
+        assert not repository._account_reply_jobs
+
+    def test_direction_conflict_is_overridden_not_rejected(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "802")
+        _seed_ticket_mirror(repository, "802")
+        handoff, agent_job, _event = _question_turn(store, repository, "802")
+
+        def route_call() -> None:
+            # The model proposes direction=human for a knowledge question the
+            # server normalizes to automation: the conflict is recorded as a
+            # server override instead of bouncing the tool call.
+            result = tool_record_direction(
+                store,
+                repository,
+                turn_id=handoff["turn_id"],
+                direction="human",
+                reason="conversation follow-up",
+                classification=_knowledge_question_classification(),
+            )
+            assert result["direction"] == "automation"
+            assert result["route"] == "conversation_followup"
+            assert result["classification"]["server_correction_reason"].startswith(
+                "direction_conflict:server_override"
+            )
+            assert result["classification"]["hermes_proposed_direction"] == "human"
+
+        client = ScriptedHermesClient(
+            store,
+            repository,
+            handoff,
+            route_call=route_call,
+            draft_content="The App ID is on the console's Project Management page.",
+        )
+        rag = FakeRagClient(payload=_RAG_ANSWER_PAYLOAD)
+        processor = _processor(store, repository, client, rag_client=rag)
+        result = processor.process(agent_job)
+        assert result["status"] == "completed"
+        review = store.get_hermes_case_review("802")
+        drafts = [d for d in review["drafts"] if d["turn_id"] == handoff["turn_id"]]
+        assert len(drafts) == 1
+        assert "docs.agora.io" in drafts[0]["content"]
+
+
+class _RouteSubmissionFailureClient:
+    """Route-phase start_run fails terminally (non-retryable)."""
+
+    def __init__(self) -> None:
+        self.run_counter = 0
+        self.submissions: list[dict[str, Any]] = []
+
+    def start_run(self, *, session_id, instructions, input_text, idempotency_key,
+                  workspace_key=None, enabled_toolsets=None):
+        from backend.services.hermes_agent_runtime import HermesAgentError
+
+        self.run_counter += 1
+        raise HermesAgentError("hermes_agent_rejected", "HTTP 500", retryable=False)
+
+    def get_run(self, run_id):
+        return {"run_id": run_id, "status": "completed", "output": "ok"}
+
+    def stop_run(self, run_id):
+        return {"run_id": run_id, "status": "stopping"}
+
+
+class TestTerminalFailureHandoff:
+    def test_route_submission_failure_completes_handoff(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "803")
+        _seed_ticket_mirror(repository, "803")
+        handoff, agent_job, _event = _question_turn(store, repository, "803")
+        processor = _processor(store, repository, _RouteSubmissionFailureClient())
+        with _handoff_patches() as (_audit, note, route_back, mail):
+            result = processor.process(agent_job)
+        assert result["status"] == "failed"
+        assert result["error_code"] == "hermes_agent_rejected"
+        # The unified chain completed: note, queue return, owner email; no
+        # customer-facing reply was ever produced.
+        note.assert_called_once()
+        route_back.assert_called_once()
+        self.assertEqual_mail_failure(mail)
+        case = repository.get_account_case_by_ticket_id("803")
+        assert case["automation_status"] == "human_review_required"
+        ownership = case["automation_context"]["zendesk_ownership"]
+        assert ownership["state"] == "released_to_queue"
+        binding = store.get_hermes_case_binding("803")
+        assert binding["status"] == "paused"
+        review = store.get_hermes_case_review("803")
+        assert not [d for d in review["drafts"] if d["turn_id"] == handoff["turn_id"]]
+
+    @staticmethod
+    def assertEqual_mail_failure(mail) -> None:
+        assert mail.call_count == 1
+        assert mail.call_args.kwargs["subject"].startswith("[SupportPortal][Account failure]")
+
+    def test_missing_direction_completes_handoff(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "804")
+        _seed_ticket_mirror(repository, "804")
+        handoff, agent_job, _event = _question_turn(store, repository, "804")
+
+        # The route run "completes" without ever recording a direction.
+        client = ScriptedHermesClient(
+            store, repository, handoff, route_call=lambda: None, draft_content=None
+        )
+        processor = _processor(store, repository, client)
+        with _handoff_patches() as (_audit, note, route_back, mail):
+            result = processor.process(agent_job)
+        assert result["error_code"] == "missing_direction"
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["status"] == "failed"
+        note.assert_called_once()
+        route_back.assert_called_once()
+        self.assertEqual_mail_failure(mail)
+        case = repository.get_account_case_by_ticket_id("804")
+        assert case["automation_status"] == "human_review_required"
+        review = store.get_hermes_case_review("804")
+        assert not [d for d in review["drafts"] if d["turn_id"] == handoff["turn_id"]]

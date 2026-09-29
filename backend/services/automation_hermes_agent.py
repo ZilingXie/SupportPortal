@@ -412,6 +412,16 @@ class HermesAgentTurnProcessor:
                 )
             if outcome == _PHASE_FAILED:
                 failed = self.store.get_hermes_turn(payload.turn_id) or {}
+                if str(failed.get("status") or "") == "failed":
+                    # A TERMINAL phase failure (route/work submission or
+                    # polling failure, a terminal run status such as repeated
+                    # tool rejections, or missing_direction below) leaves the
+                    # case with no customer reply and no owner: complete the
+                    # unified human handoff instead of ending as an internal
+                    # "failed" state only (p2-178 review blocker 2). Retryable
+                    # statuses (outcome_unknown/interrupted) keep the deferral
+                    # machinery and are NOT handed off here.
+                    self._handoff_terminal_failure(payload, failed)
                 return {
                     "engine": "hermes",
                     "turn_id": payload.turn_id,
@@ -559,6 +569,13 @@ class HermesAgentTurnProcessor:
                         status="failed",
                         error_code="missing_direction",
                         error_message="route run finished without recording a direction",
+                    )
+                    # The route run produced no decision at all: the case has
+                    # no reply and no owner — complete the real handoff, not
+                    # just an internal failed marker (p2-178 review blocker 2).
+                    self._handoff_terminal_failure(
+                        payload,
+                        self.store.get_hermes_turn(payload.turn_id) or refreshed,
                     )
                     return {
                         "engine": "hermes",
@@ -1086,6 +1103,39 @@ class HermesAgentTurnProcessor:
             "status": "human_review",
             "reason": reason,
         }
+
+    def _handoff_terminal_failure(
+        self, payload: AgentTurnJobPayload, turn: dict[str, Any]
+    ) -> None:
+        """Complete the unified human handoff for a terminally failed turn.
+
+        Route-phase failures (submission/polling errors, terminal run
+        statuses such as an exhausted tool-rejection loop) and
+        missing_direction end the turn without any customer reply and
+        without an owner: the shared chain (internal note, queue return,
+        ownership release, pending-reply cancellation, owner failure email)
+        must run — an internal "failed" marker alone hands nothing to a
+        human (p2-178 review blocker 2). Idempotent per case/incident; the
+        turn keeps its failed status for observability."""
+        error_code = str(turn.get("error_code") or "turn_failed")
+        ticket_id = str(turn.get("zendesk_ticket_id") or payload.event.ticket.id)
+        account_case = (
+            self.repository.get_account_case_by_ticket_id(ticket_id)
+            if self.repository is not None and ticket_id
+            else None
+        )
+        if not isinstance(account_case, dict):
+            return
+        self._escalate_automation_failure(
+            payload,
+            account_case,
+            reason_code=f"turn_terminal_failure:{error_code}",
+            detail=(
+                "The Hermes turn failed terminally before any customer reply "
+                f"({error_code}); the case was transferred to the human team."
+            ),
+            notification="failure",
+        )
 
     # ------------------------------------------------------- automation claim
 
