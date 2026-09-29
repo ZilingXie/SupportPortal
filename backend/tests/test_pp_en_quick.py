@@ -284,9 +284,16 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertEqual(fetch_calls[0]["token"], "intake-token")
         self.assertEqual(len(gets), 2, "task fetched once for binding, once for the reply")
         # Result reply: real mutation contract — nested task envelope unwrapped,
-        # current message id included, fencing from the fresh GET.
+        # current message id included, fencing from the fresh GET, and EXACTLY
+        # the six server-allowed fields (protocol_v06 rejects unknown keys,
+        # so "task_id" must not be sent even though the URL carries it).
         self.assertEqual(len(posts), 1)
         payload = posts[0]["payload"]
+        self.assertEqual(
+            set(payload),
+            {"actor_agent_id", "message_id", "turn_sequence", "expected_task_version",
+             "idempotency_key", "parts"},
+        )
         self.assertEqual(payload["actor_agent_id"], "zac-agent")
         self.assertEqual(payload["message_id"], "m-1")
         self.assertEqual(payload["turn_sequence"], 3)
@@ -428,6 +435,63 @@ class PpEnQuickTests(unittest.TestCase):
                 workdir=self._workdir(),
             )
         self.assertIn("receiver", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_message_ticket_fields_missing_fails_closed(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        def get(url, **kwargs):
+            task = _relay_task_response()
+            # Strip both ticket fields from the current message: an
+            # un-verifiable ticket binding must refuse, not pass.
+            text = json.dumps({
+                "schema_version": "enablement-relay-request-v1",
+                "request_id": "enr-AC-13900-v1",
+                "request_version": 1,
+                "app_id": APP_ID,
+            })
+            task["messages"][1]["parts"] = [{"kind": "text", "text": text}]
+            return task
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("missing; ticket binding unverifiable", str(ctx.exception))
+        self.assertEqual(calls, [])
+
+    def test_ecs_identity_missing_fails_closed(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id="",  # unavailable ECS identity
+                fetch_json=fetch,
+                get_json=lambda *a, **k: _relay_task_response(),
+                workdir=self._workdir(),
+            )
+        self.assertIn("sender cannot be verified", str(ctx.exception))
         self.assertEqual(calls, [])
 
     def test_missing_fencing_fails_closed(self) -> None:

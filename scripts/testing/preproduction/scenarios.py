@@ -274,7 +274,11 @@ def _verify_current_task_message(
     sender = str(message.get("from_agent_id") or message.get("fromAgentId") or "")
     receiver = str(message.get("to_agent_id") or message.get("toAgentId") or "")
     problems = []
-    if ecs_agent_id and sender != ecs_agent_id:
+    # Sender: the ECS identity must be available AND match — an unavailable
+    # identity is un-verifiable and fails closed like a mismatch.
+    if not ecs_agent_id:
+        problems.append("ecs_agent_id unavailable; sender cannot be verified")
+    elif sender != ecs_agent_id:
         problems.append(f"sender={sender!r} != ecs={ecs_agent_id!r}")
     # The receiver proves the turn is ours; a missing receiver can never be
     # verified, so it fails closed instead of passing silently.
@@ -290,14 +294,19 @@ def _verify_current_task_message(
             f"{request_row.get('request_version')!r}"
         )
     # Ticket association: the dispatch message binds the request to one Zendesk
-    # ticket; a same-id/different-ticket application must never execute.
+    # ticket. Both fields are REQUIRED — a missing value is un-verifiable and
+    # fails closed; a mismatched one is a wrong-ticket application.
     message_zendesk = str(payload.get("zendesk_ticket_id") or "")
     message_ticket = str(payload.get("ticket_id") or "")
-    if message_zendesk != str(zendesk_ticket_id):
+    if not message_zendesk:
+        problems.append("message zendesk_ticket_id missing; ticket binding unverifiable")
+    elif message_zendesk != str(zendesk_ticket_id):
         problems.append(
             f"message zendesk_ticket_id={message_zendesk!r} != local {zendesk_ticket_id!r}"
         )
-    if message_ticket and message_ticket != str(client_ticket_id):
+    if not message_ticket:
+        problems.append("message ticket_id missing; ticket binding unverifiable")
+    elif message_ticket != str(client_ticket_id):
         problems.append(
             f"message ticket_id={message_ticket!r} != local {client_ticket_id!r}"
         )
@@ -548,13 +557,15 @@ def reply_result_to_relay_task(
     fencing = task_detail["fencing"]
     payload = {
         "actor_agent_id": identity["agent_id"],
-        "task_id": task_id,
         # The current message being replied to (strict turn-taking).
         "message_id": fencing["current_message_id"],
         "turn_sequence": int(fencing["turn_sequence"]),
         "expected_task_version": int(fencing["task_version"]),
         "idempotency_key": f"pp-quick-result:{request_row.get('request_id')}",
         "parts": [{"kind": "text", "text": json.dumps(result)}],
+        # Exactly the six server-allowed fields (protocol_v06
+        # validate_message_submit rejects unknown keys); the task id lives in
+        # the URL, so "task_id" must NOT be sent.
     }
     response = post_json(
         f"{identity['base_url'].rstrip('/')}/tasks/{task_id}/messages",
