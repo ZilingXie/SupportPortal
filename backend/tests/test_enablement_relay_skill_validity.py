@@ -357,6 +357,65 @@ class SkillPreflightTests(unittest.TestCase):
                 # no --relay-task-id
             ])
 
+    def test_both_sides_missing_fields_fail_closed(self) -> None:
+        """Fail-closed: request AND payload both missing request_id /
+        zendesk_ticket_id / request_version must NOT count as a match."""
+        skill = _load_skill()
+        stripped_request = {
+            k: v for k, v in self.REQUEST.items()
+            if k not in ("request_id", "request_version", "zendesk_ticket_id", "ticket_id")
+        }
+        stripped_payload = {
+            k: v for k, v in self.GOOD_SERVER_PAYLOAD.items()
+            if k not in ("request_id", "request_version", "zendesk_ticket_id")
+        }
+        mismatches = skill._verify_server_binding(
+            stripped_request, stripped_payload, self.RELAY_TASK_ID
+        )
+        self.assertIn("request_id", mismatches)
+        self.assertIn("request_version", mismatches)
+        self.assertIn("zendesk_ticket_id", mismatches)
+        self.assertNotIn("relay_task_id", mismatches)
+
+    def test_server_missing_single_field_fails_closed(self) -> None:
+        """The server side omitting one field is a mismatch for that field."""
+        skill = _load_skill()
+        for field in ("request_id", "request_version", "zendesk_ticket_id", "relay_task_id"):
+            payload = {
+                k: v for k, v in self.GOOD_SERVER_PAYLOAD.items() if k != field
+            }
+            mismatches = skill._verify_server_binding(self.REQUEST, payload, self.RELAY_TASK_ID)
+            self.assertEqual(mismatches, [field], field)
+
+    def test_request_missing_version_defaults_to_mismatch_not_one(self) -> None:
+        """A request without request_version must not silently become 1."""
+        skill = _load_skill()
+        request = {**self.REQUEST, "request_version": None}
+        mismatches = skill._verify_server_binding(
+            request, self.GOOD_SERVER_PAYLOAD, self.RELAY_TASK_ID
+        )
+        self.assertIn("request_version", mismatches)
+
+    def test_load_request_rejects_missing_binding_fields(self) -> None:
+        """_load_request refuses a dispatched request lacking binding fields."""
+        import tempfile
+
+        skill = _load_skill()
+        for drop in ("request_id", "request_version", ("zendesk_ticket_id", "ticket_id")):
+            fields = (drop,) if isinstance(drop, str) else drop
+            request = {
+                k: v for k, v in self.REQUEST.items() if k not in fields
+            }
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
+                json.dump(request, handle)
+                path = handle.name
+            try:
+                with self.assertRaises(SystemExit) as ctx:
+                    skill._load_request(path)
+                self.assertIn("missing required binding fields", str(ctx.exception))
+            finally:
+                Path(path).unlink(missing_ok=True)
+
     def test_all_green_preflight_passes(self) -> None:
         skill = _load_skill()
         report = self._run(

@@ -113,6 +113,25 @@ def _load_request(path: str) -> dict[str, Any]:
         raise SystemExit(f"unsupported request schema: {request.get('schema_version')!r}")
     if not APP_ID_RE.fullmatch(str(request.get("app_id") or "")):
         raise SystemExit("request app_id is not a 32-hex App ID")
+    # The four binding fields must be PRESENT and non-empty in the dispatched
+    # request itself: a request missing request_id / request_version /
+    # zendesk_ticket_id cannot be bound server-side and must never reach a
+    # comparison that would treat two missing values as equal (fail-closed).
+    missing = [
+        name
+        for name, value in (
+            ("request_id", str(request.get("request_id") or "").strip()),
+            ("request_version", request.get("request_version")),
+            ("zendesk_ticket_id", str(
+                request.get("zendesk_ticket_id") or request.get("ticket_id") or ""
+            ).strip()),
+        )
+        if not value and value != 0
+    ]
+    if missing:
+        raise SystemExit(
+            f"dispatched request is missing required binding fields: {', '.join(missing)}"
+        )
     params = dict(request.get("target_params") or {})
     if params and params != TARGET_PARAMS:
         raise SystemExit(
@@ -510,21 +529,28 @@ def _verify_server_binding(
     relay_task_id: str = "",
 ) -> list[str]:
     """Full four-field request binding per SKILL.md: the server-side readback
-    must match request_id, request_version, zendesk_ticket_id, AND
-    relay_task_id. ``relay_task_id`` is the AgentRelay Task the handoff named;
-    pass it via --relay-task-id. Returns the list of mismatched field names
-    (empty = bound). A missing expected task id is itself a mismatch
+    must carry request_id, request_version, zendesk_ticket_id, AND
+    relay_task_id, each PRESENT and exactly equal to the dispatched request
+    (fail-closed: two missing values never count as a match).
+    ``relay_task_id`` is the AgentRelay Task the handoff named; pass it via
+    --relay-task-id. Returns the list of mismatched field names (empty =
+    bound). A missing expected task id is itself a mismatch
     (``relay_task_id`` cannot be verified)."""
     mismatches: list[str] = []
-    if str(payload.get("request_id") or "") != str(request.get("request_id") or ""):
+    payload_request_id = str(payload.get("request_id") or "").strip()
+    if not payload_request_id or payload_request_id != str(request.get("request_id") or "").strip():
         mismatches.append("request_id")
-    if _safe_int(payload.get("request_version")) != int(request.get("request_version") or 1):
+    payload_version = _safe_int(payload.get("request_version"))
+    request_version = _safe_int(request.get("request_version"))
+    if payload_version is None or request_version is None or payload_version != request_version:
         mismatches.append("request_version")
+    payload_ticket = str(payload.get("zendesk_ticket_id") or "").strip()
     expected_ticket = str(request.get("zendesk_ticket_id") or request.get("ticket_id") or "").strip()
-    if str(payload.get("zendesk_ticket_id") or "").strip() != expected_ticket:
+    if not payload_ticket or not expected_ticket or payload_ticket != expected_ticket:
         mismatches.append("zendesk_ticket_id")
+    payload_task = str(payload.get("relay_task_id") or "").strip()
     expected_task = str(relay_task_id or "").strip()
-    if not expected_task or str(payload.get("relay_task_id") or "").strip() != expected_task:
+    if not expected_task or not payload_task or payload_task != expected_task:
         mismatches.append("relay_task_id")
     return mismatches
 

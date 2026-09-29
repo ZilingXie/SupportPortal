@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "修复 13751 类 enablement relay 任务在本地执行层停摆的问题：agent-relay-mcp 新增 enablement-relay-request-v1 专用分阶段 handoff（本地只读预检放行、只门禁 Archer 写入与 AgentRelay 回传、两次本地审批、ownership/project_not_found 免执行审批直接起草失败结果，PR #96）；SupportPortal skill 新增 preflight 命令作为首个本地步骤（Pilot 登录态 probe + 服务端 request readback + 结构化 blocker 报告，含 certifi CA 回退修复系统 python 读回失败）；本地一次性配置 SUPPORTPORTAL_RELAY_API_BASE/TOKEN（SSM preproduction intake shared token，仅存在于受保护本地环境）。普通 AgentRelay 任务行为不变。",
-  "next_action": "复审第一轮两阻塞已修复（四字段绑定门禁+多 part schema 扫描）并补真实领取门禁链测试；等待复验。owner 使用 pilot auth login（浏览器 PKCE 流；--device 在 Ferry 设备端点 404）。",
+  "next_action": "复审第二轮 P1（空字段 fail-open）已修复；worker.py 运行时代码变更将按规则完成官方栈重启与 live 验证后申请复验。owner 使用 pilot auth login（浏览器 PKCE 流；--device 在 Ferry 设备端点 404）。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变（默认 explain-then-approve 边界保留）。",
     "当前消息携带 enablement-relay-request-v1 JSON 的任务自动生成分阶段 handoff 并引用专用 skill；历史消息携带该 schema 不翻转 profile；不可信 payload 不进 prompt。",
@@ -25,20 +25,20 @@
     {
       "type": "test",
       "label": "SupportPortal skill preflight 测试",
-      "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py test_enablement_relay_inbox_binding_scenarios.py test_enablement_local_pilot.py test_enablement_auto_relay.py test_enablement_auto_failure.py",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
       "result": "70 passed, 5 subtests（新增 7 例 preflight blocker 分类）"
     },
     {
       "type": "deployment",
       "label": "真实 13751 preflight 验证（只读）",
-      "command": "relay_enablement.py preflight --request <enr-AC-13751-v1>",
+      "command": "relay_enablement.py preflight --request <request.json> --relay-task-id <task_id>",
       "result": "request readback 200（dispatched/ticket_valid=true/relay_task_id 匹配）；唯一 blocker=pilot_sso_login_required（owner 待执行 pilot auth login --device）；env 经 ~/.zshrc 受管块（0600）注入，值不进 prompt/报告/Relay 消息"
     },
     {
       "type": "test",
-      "label": "复审第一轮：四字段绑定门禁（preflight+execute --relay-task-id）与真实领取门禁链",
-      "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_auto_failure.py",
-      "result": "69 passed（新增：仅工单错/仅 relay task 错/缺 --relay-task-id 三类单字段阻断、execute 在任何 pilot 调用前拒绝、领取门禁经 _publish_account_reply_job 真实路径取消无标志 job 且有标志 job 存活）"
+      "label": "复审第一/二轮：四字段绑定门禁（fail-closed）+ 真实领取门禁链",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_relay_skill_validity.py backend/tests/test_enablement_relay_inbox_binding_scenarios.py backend/tests/test_enablement_local_pilot.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py",
+      "result": "81 passed, 5 subtests（含：双缺字段/单侧缺字段/缺 version 不默认/请求缺字段拒绝 + 单字段 mismatch + execute 前置拒绝 + publish 真实门禁链）"
     }
   ],
   "source_refs": [
@@ -47,7 +47,7 @@
     "docs/deploy_automation_ecs_release.md"
   ],
   "created_at": "2026-09-29T15:30:00Z",
-  "updated_at": "2026-09-29T17:30:00Z",
+  "updated_at": "2026-09-29T19:00:00Z",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
@@ -61,6 +61,10 @@
     {
       "at": "2026-09-29T17:30:00Z",
       "note": "复审第一轮未通过后修复：P1 服务端 readback 四字段（request_id/request_version/zendesk_ticket_id/relay_task_id）全匹配，execute 门禁移至任何 pilot 调用之前且 --relay-task-id 必填；P2 agent-relay-mcp 多 part schema 扫描（schema-less JSON 前导不再截断扫描）；领取门禁提取为 _account_reply_currency_gate_blocks 并经真实 _publish_account_reply_job 路径测试（复现 13751 取消、验证修复存活）。"
+    },
+    {
+      "at": "2026-09-29T19:00:00Z",
+      "note": "复审第二轮：_verify_server_binding 改为四字段均需存在且精确相等（双缺不算匹配、request_version 缺失不默认为 1），_load_request 拒绝缺绑定字段的派发请求；补四类 fail-closed 测试。worker.py 的门禁提取属运行时代码，将完成官方栈重启验证。"
     }
   ]
 }
