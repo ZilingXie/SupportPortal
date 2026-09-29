@@ -41,11 +41,16 @@
     "docs/deploy_automation_ecs_release.md"
   ],
   "created_at": "2026-09-29T15:30:00Z",
-  "updated_at": "2026-09-29T15:30:00Z",
+  "updated_at": "2026-09-29T15:45:00Z",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "legacy_ids": [],
   "legacy_refs": [],
-  "history": []
+  "history": [
+    {
+      "at": "2026-09-29T15:45:00Z",
+      "note": "实测修正：pilot auth login --device 在 Ferry 设备授权端点 404，浏览器 PKCE 流（pilot auth login）为已验证可用路径；mcp PR#97 + 本提交同步修正指引与测试。"
+    }
+  ]
 }

@@ -136,7 +136,7 @@ python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.jso
 | blocker code | 含义 | 下一步 |
 | --- | --- | --- |
 | `missing_relay_env` | 本地缺 `SUPPORTPORTAL_RELAY_API_BASE/TOKEN` | 一次性配置受保护本地环境（绝不写入 prompt/报告/Relay 消息） |
-| `pilot_sso_login_required` | Pilot 会话过期/缺失 | owner 本机运行 `pilot auth login --device` 完成浏览器/设备授权 |
+| `pilot_sso_login_required` | Pilot 会话过期/缺失 | owner 本机运行 `pilot auth login`（浏览器 SSO 流；`--device` 设备流当前在 Ferry 侧 404） |
 | `pilot_unavailable` | pilot CLI 不可用 | 检查 `PILOT_BIN` 安装后重跑 |
 | `request_status_unreadable` | 服务端 readback 不可读 | 稍后重跑；不可核实绝不执行 |
 | `request_identity_mismatch` | 服务端申请身份与派发不一致 | 停止，报告不匹配证据，只读 resync 指定 Task |
