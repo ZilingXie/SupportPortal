@@ -174,3 +174,21 @@ def test_in_memory_ledger_dedupes_by_source_run_id() -> None:
     assert second == 1  # no duplicate row appended
     summaries = repository.account_case_llm_usage_summaries(["AC-1"])
     assert summaries["AC-1"]["total_input_tokens"] == 10
+
+
+def test_empty_or_non_numeric_usage_is_rejected_not_zero() -> None:
+    repository = _RecordingRepository(account_case={"billing_ticket_id": "AC-1"})
+    processor = _processor(repository)
+    for bad_usage in (
+        {},
+        {"input_tokens": None, "output_tokens": 5},
+        {"input_tokens": 10, "output_tokens": "x"},
+        {"input_tokens": -3, "output_tokens": 5},
+        {"input_tokens": 0, "output_tokens": 0},
+        {"total_tokens": 100},
+    ):
+        recorded = processor._record_hermes_run_usage(
+            {"zendesk_ticket_id": "13500"}, "run-bad", {"status": "completed", "usage": bad_usage}
+        )
+        assert recorded is False, bad_usage
+    assert repository.writes == []
