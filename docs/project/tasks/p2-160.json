@@ -7,7 +7,7 @@
   "title": "Preproduction Agent 单模型分档：gpt-6-sol（业务/RAG=medium、调查=xhigh）",
   "summary": "p2-160 从 2026-09-14 的 astra/luna 双模型策略演进出单模型分档：Preproduction 由非敏感 String SSM /supportportal/preproduction/agent-model（v1=gpt-6-sol）在发布时固定 AGENT_MODEL_ID 进同次 api/route/worker task definition（发布前后校验 SSM 版本一致；修改 SSM 不热切换，须走新发布才生效——计划固定设计第 1 条）。纳入场景统一该模型：业务生成与 RAG 回答 medium、工程师调查回复（Hermes /v1/responses 显式 provider=custom + model_options）与 Hermes investigation work（/v1/runs 显式 model+model_options）xhigh；模型/DeepSeek fallback 与 temperature 清除。case binding 与 turn-run 行持久固定模型与强度（schema-010），丢回执重试重发相同请求体。排除场景：离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话、工单标题（实测超 2s 时限，保持 gpt-5.4-nano/none，待用户最终确认）。Production 渲染剥离该策略。",
   "status": "active",
-  "next_action": "代码与部署已收口（PR#1316/#1321，r20260930-2e0a352 已上线 Preproduction，schema-011）。剩余：①等待用户两项定案——SSM 发布时固定语义确认（当前实现遵循计划第 1 条：不热切换、切换走新发布）与标题场景排除确认（两次决策提问未获回答，暂按保守排除执行）；②首个真实调查 case 后核对 support_account_case_llm_usage 与 hermes session 实际执行模型；③ready 端点 196 条旧 heartbeat mismatch 为运维残留，另行清理（不阻塞本任务）。",
+  "next_action": "代码与部署已收口（PR#1316/#1321/#1324，r20260930-2e0a352 上线，schema-011）；SSM 发布时固定语义与标题场景排除均已定案并双处文档一致。剩余唯一验收待办：首个 direction=investigation 真实 case 后补 xhigh 业务链路回读（当前部署后无调查工单自然流量，不可控等待；人为测试工单受回归停手令约束需另行授权）；另有 ready 端点 196 条旧 heartbeat mismatch 为运维残留待清理。",
   "owner": "codex",
   "acceptance_criteria": [
     "SSM /supportportal/preproduction/agent-model 存在且非空（v1=gpt-6-sol）；发布读取一次值+版本并注入 AGENT_MODEL_ID，注册前与激活前复核版本一致；缺失/为空阻止 Preproduction 渲染（fail-closed）。",
@@ -17,8 +17,8 @@
     "工程师调查回复走 Hermes /v1/responses 显式 provider=custom + model + model_options.reasoning_effort=xhigh（该网关 OpenAI 上游 provider 名为 custom；openai 被拒，实测 2026-09-30）。",
     "实际执行模型（dashboard sessions API 记录，非响应回显）：合成 /v1/runs medium 与 xhigh 探针均执行 gpt-6-sol（reasoning_tokens 0 vs 69），/v1/responses custom+xhigh reasoning_tokens=243（已实证 2026-09-30）。",
     "RAG 出站遵守策略：light-path/api-semantics fast model 不降档最终请求；复杂/排障问题钉 medium 不升 high（策略未启用时行为不变）。",
-    "工单标题保持 gpt-5.4-nano/none（实测 gpt-6-sol/medium 2.19–2.81s 超 2s 时限且 24-token 预算下约半数被 reasoning 耗尽）；该排除为待用户最终确认的临时决策，纳入需另行批准时限与预算。",
-    "首个真实调查 case 后 support_account_case_llm_usage 各 stage model 记录 = gpt-6-sol（investigation stage 除外记录要求以分档合同为准）。"
+    "工单标题保持 gpt-5.4-nano/none（已定案 2026-09-30：继续排除作为产品决策；依据为实测 gpt-6-sol/medium 2.19–2.81s 超 2s 时限且 24-token 预算约半数被 reasoning 耗尽，两轮验收复核确认保留实现合理；纳入需另行批准时限与 token 预算，一行场景集合即可逆）。",
+    "真实业务链路回读（automation 方向已闭环 2026-09-30：工单 13789/13792/13793 的 support_account_case_llm_usage 7 条记录全部 model=gpt-6-sol，覆盖 hermes_agent_run 与 automation_persona 双 stage；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol、部署时间分界前旧 session 全部 gpt-6-astra）；首个 direction=investigation 真实 case 出现后补 xhigh 回读（turn_runs reasoning_effort=xhigh + session reasoning 对照）。"
   ],
   "evidence": [
     {
@@ -62,6 +62,12 @@
       "label": "隔离 PostgreSQL 并发/固定语义复核证据（2026-09-30 复跑，应验收要求补充）",
       "command": "本机一次性 PostgreSQL 14 实例（127.0.0.1:15433，独立数据目录，跑后即删）：AUTOMATION_ECS_TEST_POSTGRES_DSN 与 RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN 指向该实例，python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
       "result": "33 passed（store 10：binding agent_model 固定/无 env 保持 NULL/turn-run 固定单值/4 线程并发 get_or_create 单行；worker PG 16：schema-010 迁移与固定列端到端；case workflow PG 7）。日志副本 /tmp/sp-pg-evidence.log（临时）。migrate 幂等由 fixture 双跑覆盖。"
+    },
+    {
+      "type": "deployment",
+      "label": "真实业务链路模型回读（automation 方向闭环，2026-09-30）",
+      "command": "preprod 库只读查询 automation_hermes_case_bindings / automation_hermes_turn_runs / automation_hermes_agent_turns / support_account_case_llm_usage；Hermes dashboard sessions API 读回",
+      "result": "部署后 3 个新 binding 固定 agent_model=gpt-6-sol（47 个旧 binding 保持 NULL 旧行为）；5 个 turn-run 行固定 gpt-6-sol/medium 并 completed（工单 13789/13792/13793 的 route/work）；usage 台账 7 条记录全部 model=gpt-6-sol（hermes_agent_run×5 + automation_persona×2，persona reasoning 31-32）；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol（reasoning 161-323，真实工具调用 2-4 次），部署分界前旧 session 全部 gpt-6-astra——实际执行模型切换与部署时间完全吻合。direction=investigation 真实 case 尚未出现。"
     }
   ],
   "history": [
@@ -79,5 +85,5 @@
   "legacy_ids": [],
   "legacy_refs": [],
   "created_at": "2026-09-14",
-  "updated_at": "2026-09-30T08:40:00Z"
+  "updated_at": "2026-09-30T09:20:00Z"
 }
