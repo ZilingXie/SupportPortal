@@ -390,6 +390,59 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertTrue(engine.all_passed())
         self.assertEqual(report["relay_outcome"], "already_satisfied")
 
+    def _stale_binding_run(self, second_response: dict, calls: list):
+        """Drive the wait with a binding that CHANGES after the first poll."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        polls = {"n": 0}
+
+        def get(url, **kwargs):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return _relay_task_response(delivery_status="pending")
+            return second_response
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        return ctx.exception
+
+    def test_request_swapped_during_wait_refuses(self) -> None:
+        calls: list = []
+        # The current message becomes a NEW dispatch message carrying a
+        # different request: the verified binding no longer holds.
+        swapped = _relay_task_response(request_id="enr-OTHER-v2", delivery_status="delivered")
+        swapped["task"]["current_message_id"] = "m-2"
+        swapped["messages"].append(_request_message("m-2", request_id="enr-OTHER-v2"))
+        error = self._stale_binding_run(swapped, calls)
+        self.assertIn("current message changed", str(error))
+        self.assertEqual(calls, [], "no pilot write on a swapped binding")
+
+    def test_task_turned_terminal_during_wait_refuses(self) -> None:
+        calls: list = []
+        terminal = _relay_task_response(delivery_status="delivered", task_status="completed")
+        error = self._stale_binding_run(terminal, calls)
+        self.assertIn("became terminal", str(error))
+        self.assertEqual(calls, [])
+
+    def test_turn_transferred_during_wait_refuses(self) -> None:
+        calls: list = []
+        transferred = _relay_task_response(delivery_status="delivered", to_agent_id="someone-else")
+        error = self._stale_binding_run(transferred, calls)
+        self.assertIn("turn moved away", str(error))
+        self.assertEqual(calls, [])
+
     def test_turn_not_ours_stops_before_pilot(self) -> None:
         engine = FakeEngine()
         _happy_queue(engine, outcome="enabled", write=True)
