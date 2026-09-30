@@ -123,6 +123,12 @@ PREPRODUCTION_LLM_ENV_OVERRIDES = {
     "ENGINEER_INVESTIGATION_REPLY_MODEL": "gpt-6-astra",
     "ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT": "medium",
 }
+# Deployment-pinned single-model tiering: Preproduction renders read the SSM
+# agent-model parameter once per release and pin AGENT_MODEL_ID into the
+# same api/route/worker revision. Production renders must never carry the
+# pin (the policy is Preproduction-only), and the retired p2-160
+# per-scenario LLM overrides are stripped in both environments.
+AGENT_MODEL_ENV_NAME = "AGENT_MODEL_ID"
 # AgentRelay transport for the enablement auto workflow (p2-163): the worker
 # always carries the relay identity in both modes so late results stay
 # receivable after a manual-mode switch; values live under the environment SSM
@@ -511,6 +517,7 @@ def render_initial_task_definition(
     enablement_workflow_mode: str = "manual",
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
+    agent_model: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -518,6 +525,12 @@ def render_initial_task_definition(
         raise ValueError("initial task definitions may only target preproduction")
     if repository != "supportportal/preproduction":
         raise ValueError("initial Preproduction repository must be supportportal/preproduction")
+    normalized_agent_model = " ".join(str(agent_model or "").split()).strip()
+    if not normalized_agent_model:
+        raise ValueError(
+            "agent_model is required for initial preproduction renders: the "
+            "SSM agent-model parameter is missing or empty"
+        )
     if hermes_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES:
         raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
     if automation_case_engine not in AUTOMATION_CASE_ENGINES:
@@ -699,6 +712,7 @@ def render_initial_task_definition(
             "operatingSystemFamily": "LINUX",
         },
     }
+    _set_environment_value(container, AGENT_MODEL_ENV_NAME, normalized_agent_model)
     if role == "worker":
         validate_worker_contract(rendered)
     return rendered
@@ -765,6 +779,7 @@ def render_task_definition(
     automation_case_engine: str | None = None,
     hermes_agent_enabled: bool | None = None,
     enablement_workflow_mode: str | None = None,
+    agent_model: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -773,6 +788,15 @@ def render_task_definition(
     expected_repository = f"supportportal/{environment}"
     if repository != expected_repository:
         raise ValueError(f"repository must be {expected_repository}")
+    normalized_agent_model = " ".join(str(agent_model or "").split()).strip()
+    if environment == "preproduction":
+        if not normalized_agent_model:
+            raise ValueError(
+                "agent_model is required for preproduction renders: the SSM "
+                "agent-model parameter is missing or empty"
+            )
+    elif normalized_agent_model:
+        raise ValueError("agent_model must not be pinned on production renders")
     if (
         enablement_workflow_mode is not None
         and enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES
@@ -945,16 +969,19 @@ def render_task_definition(
         # normalized the mode and credential injection before validation.
         _set_environment_value(container, "ENABLEMENT_WORKFLOW_MODE", enablement_workflow_mode)
     if role in {"api", "route", "worker"}:
-        # Preproduction-only LLM policy (p2-160), see PREPRODUCTION_LLM_ENV_OVERRIDES.
-        # Production renders strip the names explicitly: render is incremental
-        # off the observed task definition, so without this removal a
-        # preproduction render's policy env would survive into the next
-        # Production revision.
+        # Deployment-pinned single-model policy: Preproduction renders pin
+        # AGENT_MODEL_ID from the SSM agent-model parameter read once per
+        # release (the release flow re-verifies the parameter version before
+        # activation). The retired p2-160 per-scenario luna/astra overrides
+        # are stripped in BOTH environments so an observed definition cannot
+        # carry them across a policy boundary, and Production renders also
+        # strip the pin itself — the policy must never leak outside
+        # Preproduction.
+        _remove_environment_values(container, set(PREPRODUCTION_LLM_ENV_OVERRIDES))
         if environment == "preproduction":
-            for name, value in sorted(PREPRODUCTION_LLM_ENV_OVERRIDES.items()):
-                _set_environment_value(container, name, value)
+            _set_environment_value(container, AGENT_MODEL_ENV_NAME, normalized_agent_model)
         else:
-            _remove_environment_values(container, set(PREPRODUCTION_LLM_ENV_OVERRIDES))
+            _remove_environment_values(container, {AGENT_MODEL_ENV_NAME})
     return rendered
 
 
@@ -1002,6 +1029,7 @@ def render_schema_bootstrap_task_definition(
     migration_secret_reference: str,
     environment: str = "production",
     repository: str = "supportportal/production",
+    agent_model: str | None = None,
 ) -> dict[str, Any]:
     if ":parameter/" not in migration_secret_reference:
         raise ValueError("schema bootstrap migration secret must be an SSM parameter ARN")
@@ -1013,6 +1041,7 @@ def render_schema_bootstrap_task_definition(
         region=region,
         environment=environment,
         repository=repository,
+        agent_model=agent_model,
     )
     rendered["family"] = f"supportportal-{environment}-schema-bootstrap"
     container = _container(rendered, "api")
@@ -1153,6 +1182,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--enablement-workflow-mode",
         choices=sorted(ENABLEMENT_WORKFLOW_MODES),
     )
+    render.add_argument("--agent-model", default=None)
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -1190,6 +1220,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     initial.add_argument("--graph-efs-file-system-id")
     initial.add_argument("--graph-efs-access-point-id")
+    initial.add_argument("--agent-model", default=None)
     initial.add_argument("--output", required=True)
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
@@ -1199,6 +1230,7 @@ def build_parser() -> argparse.ArgumentParser:
     bootstrap.add_argument("--migration-secret-reference", required=True)
     bootstrap.add_argument("--environment", choices=("preproduction", "production"), default="production")
     bootstrap.add_argument("--repository", default="supportportal/production")
+    bootstrap.add_argument("--agent-model", default=None)
     bootstrap.add_argument("--output", required=True)
     heartbeat = subparsers.add_parser("verify-heartbeats")
     heartbeat.add_argument("--manifest", required=True)
@@ -1235,6 +1267,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             automation_case_engine=args.automation_case_engine,
             hermes_agent_enabled=args.hermes_agent_enabled,
             enablement_workflow_mode=args.enablement_workflow_mode,
+            agent_model=args.agent_model,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -1270,6 +1303,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             enablement_workflow_mode=args.enablement_workflow_mode,
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
+            agent_model=args.agent_model,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -1285,6 +1319,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             migration_secret_reference=args.migration_secret_reference,
             environment=args.environment,
             repository=args.repository,
+            agent_model=args.agent_model,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",

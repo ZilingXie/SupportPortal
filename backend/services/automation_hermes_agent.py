@@ -81,6 +81,13 @@ PHASE_TOOLSETS = {
 # The gateway currently narrows within the api_server platform toolsets;
 # the plugin's phase toolsets ride along until the gateway learns them.
 
+# Deployment-pinned model tiering: every phase runs at medium reasoning
+# effort except an investigation work run (case direction or ad-hoc session),
+# which escalates to xhigh. Reviewer-feedback investigation turns reuse the
+# same work-phase escalation.
+STANDARD_PHASE_REASONING_EFFORT = "medium"
+INVESTIGATION_WORK_REASONING_EFFORT = "xhigh"
+
 # The investigation work run additionally needs the plugin's read-only case
 # context tools (registered under the plugin's `common` toolset), the
 # Hermes-native memory toolset (without `memory` the engine hides the
@@ -1396,8 +1403,25 @@ class HermesAgentTurnProcessor:
             persona_key=persona_key,
             session_kind=session_kind,
         )
+        # Deployment-pinned model tiering: the binding's pinned agent_model
+        # covers the whole session (a later SSM switch only affects new
+        # bindings); pre-policy bindings keep NULL and stay on the gateway's
+        # own default model. Only an investigation work run escalates to
+        # xhigh; route/persona/ordinary work run at medium.
+        binding_agent_model = str(binding.get("agent_model") or "").strip()
+        phase_reasoning_effort = (
+            INVESTIGATION_WORK_REASONING_EFFORT
+            if binding_agent_model
+            and phase == HermesTurnPhase.WORK.value
+            and str(turn.get("direction") or "") == "investigation"
+            else STANDARD_PHASE_REASONING_EFFORT
+        )
         turn_run = self.store.get_or_create_hermes_turn_run(
-            turn_id, phase, prompt_version=prompt_key
+            turn_id,
+            phase,
+            prompt_version=prompt_key,
+            agent_model=binding_agent_model or None,
+            reasoning_effort=phase_reasoning_effort if binding_agent_model else None,
         )
         if str(turn_run["status"]) == "completed":
             return _PHASE_COMPLETED
@@ -1423,6 +1447,12 @@ class HermesAgentTurnProcessor:
                     # session; the server-assembled trusted basis travels
                     # with the persona run input instead.
                     input_text += f"\n\n--- REPLY BASIS FOR THIS TURN ---\n{basis}"
+            # The persisted turn-run row is the only source for the model and
+            # effort of this request id: a lost-receipt retry must resend the
+            # byte-identical body (the gateway idempotency fingerprint hashes
+            # it), so live env/config changes must not leak into the retry.
+            pinned_model = str(turn_run.get("agent_model") or "").strip()
+            pinned_effort = str(turn_run.get("reasoning_effort") or "").strip()
             try:
                 started = self.client.start_run(
                     session_id=str(binding.get("hermes_session_id") or ""),
@@ -1432,6 +1462,12 @@ class HermesAgentTurnProcessor:
                     workspace_key=workspace,
                     enabled_toolsets=toolsets_for_phase(
                         phase, direction=turn.get("direction"), session_kind=session_kind
+                    ),
+                    model=pinned_model or None,
+                    model_options=(
+                        {"reasoning_effort": pinned_effort}
+                        if pinned_model and pinned_effort
+                        else None
                     ),
                 )
             except HermesAgentError as exc:

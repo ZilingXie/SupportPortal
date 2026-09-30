@@ -38,6 +38,7 @@ from backend.services.llm_profiles import (
     RAG_AGENT_PLANNER_SCENARIO,
     RAG_ANSWER_SCENARIO,
     RAG_CONTEXT_COMPRESSION_SCENARIO,
+    agent_model_policy_active,
     profile_has_invocation_credentials,
     resolve_model_profile,
 )
@@ -734,6 +735,12 @@ def _effective_answer_reasoning_effort(
     query_type: str | None = None,
 ) -> str:
     normalized = str(base_effort or "").strip().lower() or "medium"
+    if agent_model_policy_active():
+        # Deployment-pinned single-model policy: ordinary RAG answers stay at
+        # the pinned medium even when the query looks like troubleshooting —
+        # investigation-grade xhigh belongs to the Hermes investigation flow,
+        # not to the RAG answer path.
+        return normalized
     complex_default = _clean_env_text("RAG_COMPLEX_ANSWER_REASONING_EFFORT").lower() or "high"
     if query_class in {"troubleshooting_why", "comparison"} or query_type == "troubleshooting":
         return complex_default
@@ -7333,7 +7340,10 @@ def _build_answer_profile(
     model_name = str(config.get("chat_model") or "").strip() or defaults.model
     reasoning_effort = str(config.get("reasoning_effort") or "").strip() or defaults.reasoning_effort or "high"
     fallback_models = tuple(config.get("fallback_models") or defaults.fallback_models)
-    if use_light_path_fast_model:
+    if use_light_path_fast_model and not agent_model_policy_active():
+        # The light-path fast models are an open-model latency tier; under the
+        # deployment-pinned single-model policy the final outbound answer
+        # request must run on the pinned model at its standard effort.
         if str(query_class or "").strip().lower() == "api_semantics_mismatch":
             model_name = _API_SEMANTICS_FAST_ANSWER_MODEL
             reasoning_effort = _API_SEMANTICS_FAST_ANSWER_REASONING_EFFORT

@@ -27,6 +27,8 @@ HERMES_PERSONA_ENABLED=0
 AUTOMATION_CASE_ENGINE="legacy"
 HERMES_AGENT_ENABLED=0
 ENABLEMENT_WORKFLOW_MODE="manual"
+AGENT_MODEL_VALUE=""
+AGENT_MODEL_VERSION=""
 SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
 PROMPT_TARGET_SCHEMA="${PROMPT_RELEASE_TARGET_SCHEMA:-}"
 TEMP_DIR=""
@@ -787,8 +789,42 @@ render_role_task_definition() {
     args+=(--hermes-agent-enabled)
   fi
   args+=(--enablement-workflow-mode "${ENABLEMENT_WORKFLOW_MODE}")
+  if [[ -n "${AGENT_MODEL_VALUE}" ]]; then
+    args+=(--agent-model "${AGENT_MODEL_VALUE}")
+  fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-task-definition "${args[@]}" >/dev/null
+}
+
+read_agent_model_parameter() {
+  # Single-model tiering: Preproduction reads the SSM agent-model parameter
+  # once (value + version) and pins it into this release's task definitions;
+  # the version is re-verified before activation so a mid-release parameter
+  # switch cannot desynchronize the three roles. Production never pins one.
+  AGENT_MODEL_VALUE=""
+  AGENT_MODEL_VERSION=""
+  [[ "${ENVIRONMENT}" = "preproduction" ]] || return 0
+  local parameter_json
+  parameter_json="$(aws ssm get-parameter --region "${REGION}" \
+    --name "/supportportal/preproduction/agent-model" \
+    --query 'Parameter.[Value,Version]' --output json)" \
+    || fail "Preproduction agent-model parameter /supportportal/preproduction/agent-model does not exist; provision it before releasing"
+  AGENT_MODEL_VALUE="$(jq -r '.[0]' <<<"${parameter_json}" | tr -d '[:space:]')"
+  AGENT_MODEL_VERSION="$(jq -r '.[1]' <<<"${parameter_json}")"
+  [[ -n "${AGENT_MODEL_VALUE}" && "${AGENT_MODEL_VALUE}" != "null" ]] \
+    || fail "Preproduction agent-model parameter is empty; refusing to render without a pinned model"
+  log "Agent model pinned for this release: ${AGENT_MODEL_VALUE} (SSM version ${AGENT_MODEL_VERSION})"
+}
+
+verify_agent_model_unchanged() {
+  [[ "${ENVIRONMENT}" = "preproduction" ]] || return 0
+  local version_now
+  version_now="$(aws ssm get-parameter --region "${REGION}" \
+    --name "/supportportal/preproduction/agent-model" \
+    --query 'Parameter.Version' --output text)" \
+    || fail "Preproduction agent-model parameter disappeared mid-release"
+  [[ "${version_now}" = "${AGENT_MODEL_VERSION}" ]] \
+    || fail "agent-model parameter changed during the release (expected version ${AGENT_MODEL_VERSION}, now ${version_now}); restart the release to pin the new model"
 }
 
 ensure_agentrelay_parameters() {
@@ -818,16 +854,22 @@ prepare_schema_bootstrap() {
     --query 'Parameter.ARN' --output text)"
   [[ -n "${migration_reference}" && "${migration_reference}" != "None" ]] \
     || fail "${ENVIRONMENT} schema migration parameter is missing"
+  local -a bootstrap_render_args
+  bootstrap_render_args=(
+    --current "${TEMP_DIR}/api.current.json"
+    --manifest "${MANIFEST_PATH}"
+    --registry-id "${REGISTRY_ID}"
+    --region "${REGION}"
+    --environment "${ENVIRONMENT}"
+    --repository "${PROMOTION_REPOSITORY}"
+    --migration-secret-reference "${migration_reference}"
+    --output "${TEMP_DIR}/schema-bootstrap.register.json"
+  )
+  if [[ -n "${AGENT_MODEL_VALUE}" ]]; then
+    bootstrap_render_args+=(--agent-model "${AGENT_MODEL_VALUE}")
+  fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
-    render-schema-bootstrap-task-definition \
-    --current "${TEMP_DIR}/api.current.json" \
-    --manifest "${MANIFEST_PATH}" \
-    --registry-id "${REGISTRY_ID}" \
-    --region "${REGION}" \
-    --environment "${ENVIRONMENT}" \
-    --repository "${PROMOTION_REPOSITORY}" \
-    --migration-secret-reference "${migration_reference}" \
-    --output "${TEMP_DIR}/schema-bootstrap.register.json" >/dev/null
+    render-schema-bootstrap-task-definition "${bootstrap_render_args[@]}" >/dev/null
   aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
     --services "${API_SERVICE}" \
     --query 'services[0].networkConfiguration' \
@@ -1408,6 +1450,7 @@ main() {
   [[ "${preflight_failed}" = "0" ]] \
     || fail "Parallel Terraform, Prompt, ECR, or EC2 backup preflight failed"
   ensure_agentrelay_parameters
+  read_agent_model_parameter
   [[ -n "${PREFLIGHT_EVIDENCE}" ]] || TERRAFORM_STATUS="passed"
   SOURCE_PROMPT_STATUS="passed"
   EC2_BACKUP_STATUS="passed"
@@ -1443,6 +1486,7 @@ main() {
       "${role}" "${TEMP_DIR}/${role}.current.json" "${TEMP_DIR}/${role}.register.json"
   done
   ECR_STATUS="passed"
+  verify_agent_model_unchanged
   prepare_schema_bootstrap
 
   local suspension_reference suspension_recipients_json
@@ -1548,6 +1592,10 @@ main() {
     deployment_start_ms="$(($(date -u +%s) * 1000))"
     printf '%s\n' "${deployment_start_ms}" >"${TEMP_DIR}/deployment-start-ms"
   fi
+  # Activation gate: the pinned agent model must still be the SSM version the
+  # task definitions were rendered from; a parameter switch mid-release must
+  # restart the release instead of activating a split-model deployment.
+  verify_agent_model_unchanged
   DEPLOY_STARTED=1
   start_phase route_worker_rollout
   for role in route worker; do

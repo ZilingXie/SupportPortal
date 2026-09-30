@@ -11,6 +11,29 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-30 - RAG outbound model policy convergence (p2-160 single-model tiering)
+
+- Summary: when the deployment pins `AGENT_MODEL_ID` (Preproduction SSM
+  `agent-model`), the RAG answer path converges on the pinned model: the
+  light-path and api-semantics fast models no longer downgrade the final
+  outbound answer request, and complex/troubleshooting queries keep the
+  pinned `medium` effort instead of escalating to
+  `RAG_COMPLEX_ANSWER_REASONING_EFFORT`. Without the pin, both behaviors are
+  unchanged.
+- Reason: the single-model tiering plan requires every final outbound RAG
+  answer request to follow the deployment policy; ordinary RAG answers stay
+  at medium even when the question discusses a fault, because
+  investigation-grade `xhigh` belongs to the Hermes investigation flow.
+- Affected files/config: `backend/services/rag_qa.py`
+  (`_build_answer_profile`, `_effective_answer_reasoning_effort`) reading
+  `agent_model_policy_active()` from `backend/services/llm_profiles.py`.
+  No retrieval, rerank, corpus, or prompt change.
+- Data impact: none — no ingestion, schema, or replay; only the outbound
+  answer model/effort selection under the pin.
+- Verification: `backend/tests/test_agent_model_policy.py`
+  (RagOutboundPolicyTests) plus the full `backend/tests/test_rag_qa.py`
+  suite (103 passed); Preproduction usage-table model records post-deploy.
+
 ## 2026-09-30 - RAGFlow answer generation exits the admin token ledger (p2-180)
 
 - Summary: `ragflow_docs_answer` generation tokens are no longer recorded into `support_account_case_llm_usage`, and the admin reader excludes the stage from both per-case detail and the new filtered-case totals; the RAG source in the admin token view changed from "unavailable" to explicitly "excluded by admin policy". RAG-service usage (support_rag_query_runs) was already out of this ledger and remains unchanged.
@@ -18,6 +41,7 @@ For each new entry, record:
 - Affected files/config: `backend/services/ragflow_docs_search_skill.py` (record_llm_invocation call removed), `automation_ecs_admin_reader.py` (stage != 'ragflow_docs_answer' in usage queries; rag source payload).
 - Data impact: no ingestion, retrieval, or prompt change; historical ragflow_docs_answer rows remain in the ledger but are excluded from every admin view going forward.
 - Verification: reader SQL assertion + generation-path test (capture stays empty) + isolated-PostgreSQL integration (ragflow row seeded and excluded from totals).
+
 
 ## 2026-09-28 - Hermes mid-session follow-up answers from trusted docs (p2-178)
 

@@ -1,5 +1,54 @@
 # Prompt Change Log
 
+## 2026-09-30 - Preprod Agent single-model tiering (p2-160)
+
+- Area: Preproduction agent model policy for in-scope business generation,
+  RAG answers, Hermes case phases (route/work/persona), and the engineer
+  investigation reply plus its HITL revision entry points.
+- Behavior: a deployment-pinned `AGENT_MODEL_ID` (from non-sensitive SSM
+  `/supportportal/preproduction/agent-model`, initial value `gpt-6-sol`)
+  runs every in-scope scenario on that single model at `medium`; the engineer
+  investigation reply and Hermes investigation work runs (case
+  `direction=investigation` and investigation feedback turns) run at `xhigh`.
+  Model fallback chains, the DeepSeek provider fallback, and scenario
+  temperatures are dropped while the policy is active; failures keep the
+  existing human-review or explicit-failure paths. The Hermes Worker
+  `/v1/runs` request now carries an explicit `model` and
+  `model_options.reasoning_effort`; the engineer reply's Hermes
+  `/v1/responses` call sends an explicit `provider`/`model` plus
+  `model_options.reasoning_effort` (the endpoint ignores standard top-level
+  `reasoning.effort` and bare models without `direct_model_requests`).
+  Case bindings pin the model at creation (schema-010 `agent_model`), and
+  each turn-run row pins the submitted model/effort so lost-receipt retries
+  replay the byte-identical request body required by the gateway idempotency
+  fingerprint. Offline benchmarks, knowledge ingestion, deploy reports,
+  direct Hermes Dashboard sessions, and the ticket title scenario are out of
+  scope. The title was removed after a 2026-09-30 budget measurement
+  (gpt-6-sol/medium at 2.19-2.81s misses the synchronous 2s intake deadline
+  and ~50% of requests exhaust the 24-token output budget on reasoning, so
+  pinning it would trade model titles for heuristic fallbacks with no
+  customer-wait gain); the measured decision keeps the title on
+  gpt-5.4-nano/none and can be revisited by re-adding one scenario entry.
+- Model provenance: release render reads the SSM parameter once (value +
+  version), pins `AGENT_MODEL_ID` into the same api/route/worker revision,
+  and re-verifies the parameter version before registration and activation;
+  missing/empty parameter fails the Preproduction render closed. Production
+  renders strip `AGENT_MODEL_ID` and the retired per-scenario luna/astra
+  overrides.
+- Verification: `backend/tests/test_agent_model_policy.py` (profile policy,
+  RAG outbound convergence, `/v1/runs` body, `/v1/responses` payload),
+  `TestAgentModelTiering` in `test_hermes_zendesk_agent.py` (medium/xhigh
+  phasing, unpinned legacy body, lost-receipt retry pinning, feedback turn),
+  `test_automation_ecs_deploy.py` render pin/strip/fail-closed cases, and
+  isolated-PostgreSQL pinning/concurrency cases in
+  `test_automation_ecs_store_postgres.py`. Live no-customer-data requests
+  against Preproduction credentials (2026-09-30) measured: client-ack
+  1.60-3.29s within its 5s budget, input-guardrail 1.75-2.07s within its 6s
+  budget, read-only tool calls correct at both medium and xhigh (~1.9s), and
+  the title 2s budget missed as described above. Live model acceptance
+  (actual executed model for `medium`/`xhigh`, not response echo) is part of
+  the Preproduction release verification.
+
 ## 2026-09-24 - Plan2 dedicated Hermes route-inference gateway
 
 - Area: Preproduction-only route alignment experiment; the existing Hermes

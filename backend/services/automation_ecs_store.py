@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -35,6 +36,15 @@ from backend.services.automation_ecs_contracts import (
     canonical_payload_digest,
 )
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
+
+# Deployment-pinned agent model (single-model tiering). The release render
+# injects AGENT_MODEL_ID from SSM /supportportal/<env>/agent-model; an absent
+# value keeps pre-policy behavior (gateway-resolved default model).
+AGENT_MODEL_ENV_NAME = "AGENT_MODEL_ID"
+
+
+def _agent_model_env() -> str:
+    return " ".join(str(os.getenv(AGENT_MODEL_ENV_NAME) or "").split()).strip()
 
 
 def _now() -> datetime:
@@ -1163,6 +1173,7 @@ class InMemoryAutomationEcsStore:
                     "session_kind": "case",
                     "persona_key": None,
                     "persona_version": None,
+                    "agent_model": _agent_model_env() or None,
                     "created_at": _iso(),
                     "updated_at": _iso(),
                 }
@@ -1378,6 +1389,7 @@ class InMemoryAutomationEcsStore:
                     "session_kind": "adhoc",
                     "persona_key": None,
                     "persona_version": None,
+                    "agent_model": _agent_model_env() or None,
                     "created_at": now_value,
                     "updated_at": now_value,
                 }
@@ -1438,7 +1450,13 @@ class InMemoryAutomationEcsStore:
             return copy.deepcopy(row) if row is not None else None
 
     def get_or_create_hermes_turn_run(
-        self, turn_id: str, phase: str, *, prompt_version: str | None = None
+        self,
+        turn_id: str,
+        phase: str,
+        *,
+        prompt_version: str | None = None,
+        agent_model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             turn = self._hermes_turns.get(turn_id)
@@ -1454,6 +1472,8 @@ class InMemoryAutomationEcsStore:
                     "request_id": f"hmreq:{turn_id}:{phase}",
                     "run_id": None,
                     "prompt_version": prompt_version,
+                    "agent_model": str(agent_model or "").strip() or None,
+                    "reasoning_effort": str(reasoning_effort or "").strip() or None,
                     "status": "pending",
                     "output": None,
                     "error_code": None,
@@ -2321,6 +2341,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-006",
             "automation-ecs-007",
             "automation-ecs-008",
+            "automation-ecs-009",
         }
     )
 
@@ -2519,6 +2540,7 @@ class PostgresAutomationEcsStore:
                 session_kind TEXT NOT NULL DEFAULT 'case',
                 persona_key TEXT,
                 persona_version INTEGER,
+                agent_model TEXT,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                 PRIMARY KEY (namespace, zendesk_ticket_id),
@@ -2561,6 +2583,8 @@ class PostgresAutomationEcsStore:
                 request_id TEXT NOT NULL UNIQUE,
                 run_id TEXT,
                 prompt_version TEXT,
+                agent_model TEXT,
+                reasoning_effort TEXT,
                 status TEXT NOT NULL,
                 output JSONB,
                 error_code TEXT,
@@ -2600,6 +2624,7 @@ class PostgresAutomationEcsStore:
         self._apply_schema_007_migrations(cursor)
         self._apply_schema_008_migrations(cursor)
         self._apply_schema_009_migrations(cursor)
+        self._apply_schema_010_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -2812,6 +2837,29 @@ class PostgresAutomationEcsStore:
                     self._table("automation_hermes_case_drafts"),
                     sql.Identifier(column),
                     sql.SQL(definition),
+                )
+            )
+
+    def _apply_schema_010_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 009→010 evolution: deployment-pinned agent model columns.
+
+        A new case binding pins the deployed AGENT_MODEL_ID once (a later SSM
+        switch only affects sessions created afterwards), and each turn-run row
+        pins the model + reasoning effort submitted for its request id so a
+        lost-receipt retry replays the byte-identical Hermes request body
+        (the gateway idempotency fingerprint covers the whole body). NULL
+        keeps the pre-policy behavior: no model/model_options in the request.
+        """
+        cursor.execute(
+            sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS agent_model TEXT").format(
+                self._table("automation_hermes_case_bindings")
+            )
+        )
+        for column in ("agent_model", "reasoning_effort"):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} TEXT").format(
+                    self._table("automation_hermes_turn_runs"),
+                    sql.Identifier(column),
                 )
             )
 
@@ -3603,11 +3651,11 @@ class PostgresAutomationEcsStore:
                         sql.SQL(
                             """
                             INSERT INTO {} (namespace,zendesk_instance,zendesk_ticket_id,logical_conversation_key,
-                                hermes_session_id,engine,conversation_version,direction,status)
-                            VALUES (%s,%s,%s,%s,%s,'hermes',0,'pending','active')
+                                hermes_session_id,engine,conversation_version,direction,status,agent_model)
+                            VALUES (%s,%s,%s,%s,%s,'hermes',0,'pending','active',%s)
                             """
                         ).format(self._table("automation_hermes_case_bindings")),
-                        (namespace, instance, ticket_id, conversation_key, session_id),
+                        (namespace, instance, ticket_id, conversation_key, session_id, _agent_model_env() or None),
                     )
                     cursor.execute(
                         sql.SQL(
@@ -3730,7 +3778,13 @@ class PostgresAutomationEcsStore:
         return int(cursor.rowcount)
 
     def get_or_create_hermes_turn_run(
-        self, turn_id: str, phase: str, *, prompt_version: str | None = None
+        self,
+        turn_id: str,
+        phase: str,
+        *,
+        prompt_version: str | None = None,
+        agent_model: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
@@ -3743,11 +3797,17 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
                 if row is None:
+                    # FOR UPDATE locks nothing when the row does not exist yet,
+                    # so concurrent creators can both reach the INSERT. The
+                    # conflict clause makes the insert single-row: the loser
+                    # re-reads and returns the winner's pinned request config.
                     cursor.execute(
                         sql.SQL(
                             """
-                            INSERT INTO {} (turn_id,phase,namespace,zendesk_ticket_id,request_id,prompt_version,status)
-                            VALUES (%s,%s,%s,%s,%s,%s,'pending')
+                            INSERT INTO {} (turn_id,phase,namespace,zendesk_ticket_id,request_id,prompt_version,
+                                agent_model,reasoning_effort,status)
+                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                            ON CONFLICT DO NOTHING
                             RETURNING *
                             """
                         ).format(self._table("automation_hermes_turn_runs")),
@@ -3758,9 +3818,19 @@ class PostgresAutomationEcsStore:
                             turn["zendesk_ticket_id"],
                             f"hmreq:{turn_id}:{phase}",
                             prompt_version,
+                            str(agent_model or "").strip() or None,
+                            str(reasoning_effort or "").strip() or None,
                         ),
                     )
                     row = cursor.fetchone()
+                    if row is None:
+                        cursor.execute(
+                            sql.SQL(
+                                "SELECT * FROM {} WHERE turn_id=%s AND phase=%s"
+                            ).format(self._table("automation_hermes_turn_runs")),
+                            (turn_id, phase),
+                        )
+                        row = cursor.fetchone()
                 return dict(row)
 
     def start_hermes_turn_run(self, turn_id: str, phase: str, *, run_id: str) -> dict[str, Any]:
@@ -4309,8 +4379,8 @@ class PostgresAutomationEcsStore:
                             sql.SQL(
                                 "INSERT INTO {} (namespace,zendesk_instance,zendesk_ticket_id,"
                                 "logical_conversation_key,hermes_session_id,engine,conversation_version,"
-                                "direction,direction_reason,status,session_kind,slack_channel_id,slack_thread_ts) "
-                                "VALUES (%s,%s,%s,%s,%s,'hermes',0,'investigation',%s,'active','adhoc',%s,%s)"
+                                "direction,direction_reason,status,session_kind,slack_channel_id,slack_thread_ts,agent_model) "
+                                "VALUES (%s,%s,%s,%s,%s,'hermes',0,'investigation',%s,'active','adhoc',%s,%s,%s)"
                             ).format(self._table("automation_hermes_case_bindings")),
                             (
                                 namespace,
@@ -4321,6 +4391,7 @@ class PostgresAutomationEcsStore:
                                 "slack ad-hoc session",
                                 channel,
                                 thread,
+                                _agent_model_env() or None,
                             ),
                         )
                     cursor.execute(

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T04:20:23Z",
-  "source_base_commit": "7a7456c4dbcfb88d6216dfe384eadf9a8845874a",
-  "registry_digest": "e3dba2be1bec1f6f93b3e30b3d8ee194e08d685736bc442a65a1da5a68ce5a12",
+  "generated_at": "2026-09-30T04:37:03Z",
+  "source_base_commit": "e2ce42bae12f0a74dfe0d2c221edb135e0b12bcf",
+  "registry_digest": "0a4c3df9f6cb1175a4d448cb04a8c7702e2fe3b3a4d412780257f4c068c373dc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3616,6 +3616,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
           "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
           "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
+        },
+        {
+          "type": "test",
+          "label": "单模型分档策略与固定语义定向验证（2026-09-30）",
+          "command": "python3.12 -m pytest backend/tests/test_agent_model_policy.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_hermes_runtime.py -q；AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py -q；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "策略 12 passed；渲染器 58 passed（AGENT_MODEL_ID 注入/Production 剥离/缺失 fail-closed/production 拒绝）；worker 分档 5 passed（route/persona=medium、investigation work 与反馈 work=xhigh、旧 binding 不带 model 字段、丢回执重试用固定行值）；PG 固定+4 线程并发单行 10 passed（ON CONFLICT DO NOTHING 修复既有 get_or_create 竞态）；PG worker/工作流 16+7 passed；RAG 全量 103 passed。test_investigation_flow.py 两个 multi-agent 用例在干净基线同样失败（既有失败，与本改动无关）。"
+        },
+        {
+          "type": "test",
+          "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
+          "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
+          "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
         },
         {
           "type": "test",
@@ -13246,7 +13258,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Preproduction LLM 模型策略：调查 gpt-6-astra/medium、其余场景 gpt-5.6-luna/max",
       "summary": "按用户产品决策调整 Preproduction 的 LLM 模型策略：工程师调查回合（Hermes 栈）用 gpt-6-astra + reasoning effort medium（hermes EFS config.yaml 的 model.default + agent.reasoning_effort，已随 knowledge 合并部署 td:28 生效）；SupportPortal 其余全部自动化场景（route/api/worker 三角色的 ~24 个 model env + ~20 个 effort env）钉到 gpt-5.6-luna + max，经 automation_ecs_deploy.py 的 preproduction 专属 env 注入块（PREPRODUCTION_LLM_ENV_OVERRIDES）随管线发布生效，production 渲染显式剥离同名 env 防泄漏。硬门禁已实证上游组合可用（gpt-6-astra/medium、gpt-5.6-luna/max 均返回 completed）。已知边界：MemoryCore 无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none；WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不随 env 覆盖；廉价小任务（意图路由/标题/分类器，timeout 6-8s）在 luna+max 下可能超时重试，观察用量表与路由延迟后可单独回调。",
       "status": "active",
-      "next_action": "轨道 A（hermes astra/medium）已随 td:28 合并部署生效并经 dashboard sessions API 实证（model=gpt-6-astra）；轨道 B 代码+测试已就绪，待 PR 合并后跑 preprod 管线发布，按 support_account_case_llm_usage 表验证各 stage model 记录。",
+      "next_action": "单模型分档（gpt-6-sol：业务/RAG=medium、调查=xhigh；标题场景经实测排除保持 nano/none）代码、测试、文档与 SSM 建参（agent-model v1）已完成；待 finalize 合码后走 Preproduction 发布，并用合成 session 验证实际执行模型（medium→xhigh→medium、调查反馈、/v1/responses 实际模型、task definition/SSM 版本一致）。",
       "owner": "codex",
       "acceptance_criteria": [
         "上游组合硬门禁通过：gpt-6-astra+medium 与 gpt-5.6-luna+max 的 /v1/responses 最小请求均 completed（已实证 2026-09-14）。",
@@ -13266,6 +13278,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
           "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
           "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
+        },
+        {
+          "type": "test",
+          "label": "单模型分档策略与固定语义定向验证（2026-09-30）",
+          "command": "python3.12 -m pytest backend/tests/test_agent_model_policy.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_hermes_runtime.py -q；AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py -q；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "策略 12 passed；渲染器 58 passed（AGENT_MODEL_ID 注入/Production 剥离/缺失 fail-closed/production 拒绝）；worker 分档 5 passed（route/persona=medium、investigation work 与反馈 work=xhigh、旧 binding 不带 model 字段、丢回执重试用固定行值）；PG 固定+4 线程并发单行 10 passed（ON CONFLICT DO NOTHING 修复既有 get_or_create 竞态）；PG worker/工作流 16+7 passed；RAG 全量 103 passed。test_investigation_flow.py 两个 multi-agent 用例在干净基线同样失败（既有失败，与本改动无关）。"
+        },
+        {
+          "type": "test",
+          "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
+          "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
+          "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
         }
       ],
       "history": [
