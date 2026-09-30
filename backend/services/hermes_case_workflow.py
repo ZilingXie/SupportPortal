@@ -20,6 +20,16 @@ HERMES_OUTPUT_VERSION = "v1"
 HERMES_LEDGER_DELTA_VERSION = "v1"
 HUMAN_AUTHORITY_VERSION = "v1"
 CASE_KNOWLEDGE_PROMOTION_VERSION = "v1"
+HERMES_SUMMARY_PACKET_VERSION = "v1"
+HERMES_REVIEW_REPORT_VERSION = "v1"
+
+# Knowledge-governance artifacts (summary packets, review reports) must never
+# leak the same restricted identifiers as promotions: workspace credentials and
+# agent-only URLs stay out of anything that travels to knowledge consumers.
+_RESTRICTED_KNOWLEDGE_MARKERS = (
+    "<restricted>", "authorization:", "x-hermes-callback-token",
+    "slack.com/archives/", "zendesk.com/agent/tickets/",
+)
 
 
 class _StrictModel(BaseModel):
@@ -274,6 +284,161 @@ class WeKnoraPromotionCandidate(_StrictModel):
     target_object_id: str = ""
     base_version: str = ""
     note: str = ""
+
+
+class HermesSummaryCandidate(_StrictModel):
+    """One piece of case knowledge proposed for review, type-agnostic by design.
+
+    The Summary role proposes candidates; only the Review role decides whether
+    a candidate is knowledge, memory, or a skill change.
+    """
+
+    candidate_id: str = Field(min_length=1)
+    statement: str = Field(min_length=1)
+    context: str = ""
+    evidence_references: tuple[str, ...] = ()
+
+
+def _summary_packet_content(payload: dict[str, Any]) -> dict[str, Any]:
+    candidates = [
+        HermesSummaryCandidate.model_validate(item).model_dump(mode="json")
+        for item in (payload.get("candidates") or [])
+    ]
+    return {
+        "problem_description": str(payload.get("problem_description") or ""),
+        "timeline": str(payload.get("timeline") or ""),
+        "investigation_process": str(payload.get("investigation_process") or ""),
+        "confirmed_facts": str(payload.get("confirmed_facts") or ""),
+        "root_cause_and_solution": str(payload.get("root_cause_and_solution") or ""),
+        "verification_results": str(payload.get("verification_results") or ""),
+        "limitations_and_unconfirmed": str(payload.get("limitations_and_unconfirmed") or ""),
+        "evidence_references": list(payload.get("evidence_references") or []),
+        "candidates": candidates,
+    }
+
+
+def summary_packet_content_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(_summary_packet_content(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class HermesSummaryPacket(_StrictModel):
+    """Structured close-of-case summary produced by the Summary role.
+
+    Lineage fields bind the packet to one engineer-case episode/revision; the
+    content hash covers only the narrative content so lineage bookkeeping can
+    never forge a packet's substance.
+    """
+
+    schema_version: Literal["v1"]
+    summary_id: str = Field(min_length=1)
+    engineer_case_id: str = Field(min_length=1)
+    client_ticket_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    episode: int = Field(ge=1)
+    ledger_revision: int = Field(ge=0)
+    conversation_version: int = Field(ge=0)
+    hermes_session_id: str = Field(min_length=1)
+    trigger: Literal["solved", "local_resolved", "closed"]
+    problem_description: str = Field(min_length=1)
+    timeline: str = ""
+    investigation_process: str = Field(min_length=1)
+    confirmed_facts: str = ""
+    root_cause_and_solution: str = ""
+    verification_results: str = ""
+    limitations_and_unconfirmed: str = Field(min_length=1)
+    evidence_references: tuple[str, ...] = ()
+    candidates: tuple[HermesSummaryCandidate, ...] = ()
+    content_hash: str = Field(min_length=64, max_length=64)
+    created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_packet(self) -> "HermesSummaryPacket":
+        candidate_ids = [item.candidate_id for item in self.candidates]
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("summary candidates must have unique ids")
+        payload = self.model_dump(mode="json")
+        actual = summary_packet_content_hash(payload)
+        if not hmac.compare_digest(self.content_hash, actual):
+            raise ValueError("content_hash does not match summary content")
+        serialized = json.dumps(_summary_packet_content(payload), sort_keys=True).lower()
+        if any(marker in serialized for marker in _RESTRICTED_KNOWLEDGE_MARKERS):
+            raise ValueError("summary packet contains a restricted identifier")
+        return self
+
+
+class HermesReviewDecision(_StrictModel):
+    """One candidate's governance decision produced by the Review role."""
+
+    candidate_id: str = Field(min_length=1)
+    candidate_type: Literal["knowledge", "memory", "skill"]
+    decision: Literal["no_change", "merge", "supplement", "replace", "new", "human_review"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str = Field(min_length=1)
+    proposed_content: str = ""
+    target_object: str | None = None
+    target_version: str | None = None
+    source_references: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "HermesReviewDecision":
+        has_target = bool(self.target_object) or bool(self.target_version)
+        if self.decision == "human_review" and has_target:
+            raise ValueError("human_review must not claim a resolved target")
+        if self.decision in {"no_change", "merge", "supplement", "replace"}:
+            if not self.target_object or not self.target_version:
+                raise ValueError(f"{self.decision} requires target_object and target_version")
+        if self.decision == "new" and has_target:
+            raise ValueError("new must not reference an existing target")
+        return self
+
+
+def _review_report_content(payload: dict[str, Any]) -> dict[str, Any]:
+    decisions = [
+        HermesReviewDecision.model_validate(item).model_dump(mode="json")
+        for item in (payload.get("decisions") or [])
+    ]
+    return {"decisions": decisions}
+
+
+def review_report_content_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(_review_report_content(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class HermesReviewReport(_StrictModel):
+    """Validated review outcome returned to SupportPortal by the Review role."""
+
+    schema_version: Literal["v1"]
+    review_id: str = Field(min_length=1)
+    summary_id: str = Field(min_length=1)
+    engineer_case_id: str = Field(min_length=1)
+    client_ticket_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    episode: int = Field(ge=1)
+    ledger_revision: int = Field(ge=0)
+    conversation_version: int = Field(ge=0)
+    review_session_id: str = Field(min_length=1)
+    weknora_available: bool
+    decisions: tuple[HermesReviewDecision, ...]
+    content_hash: str = Field(min_length=64, max_length=64)
+    created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_report(self) -> "HermesReviewReport":
+        candidate_ids = [item.candidate_id for item in self.decisions]
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("review decisions must cover each candidate at most once")
+        payload = self.model_dump(mode="json")
+        actual = review_report_content_hash(payload)
+        if not hmac.compare_digest(self.content_hash, actual):
+            raise ValueError("content_hash does not match review decisions")
+        serialized = json.dumps(_review_report_content(payload), sort_keys=True).lower()
+        if any(marker in serialized for marker in _RESTRICTED_KNOWLEDGE_MARKERS):
+            raise ValueError("review report contains a restricted identifier")
+        return self
 
 
 HermesWorkflowConflict = HermesRepositoryConflict

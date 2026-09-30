@@ -2343,6 +2343,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-008",
             "automation-ecs-009",
             "automation-ecs-010",
+            "automation-ecs-011",
         }
     )
 

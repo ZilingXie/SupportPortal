@@ -1,5 +1,54 @@
 # Prompt Change Log
 
+## 2026-09-30 - Hermes knowledge-governance Summary/Review manuals (p2-181)
+
+- Area: Hermes engineer-case knowledge governance — new Summary and Review
+  logical roles on the existing Hermes agent gateway, plus the
+  human-maintained `knowledge-review` skill (`backend/skills/knowledge-review/SKILL.md`,
+  version `knowledge-review-v1`).
+- Prompt version: `hermes-case-summary-manual-v1` (Summary role; core
+  `hermes-support-agent-system` + phase-manual layering, runs on the case's
+  original session with the read-only `common` toolset at `medium`) and
+  `hermes-knowledge-review-manual-v1` (Review role; standalone instructions
+  on a new dedicated `supportportal:knowledge-review:*` session with the
+  `skills` toolset only at `xhigh`). Both registered in the managed catalog
+  under the new `hermes-knowledge-governance` component of
+  `hermes-support-agent`.
+- Behavior: Summary runs at the case's first terminal transition
+  (solved/local-resolved/closed) and must end with one fenced JSON block
+  (content fields + type-agnostic candidates; no knowledge/memory/skill
+  typing — that is Review's job). Review runs only after Summary completes,
+  reads server-assembled WeKnora similarity results (or an explicit
+  unavailability marker), and returns one decision per candidate with
+  decision-target consistency (no_change/merge/supplement/replace require
+  target_object+target_version from the search results; new/human_review
+  require none; missing evidence must become human_review; skill candidates
+  are never auto-evolved — only no_change or human_review). SupportPortal
+  validates schema, lineage, content hash, session identity, restricted
+  identifiers, and candidate coverage before handing decisions to the
+  WeKnora adapter layer; Hermes never writes knowledge, memory, or WeKnora.
+- Reason: Hermes Summary/Review knowledge-governance plan (user-approved
+  2026-09-30) — structured, traceable case-close knowledge extraction with
+  fail-closed human review instead of silent writes.
+- Affected files/config: `backend/services/prompts/hermes_support_agent.py`,
+  `backend/services/agent_config.py` (catalog registration),
+  `backend/services/automation_hermes_agent.py`
+  (`KNOWLEDGE_SUMMARY_TOOLSETS=["common"]`, `KNOWLEDGE_REVIEW_TOOLSETS=["skills"]`),
+  `backend/services/hermes_knowledge_workflow.py` (orchestration; activates
+  only under `HERMES_CASE_WORKFLOW_MODE=real` with the Hermes agent gateway
+  configured), `backend/services/hermes_weknora.py`
+  (`HERMES_WEKNORA_BASE_URL`/`HERMES_WEKNORA_API_TOKEN`/`HERMES_WEKNORA_TIMEOUT_SECONDS`,
+  read-only search, fail-closed).
+- Expected behavior change: no change to existing route/work/persona phase
+  prompts or models; two new catalog keys (a code-catalog fallback resolves
+  them until the next prompt release pins them); knowledge tasks are dormant
+  outside real mode.
+- Verification: `backend/tests/test_hermes_knowledge_workflow.py` (11 cases
+  incl. separate sessions/toolsets, weknora fail-closed, output-contract and
+  coverage violations), `test_hermes_case_contracts.py` (bundle fixtures for
+  the new contracts), `test_agent_config.py` regression — all passing
+  2026-09-30.
+
 ## 2026-09-30 - Preprod Agent single-model tiering (p2-160)
 
 - Area: Preproduction agent model policy for in-scope business generation,

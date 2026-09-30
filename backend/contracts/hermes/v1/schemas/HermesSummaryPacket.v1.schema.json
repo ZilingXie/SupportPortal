@@ -1,0 +1,179 @@
+{
+  "$defs": {
+    "HermesSummaryCandidate": {
+      "additionalProperties": false,
+      "description": "One piece of case knowledge proposed for review, type-agnostic by design.\n\nThe Summary role proposes candidates; only the Review role decides whether\na candidate is knowledge, memory, or a skill change.",
+      "properties": {
+        "candidate_id": {
+          "minLength": 1,
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "title": "Context",
+          "type": "string"
+        },
+        "evidence_references": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Evidence References",
+          "type": "array"
+        },
+        "statement": {
+          "minLength": 1,
+          "title": "Statement",
+          "type": "string"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "statement"
+      ],
+      "title": "HermesSummaryCandidate",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Structured close-of-case summary produced by the Summary role.\n\nLineage fields bind the packet to one engineer-case episode/revision; the\ncontent hash covers only the narrative content so lineage bookkeeping can\nnever forge a packet's substance.",
+  "properties": {
+    "candidates": {
+      "default": [],
+      "items": {
+        "$ref": "#/$defs/HermesSummaryCandidate"
+      },
+      "title": "Candidates",
+      "type": "array"
+    },
+    "client_ticket_id": {
+      "minLength": 1,
+      "title": "Client Ticket Id",
+      "type": "string"
+    },
+    "confirmed_facts": {
+      "default": "",
+      "title": "Confirmed Facts",
+      "type": "string"
+    },
+    "content_hash": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "conversation_version": {
+      "minimum": 0,
+      "title": "Conversation Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "engineer_case_id": {
+      "minLength": 1,
+      "title": "Engineer Case Id",
+      "type": "string"
+    },
+    "episode": {
+      "minimum": 1,
+      "title": "Episode",
+      "type": "integer"
+    },
+    "evidence_references": {
+      "default": [],
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence References",
+      "type": "array"
+    },
+    "hermes_session_id": {
+      "minLength": 1,
+      "title": "Hermes Session Id",
+      "type": "string"
+    },
+    "investigation_id": {
+      "minLength": 1,
+      "title": "Investigation Id",
+      "type": "string"
+    },
+    "investigation_process": {
+      "minLength": 1,
+      "title": "Investigation Process",
+      "type": "string"
+    },
+    "ledger_revision": {
+      "minimum": 0,
+      "title": "Ledger Revision",
+      "type": "integer"
+    },
+    "limitations_and_unconfirmed": {
+      "minLength": 1,
+      "title": "Limitations And Unconfirmed",
+      "type": "string"
+    },
+    "problem_description": {
+      "minLength": 1,
+      "title": "Problem Description",
+      "type": "string"
+    },
+    "root_cause_and_solution": {
+      "default": "",
+      "title": "Root Cause And Solution",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary_id": {
+      "minLength": 1,
+      "title": "Summary Id",
+      "type": "string"
+    },
+    "timeline": {
+      "default": "",
+      "title": "Timeline",
+      "type": "string"
+    },
+    "trigger": {
+      "enum": [
+        "solved",
+        "local_resolved",
+        "closed"
+      ],
+      "title": "Trigger",
+      "type": "string"
+    },
+    "verification_results": {
+      "default": "",
+      "title": "Verification Results",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema_version",
+    "summary_id",
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "episode",
+    "ledger_revision",
+    "conversation_version",
+    "hermes_session_id",
+    "trigger",
+    "problem_description",
+    "investigation_process",
+    "limitations_and_unconfirmed",
+    "content_hash",
+    "created_at"
+  ],
+  "title": "HermesSummaryPacket",
+  "type": "object"
+}

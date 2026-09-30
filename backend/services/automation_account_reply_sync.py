@@ -1360,6 +1360,25 @@ def _close_engineer_case_for_customer_resolution(
     return engineer_case, investigation_messages
 
 
+def _queue_hermes_knowledge_summary(repository: Any, engineer_case_id: str, *, trigger: str) -> None:
+    """Best-effort Summary task creation at a case terminal transition.
+
+    Creation is idempotent per case episode; failures never break the status
+    sync — the knowledge pipeline keeps its own task rows and error states.
+    """
+    from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+
+    try:
+        queue_hermes_summary_for_case(
+            repository, engineer_case_id=engineer_case_id, trigger=trigger
+        )
+    except Exception:  # noqa: BLE001 - knowledge governance must not break the status sync
+        LOGGER.warning(
+            "hermes_knowledge_summary_queue_failed engineer_case_id=%s trigger=%s",
+            engineer_case_id, trigger, exc_info=True,
+        )
+
+
 async def sync_account_case_ticket_status(
     *,
     repository: Any,
@@ -1448,6 +1467,7 @@ async def sync_account_case_ticket_status(
             record_case_solved,
             reopen_hermes_case,
         )
+        from backend.services.hermes_knowledge_workflow import knowledge_workflow_active
         from backend.services.weknora_client import weknora_promotion_enabled
 
         hermes_case_id = str(hermes_binding["engineer_case_id"])
@@ -1484,6 +1504,7 @@ async def sync_account_case_ticket_status(
                 slack_events=[review_event],
             )
             hermes_lifecycle_status = "awaiting_closed"
+            _queue_hermes_knowledge_summary(repository, hermes_case_id, trigger="solved")
         elif normalized_zendesk_status in {"new", "open", "pending", "hold"} and str(
             hermes_binding.get("status") or ""
         ) == "awaiting_closed":
@@ -1499,7 +1520,10 @@ async def sync_account_case_ticket_status(
             try:
                 sanitized_payload = build_mock_sanitized_case_knowledge(ledger)
                 weknora_promotions = None
-                if weknora_promotion_enabled():
+                # When the p2-181 knowledge Summary/Review pipeline owns candidate
+                # production, this default-candidate path stands down: one producer
+                # per case close, no duplicate WeKnora objects.
+                if weknora_promotion_enabled() and not knowledge_workflow_active():
                     slack_channel_id, slack_thread_ts = _latest_hermes_slack_thread(
                         repository, hermes_case_id
                     )
@@ -1522,6 +1546,7 @@ async def sync_account_case_ticket_status(
                     weknora_promotions=weknora_promotions,
                 )
                 hermes_lifecycle_status = "awaiting_transport"
+                _queue_hermes_knowledge_summary(repository, hermes_case_id, trigger="closed")
             except HermesWorkflowConflict:
                 hermes_lifecycle_status = "awaiting_close_review"
     if (

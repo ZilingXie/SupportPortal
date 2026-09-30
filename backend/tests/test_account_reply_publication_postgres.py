@@ -779,5 +779,87 @@ class PostgresAccountReplyPublicationTests(unittest.TestCase):
             release_ticket_fence.set()
 
 
+    def test_postgres_solved_close_records_mirror_status(self) -> None:
+        """The close transaction must write zendesk_ticket_status='solved' on
+        the case mirror: ECS has no n8n case_status_sync route, so this
+        transaction is the only writer (PP-EN-QUICK 13782 gap)."""
+        with self._isolated_repository(
+            application_name="supportportal-zendesk-solved-mirror-test",
+        ) as (repository, _schema, _runtime_dsn):
+            ticket_id = "PRD-PG-SOLVED-MIRROR"
+            job_id = "account-reply-pg-solved-mirror"
+            job = _seed_publishable_reply(
+                repository,
+                ticket_id=ticket_id,
+                job_id=job_id,
+            )
+            account_case = repository.get_account_case_by_ticket_id(ticket_id)
+            assert account_case is not None
+            account_case.update(
+                processing_profile="production",
+                zendesk_ticket_id="12839",
+            )
+            repository.save_account_case(account_case)
+            # close_after_publish=True mirrors the real closing reply: the
+            # publisher itself creates the delivery row carrying
+            # target_status="solved" (a later create would collide with it
+            # idempotently and silently drop the target).
+            published = repository.publish_account_reply(
+                job,
+                content="The feature is now enabled.",
+                payload={**job["payload"], "close_after_publish": True},
+                published_at="2026-08-08T02:02:00+00:00",
+                reply_execution={
+                    "execution_id": f"reply-{job_id}",
+                    "ticket_id": ticket_id,
+                    "reply_kind": "enablement",
+                },
+            )
+            message_id = str(published["message_id"])
+            case_id = f"AC-{ticket_id}"
+            delivery = next(
+                d
+                for d in repository.list_account_zendesk_comment_deliveries(
+                    statuses=("queued",),
+                    limit=10,
+                )
+                if d["message_id"] == message_id
+            )
+            assert delivery["target_status"] == "solved"
+            idempotency_key = f"{case_id}:{message_id}"
+            repository.begin_idempotent_request(
+                "account_zendesk_internal_comment",
+                idempotency_key,
+                created_at="2026-08-08T02:03:00+00:00",
+            )
+
+            persisted = repository.record_account_zendesk_internal_comment_result(
+                account_case_id=case_id,
+                ticket_id=ticket_id,
+                message_id=message_id,
+                idempotency_key=idempotency_key,
+                result_payload={
+                    "status": "added",
+                    "account_case_id": case_id,
+                    "message_id": message_id,
+                    "actor_id": "system:production-account-reply",
+                    "trigger": "production_worker",
+                    "comment_id": "comment-pg-solved",
+                },
+                recorded_at="2026-08-08T02:03:01+00:00",
+                close_local_ticket=True,
+            )
+
+            self.assertTrue(persisted["audit_persisted"])
+            mirror = repository.get_account_case_by_ticket_id(ticket_id)
+            assert mirror is not None
+            self.assertEqual(mirror["zendesk_ticket_status"], "solved")
+            self.assertTrue(str(mirror.get("zendesk_status_synced_at") or ""))
+            self.assertEqual(
+                repository.get_ticket(ticket_id)["status"],
+                "resolved",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

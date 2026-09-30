@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T12:25:12Z",
-  "source_base_commit": "2e0a35286b55e1c7356408f1f5c0dd554431a738",
-  "registry_digest": "79f480c303bdf9ca726913d6ea88dea759f09398c9d9f662384f478bec3993b9",
+  "generated_at": "2026-09-30T13:33:42Z",
+  "source_base_commit": "eeb7315c46a496f54de2fd5bf21105b337e37b0b",
+  "registry_digest": "5a7cfdbb405d8fe6bdc898da8f9d19cefcedd99660e0881ad402d4b5d8cfdfc0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1312,15 +1312,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "label": "[已撤回/被取代，见最新 13782 条目] PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
           "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
+          "details": "[撤回说明：本条的 9/10 步数、msg_096ec720… 回传 ID、n8n case_status_sync 归因均有误，以最新的 13782 条目为准（12 PASS/1 FAIL 共 13 步；回传=msg_880ac02f651449ae…；镜像缺口根因=close 事务无写入者，非 n8n）] 2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
         },
         {
           "type": "deployment",
-          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "label": "[已撤回/被取代，见最新 13782 条目] PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
           "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 仍 None（根因见 next_action，已修复待部署）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。"
+          "details": "[撤回说明：本条的 9/10 步数、msg_096ec720… 回传 ID、n8n case_status_sync 归因均有误，以最新的 13782 条目为准（12 PASS/1 FAIL 共 13 步；回传=msg_880ac02f651449ae…；镜像缺口根因=close 事务无写入者，非 n8n）] 2026-09-30 Preproduction：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 仍 None（根因见 next_action，已修复待部署）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。"
         },
         {
           "type": "test",
@@ -3038,7 +3038,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 12,
-      "done_count": 10,
+      "done_count": 9,
       "blocked_count": 0
     },
     {
@@ -3647,6 +3647,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
         },
         {
+          "type": "deployment",
+          "label": "最终发布与运行态读回（2026-09-30）",
+          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
+          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 并发/固定语义复核证据（2026-09-30 复跑，应验收要求补充）",
+          "command": "本机一次性 PostgreSQL 14 实例（127.0.0.1:15433，独立数据目录，跑后即删）：AUTOMATION_ECS_TEST_POSTGRES_DSN 与 RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN 指向该实例，python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "33 passed（store 10：binding agent_model 固定/无 env 保持 NULL/turn-run 固定单值/4 线程并发 get_or_create 单行；worker PG 16：schema-010 迁移与固定列端到端；case workflow PG 7）。日志副本 /tmp/sp-pg-evidence.log（临时）。migrate 幂等由 fixture 双跑覆盖。"
+        },
+        {
           "type": "test",
           "label": "Implementation regression (PR#1188)",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_automation_ecs_api.py backend/tests/test_engineer_slack.py backend/tests/test_engineer_slack_workflows.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_worker.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_route_worker.py",
@@ -3834,6 +3846,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "真实 Work 工具调用与回归",
           "details": "无客户数据的 run_6d760c2849a1480990d4040bf60654b5 在 enabled_toolsets=[common] 下 completed；事件依次含 wiki_search 和 wiki_read_page 的 started/completed，均 error=false；返回 Wiki ID 和路径，引用短句在 Knowledge 该页正文中逐字匹配。dashboard/hermes=302、dashboard/memory=200、无凭证 /v1/models=401、automation 两入口=307。三条临时安全组规则已撤销且回读为空；未触发 Slack/Zendesk 业务投递。真实客户工单未重放，故不宣称业务链验收。"
+        },
+        {
+          "type": "test",
+          "label": "Targeted unit + contract tests",
+          "details": "2026-09-30：test_hermes_knowledge_workflow（11 例：触发幂等/非 real 不建/本地 resolved/双 session 与只读 toolset/weknora 可用与 fail-closed/run 失败不建 review/输出合同违规/覆盖不匹配/revision 冲突 stale/reopen 失效+新 episode）+ test_hermes_case_contracts（bundle 验证器扩展 summary/review 前缀，含 bad-hash/restricted/duplicate-candidate/target 违规负例）+ 回归 test_hermes_zendesk_agent(_tools)/test_agent_config 129 passed + test_account_zendesk_internal_comment_service 11 passed（带 DSN）+ test_hermes_case_workflow 20 passed。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration",
+          "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Prompt release for new catalog keys",
+          "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
         },
         {
           "type": "test",
@@ -4179,7 +4206,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 43,
+      "task_count": 44,
       "done_count": 21,
       "blocked_count": 0
     },
@@ -4739,17 +4766,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "定向单元测试",
-          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 共 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
+          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
         },
         {
           "type": "test",
           "label": "隔离 PostgreSQL 集成",
-          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例（unix socket + 55432）RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL 建表、close 事务原子入队+来源版本唯一、双线程并发领取单一 owner、reopen 事务内失效且失效行不可领取）；既有 hermes PG 套件 23 passed 确认 schema v12 bump 无回归。"
+          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例 RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL、close 事务原子入队+来源版本唯一、双线程并发领取单 owner、reopen 失效不可领取）；hermes PG 套件 23 passed。"
         },
         {
           "type": "test",
           "label": "回归矩阵",
-          "details": "2026-09-30：test_hermes_case_workflow/test_hermes_case_contracts/test_hermes_runtime/test_engineer_slack/test_automation_ecs_admin_reader 80 passed；test_hermes_zendesk_agent(+tools) 125 passed；test_automation_ecs_worker 15 passed；test_repository_configuration 128 passed。"
+          "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
         }
       ],
       "source_refs": [
@@ -13315,16 +13342,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
-      "title": "Preproduction LLM 模型策略：调查 gpt-6-astra/medium、其余场景 gpt-5.6-luna/max",
-      "summary": "按用户产品决策调整 Preproduction 的 LLM 模型策略：工程师调查回合（Hermes 栈）用 gpt-6-astra + reasoning effort medium（hermes EFS config.yaml 的 model.default + agent.reasoning_effort，已随 knowledge 合并部署 td:28 生效）；SupportPortal 其余全部自动化场景（route/api/worker 三角色的 ~24 个 model env + ~20 个 effort env）钉到 gpt-5.6-luna + max，经 automation_ecs_deploy.py 的 preproduction 专属 env 注入块（PREPRODUCTION_LLM_ENV_OVERRIDES）随管线发布生效，production 渲染显式剥离同名 env 防泄漏。硬门禁已实证上游组合可用（gpt-6-astra/medium、gpt-5.6-luna/max 均返回 completed）。已知边界：MemoryCore 无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none；WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不随 env 覆盖；廉价小任务（意图路由/标题/分类器，timeout 6-8s）在 luna+max 下可能超时重试，观察用量表与路由延迟后可单独回调。",
+      "title": "Preproduction Agent 单模型分档：gpt-6-sol（业务/RAG=medium、调查=xhigh）",
+      "summary": "p2-160 从 2026-09-14 的 astra/luna 双模型策略演进出单模型分档：Preproduction 由非敏感 String SSM /supportportal/preproduction/agent-model（v1=gpt-6-sol）在发布时固定 AGENT_MODEL_ID 进同次 api/route/worker task definition（发布前后校验 SSM 版本一致；修改 SSM 不热切换，须走新发布才生效——计划固定设计第 1 条）。纳入场景统一该模型：业务生成与 RAG 回答 medium、工程师调查回复（Hermes /v1/responses 显式 provider=custom + model_options）与 Hermes investigation work（/v1/runs 显式 model+model_options）xhigh；模型/DeepSeek fallback 与 temperature 清除。case binding 与 turn-run 行持久固定模型与强度（schema-010），丢回执重试重发相同请求体。排除场景：离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话、工单标题（实测超 2s 时限，保持 gpt-5.4-nano/none，待用户最终确认）。Production 渲染剥离该策略。",
       "status": "active",
-      "next_action": "单模型分档（gpt-6-sol：业务/RAG=medium、调查=xhigh；标题场景经实测排除保持 nano/none）代码、测试、文档与 SSM 建参（agent-model v1）已完成；待 finalize 合码后走 Preproduction 发布，并用合成 session 验证实际执行模型（medium→xhigh→medium、调查反馈、/v1/responses 实际模型、task definition/SSM 版本一致）。",
+      "next_action": "代码与部署已收口（PR#1316/#1321，r20260930-2e0a352 已上线 Preproduction，schema-011）。剩余：①等待用户两项定案——SSM 发布时固定语义确认（当前实现遵循计划第 1 条：不热切换、切换走新发布）与标题场景排除确认（两次决策提问未获回答，暂按保守排除执行）；②首个真实调查 case 后核对 support_account_case_llm_usage 与 hermes session 实际执行模型；③ready 端点 196 条旧 heartbeat mismatch 为运维残留，另行清理（不阻塞本任务）。",
       "owner": "codex",
       "acceptance_criteria": [
-        "上游组合硬门禁通过：gpt-6-astra+medium 与 gpt-5.6-luna+max 的 /v1/responses 最小请求均 completed（已实证 2026-09-14）。",
-        "preprod 渲染的 api/route/worker td env 含全部 PREPRODUCTION_LLM_ENV_OVERRIDES（investigation=astra/medium，其余=luna/max）；production 渲染不含任何同名 env（泄漏测试锁定）。",
-        "管线发布后受控工单回合的 support_account_case_llm_usage 各 stage model 记录 = gpt-5.6-luna（investigation 除外）。",
-        "hermes 侧调查回合实际执行模型 = gpt-6-astra（已实证：dashboard sessions API 最新会话 model=gpt-6-astra，td:28）。"
+        "SSM /supportportal/preproduction/agent-model 存在且非空（v1=gpt-6-sol）；发布读取一次值+版本并注入 AGENT_MODEL_ID，注册前与激活前复核版本一致；缺失/为空阻止 Preproduction 渲染（fail-closed）。",
+        "修改 SSM 值不热切换：既有服务内新建 session 仍用发布时固定模型，切换须经新的 Preproduction 发布（计划固定设计第 1 条语义，发布时固定而非运行时读取）。",
+        "api/route/worker td env 含 AGENT_MODEL_ID=\u003cSSM 值> 且不含旧 PREPRODUCTION_LLM_ENV_OVERRIDES 名字；Production 渲染剥离两者（泄漏测试锁定）。",
+        "Hermes /v1/runs 请求明传 model 与 model_options.reasoning_effort：route/普通 work/persona=medium，仅 direction=investigation 的 work 与调查反馈 work=xhigh；turn-run 行固定当次请求配置，丢回执重试重发相同请求体（隔离 PostgreSQL 并发单行用例锁定）。",
+        "工程师调查回复走 Hermes /v1/responses 显式 provider=custom + model + model_options.reasoning_effort=xhigh（该网关 OpenAI 上游 provider 名为 custom；openai 被拒，实测 2026-09-30）。",
+        "实际执行模型（dashboard sessions API 记录，非响应回显）：合成 /v1/runs medium 与 xhigh 探针均执行 gpt-6-sol（reasoning_tokens 0 vs 69），/v1/responses custom+xhigh reasoning_tokens=243（已实证 2026-09-30）。",
+        "RAG 出站遵守策略：light-path/api-semantics fast model 不降档最终请求；复杂/排障问题钉 medium 不升 high（策略未启用时行为不变）。",
+        "工单标题保持 gpt-5.4-nano/none（实测 gpt-6-sol/medium 2.19–2.81s 超 2s 时限且 24-token 预算下约半数被 reasoning 耗尽）；该排除为待用户最终确认的临时决策，纳入需另行批准时限与预算。",
+        "首个真实调查 case 后 support_account_case_llm_usage 各 stage model 记录 = gpt-6-sol（investigation stage 除外记录要求以分档合同为准）。"
       ],
       "evidence": [
         {
@@ -13356,6 +13388,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 部署与合成 session 实证 + provider 名修复（2026-09-30）",
           "command": "release pipeline r20260930-414ed4e（414ed4e 含 PR#1316；经并发会话发布落地）；Hermes /v1/runs 与 /v1/responses 合成探针（zacBot VPC 内直连，探针后 SG 规则已撤）；dashboard sessions API 实际执行记录读回",
           "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
+        },
+        {
+          "type": "deployment",
+          "label": "最终发布与运行态读回（2026-09-30）",
+          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
+          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 并发/固定语义复核证据（2026-09-30 复跑，应验收要求补充）",
+          "command": "本机一次性 PostgreSQL 14 实例（127.0.0.1:15433，独立数据目录，跑后即删）：AUTOMATION_ECS_TEST_POSTGRES_DSN 与 RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN 指向该实例，python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "33 passed（store 10：binding agent_model 固定/无 env 保持 NULL/turn-run 固定单值/4 线程并发 get_or_create 单行；worker PG 16：schema-010 迁移与固定列端到端；case workflow PG 7）。日志副本 /tmp/sp-pg-evidence.log（临时）。migrate 幂等由 fixture 双跑覆盖。"
         }
       ],
       "history": [
@@ -13373,7 +13417,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "legacy_refs": [],
       "created_at": "2026-09-14",
-      "updated_at": "2026-09-14"
+      "updated_at": "2026-09-30T08:40:00Z"
     },
     {
       "schema_version": 2,
@@ -13594,7 +13638,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检过→测试自动批准（digest 1a42df19…，绑定 request/version）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…，reply 的是 ECS 请求消息 msg_096ec720…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。剧本终判 12 PASS/1 FAIL（共 13 步）：唯一 FAIL=本地 case 镜像 zendesk_ticket_status 未更新——根因（file:line 实证，非 n8n）：PG close 事务（ticket_repository record_account_zendesk_internal_comment_result）只关本地 ticket+写 suspension 专属字段，通用 zendesk_ticket_status 无任何写入者，且 ECS 无 n8n 状态同步路由。已修：close 事务补写 case 镜像 status='solved'（PG+InMemory 对等）。人工审批门禁未由测试覆盖（自动批准例外）。PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检过→测试自动批准（digest 1a42df19…，绑定 request/version）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（msg_096ec720e20e42aeaf009e0335422ba5）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一的✗=本地 case 镜像 zendesk_ticket_status 未被状态同步写入（None，独立 readback 已 solved）——n8n case_status_sync 对 preprod 工单的镜像落库缺口，产品观察非本次链路问题。人工审批门禁未由测试覆盖（自动批准例外）。dry-run 解析修复：pilot 当前输出把计划体嵌在 data.wouldBody，skill _dry_run_params_sane 的候选集未覆盖导致 exit-0 参数齐全仍判 dry_run_params_unverified（13767 实测阻断）；候选集补 wouldBody（data.wouldBody 亦收录），新增嵌套形状匹配/错参仍拦两用例，19 绿。发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
+      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）——本条为唯一有效结论，先前记录中的错误消息 ID（msg_096ec720… 误标为回传，实为 ECS 请求消息 msg_096ec720…；回传=zac-agent 发出 msg_880ac02f651449ae…）、n8n case_status_sync 归因（已撤回：ECS 从不接该路由，镜像缺口根因见下）与 9/10 步数（实为 12 PASS/1 FAIL 共 13 步）均以本条为准。链路：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检→测试自动批准（digest 1a42df19…）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（msg_880ac02f651449ae…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一 FAIL 步=本地 case 镜像 zendesk_ticket_status 未更新——根因（实证）：close 事务（record_account_zendesk_internal_comment_result）只关本地 ticket+写 suspension 专属字段，该字段无任何写入者且 ECS 无状态同步路由。已修（PG close 事务补写 solved，PG+InMemory 对等，PR#1320/#1323 及后续），PostgreSQL 隔离验证通过（RUN_POSTGRES_INTEGRATION，solved close 落镜像断言）。人工审批门禁未由测试覆盖（自动批准例外）；13793 超时=我方部署滚动中断打停 worker（route 完成于 work 提交前），先前网关归因撤回（reasoning_effort 报错来自 memory 提取器，09-29 起既有，另行处理）。PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检过→测试自动批准（digest 1a42df19…，绑定 request/version）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…，reply 的是 ECS 请求消息 msg_096ec720…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。剧本终判 12 PASS/1 FAIL（共 13 步）：唯一 FAIL=本地 case 镜像 zendesk_ticket_status 未更新——根因（file:line 实证，非 n8n）：PG close 事务（ticket_repository record_account_zendesk_internal_comment_result）只关本地 ticket+写 suspension 专属字段，通用 zendesk_ticket_status 无任何写入者，且 ECS 无 n8n 状态同步路由。已修：close 事务补写 case 镜像 status='solved'（PG+InMemory 对等）。人工审批门禁未由测试覆盖（自动批准例外）。PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检过→测试自动批准（digest 1a42df19…，绑定 request/version）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（msg_096ec720e20e42aeaf009e0335422ba5）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一的✗=本地 case 镜像 zendesk_ticket_status 未被状态同步写入（None，独立 readback 已 solved）——n8n case_status_sync 对 preprod 工单的镜像落库缺口，产品观察非本次链路问题。人工审批门禁未由测试覆盖（自动批准例外）。dry-run 解析修复：pilot 当前输出把计划体嵌在 data.wouldBody，skill _dry_run_params_sane 的候选集未覆盖导致 exit-0 参数齐全仍判 dry_run_params_unverified（13767 实测阻断）；候选集补 wouldBody（data.wouldBody 亦收录），新增嵌套形状匹配/错参仍拦两用例，19 绿。发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13732,15 +13776,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "label": "[已撤回/被取代，见最新 13782 条目] PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
           "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
+          "details": "[撤回说明：本条的 9/10 步数、msg_096ec720… 回传 ID、n8n case_status_sync 归因均有误，以最新的 13782 条目为准（12 PASS/1 FAIL 共 13 步；回传=msg_880ac02f651449ae…；镜像缺口根因=close 事务无写入者，非 n8n）] 2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
         },
         {
           "type": "deployment",
-          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "label": "[已撤回/被取代，见最新 13782 条目] PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
           "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 仍 None（根因见 next_action，已修复待部署）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。"
+          "details": "[撤回说明：本条的 9/10 步数、msg_096ec720… 回传 ID、n8n case_status_sync 归因均有误，以最新的 13782 条目为准（12 PASS/1 FAIL 共 13 步；回传=msg_880ac02f651449ae…；镜像缺口根因=close 事务无写入者，非 n8n）] 2026-09-30 Preproduction：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 仍 None（根因见 next_action，已修复待部署）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。"
         }
       ],
       "source_refs": [
@@ -14806,7 +14850,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-180",
       "title": "Admin token 统计完整性优化",
-      "status": "done",
+      "status": "active",
       "owner": "codex",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
@@ -14814,7 +14858,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
       "summary": "按用户批准的 token统计完整性优化计划实施：(1) 顶部统计改为 token_usage_filtered_total——统一过滤函数（account_admin.filter_account_case_rows 单一真理源）+ 数据库侧 SUM/GROUP BY 聚合全部筛选结果，不受分页影响，旧 token_usage_page_total 保留兼容；(2) ragflow_docs_answer 不再写入 ledger 且读侧 SQL 排除，RAG source 从 unavailable 改为明确 excluded_by_admin_policy；(3) Hermes gateway usage 入公共 ledger——探针实证 gateway /v1/runs 返回 usage={input_tokens,output_tokens,total_tokens}(+可选 input/output_tokens_details)，run 完成时规范化写入 support_account_case_llm_usage（source='hermes',source_run_id=run_id，唯一索引幂等），billing 经 account case by zendesk ticket 解析；completed run 无 usage 时 completeness=partial+unknown_sources=['hermes']，绝不伪装 0；(4) cached clamp 三层（写入 build_usage_ledger_entry/读出 _clamp_usage_row+SQL LEAST/成本计算保留）+ 数据质量日志；(5) flush_case_usage_capture 返回结构化结果（inserted/failed/status/failure_reason，unattributed 不静默丢弃）。schema：ledger 表加 source/source_run_id 列+部分唯一索引（幂等 bootstrap）。",
-      "next_action": "",
+      "next_action": "验收不通过（证据不足）修复中：v12 schema 契约+非法 usage 拒绝+anti-join+flush 失败 partial 已实现，待 preprod bootstrap 部署+受控 hermes run 验证后重新提交验收。",
       "acceptance_criteria": [
         "跨页全量汇总：page/page_size 变化不影响 token_usage_filtered_total；筛选条件生效。",
         "RAG 与 ragflow_docs_answer 永不进入总量（写侧停记+读侧排除）；RAG source 显示明确排除。",
@@ -14856,6 +14900,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "done",
           "summary": "PR#1313 部署 preprod 并完成线上矩阵验证；列预建激活 usage 记录；rev-011（PR#1317）留作下一次带 bootstrap flag 的部署（车辆由并发会话持有）。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "review_failed",
+          "summary": "独立验收结论=证据不足（5 项发现：flush 失败不进 completeness、hermes 端到端未验、schema 版本未 bump、空 usage 记 0、计数式 completeness）。修复：_TICKET_SCHEMA_VERSION v12+正式 migration 文件（v11→v12 真库升级实证）、usage 校验（非负整数+总和>0）、source_run_id anti-join、自动化 case 零 usage 行→partial+['automation']（端到端测试）。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "验收修复部署 cba1ef5 时 bootstrap 仍被 schema_is_current 跳过（该检查只对 ECS SCHEMA_REVISION+表存在性；ticket v12 与 011==011 时不触发）——按同一机制 bump ECS revision 011→012 强制 v12 迁移经正式 bootstrap 执行。"
         }
       ],
       "legacy_ids": [],
@@ -14874,7 +14928,77 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-181",
-      "title": "WeKnora 适配层：Client/Adapter/Promotion 任务表/Worker/Hermes 候选接入",
+      "title": "Hermes Case Summary 与知识治理 Review 双角色（独立会话 + 结构化合同 + WeKnora 只读适配层）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-09-30",
+      "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。",
+      "next_action": "代码已合入 main（PR#1328）；prompt release pr-c47f99044ae0 已在源库 prepare+activate（含两个新 manual key）；首次管线尝试以旧 active release pr-017c557db049 校验失败（catalog 缺新 key），按 p2-178 先例用 docs-only 提交推进 release commit 后重跑 Preproduction 管线（--bootstrap-account-schema 建 schema v13 两张新表）。",
+      "acceptance_criteria": [
+        "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
+        "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
+        "重复关闭事件（solved→closed、重复 solved）不创建重复任务（UNIQUE(engineer_case_id,episode) 只复用）。",
+        "reopen 使未完成任务失效（事务内 invalidated），新 episode 生成新任务。",
+        "缺少证据只能 human_review（decision 合同 + weknora_available=false 语义）。",
+        "Review 正确区分 knowledge/memory/skill（枚举合同；skill 候选只允许 no_change/human_review——skill 手册规定不自动演进）。",
+        "相似内容能输出 no_change/merge/supplement/replace/new（decision-target 一致性强制）。",
+        "输出可追溯 case/ticket/Summary session/Review session/Slack 线程（lineage 字段+bundle）。",
+        "Summary/Review 失败、超时、版本冲突不被标记成功（failed+error_code；stale_case_lineage）。",
+        "WeKnora 未配置/检索失败 fail-closed（weknora_available=false→human_review），不伪造成功。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Targeted unit + contract tests",
+          "details": "2026-09-30：test_hermes_knowledge_workflow（11 例：触发幂等/非 real 不建/本地 resolved/双 session 与只读 toolset/weknora 可用与 fail-closed/run 失败不建 review/输出合同违规/覆盖不匹配/revision 冲突 stale/reopen 失效+新 episode）+ test_hermes_case_contracts（bundle 验证器扩展 summary/review 前缀，含 bad-hash/restricted/duplicate-candidate/target 违规负例）+ 回归 test_hermes_zendesk_agent(_tools)/test_agent_config 129 passed + test_account_zendesk_internal_comment_service 11 passed（带 DSN）+ test_hermes_case_workflow 20 passed。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration",
+          "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Prompt release for new catalog keys",
+          "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-30",
+          "event": "created",
+          "summary": "用户批准 Hermes Summary/Review 计划（实施目标 low thinking）并下令实施；Summary/Review 复用现有 Hermes，WeKnora 只读代检索+适配层落地。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "PR#1328 合入 main；Preprod 首次发布尝试因旧 Prompt Release 缺新 catalog key 在 codebuild 门禁失败，已按流程准备并激活 pr-c47f99044ae0，docs-only 提交推进 release commit 后重跑。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/hermes_knowledge_workflow.py",
+        "backend/services/hermes_weknora.py",
+        "backend/services/hermes_case_workflow.py",
+        "backend/repositories/hermes_case_repository.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/prompts/hermes_support_agent.py",
+        "backend/skills/knowledge-review/SKILL.md",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/account_zendesk_internal_comment.py",
+        "backend/worker.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-182",
+      "title": "WeKnora 写入适配层：Client/Promotion 任务表/Adapter/Worker/Hermes 候选接入",
       "status": "active",
       "owner": "codex",
       "phase_id": "phase-2",
@@ -14882,44 +15006,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-knowledge-promotion",
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
-      "summary": "按 WeKnora 适配层计划实施：新增独立 WeKnoraClient（fail-closed，API 路径/认证/字段名由 Preproduction contract probe 固定，不按文档猜测）、WeKnoraPromotionAdapter（no_change/new/supplement/replace/merge/human_review 六种决策映射与版本冲突保护）、support_weknora_promotions 任务表（lineage 全字段+来源版本唯一约束）、worker 领取/租约/outcome_unknown 恢复边界、close 流程结构化候选入队（WEKNORA_PROMOTION_ENABLED 门禁，默认关闭）。Skill 管理不纳入；Hermes memory-core 不在本任务删除。",
-      "next_action": "等待用户提供 WeKnora Preproduction endpoint/凭证后运行 scripts/weknora/probe_weknora_contract.py 固定 WEKNORA_API_CONTRACT_JSON；随后 Preproduction 端到端验证（新建/补充/替代/合并/幂等/版本冲突）；再评估 n8n 旧 Tencent Memory 写入路径迁移与 Hermes Review 真实候选输出接入。",
+      "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。",
+      "next_action": "等待 WeKnora Preproduction endpoint/凭证运行 scripts/weknora/probe_weknora_contract.py 固定 WEKNORA_API_CONTRACT_JSON；随后接入 p2-181 review 任务 weknora_submissions → 本 promotion 表的消费桥；再做 Preproduction 端到端（新建/补充/替代/合并/幂等/版本冲突）与 n8n 旧 Tencent Memory 写入路径迁移。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
-        "Adapter 决策矩阵按计划状态规则落位（含 401/403 不重试、写后回读失败 outcome_unknown、版本冲突人工复核）",
+        "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、版本冲突人工复核）",
         "同一 (source_type, source_id, source_version, candidate_type) 只入队一次",
-        "reopen_hermes_case 使 queued/active 的 WeKnora promotion 失效",
-        "close 事务内原子入队候选，重复 close 事件幂等",
+        "reopen_hermes_case 使 queued/active 的 WeKnora promotion 失效（与 p2-181 的 summary/review 任务失效同事务）",
+        "close 事务内原子入队候选，重复 close 事件幂等；knowledge_workflow_active 时默认候选让位",
         "默认（未启用 env）对现有行为零影响"
       ],
       "blockers": [
-        "WeKnora Preproduction endpoint/认证凭证/知识库 ID/共享 Hermes 记忆身份未提供：contract probe 与端到端验证被阻塞，需用户提供目标环境信息"
+        "WeKnora Preproduction endpoint/认证凭证/知识库 ID/共享 Hermes 记忆身份未提供：contract probe 与端到端验证被阻塞"
       ],
       "evidence": [
         {
           "type": "test",
           "label": "定向单元测试",
-          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 共 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
+          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
         },
         {
           "type": "test",
           "label": "隔离 PostgreSQL 集成",
-          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例（unix socket + 55432）RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL 建表、close 事务原子入队+来源版本唯一、双线程并发领取单一 owner、reopen 事务内失效且失效行不可领取）；既有 hermes PG 套件 23 passed 确认 schema v12 bump 无回归。"
+          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例 RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL、close 事务原子入队+来源版本唯一、双线程并发领取单 owner、reopen 失效不可领取）；hermes PG 套件 23 passed。"
         },
         {
           "type": "test",
           "label": "回归矩阵",
-          "details": "2026-09-30：test_hermes_case_workflow/test_hermes_case_contracts/test_hermes_runtime/test_engineer_slack/test_automation_ecs_admin_reader 80 passed；test_hermes_zendesk_agent(+tools) 125 passed；test_automation_ecs_worker 15 passed；test_repository_configuration 128 passed。"
+          "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
         }
       ],
       "history": [],
       "legacy_ids": [],
-      "legacy_refs": [],
+      "legacy_refs": [
+        "p2-181"
+      ],
       "source_refs": [
         "backend/services/weknora_client.py",
         "backend/services/weknora_promotion_adapter.py",
         "backend/repositories/weknora_promotion_repository.py",
-        "backend/worker.py"
+        "backend/worker.py",
+        "docs/operations/weknora-adapter.md"
       ]
     },
     {
@@ -20276,6 +20403,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
         "Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。",
         "Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。",
+        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "`/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。",
         "`/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。",
         "`/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。",

@@ -211,18 +211,23 @@ def _automation_cursor(
     case_rows: list[dict] | None = None,
     usage_rows: list[dict] | None = None,
     aggregation_rows: list[dict] | None = None,
-    completed_hermes_runs: int = 0,
-    hermes_usage_rows: int = 0,
+    completed_run_rows: list[dict] | None = None,
+    recorded_run_rows: list[dict] | None = None,
+    usage_billing_rows: list[dict] | None = None,
 ) -> MagicMock:
+    """Mock cursor for account_automation.
+
+    fetchall sequence: account cases, page usage rows, filtered aggregation,
+    completed hermes run ids, recorded hermes run ids, billing ids with usage.
+    """
     cursor = MagicMock()
     cursor.fetchall.side_effect = [
         case_rows if case_rows is not None else [dict(_ACCOUNT_CASE_ROW)],
         usage_rows if usage_rows is not None else [],
         aggregation_rows if aggregation_rows is not None else [],
-    ]
-    cursor.fetchone.side_effect = [
-        {"count": completed_hermes_runs},
-        {"count": hermes_usage_rows},
+        completed_run_rows if completed_run_rows is not None else [],
+        recorded_run_rows if recorded_run_rows is not None else [],
+        usage_billing_rows if usage_billing_rows is not None else [],
     ]
     return cursor
 
@@ -275,8 +280,9 @@ def test_account_automation_payload_exposes_dual_sources_and_excludes_rag() -> N
                 "call_count": 1,
             },
         ],
-        completed_hermes_runs=1,
-        hermes_usage_rows=1,
+        completed_run_rows=[{"run_id": "run-abc"}],
+        recorded_run_rows=[{"source_run_id": "run-abc"}],
+        usage_billing_rows=[{"billing_ticket_id": "AC-14501"}],
     )
     transaction = MagicMock()
     transaction.__enter__.return_value = cursor
@@ -333,6 +339,10 @@ def test_filtered_total_covers_all_matching_cases_beyond_the_page() -> None:
                 "call_count": 3,
             }
         ],
+        usage_billing_rows=[
+            {"billing_ticket_id": "AC-14501"},
+            {"billing_ticket_id": "AC-14502"},
+        ],
     )
     transaction = MagicMock()
     transaction.__enter__.return_value = cursor
@@ -347,6 +357,7 @@ def test_filtered_total_covers_all_matching_cases_beyond_the_page() -> None:
     filtered = payload["token_usage_filtered_total"]
     assert filtered["case_count"] == 2
     assert filtered["total_input_tokens"] == 300
+    assert filtered["completeness"] == "complete"
 
 
 def test_missing_hermes_usage_marks_partial_not_zero_complete() -> None:
@@ -363,8 +374,9 @@ def test_missing_hermes_usage_marks_partial_not_zero_complete() -> None:
                 "call_count": 1,
             }
         ],
-        completed_hermes_runs=2,
-        hermes_usage_rows=0,
+        completed_run_rows=[{"run_id": "run-1"}, {"run_id": "run-2"}],
+        recorded_run_rows=[{"source_run_id": "run-1"}],
+        usage_billing_rows=[{"billing_ticket_id": "AC-14501"}],
     )
     transaction = MagicMock()
     transaction.__enter__.return_value = cursor
@@ -406,6 +418,48 @@ def test_usage_queries_exclude_ragflow_stage_and_clamp_cached_reads() -> None:
         {"prompt_tokens": 80, "cached_input_tokens": -5, "completion_tokens": 5}
     )
     assert clamped_negative["cached_input_tokens"] == 0
+
+
+def test_flush_failure_surfaces_as_partial_for_automated_case_without_rows() -> None:
+    # End-to-end contract: an automated case whose usage flush failed has no
+    # ledger rows; the filtered total must report partial, not complete zero.
+    cursor = _automation_cursor(
+        usage_rows=[],
+        aggregation_rows=[],
+        usage_billing_rows=[],
+    )
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        payload = reader.account_automation()
+
+    filtered = payload["token_usage_filtered_total"]
+    assert filtered["completeness"] == "partial"
+    assert "automation" in filtered["unknown_sources"]
+    assert filtered["total_input_tokens"] == 0
+
+
+def test_hermes_anti_join_detects_specific_missing_run() -> None:
+    # Same totals, but one specific run id missing from the ledger.
+    cursor = _automation_cursor(
+        usage_rows=[],
+        aggregation_rows=[],
+        completed_run_rows=[{"run_id": "run-1"}, {"run_id": "run-2"}],
+        recorded_run_rows=[{"source_run_id": "run-1"}, {"source_run_id": "run-extra"}],
+        usage_billing_rows=[{"billing_ticket_id": "AC-14501"}],
+    )
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        payload = reader.account_automation()
+
+    filtered = payload["token_usage_filtered_total"]
+    assert filtered["completeness"] == "partial"
+    assert "hermes" in filtered["unknown_sources"]
 
 
 def test_environment_config_returns_names_and_descriptions_without_values(
