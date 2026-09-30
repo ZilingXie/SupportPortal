@@ -57,6 +57,11 @@
       "at": "2026-09-30",
       "event": "review_failed",
       "summary": "独立验收结论=证据不足（5 项发现：flush 失败不进 completeness、hermes 端到端未验、schema 版本未 bump、空 usage 记 0、计数式 completeness）。修复：_TICKET_SCHEMA_VERSION v12+正式 migration 文件（v11→v12 真库升级实证）、usage 校验（非负整数+总和>0）、source_run_id anti-join、自动化 case 零 usage 行→partial+['automation']（端到端测试）。"
+    },
+    {
+      "at": "2026-09-30",
+      "event": "followup",
+      "summary": "验收修复部署 cba1ef5 时 bootstrap 仍被 schema_is_current 跳过（该检查只对 ECS SCHEMA_REVISION+表存在性；ticket v12 与 011==011 时不触发）——按同一机制 bump ECS revision 011→012 强制 v12 迁移经正式 bootstrap 执行。"
     }
   ],
   "legacy_ids": [],

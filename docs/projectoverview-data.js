@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T12:59:35Z",
-  "source_base_commit": "60d04f34f9a7aedc94b95cf0e412d01578c0f2c8",
-  "registry_digest": "f63ee5d4956d277f4f5004e3560b0ec6ede54de3d860c274fc17b7e070bbc8a8",
+  "generated_at": "2026-09-30T13:09:11Z",
+  "source_base_commit": "3dd735b6dbd9af5cf2a15965d1dbce29b3df0657",
+  "registry_digest": "1ed10a06753ed2aaef014d91f4c6280ff142cc9cc4b03d696720ca0093fbb075",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -14857,6 +14857,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "review_failed",
           "summary": "独立验收结论=证据不足（5 项发现：flush 失败不进 completeness、hermes 端到端未验、schema 版本未 bump、空 usage 记 0、计数式 completeness）。修复：_TICKET_SCHEMA_VERSION v12+正式 migration 文件（v11→v12 真库升级实证）、usage 校验（非负整数+总和>0）、source_run_id anti-join、自动化 case 零 usage 行→partial+['automation']（端到端测试）。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "验收修复部署 cba1ef5 时 bootstrap 仍被 schema_is_current 跳过（该检查只对 ECS SCHEMA_REVISION+表存在性；ticket v12 与 011==011 时不触发）——按同一机制 bump ECS revision 011→012 强制 v12 迁移经正式 bootstrap 执行。"
         }
       ],
       "legacy_ids": [],
