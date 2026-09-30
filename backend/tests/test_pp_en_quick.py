@@ -282,7 +282,7 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertEqual(len(fetch_calls), 1)
         self.assertIn("/v1/enablement-relay/requests/enr-AC-13900-v1", fetch_calls[0]["url"])
         self.assertEqual(fetch_calls[0]["token"], "intake-token")
-        self.assertEqual(len(gets), 2, "task fetched once for binding, once for the reply")
+        self.assertEqual(len(gets), 3, "task fetched for binding, delivery wait, and reply fencing")
         # Result reply: real mutation contract — nested task envelope unwrapped,
         # current message id included, fencing from the fresh GET, and EXACTLY
         # the six server-allowed fields (protocol_v06 rejects unknown keys,
@@ -334,7 +334,7 @@ class PpEnQuickTests(unittest.TestCase):
             )
         self.assertEqual(calls, [], "skill must never run on a current-message mismatch")
 
-    def test_pending_message_stops_before_pilot(self) -> None:
+    def test_pending_message_waits_then_refuses_on_timeout(self) -> None:
         engine = FakeEngine()
         _happy_queue(engine, outcome="enabled", write=True)
         engine.db_queue = engine.db_queue[:6]
@@ -356,8 +356,39 @@ class PpEnQuickTests(unittest.TestCase):
                 get_json=get,
                 workdir=self._workdir(),
             )
-        self.assertIn("not delivered", str(ctx.exception))
+        # A freshly dispatched message is legitimately pending: the scenario
+        # WAITS for delivery (transient) and only refuses after the timeout.
+        self.assertIn("never reached delivery_status=delivered", str(ctx.exception))
         self.assertEqual(calls, [], "no pilot write while the current message is undelivered")
+
+    def test_pending_message_delivers_during_wait_and_proceeds(self) -> None:
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="already_satisfied", write=False)
+        calls: list = []
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        state = {"polls": 0}
+
+        def get(url, **kwargs):
+            state["polls"] += 1
+            # First poll: still pending (dispatch beat). Then delivered.
+            return _relay_task_response(
+                delivery_status="delivered" if state["polls"] > 1 else "pending"
+            )
+
+        report = pp.run_pp_en_quick(
+            engine,
+            skill_runner=_fake_runner("already_satisfied", "already_satisfied", False, calls),
+            relay_base="https://preprod.example.test/automation/preproduction",
+            relay_token="intake-token",
+            relay_client_identity=_identity(),
+            ecs_agent_id=ECS_AGENT_ID,
+            fetch_json=fetch,
+            post_json=lambda *a, **k: {"ok": True},
+            get_json=get,
+            workdir=self._workdir(),
+        )
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(report["relay_outcome"], "already_satisfied")
 
     def test_turn_not_ours_stops_before_pilot(self) -> None:
         engine = FakeEngine()

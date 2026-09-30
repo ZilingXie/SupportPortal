@@ -369,16 +369,13 @@ def verify_relay_binding(
 
     # Reply-readiness gates (agentrelay-v05 contract): replying an undelivered
     # message or out-of-turn would only fail AFTER the irreversible pilot
-    # write, so both are verified here — before the skill runs.
+    # write, so both are verified here — before the skill runs. Terminal
+    # status and turn ownership fail fast; a freshly dispatched message is
+    # legitimately `pending` for a few beats, so delivery waits (transient)
+    # instead of refusing.
     if str(task.get("status") or "") != "open":
         raise AutomationTestScenarioError(
             f"relay task is terminal (status={task.get('status')!r}); refusing to execute"
-        )
-    if str(current_message.get("delivery_status") or "") != "delivered":
-        raise AutomationTestScenarioError(
-            "current message is not delivered yet "
-            f"(delivery_status={current_message.get('delivery_status')!r}); "
-            "refusing to execute before the reply is possible"
         )
     task_to_agent = str(task.get("to_agent_id") or task.get("toAgentId") or "")
     if task_to_agent != identity["agent_id"]:
@@ -386,6 +383,27 @@ def verify_relay_binding(
             f"it is not this client's turn (task to_agent_id={task_to_agent!r} "
             f"!= client={identity['agent_id']!r}); refusing to execute"
         )
+
+    def delivery_probe():
+        fresh = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
+        message = _current_task_message(fresh["task"], fresh["fencing"])
+        if str(message.get("delivery_status") or "") == "delivered":
+            return message
+        return None
+
+    try:
+        self_message = engine.wait_for(
+            "current relay message delivered to this client",
+            delivery_probe,
+            engine.relay_timeout_min * 60,
+        )
+    except TimeoutError as exc:
+        raise AutomationTestScenarioError(
+            f"current message never reached delivery_status=delivered ({exc}); "
+            "refusing to execute before the reply is possible"
+        ) from exc
+    if str(self_message.get("delivery_status") or "") != "delivered":  # pragma: no cover
+        raise AutomationTestScenarioError("current message delivery did not settle")
 
     url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
     try:
