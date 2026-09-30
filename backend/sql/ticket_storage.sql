@@ -698,6 +698,68 @@ CREATE TABLE IF NOT EXISTS support_hermes_case_promotions (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS support_hermes_summary_tasks (
+    summary_task_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    episode INTEGER NOT NULL CHECK (episode >= 1),
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    hermes_session_id TEXT NOT NULL,
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved', 'local_resolved', 'closed')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
+    idempotency_key TEXT NOT NULL,
+    run_id TEXT,
+    prompt_version TEXT,
+    agent_model TEXT,
+    reasoning_effort TEXT,
+    packet JSONB,
+    packet_hash TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_hermes_summary_tasks_episode
+    ON support_hermes_summary_tasks (engineer_case_id, episode);
+
+CREATE TABLE IF NOT EXISTS support_hermes_review_tasks (
+    review_task_id TEXT PRIMARY KEY,
+    summary_task_id TEXT NOT NULL UNIQUE REFERENCES support_hermes_summary_tasks(summary_task_id) ON DELETE CASCADE,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    episode INTEGER NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    review_session_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
+    idempotency_key TEXT NOT NULL,
+    run_id TEXT,
+    prompt_version TEXT,
+    skill_version TEXT,
+    agent_model TEXT,
+    reasoning_effort TEXT,
+    weknora_available BOOLEAN,
+    weknora_query TEXT,
+    report JSONB,
+    report_hash TEXT,
+    weknora_adapter_status TEXT,
+    weknora_submissions JSONB,
+    error_code TEXT,
+    error_message TEXT,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,
     email TEXT,

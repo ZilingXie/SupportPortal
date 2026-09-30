@@ -249,6 +249,33 @@ def _message_target(
     )
 
 
+def _queue_hermes_knowledge_summary_for_local_resolution(
+    repository: TicketRepository, *, ticket_id: str
+) -> None:
+    """Best-effort knowledge Summary task when the local ticket just resolved.
+
+    The queue helper itself verifies the ticket is locally resolved and a
+    Hermes binding exists; the n8n Zendesk ``solved`` sync stays the primary
+    trigger, so this must never affect the reply-delivery result.
+    """
+    import logging
+
+    try:
+        from backend.services.hermes_knowledge_workflow import (
+            queue_hermes_summary_for_locally_resolved_ticket,
+        )
+
+        queue_hermes_summary_for_locally_resolved_ticket(
+            repository, client_ticket_id=ticket_id
+        )
+    except Exception:  # noqa: BLE001 - knowledge governance must not affect reply delivery
+        logging.getLogger("supportportal.account_zendesk_internal_comment").warning(
+            "hermes_knowledge_summary_local_resolution_queue_failed ticket_id=%s",
+            ticket_id,
+            exc_info=True,
+        )
+
+
 def _persist_result(
     repository: TicketRepository,
     *,
@@ -277,6 +304,8 @@ def _persist_result(
             status_code=409,
             outcome_unknown=True,
         ) from exc
+    if close_local_ticket and str(payload.get("status") or "") == "added":
+        _queue_hermes_knowledge_summary_for_local_resolution(repository, ticket_id=ticket_id)
     result = _result_from_payload(payload, actor_id=str(payload.get("actor_id") or "system"), trigger=str(payload.get("trigger") or "account_admin"))
     if isinstance(persisted, dict) and persisted.get("audit_persisted") is not None:
         result = AccountZendeskCommentResult(

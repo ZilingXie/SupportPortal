@@ -153,6 +153,12 @@ from backend.services.hermes_case_workflow import (
     freeze_turn_request_for_delivery,
     hermes_workflow_mode,
 )
+from backend.services.hermes_knowledge_workflow import (
+    drain_hermes_knowledge_tasks,
+    knowledge_workflow_active,
+)
+from backend.services.hermes_agent_runtime import HermesAgentClient
+from backend.services.hermes_weknora import HermesWeKnoraClient
 from backend.services.hermes_runtime import (
     HermesRuntimeDeliveryError,
     hermes_runtime_configured,
@@ -2726,6 +2732,26 @@ def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
     return processed
 
 
+def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
+    if not knowledge_workflow_active():
+        return 0
+    try:
+        return drain_hermes_knowledge_tasks(
+            ticket_repository,
+            client=HERMES_KNOWLEDGE_AGENT_CLIENT,
+            weknora_client=HermesWeKnoraClient(),
+            limit=limit,
+        )
+    except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure
+        LOGGER.warning("hermes_knowledge_tasks_drain_failed", exc_info=True)
+        return 0
+
+
+# Stateless urllib client shared by knowledge drains (settings read once at
+# import; the run bodies pin model/effort from task rows, not live config).
+HERMES_KNOWLEDGE_AGENT_CLIENT = HermesAgentClient()
+
+
 def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
@@ -3332,6 +3358,7 @@ def process_account_automation_once() -> None:
     if _drain_real_hermes_turns(limit=20):
         _drain_engineer_slack_events(limit=20)
     _drain_real_hermes_promotions(limit=20)
+    _drain_hermes_knowledge_tasks(limit=5)
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
