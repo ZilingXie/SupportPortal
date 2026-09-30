@@ -15,6 +15,7 @@ from psycopg.rows import dict_row
 from backend.services.account_admin import (
     account_automation_payload,
     environment_config_description,
+    filter_account_case_rows,
 )
 from backend.services.agent_config import build_agent_config_payload
 from backend.services.automation_ecs_dashboard_reader import safe_zendesk_source
@@ -465,27 +466,200 @@ class AutomationEcsAdminReader:
         self,
         cursor: psycopg.Cursor[dict[str, Any]],
         billing_ticket_ids: list[str],
-    ) -> dict[str, dict[str, Any]]:
+    ) -> dict[str, dict[str, dict[str, Any]]]:
         if not billing_ticket_ids:
             return {}
         cursor.execute(
             sql.SQL(
                 """
                 SELECT billing_ticket_id,stage,provider,model,prompt_tokens,
-                       completion_tokens,cached_input_tokens,reasoning_tokens
+                       completion_tokens,cached_input_tokens,reasoning_tokens,source
                 FROM {}
-                WHERE billing_ticket_id=ANY(%s)
+                WHERE billing_ticket_id=ANY(%s) AND stage != 'ragflow_docs_answer'
                 ORDER BY created_at,id
                 """
             ).format(self._table("support_account_case_llm_usage")),
             (billing_ticket_ids,),
         )
-        grouped: dict[str, list[dict[str, Any]]] = {key: [] for key in billing_ticket_ids}
+        grouped: dict[str, dict[str, list[dict[str, Any]]]] = {
+            key: {"automation": [], "hermes": []} for key in billing_ticket_ids
+        }
         for row in cursor.fetchall():
             key = str(row.get("billing_ticket_id") or "")
-            if key in grouped:
-                grouped[key].append(row)
-        return {key: _automation_usage(rows) for key, rows in grouped.items()}
+            if key not in grouped:
+                continue
+            normalized = self._clamp_usage_row(row)
+            bucket = "hermes" if str(row.get("source") or "") == "hermes" else "automation"
+            grouped[key][bucket].append(normalized)
+        return {
+            key: {
+                "automation": _automation_usage(rows["automation"]),
+                "hermes": _automation_usage(rows["hermes"]),
+            }
+            for key, rows in grouped.items()
+        }
+
+    @staticmethod
+    def _clamp_usage_row(row: dict[str, Any]) -> dict[str, Any]:
+        """Read-side clamp: cached is a subset of input; negatives dropped."""
+        clamped = dict(row)
+        prompt_tokens = max(int(row.get("prompt_tokens") or 0), 0)
+        raw_cached = int(row.get("cached_input_tokens") or 0)
+        clamped["prompt_tokens"] = prompt_tokens
+        clamped["cached_input_tokens"] = min(max(raw_cached, 0), prompt_tokens)
+        return clamped
+
+    def _filtered_usage_total(
+        self,
+        cursor: psycopg.Cursor[dict[str, Any]],
+        filtered_rows: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Aggregate usage for every case matching the current filters.
+
+        Aggregation happens in SQL over the filtered billing ids; usage rows
+        are never fully loaded. ragflow_docs_answer is excluded by policy and
+        RAG tokens are never part of the admin totals.
+        """
+        billing_ids = sorted(
+            {
+                str(row.get("billing_ticket_id") or "").strip()
+                for row in filtered_rows
+                if str(row.get("billing_ticket_id") or "").strip()
+            }
+        )
+        if not billing_ids:
+            return {
+                "scope": "filtered_cases",
+                "case_count": 0,
+                "completeness": "complete",
+                "unknown_sources": [],
+                "total_input_tokens": 0,
+                "total_cached_input_tokens": 0,
+                "total_output_tokens": 0,
+                "cost_usd": {"available": True, "total_usd": 0.0, "by_model": []},
+                "sources": {
+                    "automation": _automation_usage([]),
+                    "hermes": _automation_usage([]),
+                    "rag": {"included": False, "reason": "excluded_by_admin_policy"},
+                },
+            }
+        cursor.execute(
+            sql.SQL(
+                """
+                SELECT source,provider,model,
+                       SUM(GREATEST(prompt_tokens,0)) AS total_input_tokens,
+                       SUM(GREATEST(completion_tokens,0)) AS total_output_tokens,
+                       SUM(LEAST(GREATEST(cached_input_tokens,0),GREATEST(prompt_tokens,0))) AS total_cached_input_tokens,
+                       SUM(GREATEST(reasoning_tokens,0)) AS total_reasoning_tokens,
+                       COUNT(*) AS call_count
+                FROM {}
+                WHERE billing_ticket_id=ANY(%s) AND stage != 'ragflow_docs_answer'
+                GROUP BY source,provider,model
+                """
+            ).format(self._table("support_account_case_llm_usage")),
+            (billing_ids,),
+        )
+        by_source: dict[str, dict[str, Any]] = {}
+        token_by_model: list[dict[str, Any]] = []
+        for row in cursor.fetchall():
+            source = "hermes" if str(row.get("source") or "") == "hermes" else "automation"
+            bucket = by_source.setdefault(
+                source,
+                {
+                    "total_input_tokens": 0,
+                    "total_cached_input_tokens": 0,
+                    "total_output_tokens": 0,
+                    "total_reasoning_tokens": 0,
+                    "call_count": 0,
+                    "token_by_model": [],
+                },
+            )
+            model_usage = {
+                "provider": str(row.get("provider") or ""),
+                "model": str(row.get("model") or ""),
+                "input_tokens": int(row.get("total_input_tokens") or 0),
+                "output_tokens": int(row.get("total_output_tokens") or 0),
+                "cached_input_tokens": int(row.get("total_cached_input_tokens") or 0),
+                "reasoning_tokens": int(row.get("total_reasoning_tokens") or 0),
+                "call_count": int(row.get("call_count") or 0),
+            }
+            for bucket_key, usage_key in (
+                ("total_input_tokens", "input_tokens"),
+                ("total_cached_input_tokens", "cached_input_tokens"),
+                ("total_output_tokens", "output_tokens"),
+                ("total_reasoning_tokens", "reasoning_tokens"),
+                ("call_count", "call_count"),
+            ):
+                bucket[bucket_key] += int(model_usage[usage_key])
+            bucket["token_by_model"].append(model_usage)
+            token_by_model.append(model_usage)
+
+        zendesk_ids = sorted(
+            {
+                str(row.get("zendesk_ticket_id") or "").strip()
+                for row in filtered_rows
+                if str(row.get("zendesk_ticket_id") or "").strip()
+            }
+        )
+        unknown_sources: list[str] = []
+        if zendesk_ids:
+            cursor.execute(
+                sql.SQL(
+                    """
+                    SELECT COUNT(*) FROM {}
+                    WHERE namespace=%s AND status='completed' AND zendesk_ticket_id=ANY(%s)
+                    """
+                ).format(self._table("automation_hermes_turn_runs")),
+                (self.settings.job_namespace, zendesk_ids),
+            )
+            completed_runs = int(cursor.fetchone()["count"] or 0)
+            cursor.execute(
+                sql.SQL(
+                    "SELECT COUNT(*) FROM {} WHERE billing_ticket_id=ANY(%s) AND source='hermes'"
+                ).format(self._table("support_account_case_llm_usage")),
+                (billing_ids,),
+            )
+            hermes_rows = int(cursor.fetchone()["count"] or 0)
+            if completed_runs > hermes_rows:
+                unknown_sources.append("hermes")
+
+        automation = by_source.get(
+            "automation",
+            {
+                "total_input_tokens": 0,
+                "total_cached_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_reasoning_tokens": 0,
+                "call_count": 0,
+                "token_by_model": [],
+            },
+        )
+        hermes = by_source.get(
+            "hermes",
+            {
+                "total_input_tokens": 0,
+                "total_cached_input_tokens": 0,
+                "total_output_tokens": 0,
+                "total_reasoning_tokens": 0,
+                "call_count": 0,
+                "token_by_model": [],
+            },
+        )
+        return {
+            "scope": "filtered_cases",
+            "case_count": len(filtered_rows),
+            "completeness": "partial" if unknown_sources else "complete",
+            "unknown_sources": unknown_sources,
+            "total_input_tokens": automation["total_input_tokens"] + hermes["total_input_tokens"],
+            "total_cached_input_tokens": automation["total_cached_input_tokens"] + hermes["total_cached_input_tokens"],
+            "total_output_tokens": automation["total_output_tokens"] + hermes["total_output_tokens"],
+            "cost_usd": estimate_token_usage_cost_usd({"token_by_model": token_by_model}),
+            "sources": {
+                "automation": automation,
+                "hermes": hermes,
+                "rag": {"included": False, "reason": "excluded_by_admin_policy"},
+            },
+        }
 
     def account_automation(
         self,
@@ -499,6 +673,13 @@ class AutomationEcsAdminReader:
     ) -> dict[str, Any]:
         with self._read_cursor() as cursor:
             rows = self._account_case_rows(cursor)
+            filtered_rows = filter_account_case_rows(
+                rows,
+                route_status=route_status,
+                category=category,
+                created_from=created_from,
+                created_to=created_to,
+            )
             payload = account_automation_payload(
                 _AccountRows(rows),
                 page=page,
@@ -512,6 +693,7 @@ class AutomationEcsAdminReader:
             page_cases = list(payload.get("cases") or [])
             billing_ids = [str(item.get("billing_ticket_id") or "") for item in page_cases]
             summaries = self._usage_summaries(cursor, [item for item in billing_ids if item])
+            filtered_total = self._filtered_usage_total(cursor, filtered_rows)
 
         page_total = {
             "total_input_tokens": 0,
@@ -522,26 +704,26 @@ class AutomationEcsAdminReader:
             "cost_usd_total": 0.0,
         }
         for item in page_cases:
-            automation = summaries.get(str(item.get("billing_ticket_id") or ""), _automation_usage([]))
+            summary = summaries.get(
+                str(item.get("billing_ticket_id") or ""),
+                {"automation": _automation_usage([]), "hermes": _automation_usage([])},
+            )
+            automation = summary["automation"]
+            hermes = summary["hermes"]
+            token_by_model = [dict(entry) for entry in automation.get("token_by_model") or []]
+            token_by_model += [dict(entry) for entry in hermes.get("token_by_model") or []]
             usage = {
                 "available": True,
                 "error_reason": None,
-                "total_input_tokens": automation["total_input_tokens"],
-                "total_cached_input_tokens": automation["total_cached_input_tokens"],
-                "total_output_tokens": automation["total_output_tokens"],
+                "total_input_tokens": automation["total_input_tokens"] + hermes["total_input_tokens"],
+                "total_cached_input_tokens": automation["total_cached_input_tokens"] + hermes["total_cached_input_tokens"],
+                "total_output_tokens": automation["total_output_tokens"] + hermes["total_output_tokens"],
                 "total_embedding_tokens": 0,
-                "token_by_model": automation["token_by_model"],
+                "token_by_model": token_by_model,
                 "sources": {
-                    "rag": {
-                        "available": False,
-                        "error_reason": "RAG token usage is unavailable in ECS Admin",
-                        "total_input_tokens": 0,
-                        "total_cached_input_tokens": 0,
-                        "total_output_tokens": 0,
-                        "total_embedding_tokens": 0,
-                        "stage_totals": {},
-                    },
+                    "rag": {"included": False, "reason": "excluded_by_admin_policy"},
                     "automation": automation,
+                    "hermes": hermes,
                 },
             }
             usage["cost_usd"] = estimate_token_usage_cost_usd(usage)
@@ -553,6 +735,7 @@ class AutomationEcsAdminReader:
             else:
                 page_total["cost_usd_available"] = False
         payload["token_usage_page_total"] = page_total
+        payload["token_usage_filtered_total"] = filtered_total
         payload["model_pricing"] = model_pricing_payload()
         return payload
 

@@ -114,8 +114,13 @@ def test_flush_persists_entries_and_clears_buffer() -> None:
     repository = InMemoryTicketRepository()
     with case_usage_capture(billing_ticket_id="AC-1", client_ticket_id="TK-1") as capture:
         record_llm_invocation(_result(prompt_tokens=20, completion_tokens=5), stage="account_route")
-        inserted = flush_case_usage_capture(repository, capture)
-    assert inserted == 1
+        result = flush_case_usage_capture(repository, capture)
+    assert result == {
+        "inserted_count": 1,
+        "failed_count": 0,
+        "status": "complete",
+        "failure_reason": None,
+    }
     assert capture.entries == []
     summaries = repository.account_case_llm_usage_summaries(["AC-1"])
     assert summaries["AC-1"]["total_input_tokens"] == 20
@@ -128,8 +133,11 @@ def test_flush_drops_entries_without_billing_identity() -> None:
     repository = InMemoryTicketRepository()
     with case_usage_capture(client_ticket_id="TK-1") as capture:
         record_llm_invocation(_result(), stage="account_route")
-        inserted = flush_case_usage_capture(repository, capture)
-    assert inserted == 0
+        result = flush_case_usage_capture(repository, capture)
+    assert result["inserted_count"] == 0
+    assert result["status"] == "unattributed"
+    assert "unattributed" in result["failure_reason"]
+    assert "TK-1" in result["failure_reason"]
     assert repository.account_case_llm_usage_summaries(["AC-1"])["AC-1"]["call_count"] == 0
 
 
@@ -140,7 +148,11 @@ def test_flush_swallows_repository_failure() -> None:
 
     with case_usage_capture(billing_ticket_id="AC-1") as capture:
         record_llm_invocation(_result(), stage="account_route")
-        assert flush_case_usage_capture(_FailingRepository(), capture) == 0
+        result = flush_case_usage_capture(_FailingRepository(), capture)
+    assert result["inserted_count"] == 0
+    assert result["status"] == "failed"
+    assert "AC-1" in result["failure_reason"]
+    assert "RuntimeError" in result["failure_reason"]
 
 
 def test_invoke_account_responses_text_records_usage(monkeypatch: pytest.MonkeyPatch) -> None:

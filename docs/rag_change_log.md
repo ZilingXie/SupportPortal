@@ -34,6 +34,15 @@ For each new entry, record:
   (RagOutboundPolicyTests) plus the full `backend/tests/test_rag_qa.py`
   suite (103 passed); Preproduction usage-table model records post-deploy.
 
+## 2026-09-30 - RAGFlow answer generation exits the admin token ledger (p2-180)
+
+- Summary: `ragflow_docs_answer` generation tokens are no longer recorded into `support_account_case_llm_usage`, and the admin reader excludes the stage from both per-case detail and the new filtered-case totals; the RAG source in the admin token view changed from "unavailable" to explicitly "excluded by admin policy". RAG-service usage (support_rag_query_runs) was already out of this ledger and remains unchanged.
+- Reason: the user asked for honest admin token accounting: RAG and RAGFlow tokens must never enter the admin totals, and an "unavailable" label misled readers into thinking the RAG lookup failed.
+- Affected files/config: `backend/services/ragflow_docs_search_skill.py` (record_llm_invocation call removed), `automation_ecs_admin_reader.py` (stage != 'ragflow_docs_answer' in usage queries; rag source payload).
+- Data impact: no ingestion, retrieval, or prompt change; historical ragflow_docs_answer rows remain in the ledger but are excluded from every admin view going forward.
+- Verification: reader SQL assertion + generation-path test (capture stays empty) + isolated-PostgreSQL integration (ragflow row seeded and excluded from totals).
+
+
 ## 2026-09-28 - Hermes mid-session follow-up answers from trusted docs (p2-178)
 
 - Summary: an AI-held enablement conversation can now answer an in-session knowledge question ("What is the App ID?") in-turn: the Hermes route phase classifies it as conversation follow-up/knowledge_question, the server verifies business-state gates, and a server-controlled reply-only work phase queries the SAME trusted RAGFlow docs adapter used by the legacy reply fallback (`try_rag_fallback_answer`); the answer renders through the Persona phase with the deterministic References block appended, and publishes once through the hermes draft pipeline. RAG-unanswerable or failed lookups never guess — they complete the real human handoff.

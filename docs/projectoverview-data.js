@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T04:34:37Z",
-  "source_base_commit": "304610e1bfb87863df0b49e73463177f7768978e",
-  "registry_digest": "2c93c0c3a5602aab09791b0ee3a70fa2c2bbb25bf4d5afb6ee8581296f721d75",
+  "generated_at": "2026-09-30T04:20:23Z",
+  "source_base_commit": "7a7456c4dbcfb88d6216dfe384eadf9a8845874a",
+  "registry_digest": "e3dba2be1bec1f6f93b3e30b3d8ee194e08d685736bc442a65a1da5a68ce5a12",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1309,6 +1309,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Skill dry-run wouldBody parsing (local pilot)",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_local_pilot.py",
           "details": "19 passed（新增 2：data.wouldBody 嵌套计划体被正确核验且匹配→execute、嵌套错参→dry_run_params_mismatch 仍阻断）。修复=候选集加 wouldBody 键（顶层与 data.wouldBody 均收录），不弱化 fail-closed 语义。实测动机：preprod 13767（2026-09-29）exit-0 dry-run 参数齐全但判 unverified。"
+        },
+        {
+          "type": "deployment",
+          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
+          "details": "2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
         },
         {
           "type": "test",
@@ -2998,6 +3004,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Removal coverage",
           "details": "2026-09-18：定向 238 passed（ecs api 删 4 admin 用例+stub、UI 合同删 4 ECS 用例并加\"无 isEcsAdmin\"源码断言、镜像合同更新为不打包 workspace-ui、workspace api/reader/repository 回归；release_notes 契约断言改为基线存在而非首个）。"
+        },
+        {
+          "type": "test",
+          "label": "Matrix coverage",
+          "details": "2026-09-30：定向 286 passed+2 skipped（本地无 DSN）；postgres 集成在本地一次性 PostgreSQL 14 实例上真跑通过（2 passed：DDL 迁移、幂等、SQL 排除/clamp、hermes source、filtered 聚合、completeness）。新增 test_hermes_run_usage_ledger（6 例）+ clamp/排除/跨页/partial reader 用例 + flush 结构化用例 + UI 合同（All matching cases tokens/excluded/completeness）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes gateway usage contract",
+          "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
         }
       ],
       "source_refs": [
@@ -3010,7 +3026,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 9,
       "blocked_count": 0
     },
@@ -3600,18 +3616,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
           "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
           "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
-        },
-        {
-          "type": "test",
-          "label": "单模型分档策略与固定语义定向验证（2026-09-30）",
-          "command": "python3.12 -m pytest backend/tests/test_agent_model_policy.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_hermes_runtime.py -q；AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py -q；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
-          "result": "策略 12 passed；渲染器 58 passed（AGENT_MODEL_ID 注入/Production 剥离/缺失 fail-closed/production 拒绝）；worker 分档 5 passed（route/persona=medium、investigation work 与反馈 work=xhigh、旧 binding 不带 model 字段、丢回执重试用固定行值）；PG 固定+4 线程并发单行 10 passed（ON CONFLICT DO NOTHING 修复既有 get_or_create 竞态）；PG worker/工作流 16+7 passed；RAG 全量 103 passed。test_investigation_flow.py 两个 multi-agent 用例在干净基线同样失败（既有失败，与本改动无关）。"
-        },
-        {
-          "type": "test",
-          "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
-          "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
-          "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
         },
         {
           "type": "test",
@@ -13242,7 +13246,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Preproduction LLM 模型策略：调查 gpt-6-astra/medium、其余场景 gpt-5.6-luna/max",
       "summary": "按用户产品决策调整 Preproduction 的 LLM 模型策略：工程师调查回合（Hermes 栈）用 gpt-6-astra + reasoning effort medium（hermes EFS config.yaml 的 model.default + agent.reasoning_effort，已随 knowledge 合并部署 td:28 生效）；SupportPortal 其余全部自动化场景（route/api/worker 三角色的 ~24 个 model env + ~20 个 effort env）钉到 gpt-5.6-luna + max，经 automation_ecs_deploy.py 的 preproduction 专属 env 注入块（PREPRODUCTION_LLM_ENV_OVERRIDES）随管线发布生效，production 渲染显式剥离同名 env 防泄漏。硬门禁已实证上游组合可用（gpt-6-astra/medium、gpt-5.6-luna/max 均返回 completed）。已知边界：MemoryCore 无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none；WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不随 env 覆盖；廉价小任务（意图路由/标题/分类器，timeout 6-8s）在 luna+max 下可能超时重试，观察用量表与路由延迟后可单独回调。",
       "status": "active",
-      "next_action": "单模型分档（gpt-6-sol：业务/RAG=medium、调查=xhigh；标题场景经实测排除保持 nano/none）代码、测试、文档与 SSM 建参（agent-model v1）已完成；待 finalize 合码后走 Preproduction 发布，并用合成 session 验证实际执行模型（medium→xhigh→medium、调查反馈、/v1/responses 实际模型、task definition/SSM 版本一致）。",
+      "next_action": "轨道 A（hermes astra/medium）已随 td:28 合并部署生效并经 dashboard sessions API 实证（model=gpt-6-astra）；轨道 B 代码+测试已就绪，待 PR 合并后跑 preprod 管线发布，按 support_account_case_llm_usage 表验证各 stage model 记录。",
       "owner": "codex",
       "acceptance_criteria": [
         "上游组合硬门禁通过：gpt-6-astra+medium 与 gpt-5.6-luna+max 的 /v1/responses 最小请求均 completed（已实证 2026-09-14）。",
@@ -13262,18 +13266,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "上游组合硬门禁 + 渲染注入/剥离契约测试",
           "command": "curl /v1/responses（astra/medium、luna/max）；pytest backend/tests/test_automation_ecs_deploy.py -q",
           "result": "两个组合均 status=completed；60 passed（含新增 preproduction_pins_llm_policy ×3 角色 + production_strips_llm_policy）（2026-09-14）"
-        },
-        {
-          "type": "test",
-          "label": "单模型分档策略与固定语义定向验证（2026-09-30）",
-          "command": "python3.12 -m pytest backend/tests/test_agent_model_policy.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_llm_profiles.py backend/tests/test_rag_qa.py backend/tests/test_hermes_runtime.py -q；AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py -q；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003c隔离PG> python3.12 -m pytest backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
-          "result": "策略 12 passed；渲染器 58 passed（AGENT_MODEL_ID 注入/Production 剥离/缺失 fail-closed/production 拒绝）；worker 分档 5 passed（route/persona=medium、investigation work 与反馈 work=xhigh、旧 binding 不带 model 字段、丢回执重试用固定行值）；PG 固定+4 线程并发单行 10 passed（ON CONFLICT DO NOTHING 修复既有 get_or_create 竞态）；PG worker/工作流 16+7 passed；RAG 全量 103 passed。test_investigation_flow.py 两个 multi-agent 用例在干净基线同样失败（既有失败，与本改动无关）。"
-        },
-        {
-          "type": "test",
-          "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
-          "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
-          "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
         }
       ],
       "history": [
@@ -13512,7 +13504,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "dry-run 解析修复：pilot 当前输出把计划体嵌在 data.wouldBody，skill _dry_run_params_sane 的候选集未覆盖导致 exit-0 参数齐全仍判 dry_run_params_unverified（13767 实测阻断）；候选集补 wouldBody（data.wouldBody 亦收录），新增嵌套形状匹配/错参仍拦两用例，19 绿。发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
+      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表）→归属/dry-run 预检过→测试自动批准（digest 1a42df19…，绑定 request/version）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（msg_096ec720e20e42aeaf009e0335422ba5）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一的✗=本地 case 镜像 zendesk_ticket_status 未被状态同步写入（None，独立 readback 已 solved）——n8n case_status_sync 对 preprod 工单的镜像落库缺口，产品观察非本次链路问题。人工审批门禁未由测试覆盖（自动批准例外）。dry-run 解析修复：pilot 当前输出把计划体嵌在 data.wouldBody，skill _dry_run_params_sane 的候选集未覆盖导致 exit-0 参数齐全仍判 dry_run_params_unverified（13767 实测阻断）；候选集补 wouldBody（data.wouldBody 亦收录），新增嵌套形状匹配/错参仍拦两用例，19 绿。发布 13693 验收发现的 completion job 顶层 intent 对齐修复到 Preproduction，并用新的受控测试工单确认：Relay/数据库保留完整 readback，客户回复只说明 Media Relay 已启用且不包含 region/load/capacity/write 细节，delivery delivered 且工单 solved。13687 与 13693 均不修改、不重放；后续仍需完成其余四段受控验收、Mac 10:00 触发与 Production 授权。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13647,6 +13639,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Skill dry-run wouldBody parsing (local pilot)",
           "command": ".venv/bin/python -m pytest -q backend/tests/test_enablement_local_pilot.py",
           "details": "19 passed（新增 2：data.wouldBody 嵌套计划体被正确核验且匹配→execute、嵌套错参→dry_run_params_mismatch 仍阻断）。修复=候选集加 wouldBody 键（顶层与 data.wouldBody 均收录），不弱化 fail-closed 语义。实测动机：preprod 13767（2026-09-29）exit-0 dry-run 参数齐全但判 unverified。"
+        },
+        {
+          "type": "deployment",
+          "label": "PP-EN-QUICK authorized full-chain run (already_satisfied leg)",
+          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
+          "details": "2026-09-30 Preproduction：9/10 步 PASS。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 本地记录+独立回读 state=enabled/maxSubscribeLoad=10/region=2 verified_at 03:46:15）；Relay 回传 message_id=msg_096ec720…（task_00a519ca…，turn 1）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。待办：case 镜像 status 同步缺口移交调查。"
         }
       ],
       "source_refs": [
@@ -14706,6 +14704,60 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-29T21:00:00Z",
           "note": "第三轮复验通过（评审复核 commit 00575962/03737b7：287+85 passed、证据同步、官方栈 matched）；任务收口 done。遗留范围：Preproduction 未重新部署（本轮无运行时行为变更需求）；E3 终段（工单更正 AppID→v2→真实开通）待 owner 发起。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-180",
+      "title": "Admin token 统计完整性优化",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-09-30",
+      "summary": "按用户批准的 token统计完整性优化计划实施：(1) 顶部统计改为 token_usage_filtered_total——统一过滤函数（account_admin.filter_account_case_rows 单一真理源）+ 数据库侧 SUM/GROUP BY 聚合全部筛选结果，不受分页影响，旧 token_usage_page_total 保留兼容；(2) ragflow_docs_answer 不再写入 ledger 且读侧 SQL 排除，RAG source 从 unavailable 改为明确 excluded_by_admin_policy；(3) Hermes gateway usage 入公共 ledger——探针实证 gateway /v1/runs 返回 usage={input_tokens,output_tokens,total_tokens}(+可选 input/output_tokens_details)，run 完成时规范化写入 support_account_case_llm_usage（source='hermes',source_run_id=run_id，唯一索引幂等），billing 经 account case by zendesk ticket 解析；completed run 无 usage 时 completeness=partial+unknown_sources=['hermes']，绝不伪装 0；(4) cached clamp 三层（写入 build_usage_ledger_entry/读出 _clamp_usage_row+SQL LEAST/成本计算保留）+ 数据质量日志；(5) flush_case_usage_capture 返回结构化结果（inserted/failed/status/failure_reason，unattributed 不静默丢弃）。schema：ledger 表加 source/source_run_id 列+部分唯一索引（幂等 bootstrap）。",
+      "next_action": "代码+测试完成；finalize 合入后部署 Preproduction（须带 --bootstrap-account-schema 建 DDL）并按验收矩阵线上验证；Production 另行授权（届时同样带 bootstrap flag）。",
+      "acceptance_criteria": [
+        "跨页全量汇总：page/page_size 变化不影响 token_usage_filtered_total；筛选条件生效。",
+        "RAG 与 ragflow_docs_answer 永不进入总量（写侧停记+读侧排除）；RAG source 显示明确排除。",
+        "direct+hermes 相加；hermes usage 缺失→partial+unknown_sources，不显示完整 0；worker 重试同 run 不重复计数（唯一索引）。",
+        "cached>input 时 clamp（写/读/成本三层）；UI 不显示 cached>input。",
+        "flush 失败/无 billing id → 结构化状态（complete/unattributed/failed+原因），不静默丢弃。",
+        "未定价模型：token 正常显示，成本 unknown（全有或全无契约不变）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Matrix coverage",
+          "details": "2026-09-30：定向 286 passed+2 skipped（本地无 DSN）；postgres 集成在本地一次性 PostgreSQL 14 实例上真跑通过（2 passed：DDL 迁移、幂等、SQL 排除/clamp、hermes source、filtered 聚合、completeness）。新增 test_hermes_run_usage_ledger（6 例）+ clamp/排除/跨页/partial reader 用例 + flush 结构化用例 + UI 合同（All matching cases tokens/excluded/completeness）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes gateway usage contract",
+          "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-30",
+          "event": "created",
+          "summary": "用户交付 token统计完整性优化计划（low thinking）并批准实施；阶段 0 探针确认 gateway 返回 usage 后全阶段实施。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/automation_ecs_admin_reader.py",
+        "backend/services/account_admin.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/llm_usage_capture.py",
+        "backend/services/token_usage.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/services/ragflow_docs_search_skill.py",
+        "ui/workspace-ui/admin/app.js"
       ]
     },
     {
