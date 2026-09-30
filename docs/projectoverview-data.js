@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T13:45:29Z",
-  "source_base_commit": "4b98e7d8def4d99a6ebf9a2aa971b1d18a5507a0",
-  "registry_digest": "d2ad1cb4f34d7cb38ad2f25e4e214f25fa755eeb5462f0ababd63c4f025fb0e4",
+  "generated_at": "2026-09-30T15:51:54Z",
+  "source_base_commit": "dd32c03b85b8cd3acd18f610d70c147f7e4ed18f",
+  "registry_digest": "3d7f63a1cc7983821740dcf913301b6be9e9088a2f44f55ee5d489b8f3bad8cc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3866,6 +3866,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Prompt release for new catalog keys",
           "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release r20260930-39144ab attempt",
+          "details": "2026-09-30：release_commit=39144abb（含 PR#1328 代码与 #1329 rev-012），prompt release pr-c47f99044ae0（41 prompts 含两个新 manual）。checkpoint：codebuild passed(160s)、preproduction_preflight passed(154s)、schema bootstrap one-off task exit 0（33s，supportportal_preproduction schema）、prompt-sync 41 matched/7 remapped；route_worker_rollout/api_rollout/heartbeat 重试后 passed；collector failed(109s)——aws signin 端点不可达（操作者 AWS 会话过期），回滚读回失败→rollback_incomplete。发布未激活；DB 侧变更（v13 表+prompt）已生效不回滚。"
+        },
+        {
+          "type": "test",
+          "label": "Local official stack live verification",
+          "details": "2026-09-30：restart_single_host_stack --mode local_lightweight --db remote 于 main dd32c03b85b8，/health ok，app_build.ref=dd32c03b85b8=root main，inspect build_provenance_status=matched、无辅助栈；prompt_runtime(code-78882e9a3f24) prompt_count=41——运行中构建包含两个新知识治理 manual。本地远端库为 check 模式不 bootstrap 新表（管线本地 disabled 休眠，行为中性）；DDL 已由 PG 集成测试与 preprod bootstrap 实证。"
         },
         {
           "type": "test",
@@ -14952,7 +14962,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
       "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。",
-      "next_action": "代码已合入 main（PR#1328）；prompt release pr-c47f99044ae0 已在源库 prepare+activate（含两个新 manual key）；首次管线尝试以旧 active release pr-017c557db049 校验失败（catalog 缺新 key），按 p2-178 先例用 docs-only 提交推进 release commit 后重跑 Preproduction 管线（--bootstrap-account-schema 建 schema v13 两张新表）。",
+      "next_action": "代码已合入 main（PR#1328/#1330）；发布 r20260930-39144ab：codebuild/preflight/schema bootstrap（one-off task exit 0，schema v13 两张新表已建）/prompt 同步 pr-c47f99044ae0（41 prompts）全部通过，api/worker/route rollout 阶段通过后 collector 阶段因操作者 AWS 会话过期失败，回滚亦被过期凭证阻断（evidence status=rollback_incomplete，route live revision 未知）。待用户 aws login 后 resume 管线（ecs-pipeline-r20260930-39144ab --resume）或按 runbook 收敛服务并激活 release，再完成 preprod 验证。",
       "acceptance_criteria": [
         "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
         "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
@@ -14981,6 +14991,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Prompt release for new catalog keys",
           "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release r20260930-39144ab attempt",
+          "details": "2026-09-30：release_commit=39144abb（含 PR#1328 代码与 #1329 rev-012），prompt release pr-c47f99044ae0（41 prompts 含两个新 manual）。checkpoint：codebuild passed(160s)、preproduction_preflight passed(154s)、schema bootstrap one-off task exit 0（33s，supportportal_preproduction schema）、prompt-sync 41 matched/7 remapped；route_worker_rollout/api_rollout/heartbeat 重试后 passed；collector failed(109s)——aws signin 端点不可达（操作者 AWS 会话过期），回滚读回失败→rollback_incomplete。发布未激活；DB 侧变更（v13 表+prompt）已生效不回滚。"
+        },
+        {
+          "type": "test",
+          "label": "Local official stack live verification",
+          "details": "2026-09-30：restart_single_host_stack --mode local_lightweight --db remote 于 main dd32c03b85b8，/health ok，app_build.ref=dd32c03b85b8=root main，inspect build_provenance_status=matched、无辅助栈；prompt_runtime(code-78882e9a3f24) prompt_count=41——运行中构建包含两个新知识治理 manual。本地远端库为 check 模式不 bootstrap 新表（管线本地 disabled 休眠，行为中性）；DDL 已由 PG 集成测试与 preprod bootstrap 实证。"
         }
       ],
       "history": [
@@ -14993,6 +15013,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "followup",
           "summary": "PR#1328 合入 main；Preprod 首次发布尝试因旧 Prompt Release 缺新 catalog key 在 codebuild 门禁失败，已按流程准备并激活 pr-c47f99044ae0，docs-only 提交推进 release commit 后重跑。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "r20260930-39144ab 发布：DB 侧（schema v13 + prompt）全部完成；collector 因 AWS 会话过期失败且回滚受阻（rollback_incomplete），服务收敛与激活待用户重新认证后 resume；feature list 条目暂移未完成。"
         }
       ],
       "legacy_ids": [],
@@ -20418,7 +20443,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
         "Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。",
         "Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。",
-        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "`/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。",
         "`/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。",
         "`/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。",
@@ -20441,6 +20465,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
+        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]
