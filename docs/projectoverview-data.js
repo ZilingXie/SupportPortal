@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T12:05:23Z",
-  "source_base_commit": "2e0a35286b55e1c7356408f1f5c0dd554431a738",
-  "registry_digest": "6257c3454412d7d39d8b42223351f3f641b90e6863cd7546053e1bad41fa1d7e",
+  "generated_at": "2026-09-30T12:05:58Z",
+  "source_base_commit": "595c4b5c269497eb75e7087708e6d5d418c24ee9",
+  "registry_digest": "5c5770ff67f38259598b4226852ab990cd7f898dfe13525d82d1384fdc97a66d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3645,6 +3645,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 部署与合成 session 实证 + provider 名修复（2026-09-30）",
           "command": "release pipeline r20260930-414ed4e（414ed4e 含 PR#1316；经并发会话发布落地）；Hermes /v1/runs 与 /v1/responses 合成探针（zacBot VPC 内直连，探针后 SG 规则已撤）；dashboard sessions API 实际执行记录读回",
           "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
+        },
+        {
+          "type": "deployment",
+          "label": "最终发布与运行态读回（2026-09-30）",
+          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
+          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 并发/固定语义复核证据（2026-09-30 复跑，应验收要求补充）",
+          "command": "本机一次性 PostgreSQL 14 实例（127.0.0.1:15433，独立数据目录，跑后即删）：AUTOMATION_ECS_TEST_POSTGRES_DSN 与 RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN 指向该实例，python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "33 passed（store 10：binding agent_model 固定/无 env 保持 NULL/turn-run 固定单值/4 线程并发 get_or_create 单行；worker PG 16：schema-010 迁移与固定列端到端；case workflow PG 7）。日志副本 /tmp/sp-pg-evidence.log（临时）。migrate 幂等由 fixture 双跑覆盖。"
         },
         {
           "type": "test",
@@ -13272,16 +13284,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
-      "title": "Preproduction LLM 模型策略：调查 gpt-6-astra/medium、其余场景 gpt-5.6-luna/max",
-      "summary": "按用户产品决策调整 Preproduction 的 LLM 模型策略：工程师调查回合（Hermes 栈）用 gpt-6-astra + reasoning effort medium（hermes EFS config.yaml 的 model.default + agent.reasoning_effort，已随 knowledge 合并部署 td:28 生效）；SupportPortal 其余全部自动化场景（route/api/worker 三角色的 ~24 个 model env + ~20 个 effort env）钉到 gpt-5.6-luna + max，经 automation_ecs_deploy.py 的 preproduction 专属 env 注入块（PREPRODUCTION_LLM_ENV_OVERRIDES）随管线发布生效，production 渲染显式剥离同名 env 防泄漏。硬门禁已实证上游组合可用（gpt-6-astra/medium、gpt-5.6-luna/max 均返回 completed）。已知边界：MemoryCore 无 effort 旋钮（保持 gpt-5.6-luna）；TICKET_TITLE effort 硬编码 none；WEB_SEARCH/KNOWLEDGE_INGESTION/BENCHMARK_JUDGE 无 effort env；RAG_ANSWER 的 fallback_models 常量（gpt-5.4-mini）不随 env 覆盖；廉价小任务（意图路由/标题/分类器，timeout 6-8s）在 luna+max 下可能超时重试，观察用量表与路由延迟后可单独回调。",
+      "title": "Preproduction Agent 单模型分档：gpt-6-sol（业务/RAG=medium、调查=xhigh）",
+      "summary": "p2-160 从 2026-09-14 的 astra/luna 双模型策略演进出单模型分档：Preproduction 由非敏感 String SSM /supportportal/preproduction/agent-model（v1=gpt-6-sol）在发布时固定 AGENT_MODEL_ID 进同次 api/route/worker task definition（发布前后校验 SSM 版本一致；修改 SSM 不热切换，须走新发布才生效——计划固定设计第 1 条）。纳入场景统一该模型：业务生成与 RAG 回答 medium、工程师调查回复（Hermes /v1/responses 显式 provider=custom + model_options）与 Hermes investigation work（/v1/runs 显式 model+model_options）xhigh；模型/DeepSeek fallback 与 temperature 清除。case binding 与 turn-run 行持久固定模型与强度（schema-010），丢回执重试重发相同请求体。排除场景：离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话、工单标题（实测超 2s 时限，保持 gpt-5.4-nano/none，待用户最终确认）。Production 渲染剥离该策略。",
       "status": "active",
-      "next_action": "单模型分档（gpt-6-sol：业务/RAG=medium、调查=xhigh；标题场景经实测排除保持 nano/none）代码、测试、文档与 SSM 建参（agent-model v1）已完成；待 finalize 合码后走 Preproduction 发布，并用合成 session 验证实际执行模型（medium→xhigh→medium、调查反馈、/v1/responses 实际模型、task definition/SSM 版本一致）。",
+      "next_action": "代码与部署已收口（PR#1316/#1321，r20260930-2e0a352 已上线 Preproduction，schema-011）。剩余：①等待用户两项定案——SSM 发布时固定语义确认（当前实现遵循计划第 1 条：不热切换、切换走新发布）与标题场景排除确认（两次决策提问未获回答，暂按保守排除执行）；②首个真实调查 case 后核对 support_account_case_llm_usage 与 hermes session 实际执行模型；③ready 端点 196 条旧 heartbeat mismatch 为运维残留，另行清理（不阻塞本任务）。",
       "owner": "codex",
       "acceptance_criteria": [
-        "上游组合硬门禁通过：gpt-6-astra+medium 与 gpt-5.6-luna+max 的 /v1/responses 最小请求均 completed（已实证 2026-09-14）。",
-        "preprod 渲染的 api/route/worker td env 含全部 PREPRODUCTION_LLM_ENV_OVERRIDES（investigation=astra/medium，其余=luna/max）；production 渲染不含任何同名 env（泄漏测试锁定）。",
-        "管线发布后受控工单回合的 support_account_case_llm_usage 各 stage model 记录 = gpt-5.6-luna（investigation 除外）。",
-        "hermes 侧调查回合实际执行模型 = gpt-6-astra（已实证：dashboard sessions API 最新会话 model=gpt-6-astra，td:28）。"
+        "SSM /supportportal/preproduction/agent-model 存在且非空（v1=gpt-6-sol）；发布读取一次值+版本并注入 AGENT_MODEL_ID，注册前与激活前复核版本一致；缺失/为空阻止 Preproduction 渲染（fail-closed）。",
+        "修改 SSM 值不热切换：既有服务内新建 session 仍用发布时固定模型，切换须经新的 Preproduction 发布（计划固定设计第 1 条语义，发布时固定而非运行时读取）。",
+        "api/route/worker td env 含 AGENT_MODEL_ID=\u003cSSM 值> 且不含旧 PREPRODUCTION_LLM_ENV_OVERRIDES 名字；Production 渲染剥离两者（泄漏测试锁定）。",
+        "Hermes /v1/runs 请求明传 model 与 model_options.reasoning_effort：route/普通 work/persona=medium，仅 direction=investigation 的 work 与调查反馈 work=xhigh；turn-run 行固定当次请求配置，丢回执重试重发相同请求体（隔离 PostgreSQL 并发单行用例锁定）。",
+        "工程师调查回复走 Hermes /v1/responses 显式 provider=custom + model + model_options.reasoning_effort=xhigh（该网关 OpenAI 上游 provider 名为 custom；openai 被拒，实测 2026-09-30）。",
+        "实际执行模型（dashboard sessions API 记录，非响应回显）：合成 /v1/runs medium 与 xhigh 探针均执行 gpt-6-sol（reasoning_tokens 0 vs 69），/v1/responses custom+xhigh reasoning_tokens=243（已实证 2026-09-30）。",
+        "RAG 出站遵守策略：light-path/api-semantics fast model 不降档最终请求；复杂/排障问题钉 medium 不升 high（策略未启用时行为不变）。",
+        "工单标题保持 gpt-5.4-nano/none（实测 gpt-6-sol/medium 2.19–2.81s 超 2s 时限且 24-token 预算下约半数被 reasoning 耗尽）；该排除为待用户最终确认的临时决策，纳入需另行批准时限与预算。",
+        "首个真实调查 case 后 support_account_case_llm_usage 各 stage model 记录 = gpt-6-sol（investigation stage 除外记录要求以分档合同为准）。"
       ],
       "evidence": [
         {
@@ -13313,6 +13330,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 部署与合成 session 实证 + provider 名修复（2026-09-30）",
           "command": "release pipeline r20260930-414ed4e（414ed4e 含 PR#1316；经并发会话发布落地）；Hermes /v1/runs 与 /v1/responses 合成探针（zacBot VPC 内直连，探针后 SG 规则已撤）；dashboard sessions API 实际执行记录读回",
           "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
+        },
+        {
+          "type": "deployment",
+          "label": "最终发布与运行态读回（2026-09-30）",
+          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
+          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 并发/固定语义复核证据（2026-09-30 复跑，应验收要求补充）",
+          "command": "本机一次性 PostgreSQL 14 实例（127.0.0.1:15433，独立数据目录，跑后即删）：AUTOMATION_ECS_TEST_POSTGRES_DSN 与 RUN_POSTGRES_INTEGRATION=1 + TICKET_DB_DSN 指向该实例，python3.12 -m pytest backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_hermes_case_workflow_postgres.py -q",
+          "result": "33 passed（store 10：binding agent_model 固定/无 env 保持 NULL/turn-run 固定单值/4 线程并发 get_or_create 单行；worker PG 16：schema-010 迁移与固定列端到端；case workflow PG 7）。日志副本 /tmp/sp-pg-evidence.log（临时）。migrate 幂等由 fixture 双跑覆盖。"
         }
       ],
       "history": [
@@ -13330,7 +13359,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "legacy_refs": [],
       "created_at": "2026-09-14",
-      "updated_at": "2026-09-14"
+      "updated_at": "2026-09-30T08:40:00Z"
     },
     {
       "schema_version": 2,

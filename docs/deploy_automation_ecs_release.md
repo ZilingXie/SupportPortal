@@ -379,6 +379,11 @@ Preproduction 的 Agent 模型统一由一个非敏感 String SSM 参数控制�
   固定进同一次发布的 api/route/worker task definition；注册前与激活前
   `verify_agent_model_unchanged` 复核 SSM 版本未变，中途切换必须重启发布。
   参数缺失或为空时 Preproduction 渲染 fail-closed。
+- **生效语义（定案）**：发布时固定，不做运行时热切换。运行时只读容器环境变量
+  `AGENT_MODEL_ID`，不读 SSM——修改 SSM 值后，当前运行服务内新建 session 仍使用
+  旧（发布时固定）模型，必须走一次新的 Preproduction 发布（或服务重启进新 td）
+  才生效。这是计划固定设计第 1 条（"改 SSM 值本身不热切换；后续切换须走新的
+  Preproduction 发布"）的既定合同，与发布内三角色模型一致性版本校验配套。
 - 运行策略：纳入范围的业务/RAG 场景统一该模型 + `medium`，工程师调查回复
   （Hermes `/v1/responses`，显式 `provider`+`model_options`）与 Hermes
   investigation work run（`/v1/runs` 显式 `model`+`model_options`）为 `xhigh`；
