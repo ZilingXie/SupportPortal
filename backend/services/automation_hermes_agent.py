@@ -1544,6 +1544,28 @@ class HermesAgentTurnProcessor:
                 sorted(status.keys()),
             )
             return False
+        input_tokens = usage.get("input_tokens")
+        output_tokens = usage.get("output_tokens")
+
+        def _valid_count(value: Any) -> bool:
+            return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+        if not _valid_count(input_tokens) or not _valid_count(output_tokens):
+            LOGGER.warning(
+                "hermes_run_usage_invalid run_id=%s input=%r output=%r; not recording",
+                run_id,
+                input_tokens,
+                output_tokens,
+            )
+            return False
+        if int(input_tokens) + int(output_tokens) <= 0:
+            LOGGER.warning(
+                "hermes_run_usage_zero run_id=%s input=%r output=%r; not recording",
+                run_id,
+                input_tokens,
+                output_tokens,
+            )
+            return False
         input_details = usage.get("input_tokens_details")
         output_details = usage.get("output_tokens_details")
         entry = build_usage_ledger_entry(
