@@ -5573,6 +5573,16 @@ p {
   color: #047857;
 }
 
+.admin-token-source-hermes {
+  background: rgba(124, 58, 237, 0.12);
+  color: #6d28d9;
+}
+
+.admin-token-excluded {
+  color: var(--ink-muted);
+  font-style: italic;
+}
+
 .admin-token-table {
   width: 100%;
   border-collapse: collapse;

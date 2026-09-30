@@ -5,6 +5,7 @@ import unittest
 from backend.services.token_usage import (
     aggregate_usage_ledger,
     build_usage_ledger_entry,
+    clamp_cached_input_tokens,
     resolve_ticket_family_identity,
 )
 
@@ -114,3 +115,33 @@ class TokenUsageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CachedClampTests(unittest.TestCase):
+    def test_build_usage_ledger_entry_clamps_cached_to_input(self) -> None:
+        entry = build_usage_ledger_entry(
+            provider="openai",
+            model="gpt-6-astra",
+            stage="account_route",
+            input_tokens=80,
+            output_tokens=5,
+            cached_input_tokens=120,
+        )
+        self.assertEqual(entry["cached_input_tokens"], 80)
+
+    def test_build_usage_ledger_entry_drops_negative_cached(self) -> None:
+        entry = build_usage_ledger_entry(
+            provider="openai",
+            model="gpt-6-astra",
+            stage="account_route",
+            input_tokens=80,
+            output_tokens=5,
+            cached_input_tokens=-10,
+        )
+        self.assertEqual(entry["cached_input_tokens"], 0)
+
+    def test_clamp_cached_input_tokens_helper(self) -> None:
+        self.assertEqual(clamp_cached_input_tokens(120, 80), 80)
+        self.assertEqual(clamp_cached_input_tokens(-5, 80), 0)
+        self.assertEqual(clamp_cached_input_tokens(30, 80), 30)
+        self.assertEqual(clamp_cached_input_tokens("bad", 80), 0)

@@ -100,34 +100,59 @@ def end_case_usage_capture(
     _CURRENT_CAPTURE.reset(token)
 
 
-def flush_case_usage_capture(repository: Any, capture: CaseUsageCapture) -> int:
-    """Best-effort persistence of buffered entries; never raises."""
+def flush_case_usage_capture(repository: Any, capture: CaseUsageCapture) -> dict[str, Any]:
+    """Structured persistence result; never raises.
+
+    Returns {inserted_count, failed_count, status, failure_reason} where
+    status is one of complete | unattributed | failed | empty. Failures are
+    surfaced instead of silently rendering as a complete zero.
+    """
     if not capture.entries:
-        return 0
+        return {
+            "inserted_count": 0,
+            "failed_count": 0,
+            "status": "empty",
+            "failure_reason": None,
+        }
     billing_ticket_id = capture.billing_ticket_id
     if not billing_ticket_id:
-        LOGGER.warning(
-            "dropping %s captured LLM usage entries without a billing ticket id",
-            len(capture.entries),
+        reason = (
+            f"unattributed: {len(capture.entries)} captured LLM usage entries without a "
+            f"billing ticket id (client_ticket_id={capture.client_ticket_id!r})"
         )
-        return 0
+        LOGGER.warning("%s", reason)
+        return {
+            "inserted_count": 0,
+            "failed_count": len(capture.entries),
+            "status": "unattributed",
+            "failure_reason": reason,
+        }
     try:
         inserted = repository.record_account_case_llm_usage_entries(
             billing_ticket_id=billing_ticket_id,
             client_ticket_id=capture.client_ticket_id,
             entries=capture.entries,
         )
-    except Exception:
-        LOGGER.warning(
-            "failed to persist %s LLM usage entries for case %s",
-            len(capture.entries),
-            billing_ticket_id,
-            exc_info=True,
+    except Exception as exc:
+        reason = (
+            f"failed to persist {len(capture.entries)} LLM usage entries for case "
+            f"{billing_ticket_id}: {type(exc).__name__}: {exc}"
         )
-        return 0
+        LOGGER.warning("%s", reason, exc_info=True)
+        return {
+            "inserted_count": 0,
+            "failed_count": len(capture.entries),
+            "status": "failed",
+            "failure_reason": reason,
+        }
     if inserted:
         capture.entries.clear()
-    return inserted
+    return {
+        "inserted_count": inserted,
+        "failed_count": 0,
+        "status": "complete",
+        "failure_reason": None,
+    }
 
 
 def record_llm_invocation(result: LlmTextResult, *, stage: str) -> None:

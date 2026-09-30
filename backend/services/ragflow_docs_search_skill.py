@@ -12,7 +12,6 @@ from urllib.parse import urlsplit
 
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import RAGFLOW_ANSWER_SCENARIO, resolve_model_profile
-from backend.services.llm_usage_capture import record_llm_invocation
 from backend.services.prompts.rag_answer import (
     INSUFFICIENT_EVIDENCE_REPLY,
     build_rag_answer_system_prompt,
@@ -244,7 +243,6 @@ class RagflowDocsSearchSkillClient:
             )
         except (LlmInvocationError, ValueError) as exc:
             raise RagflowDocsSearchError("generation") from exc
-        record_llm_invocation(response, stage="ragflow_docs_answer")
         try:
             payload = json.loads(str(response.text or "").strip())
         except json.JSONDecodeError as exc:

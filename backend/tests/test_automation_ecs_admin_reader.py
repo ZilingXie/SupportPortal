@@ -182,34 +182,54 @@ def test_automation_usage_is_available_without_rag_or_external_service_calls() -
     assert usage["stage_totals"]["route"]["reasoning_tokens"] == 5
 
 
-def test_account_automation_payload_exposes_automation_tokens_and_marks_rag_unavailable() -> None:
+_ACCOUNT_CASE_ROW = {
+    "account_case_id": "AC-14501",
+    "billing_ticket_id": "AC-14501",
+    "client_ticket_id": "14501",
+    "processing_profile": "production",
+    "zendesk_ticket_id": "14501",
+    "source": "https://agoraio.zendesk.com/agent/tickets/14501",
+    "title": "Production case",
+    "route": "enablement",
+    "scope_label": "automation",
+    "route_family": "automated",
+    "execution_action": "enablement",
+    "automation_status": "completed",
+    "internal_email_send_status": "sent",
+    "category": "backend_operation",
+    "subcategory": "enablement",
+    "route_status": "automated",
+    "automation_handler": "enablement",
+    "route_classification": {},
+    "created_at": "2026-09-05T00:00:00+00:00",
+    "updated_at": "2026-09-05T00:00:00+00:00",
+}
+
+
+def _automation_cursor(
+    *,
+    case_rows: list[dict] | None = None,
+    usage_rows: list[dict] | None = None,
+    aggregation_rows: list[dict] | None = None,
+    completed_hermes_runs: int = 0,
+    hermes_usage_rows: int = 0,
+) -> MagicMock:
     cursor = MagicMock()
     cursor.fetchall.side_effect = [
-        [
-            {
-                "account_case_id": "AC-14501",
-                "billing_ticket_id": "AC-14501",
-                "client_ticket_id": "14501",
-                "processing_profile": "production",
-                "zendesk_ticket_id": "14501",
-                "source": "https://agoraio.zendesk.com/agent/tickets/14501",
-                "title": "Production case",
-                "route": "enablement",
-                "scope_label": "automation",
-                "route_family": "automated",
-                "execution_action": "enablement",
-                "automation_status": "completed",
-                "internal_email_send_status": "sent",
-                "category": "backend_operation",
-                "subcategory": "enablement",
-                "route_status": "automated",
-                "automation_handler": "enablement",
-                "route_classification": {},
-                "created_at": "2026-09-05T00:00:00+00:00",
-                "updated_at": "2026-09-05T00:00:00+00:00",
-            }
-        ],
-        [
+        case_rows if case_rows is not None else [dict(_ACCOUNT_CASE_ROW)],
+        usage_rows if usage_rows is not None else [],
+        aggregation_rows if aggregation_rows is not None else [],
+    ]
+    cursor.fetchone.side_effect = [
+        {"count": completed_hermes_runs},
+        {"count": hermes_usage_rows},
+    ]
+    return cursor
+
+
+def test_account_automation_payload_exposes_dual_sources_and_excludes_rag() -> None:
+    cursor = _automation_cursor(
+        usage_rows=[
             {
                 "billing_ticket_id": "AC-14501",
                 "stage": "route",
@@ -219,9 +239,45 @@ def test_account_automation_payload_exposes_automation_tokens_and_marks_rag_unav
                 "cached_input_tokens": 40,
                 "completion_tokens": 25,
                 "reasoning_tokens": 5,
-            }
+                "source": "supportportal",
+            },
+            {
+                "billing_ticket_id": "AC-14501",
+                "stage": "hermes_agent_run",
+                "provider": "hermes",
+                "model": "hermes-agent",
+                "prompt_tokens": 500,
+                "cached_input_tokens": 0,
+                "completion_tokens": 50,
+                "reasoning_tokens": 0,
+                "source": "hermes",
+            },
         ],
-    ]
+        aggregation_rows=[
+            {
+                "source": "supportportal",
+                "provider": "openai",
+                "model": "gpt-test",
+                "total_input_tokens": 100,
+                "total_output_tokens": 25,
+                "total_cached_input_tokens": 40,
+                "total_reasoning_tokens": 5,
+                "call_count": 1,
+            },
+            {
+                "source": "hermes",
+                "provider": "hermes",
+                "model": "hermes-agent",
+                "total_input_tokens": 500,
+                "total_output_tokens": 50,
+                "total_cached_input_tokens": 0,
+                "total_reasoning_tokens": 0,
+                "call_count": 1,
+            },
+        ],
+        completed_hermes_runs=1,
+        hermes_usage_rows=1,
+    )
     transaction = MagicMock()
     transaction.__enter__.return_value = cursor
     reader = _reader()
@@ -231,17 +287,125 @@ def test_account_automation_payload_exposes_automation_tokens_and_marks_rag_unav
 
     token_usage = payload["cases"][0]["token_usage"]
     assert token_usage["available"] is True
-    assert token_usage["total_input_tokens"] == 100
+    assert token_usage["total_input_tokens"] == 600
     assert token_usage["sources"]["automation"]["available"] is True
+    assert token_usage["sources"]["automation"]["total_input_tokens"] == 100
+    assert token_usage["sources"]["hermes"]["total_input_tokens"] == 500
     assert token_usage["sources"]["rag"] == {
-        "available": False,
-        "error_reason": "RAG token usage is unavailable in ECS Admin",
-        "total_input_tokens": 0,
-        "total_cached_input_tokens": 0,
-        "total_output_tokens": 0,
-        "total_embedding_tokens": 0,
-        "stage_totals": {},
+        "included": False,
+        "reason": "excluded_by_admin_policy",
     }
+
+    filtered = payload["token_usage_filtered_total"]
+    assert filtered["scope"] == "filtered_cases"
+    assert filtered["case_count"] == 1
+    assert filtered["completeness"] == "complete"
+    assert filtered["unknown_sources"] == []
+    assert filtered["total_input_tokens"] == 600
+    assert filtered["sources"]["automation"]["total_input_tokens"] == 100
+    assert filtered["sources"]["hermes"]["total_input_tokens"] == 500
+    assert filtered["sources"]["rag"] == {"included": False, "reason": "excluded_by_admin_policy"}
+    # legacy field retained for older clients
+    assert payload["token_usage_page_total"]["total_input_tokens"] == 600
+
+
+def test_filtered_total_covers_all_matching_cases_beyond_the_page() -> None:
+    second_case = dict(_ACCOUNT_CASE_ROW)
+    second_case.update(
+        account_case_id="AC-14502",
+        billing_ticket_id="AC-14502",
+        zendesk_ticket_id="14502",
+        client_ticket_id="14502",
+        created_at="2026-09-06T00:00:00+00:00",
+    )
+    cursor = _automation_cursor(
+        case_rows=[dict(_ACCOUNT_CASE_ROW), second_case],
+        usage_rows=[],
+        aggregation_rows=[
+            {
+                "source": "supportportal",
+                "provider": "openai",
+                "model": "gpt-test",
+                "total_input_tokens": 300,
+                "total_output_tokens": 30,
+                "total_cached_input_tokens": 0,
+                "total_reasoning_tokens": 0,
+                "call_count": 3,
+            }
+        ],
+    )
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        payload = reader.account_automation(page=1, page_size=1)
+
+    # only one case on the page, but the filtered total aggregates both
+    assert len(payload["cases"]) == 1
+    assert payload["token_usage_page_total"]["total_input_tokens"] == 0
+    filtered = payload["token_usage_filtered_total"]
+    assert filtered["case_count"] == 2
+    assert filtered["total_input_tokens"] == 300
+
+
+def test_missing_hermes_usage_marks_partial_not_zero_complete() -> None:
+    cursor = _automation_cursor(
+        aggregation_rows=[
+            {
+                "source": "supportportal",
+                "provider": "openai",
+                "model": "gpt-test",
+                "total_input_tokens": 100,
+                "total_output_tokens": 25,
+                "total_cached_input_tokens": 40,
+                "total_reasoning_tokens": 5,
+                "call_count": 1,
+            }
+        ],
+        completed_hermes_runs=2,
+        hermes_usage_rows=0,
+    )
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        payload = reader.account_automation()
+
+    filtered = payload["token_usage_filtered_total"]
+    assert filtered["completeness"] == "partial"
+    assert filtered["unknown_sources"] == ["hermes"]
+    # known direct usage is preserved, never masked as complete zero
+    assert filtered["total_input_tokens"] == 100
+
+
+def test_usage_queries_exclude_ragflow_stage_and_clamp_cached_reads() -> None:
+    cursor = _automation_cursor()
+    transaction = MagicMock()
+    transaction.__enter__.return_value = cursor
+    reader = _reader()
+
+    with patch.object(reader, "_read_cursor", return_value=transaction):
+        reader.account_automation()
+
+    executed_sql = [call.args[0].as_string() for call in cursor.execute.call_args_list]
+    usage_queries = [
+        q for q in executed_sql
+        if "support_account_case_llm_usage" in q and "SUM(" in q
+    ]
+    assert usage_queries, "usage aggregation queries must run"
+    for query in usage_queries:
+        assert "stage != 'ragflow_docs_answer'" in query
+
+    clamped = AutomationEcsAdminReader._clamp_usage_row(
+        {"prompt_tokens": 80, "cached_input_tokens": 120, "completion_tokens": 5}
+    )
+    assert clamped["cached_input_tokens"] == 80
+    clamped_negative = AutomationEcsAdminReader._clamp_usage_row(
+        {"prompt_tokens": 80, "cached_input_tokens": -5, "completion_tokens": 5}
+    )
+    assert clamped_negative["cached_input_tokens"] == 0
 
 
 def test_environment_config_returns_names_and_descriptions_without_values(

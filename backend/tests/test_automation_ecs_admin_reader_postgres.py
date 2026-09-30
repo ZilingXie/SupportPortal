@@ -188,6 +188,48 @@ def admin_reader(request) -> AutomationEcsAdminReader:
             _ticket_event("14501", "fixture:primary"),
             primary_settings.provenance(),
         )
+        repositories[0].record_account_case_llm_usage_entries(
+            billing_ticket_id="AC-14501",
+            client_ticket_id="14501",
+            entries=[
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "account_route",
+                    "prompt_tokens": 100,
+                    "completion_tokens": 25,
+                    "cached_input_tokens": 40,
+                    "reasoning_tokens": 5,
+                },
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "ragflow_docs_answer",
+                    "prompt_tokens": 999,
+                    "completion_tokens": 999,
+                    "cached_input_tokens": 0,
+                },
+                {
+                    "provider": "openai",
+                    "model": "gpt-test",
+                    "stage": "legacy_oversized_cached",
+                    "prompt_tokens": 10,
+                    "completion_tokens": 2,
+                    "cached_input_tokens": 500,
+                },
+                {
+                    "provider": "hermes",
+                    "model": "hermes-agent",
+                    "stage": "hermes_agent_run",
+                    "prompt_tokens": 500,
+                    "completion_tokens": 50,
+                    "cached_input_tokens": 0,
+                    "reasoning_tokens": 0,
+                    "source": "hermes",
+                    "source_run_id": "run-fixture-1",
+                },
+            ],
+        )
         PostgresAutomationEcsStore(wrong_namespace_settings).accept_intake(
             _ticket_event("14502", "fixture:wrong-namespace"),
             wrong_namespace_settings.provenance(),
@@ -243,8 +285,18 @@ def test_postgres_reader_is_read_only_and_excludes_schema_and_namespace_traps(
     assert "14503" not in serialized
     assert "secret-hash" not in serialized
     assert automation["processing_profile"] == admin_reader.settings.environment
-    assert automation["cases"][0]["token_usage"]["sources"]["rag"]["available"] is False
-    assert automation["cases"][0]["token_usage"]["sources"]["automation"]["available"] is True
+    usage = automation["cases"][0]["token_usage"]
+    assert usage["sources"]["rag"] == {"included": False, "reason": "excluded_by_admin_policy"}
+    assert usage["sources"]["automation"]["available"] is True
+    # ragflow excluded, oversized cached clamped, hermes included
+    assert usage["total_input_tokens"] == 100 + 10 + 500
+    assert usage["sources"]["automation"]["total_input_tokens"] == 110
+    assert usage["sources"]["automation"]["total_cached_input_tokens"] == 40 + 10
+    assert usage["sources"]["hermes"]["total_input_tokens"] == 500
+    filtered = automation["token_usage_filtered_total"]
+    assert filtered["scope"] == "filtered_cases"
+    assert filtered["completeness"] == "complete"
+    assert filtered["total_input_tokens"] == 610
     assert metrics["billing"]["internal_email_failed"] == 1
     assert transaction_settings == {"read_only": "on", "isolation": "repeatable read"}
     assert after == before

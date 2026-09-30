@@ -320,7 +320,7 @@ class RagflowDocsSearchSkillClientTest(unittest.TestCase):
                     )
                 self.assertEqual(caught.exception.failure_kind, "invalid_generation_response")
 
-    def test_generation_uses_core_content_prompt_and_records_usage(self) -> None:
+    def test_generation_uses_core_content_prompt_without_usage_capture(self) -> None:
         completed = subprocess.CompletedProcess([], 0, stdout=_search_result(), stderr="")
         generated = LlmTextResult(
             text=json.dumps(
@@ -356,10 +356,8 @@ class RagflowDocsSearchSkillClientTest(unittest.TestCase):
         system_prompt = invoke_model.call_args.kwargs["system_prompt"]
         self.assertIn("core technical explanation only", system_prompt)
         self.assertIn("no greeting", system_prompt)
-        self.assertEqual(len(capture.entries), 1)
-        self.assertEqual(capture.entries[0]["stage"], "ragflow_docs_answer")
-        self.assertEqual(capture.entries[0]["prompt_tokens"], 120)
-        self.assertEqual(capture.entries[0]["completion_tokens"], 45)
+        # ragflow_docs_answer stays out of the admin token totals
+        self.assertEqual(capture.entries, [])
 
     def test_ragflow_answer_scenario_defaults_to_astra_low(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -383,3 +381,11 @@ class RagflowDocsSearchSkillClientTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_ragflow_answer_generation_no_longer_records_usage() -> None:
+    source = Path("backend/services/ragflow_docs_search_skill.py").read_text(encoding="utf-8")
+    assert "record_llm_invocation" not in source, (
+        "ragflow_docs_answer must stay out of the admin token totals; "
+        "remove any record_llm_invocation call from the docs search skill"
+    )

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-29T10:24:40Z",
-  "source_base_commit": "0057596252984856108b7b81518d10391e721270",
-  "registry_digest": "eaa56517270f4bafb00fdb507bd6d8441553a2554829271b3b592bf34f506ee9",
+  "generated_at": "2026-09-30T04:08:17Z",
+  "source_base_commit": "e097273153da1f2acb6a719479daddae892fcd6a",
+  "registry_digest": "b4e762ec7802b69cb2e918c5075ca4b386ea2728685aad96a2bd82b44e4c352a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2998,6 +2998,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Removal coverage",
           "details": "2026-09-18：定向 238 passed（ecs api 删 4 admin 用例+stub、UI 合同删 4 ECS 用例并加\"无 isEcsAdmin\"源码断言、镜像合同更新为不打包 workspace-ui、workspace api/reader/repository 回归；release_notes 契约断言改为基线存在而非首个）。"
+        },
+        {
+          "type": "test",
+          "label": "Matrix coverage",
+          "details": "2026-09-30：定向 286 passed+2 skipped（本地无 DSN）；postgres 集成在本地一次性 PostgreSQL 14 实例上真跑通过（2 passed：DDL 迁移、幂等、SQL 排除/clamp、hermes source、filtered 聚合、completeness）。新增 test_hermes_run_usage_ledger（6 例）+ clamp/排除/跨页/partial reader 用例 + flush 结构化用例 + UI 合同（All matching cases tokens/excluded/completeness）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes gateway usage contract",
+          "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
         }
       ],
       "source_refs": [
@@ -3010,7 +3020,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 9,
       "blocked_count": 0
     },
@@ -14682,6 +14692,60 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-29T21:00:00Z",
           "note": "第三轮复验通过（评审复核 commit 00575962/03737b7：287+85 passed、证据同步、官方栈 matched）；任务收口 done。遗留范围：Preproduction 未重新部署（本轮无运行时行为变更需求）；E3 终段（工单更正 AppID→v2→真实开通）待 owner 发起。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-180",
+      "title": "Admin token 统计完整性优化",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-09-30",
+      "summary": "按用户批准的 token统计完整性优化计划实施：(1) 顶部统计改为 token_usage_filtered_total——统一过滤函数（account_admin.filter_account_case_rows 单一真理源）+ 数据库侧 SUM/GROUP BY 聚合全部筛选结果，不受分页影响，旧 token_usage_page_total 保留兼容；(2) ragflow_docs_answer 不再写入 ledger 且读侧 SQL 排除，RAG source 从 unavailable 改为明确 excluded_by_admin_policy；(3) Hermes gateway usage 入公共 ledger——探针实证 gateway /v1/runs 返回 usage={input_tokens,output_tokens,total_tokens}(+可选 input/output_tokens_details)，run 完成时规范化写入 support_account_case_llm_usage（source='hermes',source_run_id=run_id，唯一索引幂等），billing 经 account case by zendesk ticket 解析；completed run 无 usage 时 completeness=partial+unknown_sources=['hermes']，绝不伪装 0；(4) cached clamp 三层（写入 build_usage_ledger_entry/读出 _clamp_usage_row+SQL LEAST/成本计算保留）+ 数据质量日志；(5) flush_case_usage_capture 返回结构化结果（inserted/failed/status/failure_reason，unattributed 不静默丢弃）。schema：ledger 表加 source/source_run_id 列+部分唯一索引（幂等 bootstrap）。",
+      "next_action": "代码+测试完成；finalize 合入后部署 Preproduction（须带 --bootstrap-account-schema 建 DDL）并按验收矩阵线上验证；Production 另行授权（届时同样带 bootstrap flag）。",
+      "acceptance_criteria": [
+        "跨页全量汇总：page/page_size 变化不影响 token_usage_filtered_total；筛选条件生效。",
+        "RAG 与 ragflow_docs_answer 永不进入总量（写侧停记+读侧排除）；RAG source 显示明确排除。",
+        "direct+hermes 相加；hermes usage 缺失→partial+unknown_sources，不显示完整 0；worker 重试同 run 不重复计数（唯一索引）。",
+        "cached>input 时 clamp（写/读/成本三层）；UI 不显示 cached>input。",
+        "flush 失败/无 billing id → 结构化状态（complete/unattributed/failed+原因），不静默丢弃。",
+        "未定价模型：token 正常显示，成本 unknown（全有或全无契约不变）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Matrix coverage",
+          "details": "2026-09-30：定向 286 passed+2 skipped（本地无 DSN）；postgres 集成在本地一次性 PostgreSQL 14 实例上真跑通过（2 passed：DDL 迁移、幂等、SQL 排除/clamp、hermes source、filtered 聚合、completeness）。新增 test_hermes_run_usage_ledger（6 例）+ clamp/排除/跨页/partial reader 用例 + flush 结构化用例 + UI 合同（All matching cases tokens/excluded/completeness）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes gateway usage contract",
+          "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-30",
+          "event": "created",
+          "summary": "用户交付 token统计完整性优化计划（low thinking）并批准实施；阶段 0 探针确认 gateway 返回 usage 后全阶段实施。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/automation_ecs_admin_reader.py",
+        "backend/services/account_admin.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/llm_usage_capture.py",
+        "backend/services/token_usage.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/services/ragflow_docs_search_skill.py",
+        "ui/workspace-ui/admin/app.js"
       ]
     },
     {

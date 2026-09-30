@@ -3689,9 +3689,20 @@ class InMemoryTicketRepository(
             return 0
         created_at = _utc_now()
         with self._assignment_lock:
+            known_run_ids = {
+                (str(row.get("source") or "supportportal"), str(row.get("source_run_id") or ""))
+                for row in self._account_case_llm_usage
+                if row.get("source_run_id")
+            }
             for entry in entries:
                 if not isinstance(entry, dict):
                     continue
+                source = str(entry.get("source") or "supportportal").strip() or "supportportal"
+                source_run_id = str(entry.get("source_run_id") or "").strip() or None
+                if source_run_id and (source, source_run_id) in known_run_ids:
+                    continue
+                if source_run_id:
+                    known_run_ids.add((source, source_run_id))
                 self._account_case_llm_usage.append(
                     {
                         "billing_ticket_id": normalized_billing_id,
@@ -3703,6 +3714,8 @@ class InMemoryTicketRepository(
                         "completion_tokens": _safe_non_negative_int(entry.get("completion_tokens"), 0),
                         "cached_input_tokens": _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
                         "reasoning_tokens": _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
+                        "source": source,
+                        "source_run_id": source_run_id,
                         "created_at": created_at,
                     }
                 )
@@ -9925,29 +9938,61 @@ class PostgresTicketRepository(
             inserted = 0
             with conn.cursor() as cur:
                 for entry in normalized_entries:
-                    cur.execute(
-                        sql.SQL(
-                            """
-                            INSERT INTO {} (
-                                billing_ticket_id, client_ticket_id, stage, provider, model,
-                                prompt_tokens, completion_tokens, cached_input_tokens,
-                                reasoning_tokens, created_at
-                            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
-                            """
-                        ).format(self._table("support_account_case_llm_usage")),
-                        (
-                            normalized_billing_id,
-                            normalized_client_id,
-                            str(entry.get("stage") or ""),
-                            str(entry.get("provider") or ""),
-                            str(entry.get("model") or ""),
-                            _safe_non_negative_int(entry.get("prompt_tokens"), 0),
-                            _safe_non_negative_int(entry.get("completion_tokens"), 0),
-                            _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
-                            _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
-                            str(entry.get("created_at") or "").strip() or None,
-                        ),
-                    )
+                    source = str(entry.get("source") or "supportportal").strip() or "supportportal"
+                    source_run_id = str(entry.get("source_run_id") or "").strip() or None
+                    if source_run_id:
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    billing_ticket_id, client_ticket_id, stage, provider, model,
+                                    prompt_tokens, completion_tokens, cached_input_tokens,
+                                    reasoning_tokens, source, source_run_id, created_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                                ON CONFLICT (source, source_run_id) WHERE source_run_id IS NOT NULL
+                                DO NOTHING
+                                """
+                            ).format(self._table("support_account_case_llm_usage")),
+                            (
+                                normalized_billing_id,
+                                normalized_client_id,
+                                str(entry.get("stage") or ""),
+                                str(entry.get("provider") or ""),
+                                str(entry.get("model") or ""),
+                                _safe_non_negative_int(entry.get("prompt_tokens"), 0),
+                                _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                                _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
+                                _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
+                                source,
+                                source_run_id,
+                                str(entry.get("created_at") or "").strip() or None,
+                            ),
+                        )
+                    else:
+                        cur.execute(
+                            sql.SQL(
+                                """
+                                INSERT INTO {} (
+                                    billing_ticket_id, client_ticket_id, stage, provider, model,
+                                    prompt_tokens, completion_tokens, cached_input_tokens,
+                                    reasoning_tokens, source, created_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                                """
+                            ).format(self._table("support_account_case_llm_usage")),
+                            (
+                                normalized_billing_id,
+                                normalized_client_id,
+                                str(entry.get("stage") or ""),
+                                str(entry.get("provider") or ""),
+                                str(entry.get("model") or ""),
+                                _safe_non_negative_int(entry.get("prompt_tokens"), 0),
+                                _safe_non_negative_int(entry.get("completion_tokens"), 0),
+                                _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
+                                _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
+                                source,
+                                str(entry.get("created_at") or "").strip() or None,
+                            ),
+                        )
                     inserted += int(cur.rowcount or 0)
             return inserted
 
@@ -11442,6 +11487,8 @@ class PostgresTicketRepository(
                             completion_tokens INTEGER NOT NULL DEFAULT 0,
                             cached_input_tokens INTEGER NOT NULL DEFAULT 0,
                             reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+                            source TEXT NOT NULL DEFAULT 'supportportal',
+                            source_run_id TEXT,
                             created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                         )
                         """
@@ -11450,6 +11497,24 @@ class PostgresTicketRepository(
                 cur.execute(
                     sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (billing_ticket_id)").format(
                         sql.Identifier("idx_support_account_case_llm_usage_billing"),
+                        self._table("support_account_case_llm_usage"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'supportportal'").format(
+                        self._table("support_account_case_llm_usage")
+                    )
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS source_run_id TEXT").format(
+                        self._table("support_account_case_llm_usage")
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (source, source_run_id) WHERE source_run_id IS NOT NULL"
+                    ).format(
+                        sql.Identifier("idx_support_account_case_llm_usage_source_run"),
                         self._table("support_account_case_llm_usage"),
                     )
                 )
