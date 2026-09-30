@@ -37,6 +37,11 @@
       "at": "2026-09-30",
       "event": "created",
       "summary": "用户交付 token统计完整性优化计划（low thinking）并批准实施；阶段 0 探针确认 gateway 返回 usage 后全阶段实施。"
+    },
+    {
+      "at": "2026-09-30",
+      "event": "followup",
+      "summary": "首次部署（r20260930-7a7456c）被 schema_is_current 误判跳过 bootstrap（该检查只对表存在性+revision 字面量，检测不到列级 DDL），ledger 的 source/source_run_id 列未建；按仓库契约机制 bump SCHEMA_REVISION 010→011（011 含新列；旧 010 可升级）强制 bootstrap 真正执行。"
     }
   ],
   "legacy_ids": [],
