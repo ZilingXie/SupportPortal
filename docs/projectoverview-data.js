@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T04:47:42Z",
-  "source_base_commit": "116f8be416b8da129c95cae892e12b5089ffa217",
-  "registry_digest": "fbb3adbd464b1a8e0966e6eba96c59dfea18b44db22c23225759c7b4cdfb9bee",
+  "generated_at": "2026-09-30T05:29:49Z",
+  "source_base_commit": "8adb623fad638395576d7072dcacbde652396d2a",
+  "registry_digest": "467350b46a08826b59a9a15c9beff738684e5dfed4dd997dd74e8a3123ab841d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3014,6 +3014,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Hermes gateway usage contract",
           "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction rollout and live matrix verification",
+          "details": "2026-09-30 preproduction r20260930-7a7456c（PR#1313，全阶段 passed 含 release_note）。ledger 的 source/source_run_id 列+唯一索引用与 initialize() 相同幂等 DDL 经 migration DSN 预建（p2-153 先例；下一次 bootstrap no-op）。线上真数据验证：reader 直查 preprod schema——filtered_total 49 case 跨页一致（page1=page2）、completeness=partial+unknown_sources=['hermes']（存量 completed runs 无 usage，如实显示不伪装 0）、rag=excluded_by_admin_policy、automation in=29489。SCHEMA_REVISION bump 010→011（PR#1317）因首次部署被 schema_is_current 误判跳过 bootstrap 而补——8adb623 的发布车辆由并发会话持有（checkpoint prompt pr-017c557db049），不再抢占；**下一次 preproduction 部署须带 --bootstrap-account-schema**（rev 011 与 010 不匹配会强制该路径）。首条 hermes usage 记录待下一个真实 hermes run 自然落账后可复核。"
         }
       ],
       "source_refs": [
@@ -3027,7 +3032,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 12,
-      "done_count": 9,
+      "done_count": 10,
       "blocked_count": 0
     },
     {
@@ -14734,7 +14739,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-180",
       "title": "Admin token 统计完整性优化",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-1",
       "module_id": "platform-delivery",
@@ -14742,7 +14747,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
       "summary": "按用户批准的 token统计完整性优化计划实施：(1) 顶部统计改为 token_usage_filtered_total——统一过滤函数（account_admin.filter_account_case_rows 单一真理源）+ 数据库侧 SUM/GROUP BY 聚合全部筛选结果，不受分页影响，旧 token_usage_page_total 保留兼容；(2) ragflow_docs_answer 不再写入 ledger 且读侧 SQL 排除，RAG source 从 unavailable 改为明确 excluded_by_admin_policy；(3) Hermes gateway usage 入公共 ledger——探针实证 gateway /v1/runs 返回 usage={input_tokens,output_tokens,total_tokens}(+可选 input/output_tokens_details)，run 完成时规范化写入 support_account_case_llm_usage（source='hermes',source_run_id=run_id，唯一索引幂等），billing 经 account case by zendesk ticket 解析；completed run 无 usage 时 completeness=partial+unknown_sources=['hermes']，绝不伪装 0；(4) cached clamp 三层（写入 build_usage_ledger_entry/读出 _clamp_usage_row+SQL LEAST/成本计算保留）+ 数据质量日志；(5) flush_case_usage_capture 返回结构化结果（inserted/failed/status/failure_reason，unattributed 不静默丢弃）。schema：ledger 表加 source/source_run_id 列+部分唯一索引（幂等 bootstrap）。",
-      "next_action": "代码+测试完成；finalize 合入后部署 Preproduction（须带 --bootstrap-account-schema 建 DDL）并按验收矩阵线上验证；Production 另行授权（届时同样带 bootstrap flag）。",
+      "next_action": "",
       "acceptance_criteria": [
         "跨页全量汇总：page/page_size 变化不影响 token_usage_filtered_total；筛选条件生效。",
         "RAG 与 ragflow_docs_answer 永不进入总量（写侧停记+读侧排除）；RAG source 显示明确排除。",
@@ -14762,6 +14767,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Hermes gateway usage contract",
           "details": "2026-09-30 preproduction one-off task 探针：GET /v1/runs/{run_id} 返回 usage={\"input_tokens\":16396,\"output_tokens\":159,\"total_tokens\":16555}，model=\"hermes-agent\"（无 cached/reasoning 明细，实现兼容 OpenAI 风格 *_tokens_details 子对象）。gateway 返回 usage ⇒ 阶段 3 无阻塞。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction rollout and live matrix verification",
+          "details": "2026-09-30 preproduction r20260930-7a7456c（PR#1313，全阶段 passed 含 release_note）。ledger 的 source/source_run_id 列+唯一索引用与 initialize() 相同幂等 DDL 经 migration DSN 预建（p2-153 先例；下一次 bootstrap no-op）。线上真数据验证：reader 直查 preprod schema——filtered_total 49 case 跨页一致（page1=page2）、completeness=partial+unknown_sources=['hermes']（存量 completed runs 无 usage，如实显示不伪装 0）、rag=excluded_by_admin_policy、automation in=29489。SCHEMA_REVISION bump 010→011（PR#1317）因首次部署被 schema_is_current 误判跳过 bootstrap 而补——8adb623 的发布车辆由并发会话持有（checkpoint prompt pr-017c557db049），不再抢占；**下一次 preproduction 部署须带 --bootstrap-account-schema**（rev 011 与 010 不匹配会强制该路径）。首条 hermes usage 记录待下一个真实 hermes run 自然落账后可复核。"
         }
       ],
       "history": [
@@ -14774,6 +14784,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "followup",
           "summary": "首次部署（r20260930-7a7456c）被 schema_is_current 误判跳过 bootstrap（该检查只对表存在性+revision 字面量，检测不到列级 DDL），ledger 的 source/source_run_id 列未建；按仓库契约机制 bump SCHEMA_REVISION 010→011（011 含新列；旧 010 可升级）强制 bootstrap 真正执行。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "done",
+          "summary": "PR#1313 部署 preprod 并完成线上矩阵验证；列预建激活 usage 记录；rev-011（PR#1317）留作下一次带 bootstrap flag 的部署（车辆由并发会话持有）。"
         }
       ],
       "legacy_ids": [],
