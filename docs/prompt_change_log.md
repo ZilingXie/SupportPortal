@@ -35,6 +35,14 @@
   missing/empty parameter fails the Preproduction render closed. Production
   renders strip `AGENT_MODEL_ID` and the retired per-scenario luna/astra
   overrides.
+- Post-deploy probe fix (2026-09-30): live synthetic `/v1/responses` probes
+  against the Preproduction gateway showed the explicit provider must be
+  `custom` (the gateway's configured OpenAI upstream name); `openai` is
+  rejected as unknown and the failure surfaces as model prose. The
+  investigation-reply compatibility payload now sends `provider: custom`,
+  verified executing gpt-6-sol at xhigh (dashboard session record:
+  reasoning_tokens=243) while the `/v1/runs` medium/xhigh probes recorded
+  reasoning_tokens 0 vs 69 on the same model.
 - Verification: `backend/tests/test_agent_model_policy.py` (profile policy,
   RAG outbound convergence, `/v1/runs` body, `/v1/responses` payload),
   `TestAgentModelTiering` in `test_hermes_zendesk_agent.py` (medium/xhigh

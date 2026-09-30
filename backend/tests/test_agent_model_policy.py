@@ -243,7 +243,7 @@ class EngineerInvestigationReplyPayloadTests(unittest.TestCase):
                 ticket, investigation, engineer_message="please continue"
             )
         extra = captured["extra_payload"]
-        self.assertEqual(extra["provider"], "openai")
+        self.assertEqual(extra["provider"], "custom")
         self.assertEqual(extra["model"], "gpt-6-sol")
         self.assertEqual(extra["model_options"], {"reasoning_effort": "xhigh"})
         # The structured-output contract still rides along.
