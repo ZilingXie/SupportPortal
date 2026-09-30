@@ -383,16 +383,60 @@ def verify_relay_binding(
             f"it is not this client's turn (task to_agent_id={task_to_agent!r} "
             f"!= client={identity['agent_id']!r}); refusing to execute"
         )
+    verified_message_id = str(current_message.get("message_id") or "")
 
     def delivery_probe():
-        fresh = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
-        message = _current_task_message(fresh["task"], fresh["fencing"])
-        if str(message.get("delivery_status") or "") == "delivered":
-            return message
-        return None
+        """Re-verify the FULL binding on every poll.
+
+        wait_for() swallows probe exceptions and keeps polling, so a binding
+        change (current message swapped to another request, task turned
+        terminal, turn moved to another agent) must be returned as a broken
+        verdict instead of raised — otherwise a stale binding would silently
+        wait out the clock and then bless the pilot write.
+        """
+        try:
+            fresh = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
+        except AutomationTestScenarioError:
+            return ("pending", None, "")  # transient read failure; keep waiting
+        fresh_task = fresh["task"]
+        try:
+            fresh_message = _current_task_message(fresh_task, fresh["fencing"])
+        except AutomationTestScenarioError as exc:
+            return ("broken", None, str(exc))
+        if str(fresh_task.get("status") or "") != "open":
+            return (
+                "broken", None,
+                f"relay task became terminal during the wait (status={fresh_task.get('status')!r})",
+            )
+        fresh_to_agent = str(fresh_task.get("to_agent_id") or fresh_task.get("toAgentId") or "")
+        if fresh_to_agent != identity["agent_id"]:
+            return (
+                "broken", None,
+                f"turn moved away from this client during the wait (to_agent_id={fresh_to_agent!r})",
+            )
+        if str(fresh_message.get("message_id") or "") != verified_message_id:
+            return (
+                "broken", None,
+                "the task's current message changed during the wait; the verified "
+                "request binding no longer holds",
+            )
+        try:
+            _verify_current_task_message(
+                fresh_message,
+                request_row,
+                identity=identity,
+                ecs_agent_id=ecs_agent_id,
+                zendesk_ticket_id=str(ctx.zendesk_ticket_id),
+                client_ticket_id=str(ctx.client_ticket_id),
+            )
+        except AutomationTestScenarioError as exc:
+            return ("broken", None, str(exc))
+        if str(fresh_message.get("delivery_status") or "") == "delivered":
+            return ("delivered", fresh_message, "")
+        return None  # still pending; keep waiting
 
     try:
-        self_message = engine.wait_for(
+        verdict, self_message, broken_reason = engine.wait_for(
             "current relay message delivered to this client",
             delivery_probe,
             engine.relay_timeout_min * 60,
@@ -402,8 +446,10 @@ def verify_relay_binding(
             f"current message never reached delivery_status=delivered ({exc}); "
             "refusing to execute before the reply is possible"
         ) from exc
-    if str(self_message.get("delivery_status") or "") != "delivered":  # pragma: no cover
-        raise AutomationTestScenarioError("current message delivery did not settle")
+    if verdict != "delivered":  # pragma: no cover - "broken" carries its own reason
+        raise AutomationTestScenarioError(
+            f"binding wait ended without delivery: {broken_reason or verdict}"
+        )
 
     url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
     try:
