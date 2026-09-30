@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T04:37:03Z",
-  "source_base_commit": "e2ce42bae12f0a74dfe0d2c221edb135e0b12bcf",
-  "registry_digest": "0a4c3df9f6cb1175a4d448cb04a8c7702e2fe3b3a4d412780257f4c068c373dc",
+  "generated_at": "2026-09-30T04:47:42Z",
+  "source_base_commit": "116f8be416b8da129c95cae892e12b5089ffa217",
+  "registry_digest": "fbb3adbd464b1a8e0966e6eba96c59dfea18b44db22c23225759c7b4cdfb9bee",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -14769,6 +14769,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "created",
           "summary": "用户交付 token统计完整性优化计划（low thinking）并批准实施；阶段 0 探针确认 gateway 返回 usage 后全阶段实施。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "首次部署（r20260930-7a7456c）被 schema_is_current 误判跳过 bootstrap（该检查只对表存在性+revision 字面量，检测不到列级 DDL），ledger 的 source/source_run_id 列未建；按仓库契约机制 bump SCHEMA_REVISION 010→011（011 含新列；旧 010 可升级）强制 bootstrap 真正执行。"
         }
       ],
       "legacy_ids": [],
