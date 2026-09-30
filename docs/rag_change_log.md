@@ -11,6 +11,35 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-30 - n8n knowledge source migration to SupportPortal ingestion (p2-181, draft only)
+
+- Summary: the two n8n KB workflows (`[kb]Build|Solved Cases`, `[kb]Build|CSD`)
+  were reworked as **unpublished drafts** to deliver raw source snapshots
+  (ticket + fully paginated comments; CSD issue with `fields=*,comment`) to a
+  SupportPortal source-ingestion endpoint instead of writing Zendesk KB drafts,
+  Tencent/SupportPortal Memory wikis, and Google Sheets directly. The n8n-side
+  AI pre-filtering, local PostgreSQL pre-dedup, and Memory wiki writes are
+  removed from the drafts; dedup becomes receipt-based
+  (`accepted`/`already_exists`/`stale_ignored`).
+- Reason: the approved n8n source-migration plan moves summarization and
+  independent review to Hermes and audited, controlled writes to SupportPortal;
+  n8n only fetches and delivers source snapshots.
+- Affected files/config: n8n workflows MM3Z3T469Eru3Q1I (draft
+  `adb1156a`, 36→14 nodes) and GgDxPEWtW7ltT5BW (draft `eea4392d`, 26→18
+  nodes); contract proposal
+  `docs/integrations/n8n/knowledge_source_ingestion_contract.md`; snapshots and
+  manifest under `docs/integrations/n8n/workflows/`. Active published versions
+  (`de3c1ca8` / `d7100b18`) are unchanged.
+- Data impact: none yet — drafts are not published; the live pipelines still
+  write Memory wikis and KB drafts as before. Publishing is blocked until the
+  SupportPortal ingestion endpoint exists in Preproduction and independent
+  acceptance passes.
+- Verification: pre-change and post-change MCP readbacks (active==published
+  before; drafts divergent after with expected nodes/connections/credentials);
+  `python3 scripts/n8n/validate_workflow_snapshots.py` → 15 published, 3
+  divergent drafts, 75 redacted values. End-to-end delivery/receipt scenarios
+  remain unverified until the endpoint exists.
+
 ## 2026-09-30 - RAG outbound model policy convergence (p2-160 single-model tiering)
 
 - Summary: when the deployment pins `AGENT_MODEL_ID` (Preproduction SSM
