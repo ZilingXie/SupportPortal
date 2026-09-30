@@ -370,6 +370,33 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 `p2-149` 起 Enablement 默认为人工开通流程，Worker 不持有任何 Archer 凭据，
 `archer-oauth-cookie` SSM 参数仅作为历史凭证保留（不删除、不消费）。
 
+### Agent 单模型分档（p2-160 延续）
+
+Preproduction 的 Agent 模型统一由一个非敏感 String SSM 参数控制：
+`/supportportal/preproduction/agent-model`（初值 `gpt-6-sol`）。
+
+- 发布流程 `read_agent_model_parameter` 在渲染前读取一次值与版本，把 `AGENT_MODEL_ID`
+  固定进同一次发布的 api/route/worker task definition；注册前与激活前
+  `verify_agent_model_unchanged` 复核 SSM 版本未变，中途切换必须重启发布。
+  参数缺失或为空时 Preproduction 渲染 fail-closed。
+- 运行策略：纳入范围的业务/RAG 场景统一该模型 + `medium`，工程师调查回复
+  （Hermes `/v1/responses`，显式 `provider`+`model_options`）与 Hermes
+  investigation work run（`/v1/runs` 显式 `model`+`model_options`）为 `xhigh`；
+  模型 fallback、DeepSeek provider fallback 与场景 temperature 在策略生效时清除。
+  离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话与
+  工单标题不在范围内（标题经 2026-09-30 实测：gpt-6-sol/medium 超出建单同步
+  2 秒时限且 24-token 输出预算下约半数请求被 reasoning 耗尽，保持
+  gpt-5.4-nano/none 现状，避免降级为启发式标题；如需纳入改一行场景集合再发布）。
+- 固定语义：case binding 创建时固定模型（schema-010 `agent_model` 列），此后 SSM
+  切换只影响新 session；每个 turn-run 行固定当次请求的模型与强度，丢回执重试重发
+  相同请求体（网关幂等指纹覆盖整个请求体）。旧行/旧 binding 为 NULL，保持网关
+  默认模型的旧请求格式。
+- Production 渲染显式剥离 `AGENT_MODEL_ID` 与旧 p2-160 per-scenario luna/astra
+  覆盖（两者在 Preproduction 渲染中也被替换为单一 `AGENT_MODEL_ID` 注入）。
+- 回滚：先阻止新 Hermes case run 并核对在途与已固定 session，不得让旧 Worker
+  以网关默认模型（astra）静默接续 Sol 固定的 session；回滚后旧代码读不到
+  `AGENT_MODEL_ID` 时按旧请求格式运行。
+
 ## Schema Bootstrap
 
 用一次性 task和 migration身份执行：

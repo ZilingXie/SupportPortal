@@ -272,3 +272,83 @@ def test_ticket_created_route_does_not_resolve_persona_before_ticket_parent(
         assert processing.payload["persona"] is None
     finally:
         repository.close()
+
+
+def _pg_handoff(store: PostgresAutomationEcsStore) -> str:
+    receipt = store.accept_intake(_event(), store.settings.provenance())
+    job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+    assert job is not None
+    handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+    return str(handoff["turn_id"])
+
+
+def test_postgres_binding_pins_agent_model_from_env(store: PostgresAutomationEcsStore) -> None:
+    with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-sol"}):
+        _pg_handoff(store)
+    binding = store.get_hermes_case_binding("123")
+    assert binding is not None
+    assert binding["agent_model"] == "gpt-6-sol"
+
+
+def test_postgres_binding_without_env_stays_unpinned(store: PostgresAutomationEcsStore) -> None:
+    with patch.dict(os.environ, {"AGENT_MODEL_ID": ""}):
+        _pg_handoff(store)
+    binding = store.get_hermes_case_binding("123")
+    assert binding is not None
+    assert binding["agent_model"] is None
+
+
+def test_postgres_turn_run_pins_model_and_effort_once(store: PostgresAutomationEcsStore) -> None:
+    turn_id = _pg_handoff(store)
+    first = store.get_or_create_hermes_turn_run(
+        turn_id,
+        "work",
+        prompt_version="hermes-investigation-manual",
+        agent_model="gpt-6-sol",
+        reasoning_effort="xhigh",
+    )
+    assert first["agent_model"] == "gpt-6-sol"
+    assert first["reasoning_effort"] == "xhigh"
+    # A retry (or a changed deployment pin) must not rewrite the pinned
+    # request config for an existing request id.
+    replay = store.get_or_create_hermes_turn_run(
+        turn_id,
+        "work",
+        prompt_version="hermes-investigation-manual",
+        agent_model="gpt-6-other",
+        reasoning_effort="medium",
+    )
+    assert replay["request_id"] == first["request_id"]
+    assert replay["agent_model"] == "gpt-6-sol"
+    assert replay["reasoning_effort"] == "xhigh"
+
+
+def test_postgres_turn_run_creation_is_concurrently_single_row(
+    store: PostgresAutomationEcsStore,
+) -> None:
+    turn_id = _pg_handoff(store)
+
+    def create(_: int) -> dict:
+        return store.get_or_create_hermes_turn_run(
+            turn_id,
+            "route",
+            prompt_version="hermes-route-manual",
+            agent_model="gpt-6-sol",
+            reasoning_effort="medium",
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        rows = list(pool.map(create, range(4)))
+    assert len({row["request_id"] for row in rows}) == 1
+    assert {row["agent_model"] for row in rows} == {"gpt-6-sol"}
+    assert {row["reasoning_effort"] for row in rows} == {"medium"}
+    with psycopg.connect(DSN) as connection:
+        connection.execute(
+            sql.SQL("SET search_path TO {}").format(sql.Identifier(store.settings.db_schema))
+        )
+        count = connection.execute(
+            sql.SQL("SELECT COUNT(*) FROM {}.automation_hermes_turn_runs").format(
+                sql.Identifier(store.settings.db_schema)
+            )
+        ).fetchone()[0]
+    assert count == 1

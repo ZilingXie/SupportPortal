@@ -11,6 +11,29 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-09-30 - RAG outbound model policy convergence (p2-160 single-model tiering)
+
+- Summary: when the deployment pins `AGENT_MODEL_ID` (Preproduction SSM
+  `agent-model`), the RAG answer path converges on the pinned model: the
+  light-path and api-semantics fast models no longer downgrade the final
+  outbound answer request, and complex/troubleshooting queries keep the
+  pinned `medium` effort instead of escalating to
+  `RAG_COMPLEX_ANSWER_REASONING_EFFORT`. Without the pin, both behaviors are
+  unchanged.
+- Reason: the single-model tiering plan requires every final outbound RAG
+  answer request to follow the deployment policy; ordinary RAG answers stay
+  at medium even when the question discusses a fault, because
+  investigation-grade `xhigh` belongs to the Hermes investigation flow.
+- Affected files/config: `backend/services/rag_qa.py`
+  (`_build_answer_profile`, `_effective_answer_reasoning_effort`) reading
+  `agent_model_policy_active()` from `backend/services/llm_profiles.py`.
+  No retrieval, rerank, corpus, or prompt change.
+- Data impact: none — no ingestion, schema, or replay; only the outbound
+  answer model/effort selection under the pin.
+- Verification: `backend/tests/test_agent_model_policy.py`
+  (RagOutboundPolicyTests) plus the full `backend/tests/test_rag_qa.py`
+  suite (103 passed); Preproduction usage-table model records post-deploy.
+
 ## 2026-09-28 - Hermes mid-session follow-up answers from trusted docs (p2-178)
 
 - Summary: an AI-held enablement conversation can now answer an in-session knowledge question ("What is the App ID?") in-turn: the Hermes route phase classifies it as conversation follow-up/knowledge_question, the server verifies business-state gates, and a server-controlled reply-only work phase queries the SAME trusted RAGFlow docs adapter used by the legacy reply fallback (`try_rag_fallback_answer`); the answer renders through the Persona phase with the deterministic References block appended, and publishes once through the hermes draft pipeline. RAG-unanswerable or failed lookups never guess — they complete the real human handoff.

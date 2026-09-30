@@ -638,7 +638,7 @@ class ScriptedHermesClient:
         self.submissions: list[dict[str, Any]] = []
 
     def start_run(self, *, session_id, instructions, input_text, idempotency_key,
-                  workspace_key=None, enabled_toolsets=None):
+                  workspace_key=None, enabled_toolsets=None, model=None, model_options=None):
         self.run_counter += 1
         run_id = f"run-{self.run_counter}"
         self.submissions.append(
@@ -649,6 +649,8 @@ class ScriptedHermesClient:
                 "idempotency_key": idempotency_key,
                 "toolsets": list(enabled_toolsets or []),
                 "phase": idempotency_key.rsplit(":", 1)[-1],
+                "model": model,
+                "model_options": model_options,
             }
         )
         phase = idempotency_key.rsplit(":", 1)[-1]
@@ -1539,7 +1541,7 @@ class _RouteSubmissionFailureClient:
         self.submissions: list[dict[str, Any]] = []
 
     def start_run(self, *, session_id, instructions, input_text, idempotency_key,
-                  workspace_key=None, enabled_toolsets=None):
+                  workspace_key=None, enabled_toolsets=None, model=None, model_options=None):
         from backend.services.hermes_agent_runtime import HermesAgentError
 
         self.run_counter += 1

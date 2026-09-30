@@ -261,7 +261,7 @@ class FakeHermesClient:
     fail_submit: bool = False
 
     def start_run(self, *, session_id, instructions, input_text, idempotency_key,
-                  workspace_key=None, enabled_toolsets=None):
+                  workspace_key=None, enabled_toolsets=None, model=None, model_options=None):
         if self.fail_submit:
             raise HermesAgentError("hermes_agent_rejected", "HTTP 500", retryable=False)
         self.run_counter += 1
@@ -274,6 +274,8 @@ class FakeHermesClient:
                 "idempotency_key": idempotency_key,
                 "workspace_key": workspace_key,
                 "enabled_toolsets": list(enabled_toolsets or []),
+                "model": model,
+                "model_options": model_options,
             }
         )
         if self.on_run_completed is not None:
@@ -2453,3 +2455,192 @@ def test_investigation_work_toolsets_include_skills() -> None:
     ]
     # automation work runs stay narrow
     assert toolsets_for_phase("work", direction="automation") == ["supportportal_work"]
+
+
+class TestAgentModelTiering:
+    """Deployment-pinned single-model tiering on the Hermes run requests."""
+
+    def _drive_turn(self, store, event, *, direction, route, work_status="executed"):
+        receipt = store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction=direction, route=route
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"], work_result={"status": work_status, "route": route}
+                )
+                if direction == "investigation":
+                    store.save_hermes_investigation(
+                        handoff["turn_id"],
+                        summary="verified",
+                        evidence=[],
+                        blockers=[],
+                        next_steps=[],
+                    )
+
+        client = FakeHermesClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=None,
+            poll_interval_seconds=0.01,
+        )
+        result = processor.process(agent_job)
+        return handoff, client, result
+
+    def test_pinned_automation_case_runs_medium_across_route_work_persona(self) -> None:
+        store = _store()
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-sol"}):
+            handoff, client, result = self._drive_turn(
+                store,
+                _event("zendesk:ticket:771:created"),
+                direction="automation",
+                route="enablement",
+            )
+        assert result["status"] == "completed", result
+        binding = store.get_hermes_case_binding("123")
+        assert binding["agent_model"] == "gpt-6-sol"
+        by_phase = {
+            submission["idempotency_key"].rsplit(":", 1)[-1]: submission
+            for submission in client.submissions
+        }
+        for phase in ("route", "work", "persona"):
+            assert by_phase[phase]["model"] == "gpt-6-sol", phase
+            assert by_phase[phase]["model_options"] == {"reasoning_effort": "medium"}, phase
+
+    def test_pinned_investigation_work_escalates_to_xhigh(self) -> None:
+        store = _store()
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-sol"}):
+            handoff, client, result = self._drive_turn(
+                store,
+                _event("zendesk:ticket:772:created"),
+                direction="investigation",
+                route="investigation",
+            )
+        assert result["status"] == "awaiting_investigation_review", result
+        by_phase = {
+            submission["idempotency_key"].rsplit(":", 1)[-1]: submission
+            for submission in client.submissions
+        }
+        assert by_phase["route"]["model_options"] == {"reasoning_effort": "medium"}
+        assert by_phase["work"]["model_options"] == {"reasoning_effort": "xhigh"}
+
+    def test_unpinned_binding_keeps_legacy_request_body(self) -> None:
+        store = _store()
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": ""}):
+            handoff, client, result = self._drive_turn(
+                store,
+                _event("zendesk:ticket:773:created"),
+                direction="investigation",
+                route="investigation",
+            )
+        assert result["status"] == "awaiting_investigation_review", result
+        binding = store.get_hermes_case_binding("123")
+        assert binding["agent_model"] is None
+        for submission in client.submissions:
+            assert submission["model"] is None
+            assert submission["model_options"] is None
+
+    def test_lost_receipt_retry_resends_pinned_request_config(self) -> None:
+        # The turn-run row pins model+effort at creation; a retry after a lost
+        # acceptance receipt must resend the same request config even when the
+        # deployment pin has since changed (the gateway idempotency
+        # fingerprint hashes the whole body).
+        store = _store()
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-sol"}):
+            receipt = store.accept_intake(_event("zendesk:ticket:774:created"), _settings().provenance())
+            job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+            handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+            agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+            store.set_hermes_turn_snapshot(handoff["turn_id"], snapshot={"conversation": []})
+            store.start_hermes_agent_turn(handoff["turn_id"], run_id=None)
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="investigation", route="investigation"
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"], work_result={"status": "executed"}
+                )
+                store.save_hermes_investigation(
+                    handoff["turn_id"], summary="verified", evidence=[], blockers=[], next_steps=[]
+                )
+
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-other"}):
+            client = FakeHermesClient(on_run_completed=on_run_completed)
+            processor = HermesAgentTurnProcessor(
+                store,
+                client=client,
+                environment="preproduction",
+                repository=None,
+                poll_interval_seconds=0.01,
+            )
+            result = processor.process(agent_job)
+        assert result["status"] == "awaiting_investigation_review", result
+        # The binding pinned gpt-6-sol at handoff; the retry under a changed
+        # env still submits the binding's model, never the new value.
+        for submission in client.submissions:
+            assert submission["model"] == "gpt-6-sol"
+        by_phase = {
+            submission["idempotency_key"].rsplit(":", 1)[-1]: submission
+            for submission in client.submissions
+        }
+        assert by_phase["work"]["model_options"] == {"reasoning_effort": "xhigh"}
+
+    def test_feedback_turn_work_stays_xhigh_on_pinned_session(self) -> None:
+        store = _store()
+        with patch.dict(os.environ, {"AGENT_MODEL_ID": "gpt-6-sol"}):
+            handoff, client, result = self._drive_turn(
+                store,
+                _event("zendesk:ticket:775:created"),
+                direction="investigation",
+                route="investigation",
+            )
+            assert result["status"] == "awaiting_investigation_review", result
+            feedback = store.create_investigation_feedback_turn(
+                "123",
+                feedback="please verify the fix with the customer",
+                base_event={"event_id": "evt-feedback-1", "ticket": {"id": "123"}},
+                prompt_release_id="prompt-1",
+            )
+            agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
+
+            def on_feedback_run(run_id, idempotency_key):
+                if idempotency_key.rsplit(":", 1)[-1] == "work":
+                    store.record_hermes_turn_work(
+                        feedback["turn_id"], work_result={"status": "executed"}
+                    )
+                    store.save_hermes_investigation(
+                        feedback["turn_id"], summary="re-verified", evidence=[], blockers=[], next_steps=[]
+                    )
+
+            feedback_client = FakeHermesClient(on_run_completed=on_feedback_run)
+            processor = HermesAgentTurnProcessor(
+                store,
+                client=feedback_client,
+                environment="preproduction",
+                repository=None,
+                poll_interval_seconds=0.01,
+            )
+            feedback_result = processor.process(agent_job)
+        assert feedback_result["status"] == "awaiting_investigation_review", feedback_result
+        work_submissions = [
+            submission
+            for submission in feedback_client.submissions
+            if submission["idempotency_key"].endswith(":work")
+        ]
+        assert work_submissions
+        for submission in work_submissions:
+            assert submission["model"] == "gpt-6-sol"
+            assert submission["model_options"] == {"reasoning_effort": "xhigh"}

@@ -55,6 +55,83 @@ _PROVIDER_FALLBACK_EXCLUDED_SCENARIOS = {
     ACCOUNT_EXTRACTOR_SCENARIO,
 }
 
+# Deployment-pinned single-model tiering. When AGENT_MODEL_ID is present
+# (Preproduction renders inject it from SSM /supportportal/<env>/agent-model)
+# every in-scope scenario runs on that one model: medium reasoning effort for
+# business generation and RAG answers, xhigh for the engineer investigation
+# reply. Model fallback chains, the DeepSeek provider fallback, and scenario
+# temperatures are dropped for those scenarios (a reasoning-pinned deployment
+# must never silently degrade onto another model); failures follow the
+# existing human-review / explicit-failure paths. Out of scope by design:
+# knowledge ingestion (chat-mode metadata extraction), the offline benchmark
+# judge, developer-only deploy reports, direct Hermes Dashboard sessions,
+# and the ticket title (measured 2026-09-30: gpt-6-sol/medium misses the
+# synchronous 2s intake budget — 2.19-2.81s plus ~50% of requests exhaust the
+# 24-token output budget on reasoning — so the title keeps its
+# nano/no-reasoning configuration instead of degrading to heuristic titles).
+AGENT_MODEL_ENV_NAME = "AGENT_MODEL_ID"
+AGENT_MODEL_STANDARD_EFFORT = "medium"
+AGENT_MODEL_INVESTIGATION_EFFORT = "xhigh"
+_AGENT_MODEL_SCENARIOS = frozenset(
+    {
+        INTENT_ROUTER_SCENARIO,
+        ACCOUNT_ROUTE_SCENARIO,
+        PRODUCT_SELECTION_SCENARIO,
+        WEB_SEARCH_SCENARIO,
+        CLIENT_ACK_SCENARIO,
+        INPUT_GUARDRAIL_SCENARIO,
+        BILLING_REPLY_SCENARIO,
+        ENABLEMENT_REPLY_SCENARIO,
+        ENABLEMENT_COMPLETION_CLASSIFIER_SCENARIO,
+        AUTOMATION_PERSONA_SCENARIO,
+        RAG_ANSWER_SCENARIO,
+        RAGFLOW_ANSWER_SCENARIO,
+        ACCOUNT_EXTRACTOR_SCENARIO,
+        RAG_SUFFICIENCY_SCENARIO,
+        QUERY_EXPANSION_SCENARIO,
+        RAG_AGENT_PLANNER_SCENARIO,
+        RAG_CONTEXT_COMPRESSION_SCENARIO,
+        REQUEST_BODY_ANALYZER_SCENARIO,
+        TROUBLESHOOTING_INTAKE_SCENARIO,
+        ENGINEER_HELPER_SCENARIO,
+        ENGINEER_INVESTIGATION_REPLY_SCENARIO,
+    }
+)
+
+
+def agent_model_policy_active() -> bool:
+    """Whether the deployment-pinned single-model policy is configured."""
+    return bool(_clean_text(os.getenv(AGENT_MODEL_ENV_NAME)))
+
+
+def agent_model_env_value() -> str:
+    return _clean_text(os.getenv(AGENT_MODEL_ENV_NAME))
+
+
+def _apply_agent_model_policy(profile: ModelProfile) -> ModelProfile:
+    agent_model = agent_model_env_value()
+    if not agent_model or profile.scenario not in _AGENT_MODEL_SCENARIOS:
+        return profile
+    reasoning_effort = (
+        AGENT_MODEL_INVESTIGATION_EFFORT
+        if profile.scenario == ENGINEER_INVESTIGATION_REPLY_SCENARIO
+        else AGENT_MODEL_STANDARD_EFFORT
+    )
+    return ModelProfile(
+        scenario=profile.scenario,
+        provider="openai",
+        model=agent_model,
+        api_mode=OPENAI_RESPONSES_API,
+        api_key=profile.api_key,
+        base_url=profile.base_url,
+        reasoning_effort=reasoning_effort,
+        temperature=None,
+        timeout_seconds=profile.timeout_seconds,
+        max_retries=profile.max_retries,
+        fallback_models=(),
+        fallback_profiles=(),
+    )
+
 LOGGER = logging.getLogger(__name__)
 _CONFIG_WARNINGS: set[str] = set()
 
@@ -286,6 +363,17 @@ def parse_provider_model_reference(value: str, *, default_provider: ProviderName
 
 
 def resolve_model_profile(
+    scenario: str,
+    *,
+    provider: ProviderName | None = None,
+    model: str | None = None,
+) -> ModelProfile:
+    return _apply_agent_model_policy(
+        _resolve_scenario_model_profile(scenario, provider=provider, model=model)
+    )
+
+
+def _resolve_scenario_model_profile(
     scenario: str,
     *,
     provider: ProviderName | None = None,

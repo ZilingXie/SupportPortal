@@ -108,6 +108,8 @@ class HermesAgentClient:
         idempotency_key: str,
         workspace_key: str | None = None,
         enabled_toolsets: list[str] | None = None,
+        model: str | None = None,
+        model_options: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.settings.configured():
             raise HermesAgentError(
@@ -129,6 +131,15 @@ class HermesAgentClient:
             body["workspace_key"] = workspace_key
         if enabled_toolsets:
             body["enabled_toolsets"] = list(enabled_toolsets)
+        # Deployment-pinned model tiering: /v1/runs honors a bare request-body
+        # model plus model_options.reasoning_effort. The gateway idempotency
+        # fingerprint hashes the whole body, so callers must source these
+        # values from the persisted turn-run row, never from live config.
+        normalized_model = str(model or "").strip()
+        if normalized_model:
+            body["model"] = normalized_model
+            if isinstance(model_options, dict) and model_options:
+                body["model_options"] = dict(model_options)
         status, payload = _request(
             self.settings,
             method="POST",

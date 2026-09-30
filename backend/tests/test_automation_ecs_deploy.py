@@ -251,6 +251,7 @@ def test_render_task_definition_sets_engineer_slack_outbound_switch(
         region="us-east-1",
         environment=environment,
         repository=f"supportportal/{environment}",
+        agent_model="gpt-6-sol" if environment == "preproduction" else None,
     )
 
     values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
@@ -258,9 +259,15 @@ def test_render_task_definition_sets_engineer_slack_outbound_switch(
 
 
 @pytest.mark.parametrize("role", ["api", "route", "worker"])
-def test_render_task_definition_preproduction_pins_llm_policy(tmp_path: Path, role: str) -> None:
+def test_render_task_definition_preproduction_pins_agent_model(tmp_path: Path, role: str) -> None:
     current = _task_definition(tmp_path, role)
     _as_preproduction(current)
+    # An observed revision may still carry the retired p2-160 per-scenario
+    # policy env; the render must replace it with the single-model pin.
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["environment"].append({"name": "AUTOMATION_PERSONA_MODEL", "value": "gpt-5.6-luna"})
+    current.write_text(json.dumps(payload), encoding="utf-8")
 
     rendered = render_task_definition(
         role=role,
@@ -270,31 +277,51 @@ def test_render_task_definition_preproduction_pins_llm_policy(tmp_path: Path, ro
         region="us-east-1",
         environment="preproduction",
         repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
     )
 
     values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
-    # Spot-check the policy across scenario families: cheap classifiers, reply
-    # rendering, RAG, and the investigation pin (astra/medium, not luna/max).
-    assert values["ROUTE_AGENT_ROUTER_MODEL"] == "gpt-5.6-luna"
-    assert values["ROUTE_AGENT_ROUTER_REASONING_EFFORT"] == "max"
-    assert values["AUTOMATION_PERSONA_MODEL"] == "gpt-5.6-luna"
-    assert values["AUTOMATION_PERSONA_REASONING_EFFORT"] == "max"
-    assert values["RAG_AGENT_ANSWER_MODEL"] == "gpt-5.6-luna"
-    assert values["ENGINEER_INVESTIGATION_REPLY_MODEL"] == "gpt-6-astra"
-    assert values["ENGINEER_INVESTIGATION_REPLY_REASONING_EFFORT"] == "medium"
-    # Every declared override name must be present on a preproduction render.
-    assert set(PREPRODUCTION_LLM_ENV_OVERRIDES) <= set(values)
+    assert values["AGENT_MODEL_ID"] == "gpt-6-sol"
+    assert not (set(PREPRODUCTION_LLM_ENV_OVERRIDES) & set(values))
+
+
+def test_render_task_definition_preproduction_requires_agent_model(tmp_path: Path) -> None:
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    with pytest.raises(ValueError, match="agent_model is required for preproduction renders"):
+        render_task_definition(
+            role="worker",
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+        )
+
+
+def test_render_task_definition_production_rejects_agent_model(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="must not be pinned on production renders"):
+        render_task_definition(
+            role="worker",
+            current_path=_task_definition(tmp_path, "worker"),
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            agent_model="gpt-6-sol",
+        )
 
 
 def test_render_task_definition_production_strips_llm_policy_env(tmp_path: Path) -> None:
     # The formal upgrade path renders from the observed task definition, so a
     # preproduction revision's policy env must not survive into a Production
-    # render.
+    # render — including the single-model pin itself.
     current = _task_definition(tmp_path, "worker")
     payload = json.loads(current.read_text())
     environment = payload["taskDefinition"]["containerDefinitions"][0]["environment"]
     environment.append({"name": "AUTOMATION_PERSONA_MODEL", "value": "gpt-5.6-luna"})
     environment.append({"name": "AUTOMATION_PERSONA_REASONING_EFFORT", "value": "max"})
+    environment.append({"name": "AGENT_MODEL_ID", "value": "gpt-6-sol"})
     current.write_text(json.dumps(payload))
 
     rendered = render_task_definition(
@@ -309,6 +336,7 @@ def test_render_task_definition_production_strips_llm_policy_env(tmp_path: Path)
 
     values = {item["name"] for item in rendered["containerDefinitions"][0]["environment"]}
     assert not (set(PREPRODUCTION_LLM_ENV_OVERRIDES) & values)
+    assert "AGENT_MODEL_ID" not in values
 
 
 def _worker_current_with_archer_secret(tmp_path: Path) -> Path:
@@ -398,6 +426,7 @@ def test_render_task_definition_archer_mode_carries_no_credential(
         environment="preproduction",
         repository="supportportal/preproduction",
         enablement_workflow_mode="archer",
+        agent_model="gpt-6-sol",
     )
     container = rendered["containerDefinitions"][0]
     values = {item["name"]: item["value"] for item in container["environment"]}
@@ -424,6 +453,7 @@ def test_render_task_definition_archer_mode_allowed_for_both_environments(
         environment=environment,
         repository=f"supportportal/{environment}",
         enablement_workflow_mode="archer",
+        agent_model="gpt-6-sol" if environment == "preproduction" else None,
     )
     values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
     assert values["ENABLEMENT_WORKFLOW_MODE"] == "archer"
@@ -478,6 +508,7 @@ def test_render_task_definition_sets_enablement_mode_on_api(tmp_path: Path) -> N
         environment="preproduction",
         repository="supportportal/preproduction",
         enablement_workflow_mode="manual",
+        agent_model="gpt-6-sol",
     )
     values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
     assert values["ENABLEMENT_WORKFLOW_MODE"] == "manual"
@@ -568,6 +599,7 @@ def test_disabled_case_workflow_can_keep_persona_endpoint(
         repository="supportportal/preproduction",
         hermes_case_workflow_mode="disabled",
         hermes_persona_enabled=True,
+        agent_model="gpt-6-sol",
     )
     rendered_container = rendered["containerDefinitions"][0]
     secret_names = {item["name"] for item in rendered_container["secrets"]}
@@ -616,6 +648,7 @@ def test_render_task_definition_can_activate_hermes_from_disabled_preproduction(
         environment="preproduction",
         repository="supportportal/preproduction",
         hermes_case_workflow_mode="real",
+        agent_model="gpt-6-sol",
     )
 
     secret_references = {
@@ -658,6 +691,7 @@ def test_render_task_definition_rejects_cross_environment_ssm_prefix(
             environment="preproduction",
             repository="supportportal/preproduction",
             hermes_case_workflow_mode="real",
+            agent_model="gpt-6-sol",
         )
 
 
@@ -742,6 +776,7 @@ def test_render_initial_preproduction_worker_is_environment_isolated(
         hermes_case_workflow_mode="real",
         graph_efs_file_system_id="fs-preproduction",
         graph_efs_access_point_id="fsap-preproduction",
+        agent_model="gpt-6-sol",
     )
     serialized = json.dumps(rendered, sort_keys=True)
     assert "supportportal/production" not in serialized
@@ -774,6 +809,7 @@ def test_render_initial_preproduction_worker_is_environment_isolated(
             "parameter/supportportal/preproduction"
         ),
         hermes_case_workflow_mode="real",
+        agent_model="gpt-6-sol",
     )
     assert "HERMES_CALLBACK_TOKEN" in {
         item["name"] for item in api["containerDefinitions"][0]["secrets"]
@@ -803,6 +839,7 @@ def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Pa
         ),
         hermes_case_workflow_mode="disabled",
         hermes_persona_enabled=True,
+        agent_model="gpt-6-sol",
     )
     container = rendered["containerDefinitions"][0]
     secret_names = {item["name"] for item in container["secrets"]}

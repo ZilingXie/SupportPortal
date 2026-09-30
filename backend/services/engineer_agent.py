@@ -9,6 +9,7 @@ from backend.services.customer_reply_composer import ensure_customer_reply_email
 from backend.services.llm_factory import LlmInvocationError, invoke_responses_text
 from backend.services.llm_profiles import (
     ENGINEER_INVESTIGATION_REPLY_SCENARIO,
+    agent_model_policy_active,
     profile_has_invocation_credentials,
     resolve_model_profile,
 )
@@ -843,12 +844,27 @@ def _generate_investigation_reply_turn(
             + " No prose, no code fences, and no text before or after the JSON object."
         )
 
+    extra_payload = _investigation_reply_extra_payload()
+    if profile.base_url and agent_model_policy_active():
+        # Hermes /v1/responses contract: the standard top-level
+        # reasoning.effort is not treated as agent strength there and a bare
+        # model only applies with direct_model_requests enabled; an explicit
+        # provider is always honored and model_options.reasoning_effort is
+        # the strength control. Acceptance must check the actually executed
+        # model — the response model field is an echo.
+        extra_payload = {
+            **extra_payload,
+            "provider": "openai",
+            "model": profile.model,
+            "model_options": {"reasoning_effort": profile.reasoning_effort or "xhigh"},
+        }
+
     try:
         response = invoke_responses_text(
             profile=profile,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
-            extra_payload=_investigation_reply_extra_payload(),
+            extra_payload=extra_payload,
         )
         model_name = (
             response.provider_model_name
