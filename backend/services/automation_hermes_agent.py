@@ -42,6 +42,7 @@ from backend.services.hermes_agent_runtime import (
     HermesAgentError,
 )
 from backend.services.prompt_runtime import resolve_system_prompt
+from backend.services.token_usage import build_usage_ledger_entry
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_agent")
 
@@ -1457,10 +1458,15 @@ class HermesAgentTurnProcessor:
             run_status = str(status.get("status"))
             if run_status in TERMINAL_RUN_STATUSES:
                 if run_status == "completed":
+                    usage_recorded = self._record_hermes_run_usage(turn, run_id, status)
                     self.store.complete_hermes_turn_run(
                         turn_id,
                         phase,
-                        output={"run_id": run_id, "output": status.get("output")},
+                        output={
+                            "run_id": run_id,
+                            "output": status.get("output"),
+                            **({"usage_recorded": True} if usage_recorded else {}),
+                        },
                     )
                     return _PHASE_COMPLETED
                 return self._fail_phase_terminal(turn_id, phase, run_status, status)
@@ -1481,6 +1487,88 @@ class HermesAgentTurnProcessor:
                 )
                 return _PHASE_FAILED
             self._sleep(self.poll_interval_seconds)
+
+    # ----------------------------------------------------------- usage ledger
+
+    def _record_hermes_run_usage(
+        self, turn: dict[str, Any], run_id: str, status: dict[str, Any]
+    ) -> bool:
+        """Persist the gateway-reported usage of a completed run.
+
+        Returns True when an entry was written (or already existed). A missing
+        gateway usage never blocks the business turn; the admin completeness
+        view reports it as partial instead of pretending zero.
+        """
+        usage = status.get("usage")
+        if not isinstance(usage, dict):
+            LOGGER.warning(
+                "hermes_run_usage_missing turn_id=%s run_id=%s phase_payload_keys=%s",
+                turn.get("turn_id"),
+                run_id,
+                sorted(status.keys()),
+            )
+            return False
+        input_details = usage.get("input_tokens_details")
+        output_details = usage.get("output_tokens_details")
+        entry = build_usage_ledger_entry(
+            provider="hermes",
+            model=str(status.get("model") or "hermes-agent"),
+            stage="hermes_agent_run",
+            input_tokens=usage.get("input_tokens"),
+            output_tokens=usage.get("output_tokens"),
+            cached_input_tokens=(
+                input_details.get("cached_tokens")
+                if isinstance(input_details, dict)
+                else None
+            ),
+            reasoning_tokens=(
+                output_details.get("reasoning_tokens")
+                if isinstance(output_details, dict)
+                else None
+            ),
+        )
+        entry["source"] = "hermes"
+        entry["source_run_id"] = run_id
+
+        ticket_id = str(turn.get("zendesk_ticket_id") or "").strip()
+        repository = self.repository
+        if not ticket_id or repository is None:
+            LOGGER.warning(
+                "hermes_run_usage_unattributed run_id=%s ticket=%r repository=%s",
+                run_id,
+                ticket_id,
+                repository is not None,
+            )
+            return False
+        try:
+            account_case = repository.get_account_case_by_zendesk_ticket_id(
+                ticket_id, processing_profile=self.environment
+            )
+            billing_ticket_id = str(
+                (account_case or {}).get("billing_ticket_id") or ""
+            ).strip()
+            if not billing_ticket_id:
+                LOGGER.warning(
+                    "hermes_run_usage_no_account_case run_id=%s ticket=%s environment=%s",
+                    run_id,
+                    ticket_id,
+                    self.environment,
+                )
+                return False
+            repository.record_account_case_llm_usage_entries(
+                billing_ticket_id=billing_ticket_id,
+                client_ticket_id=ticket_id,
+                entries=[entry],
+            )
+            return True
+        except Exception:
+            LOGGER.warning(
+                "hermes_run_usage_write_failed run_id=%s ticket=%s",
+                run_id,
+                ticket_id,
+                exc_info=True,
+            )
+            return False
 
     # ------------------------------------------------------------ submission
 

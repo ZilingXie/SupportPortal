@@ -939,9 +939,13 @@ function renderTokenDetailRow(item) {
   if (!usage || !usage.available || !expandedTokenCaseKeys.has(tokenCaseKey(item))) return "";
   const rag = (usage.sources && usage.sources.rag) || {};
   const automation = (usage.sources && usage.sources.automation) || {};
-  const ragSummary = rag.available === false
-    ? `<span class="admin-token-unavailable" title="${escapeHtml(rag.error_reason || "RAG token usage unavailable")}">Unavailable</span>`
+  const hermes = (usage.sources && usage.sources.hermes) || {};
+  const ragSummary = rag.included === false
+    ? `<span class="admin-token-excluded" title="${escapeHtml(rag.reason || "excluded_by_admin_policy")}">Excluded</span>`
     : `${escapeHtml(formatTokenCount(rag.total_input_tokens))} in / ${escapeHtml(formatTokenCount(rag.total_output_tokens))} out / ${escapeHtml(formatTokenCount(rag.total_embedding_tokens))} emb`;
+  const hermesSummary = (hermes.call_count || hermes.total_input_tokens || hermes.total_output_tokens)
+    ? `${escapeHtml(formatTokenCount(hermes.total_input_tokens))} in / ${escapeHtml(formatTokenCount(hermes.total_output_tokens))} out`
+    : `<span class="admin-token-excluded" title="No recorded Hermes usage for this case">None</span>`;
   const costByModel = {};
   const costEntries = (usage.cost_usd && Array.isArray(usage.cost_usd.by_model)) ? usage.cost_usd.by_model : [];
   costEntries.forEach((entry) => {
@@ -956,6 +960,9 @@ function renderTokenDetailRow(item) {
       <section aria-label="Automation chain token usage">
         <header><span class="admin-token-source admin-token-source-automation">Automation</span> ${escapeHtml(formatTokenCount(automation.total_input_tokens))} in / ${escapeHtml(formatTokenCount(automation.total_output_tokens))} out · ${Number(automation.call_count || 0)} calls</header>
         <table class="admin-token-table"><thead><tr><th>Stage</th><th>In</th><th>Out</th><th>Calls</th></tr></thead><tbody>${renderTokenStageRows(automation.stage_totals)}</tbody></table>
+      </section>
+      <section aria-label="Hermes agent token usage">
+        <header><span class="admin-token-source admin-token-source-hermes">Hermes</span> ${hermesSummary} · ${Number(hermes.call_count || 0)} runs</header>
       </section>
       <section aria-label="Token usage by model">
         <header>By model</header>
@@ -994,14 +1001,18 @@ function renderAutomatedCases() {
   const metric = automationData.metrics || {};
   const rate = Number(metric.automation_rate || 0) * 100;
   const cases = Array.isArray(automationData.cases) ? automationData.cases : [];
-  const pageTokens = automationData.token_usage_page_total || {};
+  const filteredTokens = automationData.token_usage_filtered_total || {};
+  const completeness = String(filteredTokens.completeness || "complete");
+  const unknownSources = Array.isArray(filteredTokens.unknown_sources) ? filteredTokens.unknown_sources : [];
+  const filteredCost = filteredTokens.cost_usd || {};
+  const tokenSummary = `${escapeHtml(formatTokenCount(filteredTokens.total_input_tokens || 0))} in / ${escapeHtml(formatTokenCount(filteredTokens.total_output_tokens || 0))} out${Number(filteredTokens.total_cached_input_tokens || 0) ? ` · ${escapeHtml(formatTokenCount(filteredTokens.total_cached_input_tokens || 0))} cached` : ""}${completeness === "complete" && filteredCost.available ? ` · ${escapeHtml(formatTokenCostUsd(filteredCost.total_usd))}` : ""}`;
   return `
     <header class="admin-main-header"><div><p class="admin-eyebrow">ACCOUNT AUTOMATION</p><p>All /account cases. Automated means the final route was Automated, not that the case was resolved.</p></div></header>
     <section class="admin-metric-strip" aria-label="Account automation metrics">
       <div><span>Total account cases</span><strong>${Number(metric.total_account_cases || 0)}</strong></div>
       <div><span>Routed Automated</span><strong>${Number(metric.automated_cases || 0)}</strong></div>
       <div><span>Not Automated</span><strong>${Number(metric.not_automated_cases || 0)}</strong></div>
-      <div><span>Page tokens</span><strong>${escapeHtml(formatTokenCount(pageTokens.total_input_tokens))} in / ${escapeHtml(formatTokenCount(pageTokens.total_output_tokens))} out${Number(pageTokens.total_cached_input_tokens || 0) ? ` · ${escapeHtml(formatTokenCount(pageTokens.total_cached_input_tokens))} cached` : ""}${pageTokens.cost_usd_available ? ` · ${escapeHtml(formatTokenCostUsd(pageTokens.cost_usd_total))}` : ""}</strong></div>
+      <div${completeness !== "complete" ? ' title="Token totals are partial: usage missing for some runs"' : ""}><span>All matching cases tokens${completeness !== "complete" ? ` · partial${unknownSources.length ? ` (${escapeHtml(unknownSources.join(", "))} usage missing)` : ""}` : ""}</span><strong>${tokenSummary}</strong></div>
       <div class="is-emphasis"><span>Automation share</span><strong>${rate.toFixed(1)}%</strong></div>
     </section>
     ${renderModelPricingStrip()}

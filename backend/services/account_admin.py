@@ -351,6 +351,48 @@ def _admin_case_subcategory(record: dict[str, Any], secondary_label: str = "") -
     return raw_subcategory
 
 
+def filter_account_case_rows(
+    rows: list[dict[str, Any]],
+    *,
+    route_status: str | None = None,
+    category: str | None = None,
+    created_from: str | None = None,
+    created_to: str | None = None,
+) -> list[dict[str, Any]]:
+    """Apply the admin automation filters to account-case rows.
+
+    Single source of truth for both the page slice and the filtered-token
+    aggregation so the two views can never diverge.
+    """
+    filtered = list(rows)
+    normalized_status = str(route_status or "").strip().lower()
+    if normalized_status in {"automation", "automated"}:
+        filtered = [item for item in filtered if _is_automated(item)]
+    elif normalized_status == "not_automated":
+        filtered = [item for item in filtered if not _is_automated(item)]
+    normalized_category = str(category or "").strip().lower()
+    if normalized_category:
+        filtered = [
+            item
+            for item in filtered
+            if normalized_category
+            == str(
+                account_route_metadata(
+                    classification=item.get("route_classification"),
+                    route_family=item.get("route_family"),
+                    execution_action=item.get("execution_action") or item.get("route"),
+                ).get("category")
+                or item.get("category")
+                or ""
+            ).lower()
+        ]
+    if created_from:
+        filtered = [item for item in filtered if str(item.get("created_at") or "") >= str(created_from)]
+    if created_to:
+        filtered = [item for item in filtered if str(item.get("created_at") or "") <= str(created_to)]
+    return filtered
+
+
 def account_automation_payload(
     repository: Any,
     *,
@@ -395,32 +437,13 @@ def account_automation_payload(
                 "automation_rate": bucket_automated / bucket_total if bucket_total else 0,
             }
         )
-    filtered = list(all_cases)
-    normalized_status = str(route_status or "").strip().lower()
-    if normalized_status in {"automation", "automated"}:
-        filtered = [item for item in filtered if _is_automated(item)]
-    elif normalized_status == "not_automated":
-        filtered = [item for item in filtered if not _is_automated(item)]
-    normalized_category = str(category or "").strip().lower()
-    if normalized_category:
-        filtered = [
-            item
-            for item in filtered
-            if normalized_category
-            == str(
-                account_route_metadata(
-                    classification=item.get("route_classification"),
-                    route_family=item.get("route_family"),
-                    execution_action=item.get("execution_action") or item.get("route"),
-                ).get("category")
-                or item.get("category")
-                or ""
-            ).lower()
-        ]
-    if created_from:
-        filtered = [item for item in filtered if str(item.get("created_at") or "") >= str(created_from)]
-    if created_to:
-        filtered = [item for item in filtered if str(item.get("created_at") or "") <= str(created_to)]
+    filtered = filter_account_case_rows(
+        all_cases,
+        route_status=route_status,
+        category=category,
+        created_from=created_from,
+        created_to=created_to,
+    )
     start = (safe_page - 1) * safe_size
     def admin_case_view(item: dict[str, Any]) -> dict[str, Any]:
         record = dict(item)

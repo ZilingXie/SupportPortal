@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from collections import OrderedDict
 from typing import Any
+
+LOGGER = logging.getLogger(__name__)
 
 
 def _clean_text(value: Any) -> str:
@@ -13,6 +16,11 @@ def _safe_int(value: Any) -> int:
         return max(0, int(value or 0))
     except (TypeError, ValueError):
         return 0
+
+
+def clamp_cached_input_tokens(cached_input_tokens: Any, input_tokens: Any) -> int:
+    """cached is a subset of input; clamp negatives and oversized values."""
+    return min(max(_safe_int(cached_input_tokens), 0), _safe_int(input_tokens))
 
 
 def _safe_float(value: Any) -> float:
@@ -45,6 +53,17 @@ def build_usage_ledger_entry(
     input_token_count = _safe_int(input_tokens if input_tokens is not None else prompt_token_count)
     output_token_count = _safe_int(output_tokens if output_tokens is not None else completion_token_count)
     embedding_token_count = _safe_int(embedding_tokens)
+    raw_cached = _safe_int(cached_input_tokens)
+    cached_token_count = clamp_cached_input_tokens(raw_cached, input_token_count)
+    if raw_cached != cached_token_count:
+        LOGGER.warning(
+            "usage_ledger_cached_clamped provider=%s model=%s stage=%s raw_cached=%s input=%s",
+            normalized_provider,
+            normalized_model,
+            normalized_stage,
+            raw_cached,
+            input_token_count,
+        )
     return {
         "provider": normalized_provider,
         "model": normalized_model,
@@ -53,7 +72,7 @@ def build_usage_ledger_entry(
         "output_tokens": output_token_count,
         "prompt_tokens": prompt_token_count,
         "completion_tokens": completion_token_count,
-        "cached_input_tokens": _safe_int(cached_input_tokens),
+        "cached_input_tokens": cached_token_count,
         "reasoning_tokens": _safe_int(reasoning_tokens),
         "tool_tokens": _safe_int(tool_tokens),
         "embedding_tokens": embedding_token_count,
