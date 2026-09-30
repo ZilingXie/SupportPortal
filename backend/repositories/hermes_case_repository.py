@@ -617,6 +617,10 @@ class InMemoryHermesCaseRepositoryMixin:
             for promotion in self._hermes_promotions.values():
                 if promotion["engineer_case_id"] == case_id and promotion["status"] != "invalidated":
                     promotion.update(status="invalidated", updated_at=request["created_at"])
+            for weknora in self._weknora_promotion_state().values():
+                if weknora["engineer_case_id"] == case_id and weknora["status"] in {"queued", "active"}:
+                    weknora.update(status="invalidated", lease_expires_at=None,
+                                   updated_at=request["created_at"])
             for snapshot in self._hermes_summary_snapshots.values():
                 if snapshot["engineer_case_id"] == case_id and snapshot["status"] == "frozen":
                     snapshot.update(status="superseded", updated_at=request["created_at"])
@@ -630,7 +634,13 @@ class InMemoryHermesCaseRepositoryMixin:
                                      draft_customer_reply="", updated_at=request["created_at"])
             return copy.deepcopy(request)
 
-    def close_hermes_case(self, promotion: dict[str, Any], *, now_value: str) -> dict[str, Any]:
+    def close_hermes_case(
+        self,
+        promotion: dict[str, Any],
+        *,
+        now_value: str,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         case_id = str(promotion["engineer_case_id"])
         with self._assignment_lock:
             binding = self._hermes_case_bindings.get(case_id)
@@ -654,6 +664,7 @@ class InMemoryHermesCaseRepositoryMixin:
                 "lease_expires_at": None, "runtime_receipt": None, "failure_code": None,
                 "updated_at": now_value,
             })
+            self._enqueue_weknora_promotions_locked(weknora_promotions or [], now_value=now_value)
             binding.update(status="closed", updated_at=now_value)
             self._hermes_case_ledgers[case_id].update(status="closed", updated_at=now_value)
             for request in self._hermes_turn_requests.values():
@@ -1367,11 +1378,18 @@ class PostgresHermesCaseRepositoryMixin:
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded', updated_at=%s WHERE engineer_case_id=%s AND status='frozen'").format(self._table("support_hermes_summary_snapshots")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_close_reviews")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_case_promotions")), (request["created_at"], request["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active')").format(self._table("support_weknora_promotions")), (request["created_at"], request["engineer_case_id"]))
                 self._insert_hermes_turn(cur, request)
                 return copy.deepcopy(request)
         return self._run_with_connection_retry("reopen_hermes_case", operation)
 
-    def close_hermes_case(self, promotion: dict[str, Any], *, now_value: str) -> dict[str, Any]:
+    def close_hermes_case(
+        self,
+        promotion: dict[str, Any],
+        *,
+        now_value: str,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql.SQL("SELECT episode, current_ledger_revision FROM {} WHERE engineer_case_id=%s FOR UPDATE").format(self._table("support_hermes_case_bindings")), (promotion["engineer_case_id"],))
@@ -1385,6 +1403,7 @@ class PostgresHermesCaseRepositoryMixin:
                 if cur.fetchone() is None:
                     raise HermesRepositoryConflict("current summary guardrail is required")
                 cur.execute(sql.SQL("INSERT INTO {} (promotion_id, engineer_case_id, episode, ledger_revision, promotion_payload, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,'awaiting_transport',%s,%s) ON CONFLICT (promotion_id) DO NOTHING").format(self._table("support_hermes_case_promotions")), (promotion["promotion_id"], promotion["engineer_case_id"], promotion["episode"], promotion["ledger_revision"], Json(promotion), now_value, now_value))
+                self._enqueue_weknora_promotions_cur(cur, weknora_promotions or [], now_value=now_value)
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_bindings")), (now_value, promotion["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_ledgers")), (now_value, promotion["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active','awaiting_result')").format(self._table("support_hermes_turn_requests")), (now_value, promotion["engineer_case_id"]))

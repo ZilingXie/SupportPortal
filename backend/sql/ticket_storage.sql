@@ -698,6 +698,49 @@ CREATE TABLE IF NOT EXISTS support_hermes_case_promotions (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS support_weknora_promotions (
+    promotion_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT,
+    summary_session_id TEXT,
+    summary_run_id TEXT,
+    review_session_id TEXT,
+    review_run_id TEXT,
+    slack_channel_id TEXT,
+    slack_thread_ts TEXT,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge', 'memory')),
+    decision TEXT NOT NULL CHECK (decision IN (
+        'no_change', 'new', 'supplement', 'replace', 'merge', 'human_review'
+    )),
+    candidate_payload JSONB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'queued', 'active', 'accepted', 'failed', 'outcome_unknown', 'human_review', 'invalidated'
+    )),
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    weknora_object_id TEXT,
+    weknora_version TEXT,
+    operation_receipt JSONB,
+    failure_code TEXT,
+    failure_detail TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_weknora_promotions_source_unique
+    ON support_weknora_promotions (source_type, source_id, source_version, candidate_type);
+
+CREATE INDEX IF NOT EXISTS idx_support_weknora_promotions_claim
+    ON support_weknora_promotions (status, created_at, promotion_id);
+
+
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,
     email TEXT,
