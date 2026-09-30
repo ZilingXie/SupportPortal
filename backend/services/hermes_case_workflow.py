@@ -251,6 +251,41 @@ class CaseKnowledgePromotion(_StrictModel):
         return self
 
 
+WEKNORA_CANDIDATE_TYPES = ("knowledge", "memory")
+WEKNORA_CANDIDATE_DECISIONS = (
+    "no_change",
+    "new",
+    "supplement",
+    "replace",
+    "merge",
+    "human_review",
+)
+
+
+class WeKnoraPromotionCandidate(_StrictModel):
+    """Structured promotion candidate from the Hermes Review output.
+
+    Only the classification contract is enforced here: candidate_type and
+    decision must be recognizable.  Content completeness (content, target,
+    base version, merged content) is validated by the WeKnora adapter, which
+    records incomplete review output as a failed write.  Skill proposals are
+    intentionally not representable: they stay proposals and never enter the
+    WeKnora adapter.
+    """
+
+    schema_version: Literal["v1"]
+    candidate_type: Literal["knowledge", "memory"]
+    decision: Literal[
+        "no_change", "new", "supplement", "replace", "merge", "human_review"
+    ]
+    title: str = ""
+    content: str = ""
+    merged_content: str = ""
+    target_object_id: str = ""
+    base_version: str = ""
+    note: str = ""
+
+
 class HermesSummaryCandidate(_StrictModel):
     """One piece of case knowledge proposed for review, type-agnostic by design.
 
@@ -803,9 +838,120 @@ def reopen_hermes_case(
     return request
 
 
+def build_weknora_promotion_tasks(
+    *,
+    sanitized_payload: dict[str, Any],
+    binding: dict[str, Any],
+    review_payload: dict[str, Any] | None = None,
+    slack_channel_id: str | None = None,
+    slack_thread_ts: str | None = None,
+    summary_session_id: str | None = None,
+    summary_run_id: str | None = None,
+    review_session_id: str | None = None,
+    review_run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Map Review output to WeKnora promotion tasks (knowledge/memory only).
+
+    When the review provides ``weknora_candidates``, each entry is validated
+    against :class:`WeKnoraPromotionCandidate`; structurally invalid entries are
+    preserved as synthetic ``human_review`` tasks instead of being dropped, and
+    incomplete-but-classifiable candidates pass through for the adapter to
+    record as failed writes.  When the review provides no candidates, the
+    sanitized close knowledge is promoted as a single ``new`` knowledge
+    candidate (the current close-review contract has no memory/skill output).
+    """
+    source_id = f"{binding['engineer_case_id']}:{binding['episode']}"
+    source_version = str(binding["current_ledger_revision"])
+    lineage = {
+        "engineer_case_id": str(binding["engineer_case_id"]),
+        "client_ticket_id": str(binding["client_ticket_id"]),
+        "investigation_id": str(binding.get("investigation_id") or "") or None,
+        "slack_channel_id": str(slack_channel_id or "") or None,
+        "slack_thread_ts": str(slack_thread_ts or "") or None,
+        "summary_session_id": str(summary_session_id or "") or None,
+        "summary_run_id": str(summary_run_id or "") or None,
+        "review_session_id": str(review_session_id or "") or None,
+        "review_run_id": str(review_run_id or "") or None,
+        "source_type": "hermes_case_promotion",
+        "source_id": source_id,
+        "source_version": source_version,
+    }
+    raw_candidates: list[Any] = []
+    if isinstance(review_payload, dict):
+        value = review_payload.get("weknora_candidates")
+        if isinstance(value, list):
+            raw_candidates = value
+
+    tasks: list[dict[str, Any]] = []
+    for entry in raw_candidates:
+        raw = dict(entry) if isinstance(entry, dict) else {"raw_value": entry}
+        raw.setdefault("schema_version", "v1")
+        try:
+            candidate = WeKnoraPromotionCandidate.model_validate(raw)
+        except ValueError as exc:
+            tasks.append(
+                {
+                    **lineage,
+                    "candidate_type": "knowledge",
+                    "decision": "human_review",
+                    "content_hash": hashlib.sha256(
+                        json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+                    ).hexdigest(),
+                    "candidate_payload": {
+                        "synthetic_invalid_candidate": True,
+                        "validation_error": str(exc),
+                        "raw_entry": entry,
+                    },
+                }
+            )
+            continue
+        payload = candidate.model_dump(mode="json")
+        tasks.append(
+            {
+                **lineage,
+                "candidate_type": candidate.candidate_type,
+                "decision": candidate.decision,
+                "content_hash": _weknora_candidate_hash(payload),
+                "candidate_payload": payload,
+            }
+        )
+    if tasks:
+        return tasks
+
+    knowledge = SanitizedCaseKnowledge.model_validate(sanitized_payload["sanitized_knowledge"])
+    content = json.dumps(
+        knowledge.model_dump(mode="json"), sort_keys=True, ensure_ascii=False
+    )
+    return [
+        {
+            **lineage,
+            "candidate_type": "knowledge",
+            "decision": "new",
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "candidate_payload": {
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "new",
+                "title": (
+                    f"Hermes case {binding['client_ticket_id']} "
+                    f"episode {binding['episode']}"
+                ),
+                "content": content,
+            },
+        }
+    ]
+
+
+def _weknora_candidate_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def close_hermes_case(
     repository: Any, *, engineer_case_id: str, sanitized_payload: dict[str, Any],
     now_value: str | None = None,
+    weknora_promotions: list[dict[str, Any]] | None = None,
 ) -> CaseKnowledgePromotion:
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not binding:
@@ -844,7 +990,10 @@ def close_hermes_case(
         )
     except ValueError as exc:
         raise HermesWorkflowConflict("sanitized promotion payload is required") from exc
-    repository.close_hermes_case(promotion.model_dump(mode="json"), now_value=now)
+    repository.close_hermes_case(
+        promotion.model_dump(mode="json"), now_value=now,
+        weknora_promotions=weknora_promotions,
+    )
     return promotion
 
 

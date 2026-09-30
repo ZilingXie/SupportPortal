@@ -15,6 +15,7 @@
 | 执行已授权的 ECS 部署 | [ECS 部署 Runbook](../deploy_automation_ecs_release.md) | 正式 pipeline、目标环境的发布证据 |
 | Enablement auto（AgentRelay 跨机链路）的 HTTP 契约与服务器身份配置 | [AgentRelay HTTP 契约](./agentrelay-http-contract.md)、[服务器配置 Prompt](./agentrelay-server-provisioning-prompt.md) | live 协议 manifest、agent-relay-mcp 公开客户端源码、ECS worker SSM 参数 |
 | 维护 EC2 或本地单机栈 | [单机部署指南](../deploy_single_host_ec2.md) | 对应部署脚本与当前栈模式 |
+| WeKnora 知识/记忆写入如何启用、探针与状态机 | [WeKnora 适配层](./weknora-adapter.md) | `backend/services/weknora_*`、`support_weknora_promotions` 表、探针脚本 |
 
 先读与当前任务有关的一页，再打开其中列出的来源。不需要每次会话通读本目录或完整代码地图。
 

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T13:10:06Z",
-  "source_base_commit": "abb76d67596c534e9f29db064ea016e4a6e2afe9",
-  "registry_digest": "e4b0cae3ff27999b2467cac5bb64ab7084aa1fc6ac5d57c8aae042d170302e10",
+  "generated_at": "2026-09-30T13:33:42Z",
+  "source_base_commit": "eeb7315c46a496f54de2fd5bf21105b337e37b0b",
+  "registry_digest": "5a7cfdbb405d8fe6bdc898da8f9d19cefcedd99660e0881ad402d4b5d8cfdfc0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4743,6 +4743,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "planned",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "weknora-knowledge-promotion",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "WeKnora 知识/记忆适配层",
+      "goal": "SupportPortal 作为唯一写入方承接 Hermes Summary/Review 产出的知识与记忆候选：经 WeKnora Client/Adapter 执行搜索、受控写入、版本冲突保护和回读，PostgreSQL 保存跨系统 lineage 与任务状态。",
+      "acceptance_criteria": [
+        "新建知识写入 WeKnora 并回读成功",
+        "supplement/replace/merge 基于目标当前版本执行，版本冲突不覆盖并转人工复核",
+        "重复事件对同一来源版本只生成一个对象（数据库唯一约束+稳定幂等键）",
+        "超时/权限失败/写入后回读失败分别落位 outcome_unknown/failed 并保留原因",
+        "reopen 使未执行的 promotion 失效",
+        "case、ticket、Summary、Review、Slack thread 与 WeKnora object/version 可完整串联"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "定向单元测试",
+          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 集成",
+          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例 RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL、close 事务原子入队+来源版本唯一、双线程并发领取单 owner、reopen 失效不可领取）；hermes PG 套件 23 passed。"
+        },
+        {
+          "type": "test",
+          "label": "回归矩阵",
+          "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/weknora_client.py",
+        "backend/services/weknora_promotion_adapter.py",
+        "backend/repositories/weknora_promotion_repository.py"
+      ],
+      "legacy_ids": [],
+      "status": "active",
       "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
@@ -14950,6 +14993,60 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/automation_account_reply_sync.py",
         "backend/services/account_zendesk_internal_comment.py",
         "backend/worker.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-182",
+      "title": "WeKnora 写入适配层：Client/Promotion 任务表/Adapter/Worker/Hermes 候选接入",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-knowledge-promotion",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-09-30",
+      "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。",
+      "next_action": "等待 WeKnora Preproduction endpoint/凭证运行 scripts/weknora/probe_weknora_contract.py 固定 WEKNORA_API_CONTRACT_JSON；随后接入 p2-181 review 任务 weknora_submissions → 本 promotion 表的消费桥；再做 Preproduction 端到端（新建/补充/替代/合并/幂等/版本冲突）与 n8n 旧 Tencent Memory 写入路径迁移。",
+      "acceptance_criteria": [
+        "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
+        "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、版本冲突人工复核）",
+        "同一 (source_type, source_id, source_version, candidate_type) 只入队一次",
+        "reopen_hermes_case 使 queued/active 的 WeKnora promotion 失效（与 p2-181 的 summary/review 任务失效同事务）",
+        "close 事务内原子入队候选，重复 close 事件幂等；knowledge_workflow_active 时默认候选让位",
+        "默认（未启用 env）对现有行为零影响"
+      ],
+      "blockers": [
+        "WeKnora Preproduction endpoint/认证凭证/知识库 ID/共享 Hermes 记忆身份未提供：contract probe 与端到端验证被阻塞"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "定向单元测试",
+          "details": "2026-09-30：test_weknora_client/test_weknora_promotion_adapter/test_weknora_promotion_workflow/test_weknora_promotion_worker 45 passed（决策矩阵、错误分类、fail-closed、租约/幂等/outcome_unknown 不盲写、reopen 失效、默认关闭零影响）。"
+        },
+        {
+          "type": "test",
+          "label": "隔离 PostgreSQL 集成",
+          "details": "2026-09-30：本地一次性 PostgreSQL 14.19 实例 RUN_POSTGRES_INTEGRATION=1：test_weknora_promotion_postgres 4 passed（DDL、close 事务原子入队+来源版本唯一、双线程并发领取单 owner、reopen 失效不可领取）；hermes PG 套件 23 passed。"
+        },
+        {
+          "type": "test",
+          "label": "回归矩阵",
+          "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
+        }
+      ],
+      "history": [],
+      "legacy_ids": [],
+      "legacy_refs": [
+        "p2-181"
+      ],
+      "source_refs": [
+        "backend/services/weknora_client.py",
+        "backend/services/weknora_promotion_adapter.py",
+        "backend/repositories/weknora_promotion_repository.py",
+        "backend/worker.py",
+        "docs/operations/weknora-adapter.md"
       ]
     },
     {

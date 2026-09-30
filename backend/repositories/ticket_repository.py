@@ -60,6 +60,10 @@ from backend.repositories.hermes_case_repository import (
     InMemoryHermesCaseRepositoryMixin,
     PostgresHermesCaseRepositoryMixin,
 )
+from backend.repositories.weknora_promotion_repository import (
+    InMemoryWeKnoraPromotionRepositoryMixin,
+    PostgresWeKnoraPromotionRepositoryMixin,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -1272,11 +1276,14 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v13-hermes-knowledge-tasks"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v14-weknora-promotions"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v10-enablement-relay",
     "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v12-case-llm-usage-source",
+    "2026-single-ai-managed-v12-weknora-promotions",
+    "2026-single-ai-managed-v13-hermes-knowledge-tasks",
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v9-product-selection-state",
     "2026-single-ai-managed-v3",
@@ -3080,6 +3087,7 @@ class TicketRepository(Protocol):
 class InMemoryTicketRepository(
     InMemoryHermesCaseRepositoryMixin,
     InMemoryEnablementRelayRepositoryMixin,
+    InMemoryWeKnoraPromotionRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -8227,6 +8235,7 @@ def _build_trace_ticket_snapshot_payload(
 class PostgresTicketRepository(
     PostgresHermesCaseRepositoryMixin,
     PostgresEnablementRelayRepositoryMixin,
+    PostgresWeKnoraPromotionRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -12625,6 +12634,7 @@ class PostgresTicketRepository(
                 )
                 self._initialize_hermes_schema(cur)
                 self._initialize_enablement_relay_schema(cur)
+                self._initialize_weknora_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:

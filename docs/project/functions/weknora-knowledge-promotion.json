@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "function_id": "weknora-knowledge-promotion",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "WeKnora 知识/记忆适配层",
+  "goal": "SupportPortal 作为唯一写入方承接 Hermes Summary/Review 产出的知识与记忆候选：经 WeKnora Client/Adapter 执行搜索、受控写入、版本冲突保护和回读，PostgreSQL 保存跨系统 lineage 与任务状态。",
+  "acceptance_criteria": [
+    "新建知识写入 WeKnora 并回读成功",
+    "supplement/replace/merge 基于目标当前版本执行，版本冲突不覆盖并转人工复核",
+    "重复事件对同一来源版本只生成一个对象（数据库唯一约束+稳定幂等键）",
+    "超时/权限失败/写入后回读失败分别落位 outcome_unknown/failed 并保留原因",
+    "reopen 使未执行的 promotion 失效",
+    "case、ticket、Summary、Review、Slack thread 与 WeKnora object/version 可完整串联"
+  ],
+  "evidence": [],
+  "source_refs": [
+    "backend/services/weknora_client.py",
+    "backend/services/weknora_promotion_adapter.py",
+    "backend/repositories/weknora_promotion_repository.py"
+  ],
+  "legacy_ids": []
+}
