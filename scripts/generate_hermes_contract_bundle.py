@@ -9,8 +9,12 @@ from typing import Any
 from backend.services.hermes_case_workflow import (
     CaseKnowledgePromotion,
     HermesInvestigationOutput,
+    HermesReviewReport,
+    HermesSummaryPacket,
     HermesTurnRequest,
     _promotion_content_hash,
+    review_report_content_hash,
+    summary_packet_content_hash,
 )
 
 
@@ -95,10 +99,72 @@ def _fixtures() -> tuple[dict[str, Any], dict[str, Any]]:
         "created_at": "2026-09-05T09:00:00Z",
     }
     promotion["content_hash"] = _promotion_content_hash(promotion)
+    summary_packet = {
+        "schema_version": "v1",
+        "summary_id": "hermes-summary:case-1:1",
+        "engineer_case_id": opening["engineer_case_id"],
+        "client_ticket_id": opening["client_ticket_id"],
+        "investigation_id": opening["investigation_id"],
+        "episode": 1,
+        "ledger_revision": 1,
+        "conversation_version": 0,
+        "hermes_session_id": opening["hermes_session_id"],
+        "trigger": "solved",
+        "problem_description": "A synthetic technical issue.",
+        "timeline": "Opened; investigated; solved.",
+        "investigation_process": "Checked the synthetic evidence chain.",
+        "confirmed_facts": "The synthetic symptom reproduces under load.",
+        "root_cause_and_solution": "Misconfiguration; corrected by the documented step.",
+        "verification_results": "Verified via the synthetic check.",
+        "limitations_and_unconfirmed": "Scale behavior was never confirmed.",
+        "evidence_references": ["output-investigation-result.json"],
+        "candidates": [
+            {
+                "candidate_id": "cand-1",
+                "statement": "The synthetic symptom indicates this misconfiguration.",
+                "context": "Observed in one synthetic case.",
+                "evidence_references": ["output-investigation-result.json"],
+            }
+        ],
+        "content_hash": "",
+        "created_at": "2026-09-05T09:10:00Z",
+    }
+    summary_packet["content_hash"] = summary_packet_content_hash(summary_packet)
+    review_report = {
+        "schema_version": "v1",
+        "review_id": "hermes-review:case-1:1",
+        "summary_id": summary_packet["summary_id"],
+        "engineer_case_id": opening["engineer_case_id"],
+        "client_ticket_id": opening["client_ticket_id"],
+        "investigation_id": opening["investigation_id"],
+        "episode": 1,
+        "ledger_revision": 1,
+        "conversation_version": 0,
+        "review_session_id": "hermes-session:knowledge-review-case-1",
+        "weknora_available": True,
+        "decisions": [
+            {
+                "candidate_id": "cand-1",
+                "candidate_type": "knowledge",
+                "decision": "supplement",
+                "confidence": 0.8,
+                "rationale": "Existing entry lacks the load condition.",
+                "proposed_content": "Add: the symptom reproduces under load.",
+                "target_object": "weknora:kb:synthetic-misconfiguration",
+                "target_version": "3",
+                "source_references": ["weknora:kb:synthetic-misconfiguration"],
+            }
+        ],
+        "content_hash": "",
+        "created_at": "2026-09-05T09:20:00Z",
+    }
+    review_report["content_hash"] = review_report_content_hash(review_report)
     valid = {
         "turn-opening.json": opening,
         "output-investigation-result.json": result,
         "promotion-closed.json": promotion,
+        "summary-packet-close.json": summary_packet,
+        "review-report-decisions.json": review_report,
     }
     invalid = {
         "turn-null-session.json": {**opening, "hermes_session_id": None},
@@ -127,6 +193,25 @@ def _fixtures() -> tuple[dict[str, Any], dict[str, Any]]:
             **promotion,
             "sanitized_knowledge": {"summary": "Contains <restricted> customer identity."},
         },
+        "summary-bad-hash.json": {**summary_packet, "content_hash": "0" * 64},
+        "summary-restricted-identifier.json": {
+            **summary_packet,
+            "problem_description": "See https://slack.com/archives/C1/p1 for details.",
+        },
+        "summary-duplicate-candidate.json": {
+            **summary_packet,
+            "candidates": [summary_packet["candidates"][0], summary_packet["candidates"][0]],
+        },
+        "review-bad-hash.json": {**review_report, "content_hash": "0" * 64},
+        "review-decision-without-target.json": {
+            **review_report,
+            "decisions": [{**review_report["decisions"][0], "target_object": None,
+                           "target_version": None}],
+        },
+        "review-decision-new-with-target.json": {
+            **review_report,
+            "decisions": [{**review_report["decisions"][0], "decision": "new"}],
+        },
     }
     return valid, invalid
 
@@ -136,6 +221,8 @@ def generate(output_dir: Path) -> None:
         "HermesTurnRequest.v1.schema.json": HermesTurnRequest.model_json_schema(),
         "HermesInvestigationOutput.v1.schema.json": HermesInvestigationOutput.model_json_schema(),
         "CaseKnowledgePromotion.v1.schema.json": CaseKnowledgePromotion.model_json_schema(),
+        "HermesSummaryPacket.v1.schema.json": HermesSummaryPacket.model_json_schema(),
+        "HermesReviewReport.v1.schema.json": HermesReviewReport.model_json_schema(),
     }
     for schema in schemas.values():
         schema["$schema"] = "https://json-schema.org/draft/2020-12/schema"

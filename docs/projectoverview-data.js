@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T12:05:58Z",
-  "source_base_commit": "595c4b5c269497eb75e7087708e6d5d418c24ee9",
-  "registry_digest": "5c5770ff67f38259598b4226852ab990cd7f898dfe13525d82d1384fdc97a66d",
+  "generated_at": "2026-09-30T12:52:46Z",
+  "source_base_commit": "b6bb3da6e8508ce9ead135b2dcbef9d5afab2ff2",
+  "registry_digest": "53ec7359b721d09f960233aaa797fa0ca32ffb79d5522a81d10c277bb8bdc024",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3849,6 +3849,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Targeted unit + contract tests",
+          "details": "2026-09-30：test_hermes_knowledge_workflow（11 例：触发幂等/非 real 不建/本地 resolved/双 session 与只读 toolset/weknora 可用与 fail-closed/run 失败不建 review/输出合同违规/覆盖不匹配/revision 冲突 stale/reopen 失效+新 episode）+ test_hermes_case_contracts（bundle 验证器扩展 summary/review 前缀，含 bad-hash/restricted/duplicate-candidate/target 违规负例）+ 回归 test_hermes_zendesk_agent(_tools)/test_agent_config 129 passed + test_account_zendesk_internal_comment_service 11 passed（带 DSN）+ test_hermes_case_workflow 20 passed。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration",
+          "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -4191,7 +4201,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 43,
+      "task_count": 44,
       "done_count": 21,
       "blocked_count": 0
     },
@@ -14864,6 +14874,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-181",
+      "title": "Hermes Case Summary 与知识治理 Review 双角色（独立会话 + 结构化合同 + WeKnora 只读适配层）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "account-production-environment",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-09-30",
+      "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。",
+      "next_action": "代码与测试完成，待 finalize 后本地官方栈重启验证与 Preproduction 部署（须带 --bootstrap-account-schema 建 v13 两张新表）。",
+      "acceptance_criteria": [
+        "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
+        "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
+        "重复关闭事件（solved→closed、重复 solved）不创建重复任务（UNIQUE(engineer_case_id,episode) 只复用）。",
+        "reopen 使未完成任务失效（事务内 invalidated），新 episode 生成新任务。",
+        "缺少证据只能 human_review（decision 合同 + weknora_available=false 语义）。",
+        "Review 正确区分 knowledge/memory/skill（枚举合同；skill 候选只允许 no_change/human_review——skill 手册规定不自动演进）。",
+        "相似内容能输出 no_change/merge/supplement/replace/new（decision-target 一致性强制）。",
+        "输出可追溯 case/ticket/Summary session/Review session/Slack 线程（lineage 字段+bundle）。",
+        "Summary/Review 失败、超时、版本冲突不被标记成功（failed+error_code；stale_case_lineage）。",
+        "WeKnora 未配置/检索失败 fail-closed（weknora_available=false→human_review），不伪造成功。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Targeted unit + contract tests",
+          "details": "2026-09-30：test_hermes_knowledge_workflow（11 例：触发幂等/非 real 不建/本地 resolved/双 session 与只读 toolset/weknora 可用与 fail-closed/run 失败不建 review/输出合同违规/覆盖不匹配/revision 冲突 stale/reopen 失效+新 episode）+ test_hermes_case_contracts（bundle 验证器扩展 summary/review 前缀，含 bad-hash/restricted/duplicate-candidate/target 违规负例）+ 回归 test_hermes_zendesk_agent(_tools)/test_agent_config 129 passed + test_account_zendesk_internal_comment_service 11 passed（带 DSN）+ test_hermes_case_workflow 20 passed。"
+        },
+        {
+          "type": "test",
+          "label": "PostgreSQL integration",
+          "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        }
+      ],
+      "history": [
+        {
+          "at": "2026-09-30",
+          "event": "created",
+          "summary": "用户批准 Hermes Summary/Review 计划（实施目标 low thinking）并下令实施；Summary/Review 复用现有 Hermes，WeKnora 只读代检索+适配层落地。"
+        }
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "source_refs": [
+        "backend/services/hermes_knowledge_workflow.py",
+        "backend/services/hermes_weknora.py",
+        "backend/services/hermes_case_workflow.py",
+        "backend/repositories/hermes_case_repository.py",
+        "backend/services/automation_hermes_agent.py",
+        "backend/services/prompts/hermes_support_agent.py",
+        "backend/skills/knowledge-review/SKILL.md",
+        "backend/services/automation_account_reply_sync.py",
+        "backend/services/account_zendesk_internal_comment.py",
+        "backend/worker.py"
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -20216,6 +20286,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。",
         "Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。",
         "Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。",
+        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "`/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。",
         "`/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。",
         "`/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。",

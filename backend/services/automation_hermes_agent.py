@@ -101,6 +101,17 @@ INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills
 # An ad-hoc work run gets the same surface.
 ADHOC_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
 
+# Knowledge-governance role surfaces (hermes_knowledge_workflow). The Summary
+# role reuses the case's own session and sees only the read-only case context
+# tools; the Review role runs on a dedicated session with no case-write,
+# memory, or publication toolsets and no implicit agent memory — WeKnora
+# similarity evidence is assembled by the server into the run input, and the
+# outcome returns only through the validated review contract.
+KNOWLEDGE_SUMMARY_PROMPT_KEY = "hermes-case-summary-manual"
+KNOWLEDGE_REVIEW_PROMPT_KEY = "hermes-knowledge-review-manual"
+KNOWLEDGE_SUMMARY_TOOLSETS = ["common"]
+KNOWLEDGE_REVIEW_TOOLSETS = ["skills"]
+
 
 def toolsets_for_phase(
     phase: str, *, direction: str | None, session_kind: str | None = None

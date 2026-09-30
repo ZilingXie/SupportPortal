@@ -78,6 +78,7 @@
 - Client AI 只能检索官网文档，Engineer AI 优先检索非官网知识并可按需回查官网文档。
 - Engineer AI 会在工程师关闭 case 后自动生成结构化学习反馈。
 - Engineer AI 会把所有学习反馈写入 Case Memory Ledger，并默认关闭自动召回。
+- Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。
 - `/workspace` 是正式 Engineer Case 处理入口，工程师登录后可查看个人 weekly schedule，并在点击 Ready to roll 后处理系统派发给自己的 case。
 - `/workspace/admin` 为只读控制台：账号邀请与创建写端点已禁用（405），登录账号体系由部署时 bootstrap 配置维护。
 - `/workspace/admin` 的 Schedule tab 只读展示 Engineer weekly schedule（30 分钟格、跨夜与 `24:00` 边界解析为展示口径）；schedule 写端点已禁用（405）。

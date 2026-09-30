@@ -1,0 +1,30 @@
+{
+  "client_ticket_id": "ticket-1",
+  "content_hash": "e99ff233f319e7d9aa65be39dfde09d2fa5c9fb280786b9bf42b346d781f473f",
+  "conversation_version": 0,
+  "created_at": "2026-09-05T09:20:00Z",
+  "decisions": [
+    {
+      "candidate_id": "cand-1",
+      "candidate_type": "knowledge",
+      "confidence": 0.8,
+      "decision": "new",
+      "proposed_content": "Add: the symptom reproduces under load.",
+      "rationale": "Existing entry lacks the load condition.",
+      "source_references": [
+        "weknora:kb:synthetic-misconfiguration"
+      ],
+      "target_object": "weknora:kb:synthetic-misconfiguration",
+      "target_version": "3"
+    }
+  ],
+  "engineer_case_id": "case-1",
+  "episode": 1,
+  "investigation_id": "investigation-1",
+  "ledger_revision": 1,
+  "review_id": "hermes-review:case-1:1",
+  "review_session_id": "hermes-session:knowledge-review-case-1",
+  "schema_version": "v1",
+  "summary_id": "hermes-summary:case-1:1",
+  "weknora_available": true
+}
