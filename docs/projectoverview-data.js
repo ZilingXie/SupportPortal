@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T05:40:05Z",
-  "source_base_commit": "cec074a5adb98f51972f70ff4fef9afb67cf54ab",
-  "registry_digest": "06061991faa326db42ac43d36fd8c70c10105c0ed2f090d0d65f0b1b2f884d17",
+  "generated_at": "2026-09-30T07:26:06Z",
+  "source_base_commit": "414ed4e1af8c1ceb57b4706bc03d6e053058bded",
+  "registry_digest": "952f93b6c321fdc50039d37e2680e55c1236c67e8da548cfff0cd93ccd5f4b81",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3639,6 +3639,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
           "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
           "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction 部署与合成 session 实证 + provider 名修复（2026-09-30）",
+          "command": "release pipeline r20260930-414ed4e（414ed4e 含 PR#1316；经并发会话发布落地）；Hermes /v1/runs 与 /v1/responses 合成探针（zacBot VPC 内直连，探针后 SG 规则已撤）；dashboard sessions API 实际执行记录读回",
+          "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
         },
         {
           "type": "test",
@@ -13301,6 +13307,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "gpt-6-sol 无客户数据实测与时限决策（2026-09-30，Preproduction 凭据直连）",
           "command": "OpenAI /v1/responses（model=gpt-6-sol；effort=medium/xhigh；标题/确认/guardrail 三时限期 prompt + 只读 function 工具）",
           "result": "确认回复 1.60-3.29s（5s 预算内）；guardrail 1.75-2.07s（6s 预算内）；只读工具调用 medium/xhigh 均正确发起（约 1.9s）；xhigh 短请求约 2s。标题（真实 24-token 预算）：2.39s incomplete(reasoning 24 tok 耗尽)+1.94s completed、48-token 下 2.81s incomplete/2.19s completed，2 秒时限不达标。执行决策：标题场景排除出单模型策略（保持 gpt-5.4-nano/none），不放宽客户建单等待、不接受约半数新工单标题降级为启发式；决策可逆（改一行场景集合重发布）。low effort 对照 1.55-1.58s 稳定完成（留作后续参考）。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction 部署与合成 session 实证 + provider 名修复（2026-09-30）",
+          "command": "release pipeline r20260930-414ed4e（414ed4e 含 PR#1316；经并发会话发布落地）；Hermes /v1/runs 与 /v1/responses 合成探针（zacBot VPC 内直连，探针后 SG 规则已撤）；dashboard sessions API 实际执行记录读回",
+          "result": "Preproduction 运行 r20260930-414ed4e / schema-011；api/route/worker td 读回 AGENT_MODEL_ID=gpt-6-sol、SSM v1 未变（版本一致）。/v1/runs 探针：medium reasoning_tokens=0、xhigh=69，均实际执行 gpt-6-sol（sessions API 记录非回显）；部署后已有真实 hermes-session 流量记录 model=gpt-6-sol。/v1/responses 探针发现 provider 名缺陷：网关 OpenAI 上游配置为 custom，openai 被拒（失败以模型文本形式返回）；修复为 provider=custom 后实际执行 gpt-6-sol/xhigh（reasoning_tokens=243）。修复已另行提交发布。"
         }
       ],
       "history": [

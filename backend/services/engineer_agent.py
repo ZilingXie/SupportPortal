@@ -850,11 +850,14 @@ def _generate_investigation_reply_turn(
         # reasoning.effort is not treated as agent strength there and a bare
         # model only applies with direct_model_requests enabled; an explicit
         # provider is always honored and model_options.reasoning_effort is
-        # the strength control. Acceptance must check the actually executed
-        # model — the response model field is an echo.
+        # the strength control. The gateway's OpenAI upstream is configured
+        # as its 'custom' provider (verified live 2026-09-30: 'openai' is
+        # rejected with a provider-auth failure that surfaces as model
+        # prose). Acceptance must check the actually executed model — the
+        # response model field is an echo.
         extra_payload = {
             **extra_payload,
-            "provider": "openai",
+            "provider": "custom",
             "model": profile.model,
             "model_options": {"reasoning_effort": profile.reasoning_effort or "xhigh"},
         }
