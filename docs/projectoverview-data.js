@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T13:09:11Z",
-  "source_base_commit": "3dd735b6dbd9af5cf2a15965d1dbce29b3df0657",
-  "registry_digest": "1ed10a06753ed2aaef014d91f4c6280ff142cc9cc4b03d696720ca0093fbb075",
+  "generated_at": "2026-09-30T13:10:06Z",
+  "source_base_commit": "abb76d67596c534e9f29db064ea016e4a6e2afe9",
+  "registry_digest": "e4b0cae3ff27999b2467cac5bb64ab7084aa1fc6ac5d57c8aae042d170302e10",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3856,6 +3856,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "PostgreSQL integration",
           "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Prompt release for new catalog keys",
+          "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
         },
         {
           "type": "test",
@@ -14889,7 +14894,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
       "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。",
-      "next_action": "代码与测试完成，待 finalize 后本地官方栈重启验证与 Preproduction 部署（须带 --bootstrap-account-schema 建 v13 两张新表）。",
+      "next_action": "代码已合入 main（PR#1328）；prompt release pr-c47f99044ae0 已在源库 prepare+activate（含两个新 manual key）；首次管线尝试以旧 active release pr-017c557db049 校验失败（catalog 缺新 key），按 p2-178 先例用 docs-only 提交推进 release commit 后重跑 Preproduction 管线（--bootstrap-account-schema 建 schema v13 两张新表）。",
       "acceptance_criteria": [
         "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
         "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
@@ -14913,6 +14918,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "PostgreSQL integration",
           "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Prompt release for new catalog keys",
+          "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
         }
       ],
       "history": [
@@ -14920,6 +14930,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "created",
           "summary": "用户批准 Hermes Summary/Review 计划（实施目标 low thinking）并下令实施；Summary/Review 复用现有 Hermes，WeKnora 只读代检索+适配层落地。"
+        },
+        {
+          "at": "2026-09-30",
+          "event": "followup",
+          "summary": "PR#1328 合入 main；Preprod 首次发布尝试因旧 Prompt Release 缺新 catalog key 在 codebuild 门禁失败，已按流程准备并激活 pr-c47f99044ae0，docs-only 提交推进 release commit 后重跑。"
         }
       ],
       "legacy_ids": [],
