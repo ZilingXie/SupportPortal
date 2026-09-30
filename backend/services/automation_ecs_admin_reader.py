@@ -603,25 +603,60 @@ class AutomationEcsAdminReader:
         )
         unknown_sources: list[str] = []
         if zendesk_ids:
+            # Anti-join by run id: a completed gateway run without a ledger
+            # row means usage is missing for THAT run, even when totals match.
             cursor.execute(
                 sql.SQL(
                     """
-                    SELECT COUNT(*) FROM {}
+                    SELECT run_id FROM {}
                     WHERE namespace=%s AND status='completed' AND zendesk_ticket_id=ANY(%s)
                     """
                 ).format(self._table("automation_hermes_turn_runs")),
                 (self.settings.job_namespace, zendesk_ids),
             )
-            completed_runs = int(cursor.fetchone()["count"] or 0)
+            completed_run_ids = {
+                str(row.get("run_id") or "").strip()
+                for row in cursor.fetchall()
+                if str(row.get("run_id") or "").strip()
+            }
             cursor.execute(
                 sql.SQL(
-                    "SELECT COUNT(*) FROM {} WHERE billing_ticket_id=ANY(%s) AND source='hermes'"
+                    "SELECT DISTINCT source_run_id FROM {} "
+                    "WHERE billing_ticket_id=ANY(%s) AND source='hermes' AND source_run_id IS NOT NULL"
                 ).format(self._table("support_account_case_llm_usage")),
                 (billing_ids,),
             )
-            hermes_rows = int(cursor.fetchone()["count"] or 0)
-            if completed_runs > hermes_rows:
+            recorded_run_ids = {
+                str(row.get("source_run_id") or "").strip()
+                for row in cursor.fetchall()
+                if str(row.get("source_run_id") or "").strip()
+            }
+            if completed_run_ids - recorded_run_ids:
                 unknown_sources.append("hermes")
+
+        # Direct-usage completeness: an automated case that executed the LLM
+        # chain must have ledger rows; zero rows means the flush failed or was
+        # never attributed, which must surface as partial instead of a silent
+        # complete zero.
+        automated_billing_ids = {
+            str(row.get("billing_ticket_id") or "").strip()
+            for row in filtered_rows
+            if str(row.get("route_status") or "").strip().lower() == "automated"
+            or str(row.get("route_family") or "").strip().lower() == "automated"
+        }
+        if automated_billing_ids:
+            cursor.execute(
+                sql.SQL(
+                    "SELECT DISTINCT billing_ticket_id FROM {} WHERE billing_ticket_id=ANY(%s)"
+                ).format(self._table("support_account_case_llm_usage")),
+                (sorted(automated_billing_ids),),
+            )
+            with_usage = {
+                str(row.get("billing_ticket_id") or "").strip()
+                for row in cursor.fetchall()
+            }
+            if automated_billing_ids - with_usage:
+                unknown_sources.append("automation")
 
         automation = by_source.get(
             "automation",

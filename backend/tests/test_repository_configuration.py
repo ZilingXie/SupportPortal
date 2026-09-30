@@ -2006,6 +2006,31 @@ class RepositoryConfigurationTests(unittest.TestCase):
         self.assertIn("SET LOCAL lock_timeout", executed_sql)
         self.assertIn("ALTER TABLE", executed_sql)
 
+    def test_case_llm_usage_source_migration_is_versioned_and_mirrored(self) -> None:
+        # p2-180 review: the ledger source columns must ship through the
+        # schema-version contract and an official migration file, so an
+        # already-migrated database applies them on the next bootstrap.
+        from backend.repositories.ticket_repository import (
+            _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS,
+        )
+
+        self.assertEqual(
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v12-case-llm-usage-source"
+        )
+        self.assertIn(
+            "2026-single-ai-managed-v11-delivery-cancelled",
+            _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS,
+        )
+        migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn("ADD COLUMN IF NOT EXISTS source", migration)
+        self.assertIn("ADD COLUMN IF NOT EXISTS source_run_id", migration)
+        self.assertIn(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_case_llm_usage_source_run",
+            migration,
+        )
+
     def test_schema_already_current_gate_variants(self) -> None:
         import os as _os
         from backend.repositories.ticket_repository import _TICKET_SCHEMA_VERSION as current
