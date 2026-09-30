@@ -497,6 +497,40 @@ class AccountZendeskInternalCommentServiceTests(unittest.TestCase):
         upload.assert_not_called()
         add_comment.assert_not_called()
 
+    def test_solve_delivery_records_solved_status_on_case_mirror(self) -> None:
+        # ECS has no n8n case_status_sync route: the closing reply's own
+        # transaction is the only writer of the case mirror's
+        # zendesk_ticket_status, for every automation handler.
+        self.repository.create_account_zendesk_comment_delivery(
+            account_case_id="AC-SERVICE-1",
+            message_id=self.message_id,
+            zendesk_ticket_id="12838",
+            idempotency_key=f"production-zendesk-comment:AC-SERVICE-1:{self.message_id}",
+            created_at="2026-08-19T00:00:00+00:00",
+            is_public=True,
+            target_status="solved",
+        )
+        with patch(
+            "backend.services.account_zendesk_internal_comment.add_ticket_comment",
+            return_value=ZendeskCommentResult(comment_id="comment-solved", status_code=200),
+        ):
+            result = deliver_account_ai_message_as_internal_comment(
+                repository=self.repository,
+                account_case_id="AC-SERVICE-1",
+                message_id=self.message_id,
+                actor_id="system:production-account-reply",
+                trigger="production_worker",
+                public_comment=True,
+                solve_ticket=True,
+            )
+
+        self.assertEqual(result.status, "added")
+        case = self.repository.get_account_case_by_ticket_id("PRD-SERVICE-1")
+        self.assertEqual(case["zendesk_ticket_status"], "solved")
+        self.assertTrue(str(case.get("zendesk_status_synced_at") or ""))
+        ticket = self.repository.get_ticket("PRD-SERVICE-1")
+        self.assertEqual(ticket["status"], "resolved")
+
 
 if __name__ == "__main__":
     unittest.main()

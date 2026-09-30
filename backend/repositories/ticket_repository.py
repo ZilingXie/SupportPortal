@@ -6883,15 +6883,23 @@ class InMemoryTicketRepository(
                 ticket["closed_at"] = recorded_at
                 ticket["updated_at"] = recorded_at
                 case = self._billing_tickets.get(normalized_case_id)
-                if isinstance(case, dict) and str(case.get("automation_handler") or "").strip() == "account_suspension":
-                    context = case.get("automation_context")
-                    context = dict(context) if isinstance(context, dict) else {}
-                    workflow = context.get("account_suspension_contact_workflow")
-                    if isinstance(workflow, dict):
-                        workflow = dict(workflow)
-                        workflow.update({"state": "closed", "updated_at": recorded_at})
-                        context["account_suspension_contact_workflow"] = workflow
-                        case["automation_context"] = context
+                if isinstance(case, dict):
+                    # The case mirror records the solved status for every
+                    # handler: ECS has no n8n case_status_sync route, so this
+                    # is the only writer of zendesk_ticket_status.
+                    case["zendesk_ticket_status"] = "solved"
+                    case["zendesk_status_updated_at"] = recorded_at
+                    case["zendesk_status_synced_at"] = recorded_at
+                    case["updated_at"] = recorded_at
+                    if str(case.get("automation_handler") or "").strip() == "account_suspension":
+                        context = case.get("automation_context")
+                        context = dict(context) if isinstance(context, dict) else {}
+                        workflow = context.get("account_suspension_contact_workflow")
+                        if isinstance(workflow, dict):
+                            workflow = dict(workflow)
+                            workflow.update({"state": "closed", "updated_at": recorded_at})
+                            context["account_suspension_contact_workflow"] = workflow
+                            case["automation_context"] = context
             return {
                 "audit_persisted": message_updated,
                 "delivery": copy.deepcopy(delivery) if delivery is not None else None,
@@ -15062,6 +15070,17 @@ class PostgresTicketRepository(
                             "WHERE ticket_id=%s AND status<>'resolved'"
                         ).format(self._table("support_tickets")),
                         (recorded_at, recorded_at, normalized_ticket_id),
+                    )
+                    # The case mirror must record the solved status for every
+                    # handler: ECS has no n8n case_status_sync route, so this
+                    # transaction is the only writer of zendesk_ticket_status.
+                    cur.execute(
+                        sql.SQL(
+                            "UPDATE {} SET zendesk_ticket_status='solved', "
+                            "zendesk_status_updated_at=%s, zendesk_status_synced_at=%s, "
+                            "updated_at=%s WHERE client_ticket_id=%s"
+                        ).format(self._table("support_account_cases")),
+                        (recorded_at, recorded_at, recorded_at, normalized_ticket_id),
                     )
                     cur.execute(
                         sql.SQL(
