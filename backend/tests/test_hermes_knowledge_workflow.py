@@ -334,51 +334,73 @@ def test_summary_then_review_run_on_separate_sessions_with_readonly_toolsets(mon
 
 
 class FakeWeKnoraWriteClient:
-    """Write-side fake for the WeKnoraPromotionAdapter (p2-182 contract)."""
+    """Write-side store fake for the WeKnoraPromotionAdapter.
+
+    Writes land in the store and reads serve the stored state, so the
+    adapter's content/version readback proof is exercised for real.
+    """
 
     def __init__(self, *, memory_identity: bool = True) -> None:
         self.calls: list[tuple[str, dict]] = []
         self.memory_identity = memory_identity
+        self.objects: dict[str, dict] = {
+            "weknora:kb:join-failures": {
+                "object_id": "weknora:kb:join-failures",
+                "version": "3",
+                "title": "Join failures",
+                "content": "Existing entry.",
+            }
+        }
+        self.next_version = 100
 
     def has_memory_identity(self) -> bool:
         return self.memory_identity
 
     def knowledge_read(self, *, object_id: str) -> dict:
         self.calls.append(("knowledge_read", {"object_id": object_id}))
-        return {
-            "object_id": object_id,
-            "version": "3",
-            "title": "Join failures",
-            "content": "Existing entry.",
-        }
+        return dict(self.objects[object_id])
 
     def knowledge_create(self, *, title: str, content: str, idempotency_key: str) -> dict:
         self.calls.append(("knowledge_create", {"title": title, "key": idempotency_key}))
-        return {"object_id": "kb-new-1", "version": "1", "receipt": {"ok": True}}
+        object_id = f"kb-new-{len(self.objects)}"
+        self.objects[object_id] = {
+            "object_id": object_id, "version": "1", "title": title, "content": content,
+        }
+        return {"object_id": object_id, "version": "1", "receipt": {"ok": True}}
 
     def knowledge_update(self, *, object_id: str, base_version: str, title: str, content: str, idempotency_key: str) -> dict:
         self.calls.append((
             "knowledge_update",
             {"object_id": object_id, "base_version": base_version, "key": idempotency_key},
         ))
-        return {"object_id": object_id, "version": "4", "receipt": {"ok": True}}
+        row = self.objects[object_id]
+        row["version"] = str(int(row["version"]) + 1)
+        row["content"] = content
+        if title:
+            row["title"] = title
+        return {"object_id": object_id, "version": row["version"], "receipt": {"ok": True}}
 
     def memory_query(self, *, query: str) -> list[dict]:
         self.calls.append(("memory_query", {"query": query}))
-        return [{
-            "object_id": "mem-new-1",
-            "version": "1",
-            "title": "",
-            "content": "Case pattern: region misconfiguration join failure.",
-        }]
+        return [
+            dict(row) for row in self.objects.values()
+            if row["object_id"].startswith("mem-")
+        ]
 
     def memory_create(self, *, content: str, idempotency_key: str) -> dict:
         self.calls.append(("memory_create", {"key": idempotency_key}))
-        return {"object_id": "mem-new-1", "version": "1", "receipt": {"ok": True}}
+        object_id = f"mem-new-{len(self.objects)}"
+        self.objects[object_id] = {
+            "object_id": object_id, "version": "1", "title": "", "content": content,
+        }
+        return {"object_id": object_id, "version": "1", "receipt": {"ok": True}}
 
     def memory_update(self, *, object_id: str, base_version: str, content: str, idempotency_key: str) -> dict:
         self.calls.append(("memory_update", {"object_id": object_id, "key": idempotency_key}))
-        return {"object_id": object_id, "version": "2", "receipt": {"ok": True}}
+        row = self.objects[object_id]
+        row["version"] = str(int(row["version"]) + 1)
+        row["content"] = content
+        return {"object_id": object_id, "version": row["version"], "receipt": {"ok": True}}
 
 
 def _drain_weknora_promotions_like_worker(repository: Any, adapter: Any) -> int:
