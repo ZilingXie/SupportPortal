@@ -58,7 +58,7 @@ HTTP 2xx 且 body 含以下 `status` 之一即视为投递成功：
 
 ## n8n 侧不变量（两条来源流程共用）
 
-1. 投递前必须完成**评论完整性校验**（Zendesk：`next_page` 为空且评论数不少于 `comment_count`；CSD：`fields.comment.comments.length` 不少于 `fields.comment.total`），不完整时显式失败，不投递半份快照。
+1. 投递前必须完成**评论完整性校验**（Zendesk：`next_page` 为空且评论数不少于 `comment_count`；CSD：`fields.comment` 对象、`comments` 数组与数值型 `total` 必须齐备，`comments.length` 不少于 `total`），结构缺失/异常或数量不满足均显式失败（fail-closed），不投递半份快照。
 2. 投递原始内容，不做脱敏或改写（脱敏与质量判断属于 Review/写入侧）。
 3. 原有 Zendesk KB 草稿与 Google Sheets 输出节点保留在画布但与主链断开并禁用，待 Review 通过后的输出链对接；旧 Memory Wiki 直写节点整体删除。
 4. 定时扫描（CSD JQL）与触发条件（Zendesk SOLVED）只决定**来源范围**，不决定知识质量。

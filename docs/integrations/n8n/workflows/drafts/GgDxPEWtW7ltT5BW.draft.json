@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-01T02:40:00.000Z",
+  "capturedAt": "2026-10-01T03:30:00.000Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD",
     "snapshotKind": "draft",
-    "versionId": "381b6fb5-8076-4efb-8c94-cfec51563434",
-    "draftVersionId": "381b6fb5-8076-4efb-8c94-cfec51563434",
+    "versionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "draftVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
     "publishedVersionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
-    "updatedAt": "2026-10-01T02:24:06.176Z",
+    "updatedAt": "2026-10-01T03:11:36.377Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
@@ -357,7 +357,7 @@
           1088
         ],
         "parameters": {
-          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nconst comment = fields.comment;\nif (comment && typeof comment.total === 'number' && Array.isArray(comment.comments) && comment.comments.length < comment.total) {\n  throw new Error(`CSD comment pagination incomplete: got ${comment.comments.length} of ${comment.total} (issue ${detail.key})`);\n}\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
+          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nconst comment = fields.comment;\nif (!comment || typeof comment !== 'object' || !Array.isArray(comment.comments) || typeof comment.total !== 'number') {\n  throw new Error(`CSD comment structure missing or malformed (issue ${detail.key})`);\n}\nif (comment.comments.length < comment.total) {\n  throw new Error(`CSD comment pagination incomplete: got ${comment.comments.length} of ${comment.total} (issue ${detail.key})`);\n}\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
         }
       },
       {

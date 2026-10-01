@@ -25,8 +25,9 @@ For each new entry, record:
   independent review to Hermes and audited, controlled writes to SupportPortal;
   n8n only fetches and delivers source snapshots.
 - Affected files/config: n8n workflows MM3Z3T469Eru3Q1I (draft
-  `33b22cd2`, 36→15 nodes; first draft `adb1156a`) and GgDxPEWtW7ltT5BW
-  (draft `381b6fb5`, 26→19 nodes; first draft `eea4392d`); contract proposal
+  `743bba31`, 36→13 nodes; first drafts `adb1156a`/`33b22cd2`) and
+  GgDxPEWtW7ltT5BW (draft `544bdb70`, 26→19 nodes; first drafts
+  `eea4392d`/`381b6fb5`); contract proposal
   `docs/integrations/n8n/knowledge_source_ingestion_contract.md`; snapshots and
   manifest under `docs/integrations/n8n/workflows/`. Active published versions
   (`de3c1ca8` / `d7100b18`) are unchanged.

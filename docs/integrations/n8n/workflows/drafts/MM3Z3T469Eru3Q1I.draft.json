@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-01T02:40:00.000Z",
+  "capturedAt": "2026-10-01T03:30:00.000Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "MM3Z3T469Eru3Q1I",
     "workflowName": "[kb]Build|Solved Cases",
     "snapshotKind": "draft",
-    "versionId": "33b22cd2-3e10-4c75-817e-c7e3c02a0d2a",
-    "draftVersionId": "33b22cd2-3e10-4c75-817e-c7e3c02a0d2a",
+    "versionId": "743bba31-73c1-43ae-a1b1-2e5d79110123",
+    "draftVersionId": "743bba31-73c1-43ae-a1b1-2e5d79110123",
     "publishedVersionId": "de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991",
-    "updatedAt": "2026-10-01T02:23:40.808Z",
+    "updatedAt": "2026-10-01T03:11:35.561Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
@@ -207,32 +207,6 @@
         "retryOnFail": true,
         "waitBetweenTries": 5000,
         "disabled": true
-      },
-      {
-        "parameters": {
-          "jsCode": "const text = $('Generate_KB_Title').first().json.choices[0].message.content.trim();\n\nreturn {\n  extractedTitle: text.match(/^\\[[^\\]]*]\\[[^\\]]*]\\[(.*)]$/)?.[1] ?? null,\n};\n"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          2848,
-          608
-        ],
-        "id": "75505d48-dfb9-498f-924f-22e3234b66cc",
-        "name": "Code in JavaScript"
-      },
-      {
-        "parameters": {
-          "jsCode": "const text = $('Geneate_KB_Content').first().json.choices[0].message.content\n\nreturn {text}"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          3072,
-          608
-        ],
-        "id": "5d11bd94-4edd-4b94-a841-ab4f05cff8c6",
-        "name": "Code in JavaScript1"
       },
       {
         "id": "cb0cf46d-5665-4c94-807f-d0a0475841ca",
@@ -553,39 +527,6 @@
           [
             {
               "node": "Raise Delivery Error",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Append row in sheet": {
-        "main": [
-          [
-            {
-              "node": "Code in JavaScript",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Code in JavaScript": {
-        "main": [
-          [
-            {
-              "node": "Code in JavaScript1",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Code in JavaScript1": {
-        "main": [
-          [
-            {
-              "node": "2_rag",
               "type": "main",
               "index": 0
             }
