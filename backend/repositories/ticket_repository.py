@@ -9208,6 +9208,8 @@ class PostgresTicketRepository(
                     if record is not None
                 ]
 
+        return self._run_with_connection_retry("list_engineer_slack_events", _operation)
+
     def list_engineer_slack_events_for_case(
         self, engineer_case_id: str, *, limit: int = 500
     ) -> dict[str, Any]:
