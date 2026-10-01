@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T03:39:26Z",
-  "source_base_commit": "9cc2ae0d18e209ada41885044b60b8fb6d06d037",
-  "registry_digest": "3b2aedb4600d7b5a11f27b0a765929c0ee63a2c3ff093db0ffe05325de5c99eb",
+  "generated_at": "2026-10-01T03:40:55Z",
+  "source_base_commit": "046cda434a46a61c8ed3c85941edf00fb5c03d0a",
+  "registry_digest": "db86c749fe3d36b76e3bdc4a401eec1dda2cad64cc821f7aeb73f85910db89e1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3904,6 +3904,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Consumption bridge Review->Promotion->Adapter e2e",
           "details": "2026-10-01：test_hermes_knowledge_workflow 新增全链路用例——三候选（knowledge-supplement/memory-new/skill-human_review）review 完成后同事务入队三条 promotion（逐候选 source、全 lineage 断言），worker 循环消费：knowledge_update(base_version=3)与 memory_create 回读 accepted、skill 零客户端调用终态 human_review；重复排水零重复、公开入队口幂等；skill 写意图在 normalize 门禁被拒（ValueError）；适配器 skill 护栏测试更新为 human_review 契约。57 单测通过（含 weknora client/adapter/workflow/worker 全套回归）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Consumption bridge merged and deployed (r20261001-9af808a)",
+          "details": "2026-10-01：PR#1340（消费桥+skill 分流+全 lineage+v16，合并 #1336 候选级幂等成 v16-weknora-skill-candidate-key）合入 main 9af808ac。发布 r20261001-9af808a：codebuild/preflight/prompt_schema(bootstrap)/route_worker/api/collector/activation/release_note 全 passed（复收敛了 r20260930-39144ab 的 rollback_incomplete 残局）；只读回读：supportportal_preproduction 三表在位、candidate_type CHECK 含 skill、idx_support_weknora_promotions_candidate_unique 五列、schema_meta=v16@2026-10-01T03:21:44Z。本地官方栈 9af808acacb7 /health ok+provenance matched+prompt_count=41。WeKnora 真实端到端仍未执行（缺凭证），knowledge 管线在 preprod 仍为 disabled 休眠。"
         },
         {
           "type": "test",
@@ -15058,7 +15063,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
       "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。(5) 消费桥（验收未通过阻断项修复）：Review 完成事务内原子入队 support_weknora_promotions（build_weknora_promotions_from_review_report，source_type=hermes_knowledge_review、source_id=\u003creview_id>:\u003ccandidate_id>、source_version=报告 content_hash 内容寻址，lineage 全量：ticket/investigation/Summary+Review session 与 run/Slack thread）；skill 决策显式分流为仅人工复核记录（candidate_type 枚举扩至 skill，仅 no_change/human_review，仓储门禁拒绝 skill 写意图，适配器零读写护栏 skill_change_requires_human_review，原始 decision 保留于 payload）；schema 合并为 v16（与 #1336 的候选级幂等 v15 合并：v16-weknora-skill-candidate-key，约束交换+候选级唯一索引并存）；worker 顺序调整为先知识排水后 promotion 排水。",
-      "next_action": "消费桥已实现并合并 #1336（v16）：待 PG 集成通过后 finalize 合入，重启本地官方栈验证，再重部署当前 main 到 Preproduction（--bootstrap-account-schema，v16），随后 WeKnora 真实探针与端到端写入验证（仍缺 endpoint/凭证/知识库 ID/共享 memory identity）。",
+      "next_action": "消费桥已合入（PR#1340）并部署 Preproduction r20261001-9af808a 全阶段 passed（含 v16 bootstrap 与 Prompt Release 激活，只读回读确认 skill 约束/候选级索引/三表/schema=v16）。剩余：WeKnora 真实探针与端到端写入验证——待用户提供 endpoint/凭证/知识库 ID/共享 memory identity（scripts/weknora/probe_weknora_contract.py + 真实管线激活 HERMES_CASE_WORKFLOW_MODE=real）。",
       "acceptance_criteria": [
         "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
         "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
@@ -15102,6 +15107,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Consumption bridge Review->Promotion->Adapter e2e",
           "details": "2026-10-01：test_hermes_knowledge_workflow 新增全链路用例——三候选（knowledge-supplement/memory-new/skill-human_review）review 完成后同事务入队三条 promotion（逐候选 source、全 lineage 断言），worker 循环消费：knowledge_update(base_version=3)与 memory_create 回读 accepted、skill 零客户端调用终态 human_review；重复排水零重复、公开入队口幂等；skill 写意图在 normalize 门禁被拒（ValueError）；适配器 skill 护栏测试更新为 human_review 契约。57 单测通过（含 weknora client/adapter/workflow/worker 全套回归）。"
+        },
+        {
+          "type": "deployment",
+          "label": "Consumption bridge merged and deployed (r20261001-9af808a)",
+          "details": "2026-10-01：PR#1340（消费桥+skill 分流+全 lineage+v16，合并 #1336 候选级幂等成 v16-weknora-skill-candidate-key）合入 main 9af808ac。发布 r20261001-9af808a：codebuild/preflight/prompt_schema(bootstrap)/route_worker/api/collector/activation/release_note 全 passed（复收敛了 r20260930-39144ab 的 rollback_incomplete 残局）；只读回读：supportportal_preproduction 三表在位、candidate_type CHECK 含 skill、idx_support_weknora_promotions_candidate_unique 五列、schema_meta=v16@2026-10-01T03:21:44Z。本地官方栈 9af808acacb7 /health ok+provenance matched+prompt_count=41。WeKnora 真实端到端仍未执行（缺凭证），knowledge 管线在 preprod 仍为 disabled 休眠。"
         }
       ],
       "history": [
@@ -15124,6 +15134,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "followup",
           "summary": "验收未通过（消费桥断裂）：实现 review 完成→weknora promotion 原子入队桥（含 skill 人工复核分流、全 lineage、schema v15、worker 顺序），端到端单测与 PG 集成补齐。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "验收阻断项（消费桥）修复并部署：Review→Promotion→Adapter 全链路打通（skill 仅人工复核），Preproduction r20261001-9af808a 激活并回读确认；仅剩 WeKnora 真实探针/端到端待用户凭证。"
         }
       ],
       "legacy_ids": [],
