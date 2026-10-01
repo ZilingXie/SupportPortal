@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T07:07:59Z",
-  "source_base_commit": "01666d65704e71b64ca9e1d3fc93e61bbf09512d",
-  "registry_digest": "89efc5388c1827483dddeffe859890dd81067fe252ad798543299f7067c9a006",
+  "generated_at": "2026-10-01T07:09:00Z",
+  "source_base_commit": "c5a9b37d53c4123c65f7261383e8670a64fb98e5",
+  "registry_digest": "66150c26583a27f2d5b4b7462d40a16995208dab354a2fbdffdcbc2615797ba7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3917,6 +3917,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Round-5 integration tests",
+          "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -4885,6 +4890,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction 部署与回读（2026-10-01）",
           "details": "r20261001-3856643（git 38566439b19a，含 PR#1331/#1336/#1344/#1351 及后续 docs）：新 Prompt Release pr-22d6c9be1773（hermes-knowledge-review-manual v2 kind/importance，draft→schedule→prepare→validate）随发布激活；api:85/route:84/worker:85 全部 runtime_verified=true，target_health healthy，evidence status=complete（rollback=not_started、schema_bootstrap=skipped_current——v16 已在位）；公开回读 /automation/preproduction/health/release：release_id/git_commit/prompt_release_id/schema-012 全部一致。"
+        },
+        {
+          "type": "test",
+          "label": "Round-5 contract preservation check",
+          "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
         }
       ],
       "source_refs": [
@@ -15137,6 +15147,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Independent acceptance passed (consumption bridge round)",
           "details": "2026-10-01 独立验收结论=通过（验收对象 main@53c0564469400707c7bbd2e6f660ca6020cbc201）：Review→Promotion→Adapter 消费桥闭合（同事务完成+入队、候选级幂等键、worker 同轮衔接、全 lineage）；skill 分流符合设计（写意图桥接 human_review、原始 decision 留 payload、Adapter 零调用、knowledge/memory 走正常决策矩阵）；相关单测 50 passed 3 skipped（独立复跑，.venv pytest），PG 集成以先前 8 项通过证据采信；preprod r20260930→r20261001-9af808a v16 回读与本地栈 9af808ac provenance 证据被采纳。剩余限制=WeKnora 真实凭证未提供（真实探针/写入端到端未执行，属 p2-182 后续验收条件，不阻塞本次）。"
+        },
+        {
+          "type": "test",
+          "label": "Round-5 integration tests",
+          "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
         }
       ],
       "history": [
@@ -15169,6 +15184,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "done",
           "summary": "消费桥验收通过（阻断项全闭环）；p2-181 收口 done，feature list 条目移入已完成；WeKnora 真实端到端移交 p2-182 凭证条件。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "第四轮验收（eb999da7，基线 bec205e0）未通过：main 新增 ee510a97/8e3c1d86/61728e4e，其中 61728e4e 属同一治理链路（Review memory kind/importance 字段链闭合 + 真实 stale-base 探针：保存更新前版本、服务端接受 stale base 判失败 + test_weknora_probe_capabilities）。第五轮整合：分支 reset 到 61728e4e，保留主线全部契约（kind/importance/memory 分类校验、stale-base 探针及其测试原样未动），最小化叠加治理修复——(1) HermesReviewDecision 在主线 kind/importance/memory 校验之上叠加 skill 边界（仅 no_change/human_review、禁带 WeKnora target）；HermesReviewReport 增 memory_available/downgraded_candidate_ids（不进 content hash），契约 bundle 已用 generate_hermes_contract_bundle.py 同步再生；(2) 携带第四轮的 client metadata semantic/adapter lineage/worker 接线（main 期间未动这些文件）；(3) hermes_knowledge_workflow 的 Summary 完整输入+Slack 三缺陷+memory 证据面（memory_list）+按候选类型降级以 3way 干净应用。旧 eb999da7 存档为 codex/governance-knowledge-curation-round4。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "SupportPortal 治理层计划第七轮验收通过（对象 1c8ea8c7），释放 finalize→PR。rebase 到 main(01666d65) 时与主线 p2-182 round-4 验收/Preproduction 部署记录语义合并（r20261001-3856643 不含本叠加，随下一次常规发布携带）。"
         }
       ],
       "legacy_ids": [],
@@ -15198,7 +15223,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-10-01",
       "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。 【修复轮 2 2026-10-01，响应第二轮验收未通过】(1) supplement 与 replace/merge 一致强制 Review base_version（缺失=invalid_candidate），不再把未确认的当前版本当作 Review 基准；比对改严格相等，不一致或不可读均 human_review。(2) Client 请求字段映射：契约操作支持 body 模板（值为 $语义字段引用 或字面量，模板存在时只发已定义字段、被引用字段缺失/空值 fail-closed）与 query_params 模板（GET 无 body）；官方 memory 形态（POST /api/v1/memory/items 的 kind/content/importance）用模板精确发出，不再泄漏 user_id/幂等键/metadata；memory_query→memory_list（官方列表语义）；memory 语义字段新增 kind/importance 并入候选契约。(3) conditional_update 能力声明：update 操作须显式 conditional_update=true（探针证据），缺省视为不支持——定向更新无证据时转 human_review，不执行不可验证的覆盖。",
-      "next_action": "代码验收已通过（第四轮）并已部署 Preproduction（r20261001-3856643，含 pr-22d6c9be1773 prompt 激活，公开回读一致）。剩余按验收结论顺序，均被 WeKnora 访问阻塞：用户提供 endpoint/凭证/知识库 ID/共享 memory identity→只读 contract probe→隔离对象写能力 probe（幂等+stale 拒绝）→stale 证据成立后为 update 操作声明 conditional_update=true→端到端写入验证（新建/补充/替代/合并/幂等/版本冲突）→n8n 旧 Tencent Memory 写入路径迁移。无该证据前 Adapter 保持 fail-closed（定向更新转 human_review），符合设计。",
+      "next_action": "治理层叠加（skill 边界/Slack 完整历史/binding lineage/memory list evidence/lineage metadata）已通过第七轮验收并 finalize→PR；随下一次常规 Preproduction 发布携带（主线 round-4 的 r20261001-3856643 部署不包含该叠加）。激活前置不变，均被 WeKnora 访问阻塞：用户提供 endpoint/凭证/知识库 ID/共享 memory identity→只读 contract probe→隔离对象写能力 probe（幂等+stale 拒绝）→stale 证据成立后为 update 操作声明 conditional_update=true→端到端写入验证（新建/补充/替代/合并/幂等/版本冲突/stale 拒绝）→n8n 旧 Tencent Memory 写入路径迁移。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
         "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、回读须证明对象/内容/版本一致）",
@@ -15253,9 +15278,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction 部署与回读（2026-10-01）",
           "details": "r20261001-3856643（git 38566439b19a，含 PR#1331/#1336/#1344/#1351 及后续 docs）：新 Prompt Release pr-22d6c9be1773（hermes-knowledge-review-manual v2 kind/importance，draft→schedule→prepare→validate）随发布激活；api:85/route:84/worker:85 全部 runtime_verified=true，target_health healthy，evidence status=complete（rollback=not_started、schema_bootstrap=skipped_current——v16 已在位）；公开回读 /automation/preproduction/health/release：release_id/git_commit/prompt_release_id/schema-012 全部一致。"
+        },
+        {
+          "type": "test",
+          "label": "Round-5 contract preservation check",
+          "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
         }
       ],
-      "history": [],
+      "history": [
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "第五轮整合（p2-181 治理层验收，基线 61728e4e）：本轮主线契约——memory kind/importance 字段链（HermesReviewDecision→submissions→promotions→adapter→官方请求形状）、真实 stale-base 探针（probe_weknora_contract.py 保存更新前版本、服务端接受 stale base 判失败）及 test_weknora_probe_capabilities 全部原样保留；在其上叠加 lineage metadata 传递（knowledge_update/memory_update metadata semantic，模板契约下由 pinned body 决定是否上线）与 adapter 四写调用的全 lineage。本条记录取代前一轮基于 bec205e0 的登记措辞，确认主线第三轮（p2-182 round 3=61728e4e）的 stale-base 与 memory kind/importance 契约为当前基底。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "SupportPortal 治理层计划第七轮验收通过（对象 1c8ea8c7：5cb140d1 运行时叠加 + 登记收口），结论释放 finalize→PR。本条在 rebase 到 main(01666d65) 时合并主线 round-4 验收与 Preproduction 部署（r20261001-3856643）记录：该部署不包含本治理叠加，叠加随下一次常规发布携带；真实 WeKnora endpoint/凭证/写能力探针与 Preproduction E2E 仍为激活前置（本计划验收明确不释放线上部署）。"
+        }
+      ],
       "legacy_ids": [],
       "legacy_refs": [
         "p2-181"

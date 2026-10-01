@@ -2104,6 +2104,11 @@ class TicketRepository(Protocol):
     ) -> list[dict[str, Any]]:
         ...
 
+    def list_engineer_slack_events_for_case(
+        self, engineer_case_id: str, *, limit: int = 500
+    ) -> dict[str, Any]:
+        ...
+
     def claim_engineer_slack_event(
         self, *, event_id: str, claimed_at: str
     ) -> dict[str, Any] | None:
@@ -6265,6 +6270,25 @@ class InMemoryTicketRepository(
         rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("event_id") or "")))
         return rows[: max(1, min(int(limit), 500))]
 
+    def list_engineer_slack_events_for_case(
+        self, engineer_case_id: str, *, limit: int = 500
+    ) -> dict[str, Any]:
+        """Complete Slack event history for ONE case.
+
+        ``truncated`` is True when the case's own history exceeds the cap —
+        callers must fail visibly instead of consuming a partial history.
+        """
+        normalized_id = str(engineer_case_id or "").strip()
+        cap = max(1, int(limit))
+        with self._assignment_lock:
+            rows = [
+                copy.deepcopy(row)
+                for row in self._engineer_slack_events.values()
+                if str(row.get("engineer_case_id") or "").strip() == normalized_id
+            ]
+        rows.sort(key=lambda row: (str(row.get("created_at") or ""), str(row.get("event_id") or "")))
+        return {"events": rows[:cap], "truncated": len(rows) > cap}
+
     def claim_engineer_slack_event(
         self, *, event_id: str, claimed_at: str
     ) -> dict[str, Any] | None:
@@ -9183,6 +9207,36 @@ class PostgresTicketRepository(
                     for record in [_engineer_slack_event_from_row(row)]
                     if record is not None
                 ]
+
+    def list_engineer_slack_events_for_case(
+        self, engineer_case_id: str, *, limit: int = 500
+    ) -> dict[str, Any]:
+        """Complete per-case Slack history; truncation is reported so callers
+        can fail visibly instead of summarizing a partial history."""
+        normalized_id = str(engineer_case_id or "").strip()
+        cap = max(1, int(limit))
+        columns = ", ".join(_ENGINEER_SLACK_EVENT_FIELDS)
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT " + columns + " FROM {} WHERE engineer_case_id = %s "
+                        "ORDER BY created_at, event_id LIMIT %s"
+                    ).format(self._table("support_engineer_slack_events")),
+                    (normalized_id, cap + 1),
+                )
+                rows = cur.fetchall()
+            truncated = len(rows) > cap
+            return {
+                "events": [
+                    record
+                    for row in rows[:cap]
+                    for record in [_engineer_slack_event_from_row(row)]
+                    if record is not None
+                ],
+                "truncated": truncated,
+            }
 
         return self._run_with_connection_retry("list_engineer_slack_events", _operation)
 

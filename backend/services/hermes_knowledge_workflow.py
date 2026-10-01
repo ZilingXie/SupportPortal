@@ -194,6 +194,63 @@ def queue_hermes_summary_for_locally_resolved_ticket(
 # ---------------------------------------------------------------------- bundles
 
 
+KNOWLEDGE_SLACK_HISTORY_LIMIT = 500
+
+
+def _case_slack_thread(repository: Any, case_id: str) -> dict[str, Any]:
+    """Complete engineer Slack thread history for the Summary input contract.
+
+    The thread binding is the authoritative Slack lineage source — the
+    engineer-case payload does not carry Slack ids. A missing binding means
+    the case never had a thread (an empty projection is correct); any read
+    failure or a per-case history overflow FAILS the summary visibly
+    (`slack_history_unavailable` / `slack_history_truncated`) instead of
+    summarizing without the investigation context.
+    """
+    try:
+        binding = repository.get_engineer_slack_thread_binding(case_id, active_only=False)
+        listing = repository.list_engineer_slack_events_for_case(
+            case_id, limit=KNOWLEDGE_SLACK_HISTORY_LIMIT
+        )
+    except KnowledgeWorkflowError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - partial Slack context must not silently pass
+        raise KnowledgeWorkflowError(
+            "slack_history_unavailable",
+            f"engineer Slack history could not be read for {case_id}: {exc}",
+        ) from exc
+    if not isinstance(binding, dict):
+        return {"slack_channel_id": "", "slack_thread_ts": "", "events": []}
+    events = listing.get("events") if isinstance(listing, dict) else None
+    if not isinstance(events, list):
+        raise KnowledgeWorkflowError(
+            "slack_history_unavailable",
+            f"engineer Slack history listing is malformed for {case_id}",
+        )
+    if bool(listing.get("truncated")):
+        raise KnowledgeWorkflowError(
+            "slack_history_truncated",
+            f"engineer Slack history for {case_id} exceeds "
+            f"{KNOWLEDGE_SLACK_HISTORY_LIMIT} events; refusing a partial summary",
+        )
+    projection = [
+        {
+            "event_id": str(event.get("event_id") or ""),
+            "event_type": str(event.get("event_type") or ""),
+            "status": str(event.get("status") or ""),
+            "payload": event.get("payload") or {},
+            "created_at": str(event.get("created_at") or ""),
+        }
+        for event in events
+        if isinstance(event, dict)
+    ]
+    return {
+        "slack_channel_id": str(binding.get("slack_channel_id") or ""),
+        "slack_thread_ts": str(binding.get("slack_thread_ts") or ""),
+        "events": projection,
+    }
+
+
 def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, Any]:
     case_id = str(task["engineer_case_id"])
     binding = repository.get_hermes_case_binding(case_id) or {}
@@ -202,6 +259,7 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
     ticket = repository.get_ticket(str(task["client_ticket_id"])) or {}
     current_output_id = str(binding.get("current_output_id") or "")
     current_output = repository.get_hermes_output(current_output_id) if current_output_id else None
+    slack_thread = _case_slack_thread(repository, case_id)
     return {
         "schema": "hermes-case-close-bundle-v1",
         "lineage": {
@@ -213,13 +271,19 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
             "conversation_version": int(task["conversation_version"]),
             "hermes_session_id": str(task["hermes_session_id"]),
             "zendesk_ticket_id": str(ticket.get("ticket_id") or task["client_ticket_id"]),
-            "slack_channel_id": str(engineer_case.get("slack_channel_id") or ""),
-            "slack_thread_ts": str(engineer_case.get("slack_thread_ts") or ""),
+            # Slack lineage comes from the thread binding, the authoritative
+            # source; the engineer-case payload does not carry these ids.
+            "slack_channel_id": slack_thread["slack_channel_id"],
+            "slack_thread_ts": slack_thread["slack_thread_ts"],
         },
         "ticket": {
             "ticket_id": str(ticket.get("ticket_id") or ""),
             "subject": str(ticket.get("subject") or ""),
             "status": str(ticket.get("status") or ""),
+            # Full ticket message history (customer comments, AI replies,
+            # Zendesk-linked external ids) — the summary input contract
+            # requires the complete conversation, not just the ledger.
+            "messages": ticket.get("messages") or [],
         },
         "ledger": ledger,
         "engineer_case": {
@@ -227,6 +291,7 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
             "status": str(engineer_case.get("status") or ""),
             "messages": engineer_case.get("messages") or [],
         },
+        "slack_thread": slack_thread,
         "current_investigation_output": current_output,
         "authority_events": repository.list_hermes_authority_events(case_id),
     }
@@ -493,26 +558,127 @@ def run_hermes_summary_task(
 # ------------------------------------------------------------------- Review run
 
 
+WRITABLE_REVIEW_DECISIONS = frozenset({"new", "merge", "supplement", "replace"})
+
+
 def _collect_weknora_evidence(
-    weknora_client: HermesWeKnoraClient | None, packet: dict[str, Any]
-) -> tuple[dict[str, list[dict[str, Any]]], bool]:
-    results: dict[str, list[dict[str, Any]]] = {}
+    weknora_client: HermesWeKnoraClient | None,
+    packet: dict[str, Any],
+    *,
+    memory_client: Any = None,
+) -> tuple[dict[str, list[dict[str, Any]]], dict[str, list[dict[str, Any]]], bool, bool]:
+    """Per-candidate similarity evidence from BOTH WeKnora surfaces.
+
+    ``knowledge`` results come from the read-only review client; ``memory``
+    results come from the contract-pinned client's caller-isolated memory
+    query (shared Hermes identity). Each surface reports its own
+    availability; a candidate's writable decision is only trustworthy when
+    every surface that could hold a duplicate answered.
+    """
+    knowledge_results: dict[str, list[dict[str, Any]]] = {}
+    memory_results: dict[str, list[dict[str, Any]]] = {}
+    candidates = packet.get("candidates") or []
+    knowledge_ok = True
     if weknora_client is None or not weknora_client.configured():
-        for candidate in packet.get("candidates") or []:
-            results[str(candidate.get("candidate_id") or "")] = []
-        return results, False
-    all_available = True
-    for candidate in packet.get("candidates") or []:
-        candidate_id = str(candidate.get("candidate_id") or "")
-        try:
-            results[candidate_id] = weknora_client.search(str(candidate.get("statement") or ""))
-        except WeKnoraUnavailable as exc:
-            LOGGER.warning(
-                "weknora_search_unavailable candidate_id=%s error=%s", candidate_id, exc
-            )
-            results[candidate_id] = []
-            all_available = False
-    return results, all_available
+        knowledge_ok = False
+        for candidate in candidates:
+            knowledge_results[str(candidate.get("candidate_id") or "")] = []
+    else:
+        for candidate in candidates:
+            candidate_id = str(candidate.get("candidate_id") or "")
+            try:
+                knowledge_results[candidate_id] = weknora_client.search(
+                    str(candidate.get("statement") or "")
+                )
+            except WeKnoraUnavailable as exc:
+                LOGGER.warning(
+                    "weknora_search_unavailable candidate_id=%s error=%s", candidate_id, exc
+                )
+                knowledge_results[candidate_id] = []
+                knowledge_ok = False
+    memory_ok = True
+    # The current contract-pinned client exposes the official memory API as
+    # ``memory_list`` (a list endpoint, not a search); older clients and test
+    # fakes may still expose ``memory_query``. Either surface counts.
+    memory_list = getattr(memory_client, "memory_list", None) if memory_client is not None else None
+    memory_query = getattr(memory_client, "memory_query", None) if memory_client is not None else None
+    memory_read = memory_list if callable(memory_list) else (
+        memory_query if callable(memory_query) else None
+    )
+    memory_configured = (
+        memory_read is not None
+        and bool(getattr(memory_client, "is_configured", lambda: True)())
+        and bool(getattr(memory_client, "has_memory_identity", lambda: True)())
+    )
+    if not memory_configured:
+        memory_ok = False
+        for candidate in candidates:
+            memory_results[str(candidate.get("candidate_id") or "")] = []
+    else:
+        for candidate in candidates:
+            candidate_id = str(candidate.get("candidate_id") or "")
+            try:
+                if memory_read is memory_list:
+                    # One listing covers every candidate (list endpoint).
+                    if candidate_id == str((candidates[0] or {}).get("candidate_id") or ""):
+                        listed = list(memory_list())
+                        for other in candidates:
+                            memory_results[str(other.get("candidate_id") or "")] = list(listed)
+                else:
+                    memory_results[candidate_id] = list(
+                        memory_query(query=str(candidate.get("statement") or ""))
+                    )
+            except Exception as exc:  # noqa: BLE001 - any memory failure is unavailable evidence
+                LOGGER.warning(
+                    "weknora_memory_unavailable candidate_id=%s error=%s", candidate_id, exc
+                )
+                memory_results[candidate_id] = []
+                memory_ok = False
+    return knowledge_results, memory_results, knowledge_ok, memory_ok
+
+
+def _downgrade_decisions_without_evidence(
+    decisions: list[Any],
+    *,
+    knowledge_available: bool,
+    memory_available: bool,
+) -> tuple[list[Any], list[str]]:
+    """Fail closed: a writable decision survives only when every surface that
+    could hold a duplicate answered (knowledge candidates need the knowledge
+    surface; memory candidates need both), and skill write proposals always
+    become ``human_review`` — the original decision is preserved in the
+    rationale and nothing is silently dropped or auto-written."""
+    adjusted: list[Any] = []
+    downgraded: list[str] = []
+    for item in decisions:
+        if not isinstance(item, dict):
+            adjusted.append(item)
+            continue
+        decision = str(item.get("decision") or "")
+        candidate_type = str(item.get("candidate_type") or "")
+        skill_write = candidate_type == "skill" and decision in WRITABLE_REVIEW_DECISIONS
+        evidence_ok = (
+            knowledge_available
+            if candidate_type == "knowledge"
+            else (knowledge_available and memory_available)
+        )
+        unverified_write = decision in WRITABLE_REVIEW_DECISIONS and not evidence_ok
+        if not skill_write and not unverified_write:
+            adjusted.append(item)
+            continue
+        degraded = dict(item)
+        degraded["decision"] = "human_review"
+        reason = (
+            "skill candidates are human-maintained and never auto-written"
+            if skill_write
+            else "WeKnora evidence unavailable; refusing an unverified write"
+        )
+        degraded["rationale"] = f"[downgraded from {decision}: {reason}] {item.get('rationale') or ''}".strip()
+        degraded.pop("target_object", None)
+        degraded.pop("target_version", None)
+        adjusted.append(degraded)
+        downgraded.append(str(item.get("candidate_id") or ""))
+    return adjusted, downgraded
 
 
 # ------------------------------------------------- consumption bridge (p2-182)
@@ -619,6 +785,7 @@ def run_hermes_review_task(
     *,
     task: dict[str, Any],
     weknora_client: HermesWeKnoraClient | None = None,
+    memory_client: Any = None,
     sleeper: Any = time.sleep,
     poll_interval_seconds: float | None = None,
     timeout_seconds: float | None = None,
@@ -647,11 +814,13 @@ def run_hermes_review_task(
     try:
         _require_current_lineage(repository, task)
         instructions = _review_instructions()
-        weknora_results, weknora_available = _collect_weknora_evidence(weknora_client, packet)
+        weknora_results, memory_results, knowledge_ok, memory_ok = _collect_weknora_evidence(
+            weknora_client, packet, memory_client=memory_client
+        )
         try:
             repository.record_hermes_review_weknora_context(
                 review_task_id,
-                weknora_available=weknora_available,
+                weknora_available=knowledge_ok and memory_ok,
                 weknora_query=(
                     "; ".join(
                         str(item.get("statement") or "")
@@ -677,7 +846,15 @@ def run_hermes_review_task(
                 "skill_version": HERMES_KNOWLEDGE_REVIEW_SKILL_VERSION,
             },
             "summary_packet": packet,
-            "weknora": {"available": weknora_available, "results": weknora_results},
+            "weknora": {
+                # Per-surface availability: a writable decision is only
+                # trustworthy when every surface that could hold a duplicate
+                # answered; the bundle exposes both flags explicitly.
+                "available": knowledge_ok,
+                "memory_available": memory_ok,
+                "results": weknora_results,
+                "memory_results": memory_results,
+            },
         }
         status = _execute_knowledge_run(
             client,
@@ -719,6 +896,17 @@ def run_hermes_review_task(
                 "review_coverage_invalid",
                 "review decisions must cover each summary candidate exactly once",
             )
+        decisions, downgraded_ids = _downgrade_decisions_without_evidence(
+            decisions,
+            knowledge_available=knowledge_ok,
+            memory_available=memory_ok,
+        )
+        if downgraded_ids:
+            LOGGER.warning(
+                "review_decisions_downgraded review_task_id=%s knowledge_available=%s "
+                "memory_available=%s candidate_ids=%s",
+                review_task_id, knowledge_ok, memory_ok, downgraded_ids,
+            )
         report_payload = {
             "schema_version": "v1",
             "review_id": f"hermes-review:{task['engineer_case_id']}:{task['episode']}",
@@ -730,8 +918,10 @@ def run_hermes_review_task(
             "ledger_revision": int(task["ledger_revision"]),
             "conversation_version": int(task["conversation_version"]),
             "review_session_id": str(task["review_session_id"]),
-            "weknora_available": weknora_available,
+            "weknora_available": knowledge_ok,
+            "memory_available": memory_ok,
             "decisions": decisions,
+            "downgraded_candidate_ids": downgraded_ids,
             "content_hash": "",
             "created_at": now,
         }
@@ -781,9 +971,9 @@ def run_hermes_review_task(
             return {"review_task_id": review_task_id, "status": "superseded_during_run"}
         LOGGER.info(
             "hermes_review_completed review_task_id=%s run_id=%s decisions=%s "
-            "weknora_available=%s weknora_promotions=%s",
+            "knowledge_available=%s memory_available=%s downgraded=%s weknora_promotions=%s",
             review_task_id, status.get("run_id"), len(report.decisions),
-            weknora_available, len(promotions),
+            knowledge_ok, memory_ok, len(report.downgraded_candidate_ids), len(promotions),
         )
         return {"review_task_id": review_task_id, "status": "completed"}
     except HermesAgentError as exc:
@@ -811,6 +1001,7 @@ def drain_hermes_knowledge_tasks(
     *,
     client: HermesAgentClient | None = None,
     weknora_client: HermesWeKnoraClient | None = None,
+    memory_client: Any = None,
     limit: int = 5,
     now_value: str | None = None,
     sleeper: Any = time.sleep,
@@ -863,7 +1054,8 @@ def drain_hermes_knowledge_tasks(
         try:
             run_hermes_review_task(
                 repository, hermes_client, task=claimed,
-                weknora_client=weknora, sleeper=sleeper, now_value=now,
+                weknora_client=weknora, memory_client=memory_client,
+                sleeper=sleeper, now_value=now,
             )
         except Exception:  # noqa: BLE001
             LOGGER.warning(

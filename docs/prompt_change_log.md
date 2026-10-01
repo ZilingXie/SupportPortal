@@ -1,5 +1,32 @@
 # Prompt Change Log
 
+## 2026-10-01 - Governance remediation round 5: skill boundary + Summary input contract on the kind/importance mainline (p2-181)
+
+- Area: Hermes knowledge-governance Summary/Review runs, integrated on
+  `61728e4e` with the mainline memory `kind`/`importance` field chain and
+  true stale-base probe fully preserved.
+- Behavior: (1) the review decision contract now restricts skill candidates
+  to `no_change`/`human_review` (never a WeKnora target), stacked on top of
+  the mainline kind/importance and memory-kind validation; the review runner
+  degrades skill write proposals and writable decisions whose
+  duplicate-bearing evidence surface (knowledge search or the official
+  memory list endpoint) was unavailable to `human_review` before the
+  report, so the promotion bridge receives only human-review or verified
+  write intents. (2) The Summary input bundle includes the complete ticket
+  message history and the full per-case engineer Slack thread (new
+  `list_engineer_slack_events_for_case` query; read failures and per-case
+  overflow fail the Summary visibly; lineage Slack ids come from the
+  delivered thread binding). Prompt texts and the `knowledge-review` skill
+  are unchanged (no new prompt release needed); the Hermes contract bundle
+  was regenerated to carry the report's new lineage fields.
+- Affected files/config: `backend/services/hermes_case_workflow.py`,
+  `backend/services/hermes_knowledge_workflow.py`,
+  `backend/repositories/ticket_repository.py`,
+  `backend/contracts/hermes/v1` (regenerated).
+- Verification: `test_knowledge_governance_review_fixes.py` (21 cases) plus
+  the merged-state governance batch (125 passed, mainline probe and
+  kind/importance cases unchanged).
+
 ## 2026-10-01 - Review 输出为 memory 候选补 kind/importance 分类字段（p2-182 修复轮 3）
 
 - Area: `hermes-knowledge-review-manual-v1`（Review 角色）输出合同扩展——decision 对象新增 `kind`（memory 候选必填：目标记忆系统的类别标签，取自观察到的 memory 条目；其余类型为空）与 `importance`（memory 候选的整数优先权重；其余为 null）。`HermesReviewDecision` 模型同步（`extra="forbid"`，缺 kind 的 memory 决策校验失败），消费桥与 `build_weknora_submissions` 透传至 WeKnora promotion 候选，使 Review→桥→Adapter→Client 端到端可按官方 memory 形态 `{kind, content, importance}` 写入（hermes 契约 bundle 已再生，`HermesReviewReport.v1.schema.json` + manifest 哈希更新）。

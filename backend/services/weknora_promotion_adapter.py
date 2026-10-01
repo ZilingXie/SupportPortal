@@ -195,9 +195,39 @@ class WeKnoraPromotionAdapter:
             idempotency_key=idempotency_key,
             kind=str(candidate.get("kind") or "").strip(),
             importance=candidate.get("importance"),
+            metadata=self._lineage_metadata(task),
         )
 
     # -- internals ----------------------------------------------------------
+
+    def _lineage_metadata(self, task: dict[str, Any]) -> dict[str, Any]:
+        """Full SupportPortal lineage travels with every WeKnora write so the
+        stored object traces back to the case, ticket, summary/review runs,
+        and Slack thread that produced it. The client's pinned body template
+        decides whether the destination API actually receives it."""
+        keys = (
+            "engineer_case_id",
+            "client_ticket_id",
+            "investigation_id",
+            "summary_session_id",
+            "summary_run_id",
+            "review_session_id",
+            "review_run_id",
+            "slack_channel_id",
+            "slack_thread_ts",
+            "source_type",
+            "source_id",
+            "source_version",
+        )
+        metadata = {
+            key: str(task.get(key) or "").strip()
+            for key in keys
+            if str(task.get(key) or "").strip()
+        }
+        metadata["promotion_id"] = str(task.get("promotion_id") or "")
+        metadata["candidate_type"] = str(task.get("candidate_type") or "")
+        metadata["decision"] = str(task.get("decision") or "")
+        return metadata
 
     def _write_content(self, candidate: dict[str, Any], decision: str) -> str:
         if decision == "merge":
@@ -320,12 +350,14 @@ class WeKnoraPromotionAdapter:
         idempotency_key: str,
         kind: str = "",
         importance: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> WeKnoraPromotionOutcome:
         try:
             if candidate_type == "knowledge":
                 if decision == "new":
                     write = self._client.knowledge_create(
-                        title=title, content=content, idempotency_key=idempotency_key
+                        title=title, content=content, idempotency_key=idempotency_key,
+                        metadata=metadata,
                     )
                 else:
                     write = self._client.knowledge_update(
@@ -334,12 +366,13 @@ class WeKnoraPromotionAdapter:
                         title=title,
                         content=content,
                         idempotency_key=idempotency_key,
+                        metadata=metadata,
                     )
             else:
                 if decision == "new":
                     write = self._client.memory_create(
                         content=content, idempotency_key=idempotency_key,
-                        kind=kind, importance=importance,
+                        kind=kind, importance=importance, metadata=metadata,
                     )
                 else:
                     write = self._client.memory_update(
@@ -347,7 +380,7 @@ class WeKnoraPromotionAdapter:
                         base_version=base_version,
                         content=content,
                         idempotency_key=idempotency_key,
-                        kind=kind, importance=importance,
+                        kind=kind, importance=importance, metadata=metadata,
                     )
         except WeKnoraError as exc:
             if exc.failure_kind == "auth":

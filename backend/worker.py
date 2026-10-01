@@ -2790,6 +2790,10 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
             ticket_repository,
             client=HERMES_KNOWLEDGE_AGENT_CLIENT,
             weknora_client=HermesWeKnoraClient(),
+            # Contract-pinned read path for memory evidence; an unconfigured
+            # contract simply marks memory evidence unavailable, which fails
+            # review decisions closed to human_review instead of guessing.
+            memory_client=WeKnoraClient(),
             limit=limit,
         )
     except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure

@@ -382,6 +382,7 @@ class WeKnoraClient:
         title: str,
         content: str,
         idempotency_key: str,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload = self._request(
             "knowledge_update",
@@ -392,6 +393,10 @@ class WeKnoraClient:
                 "content": str(content or ""),
                 self._field("idempotency_key_field", "idempotency_key"): str(idempotency_key or "").strip(),
                 "knowledge_base_id": self._require_knowledge_base(),
+                # Lineage metadata: on template contracts the pinned body owns
+                # the wire shape and only templated fields are sent (same rule
+                # as knowledge_create); legacy contracts carry it like create.
+                "metadata": metadata or {},
             },
         )
         return self._normalize_write_receipt(payload, operation="knowledge_update")
@@ -472,6 +477,7 @@ class WeKnoraClient:
         idempotency_key: str,
         kind: str = "",
         importance: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         semantics = self._memory_semantics(
             {
@@ -481,6 +487,11 @@ class WeKnoraClient:
                 "idempotency_key": str(idempotency_key or "").strip(),
                 "kind": str(kind or ""),
                 "importance": importance,
+                # Lineage metadata semantic: a pinned body template decides
+                # whether it reaches the wire (official APIs that do not
+                # define it never receive it); legacy bodies carry it like
+                # memory_create.
+                "metadata": metadata or {},
             }
         )
         if importance is not None:

@@ -129,6 +129,29 @@ class FakeWeKnora:
         return self.results
 
 
+class _FakeMemoryEvidence:
+    """Contract-shaped memory evidence surface (available by default).
+
+    Mirrors the contract-pinned client's official memory API: a ``memory_list``
+    list endpoint (one call covers all candidates)."""
+
+    def __init__(self, *, ok: bool = True) -> None:
+        self.ok = ok
+        self.list_calls = 0
+
+    def is_configured(self) -> bool:
+        return self.ok
+
+    def has_memory_identity(self) -> bool:
+        return self.ok
+
+    def memory_list(self, *, top_k: int | None = None) -> list[dict]:
+        self.list_calls += 1
+        if not self.ok:
+            raise RuntimeError("memory surface down")
+        return [{"object_id": "mem-existing", "version": "1", "content": "existing memory"}]
+
+
 def _summary_output(candidate_id: str = "cand-1") -> str:
     return _summary_output_candidates([
         {
@@ -371,18 +394,27 @@ class FakeWeKnoraWriteClient:
         self.calls.append(("knowledge_read", {"object_id": object_id}))
         return dict(self.objects[object_id])
 
-    def knowledge_create(self, *, title: str, content: str, idempotency_key: str) -> dict:
-        self.calls.append(("knowledge_create", {"title": title, "key": idempotency_key}))
+    def knowledge_create(
+        self, *, title: str, content: str, idempotency_key: str, metadata: dict | None = None
+    ) -> dict:
+        self.calls.append((
+            "knowledge_create",
+            {"title": title, "key": idempotency_key, "metadata": metadata or {}},
+        ))
         object_id = f"kb-new-{len(self.objects)}"
         self.objects[object_id] = {
             "object_id": object_id, "version": "1", "title": title, "content": content,
         }
         return {"object_id": object_id, "version": "1", "receipt": {"ok": True}}
 
-    def knowledge_update(self, *, object_id: str, base_version: str, title: str, content: str, idempotency_key: str) -> dict:
+    def knowledge_update(
+        self, *, object_id: str, base_version: str, title: str, content: str,
+        idempotency_key: str, metadata: dict | None = None,
+    ) -> dict:
         self.calls.append((
             "knowledge_update",
-            {"object_id": object_id, "base_version": base_version, "key": idempotency_key},
+            {"object_id": object_id, "base_version": base_version, "key": idempotency_key,
+             "metadata": metadata or {}},
         ))
         row = self.objects[object_id]
         row["version"] = str(int(row["version"]) + 1)
@@ -398,16 +430,30 @@ class FakeWeKnoraWriteClient:
             if row["object_id"].startswith("mem-")
         ]
 
-    def memory_create(self, *, content: str, idempotency_key: str, kind: str = "", importance=None) -> dict:
-        self.calls.append(("memory_create", {"key": idempotency_key, "kind": kind, "importance": importance}))
+    def memory_create(
+        self, *, content: str, idempotency_key: str, kind: str = "",
+        importance=None, metadata: dict | None = None,
+    ) -> dict:
+        self.calls.append((
+            "memory_create",
+            {"key": idempotency_key, "kind": kind, "importance": importance,
+             "metadata": metadata or {}},
+        ))
         object_id = f"mem-new-{len(self.objects)}"
         self.objects[object_id] = {
             "object_id": object_id, "version": "1", "title": "", "content": content,
         }
         return {"object_id": object_id, "version": "1", "receipt": {"ok": True}}
 
-    def memory_update(self, *, object_id: str, base_version: str, content: str, idempotency_key: str, kind: str = "", importance=None) -> dict:
-        self.calls.append(("memory_update", {"object_id": object_id, "key": idempotency_key}))
+    def memory_update(
+        self, *, object_id: str, base_version: str, content: str,
+        idempotency_key: str, kind: str = "", importance=None,
+        metadata: dict | None = None,
+    ) -> dict:
+        self.calls.append((
+            "memory_update",
+            {"object_id": object_id, "key": idempotency_key, "metadata": metadata or {}},
+        ))
         row = self.objects[object_id]
         row["version"] = str(int(row["version"]) + 1)
         row["content"] = content
@@ -477,7 +523,13 @@ def test_completed_review_feeds_the_weknora_promotion_worker_end_to_end(monkeypa
         ]),
     )
     processed = drain_hermes_knowledge_tasks(
-        repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+        repository, client=client,
+        weknora_client=FakeWeKnora(
+            [{"object_id": "weknora:kb:join-failures", "version": "3",
+              "title": "Join failures", "snippet": "Existing entry.", "score": 0.9}]
+        ),
+        memory_client=_FakeMemoryEvidence(),
+        limit=5, sleeper=lambda _: None,
     )
     assert processed == 2
 
@@ -517,6 +569,56 @@ def test_completed_review_feeds_the_weknora_promotion_worker_end_to_end(monkeypa
     # from the completed review does not duplicate rows.
     assert _drain_weknora_promotions_like_worker(repository, adapter) == 0
     assert len(repository.list_weknora_promotions()) == 3
+
+
+def test_unavailable_evidence_downgrades_writable_promotions_to_human_review(monkeypatch) -> None:
+    """Fail-closed: with no WeKnora evidence surface available, writable
+    decisions never become automatic writes — every promotion lands as
+    human_review (the original decision preserved in the payload note)."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+
+    client = FakeHermesAgentClient(
+        summary_output=_summary_output_candidates([
+            {
+                "candidate_id": "cand-1",
+                "statement": "A misconfigured region causes join failures.",
+                "context": "Single-case evidence.",
+                "evidence_references": ["output-1"],
+            },
+            {
+                "candidate_id": "cand-2",
+                "statement": "Case pattern worth remembering for this account.",
+                "context": "",
+                "evidence_references": ["output-1"],
+            },
+        ]),
+        review_output=_review_output([
+            _supplement_decision("cand-1"),
+            _memory_new_decision("cand-2"),
+        ]),
+    )
+    processed = drain_hermes_knowledge_tasks(
+        repository, client=client, weknora_client=None,
+        memory_client=_FakeMemoryEvidence(ok=False), limit=5, sleeper=lambda _: None,
+    )
+    assert processed == 2
+
+    review_task = repository.list_hermes_review_tasks()[0]
+    report = review_task["report"]
+    assert report["weknora_available"] is False
+    assert report["memory_available"] is False
+    assert report["downgraded_candidate_ids"] == ["cand-1", "cand-2"]
+    assert [item["decision"] for item in report["decisions"]] == ["human_review", "human_review"]
+
+    promotions = {
+        row["source_id"].rsplit(":", 1)[-1]: row
+        for row in repository.list_weknora_promotions()
+    }
+    assert sorted(promotions) == ["cand-1", "cand-2"]
+    assert all(row["decision"] == "human_review" for row in promotions.values())
 
 
 def test_bridge_routes_any_skill_write_intent_to_human_review_only() -> None:

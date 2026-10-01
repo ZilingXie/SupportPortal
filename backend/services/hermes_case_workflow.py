@@ -374,7 +374,15 @@ class HermesSummaryPacket(_StrictModel):
 
 
 class HermesReviewDecision(_StrictModel):
-    """One candidate's governance decision produced by the Review role."""
+    """One candidate's governance decision produced by the Review role.
+
+    Skills are human-maintained (knowledge-review SKILL.md): the pipeline
+    never auto-evolves them, so a skill candidate may only be ``no_change``
+    or ``human_review`` and never carries a WeKnora target. Structurally
+    violating skill decisions fail validation here; the review runner also
+    degrades them to ``human_review`` before report construction so one bad
+    skill decision cannot discard the rest of the review.
+    """
 
     candidate_id: str = Field(min_length=1)
     candidate_type: Literal["knowledge", "memory", "skill"]
@@ -394,6 +402,15 @@ class HermesReviewDecision(_StrictModel):
     @model_validator(mode="after")
     def validate_decision(self) -> "HermesReviewDecision":
         has_target = bool(self.target_object) or bool(self.target_version)
+        if self.candidate_type == "skill":
+            if self.decision not in {"no_change", "human_review"}:
+                raise ValueError(
+                    "skill candidates only allow no_change or human_review "
+                    "(skills are human-maintained)"
+                )
+            if has_target:
+                raise ValueError("skill decisions must not claim a WeKnora target")
+            return self
         if self.decision == "human_review" and has_target:
             raise ValueError("human_review must not claim a resolved target")
         if self.decision in {"no_change", "merge", "supplement", "replace"}:
@@ -422,7 +439,13 @@ def review_report_content_hash(payload: dict[str, Any]) -> str:
 
 
 class HermesReviewReport(_StrictModel):
-    """Validated review outcome returned to SupportPortal by the Review role."""
+    """Validated review outcome returned to SupportPortal by the Review role.
+
+    ``downgraded_candidate_ids`` records which decisions SupportPortal
+    degraded to ``human_review`` (unavailable WeKnora evidence, or a skill
+    write proposal); it is lineage metadata and not part of the content
+    hash, which covers only the decisions themselves.
+    """
 
     schema_version: Literal["v1"]
     review_id: str = Field(min_length=1)
@@ -435,7 +458,9 @@ class HermesReviewReport(_StrictModel):
     conversation_version: int = Field(ge=0)
     review_session_id: str = Field(min_length=1)
     weknora_available: bool
+    memory_available: bool = True
     decisions: tuple[HermesReviewDecision, ...]
+    downgraded_candidate_ids: tuple[str, ...] = ()
     content_hash: str = Field(min_length=64, max_length=64)
     created_at: str = Field(min_length=1)
 

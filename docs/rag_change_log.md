@@ -11,6 +11,47 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-01 - Governance remediation round 5: overlay on the kind/importance + stale-probe mainline (p2-181/p2-182)
+
+- Summary: re-integration of the 治理层 acceptance fixes on `61728e4e`,
+  preserving the full round-3 WeKnora mainline from that commit — the
+  Review→memory `kind`/`importance` field chain (decision contract →
+  submissions → promotions → adapter → official request shape), the true
+  stale-base contract probe (the pre-update version is kept and a server
+  accepting a stale base FAILS the probe), and
+  `test_weknora_probe_capabilities.py` are untouched and pass unchanged.
+  The overlay re-applies the governance fixes: skill candidates restricted
+  to `no_change`/`human_review` without a WeKnora target (stacked on top of
+  the mainline kind/importance + memory-kind validation); the review report
+  gains `memory_available` and `downgraded_candidate_ids` (lineage metadata,
+  excluded from the content hash) with the Hermes contract bundle
+  regenerated via `generate_hermes_contract_bundle.py`; lineage metadata
+  semantics on `knowledge_update`/`memory_update` (pinned body templates
+  still own the wire shape) and full lineage on all four adapter write
+  calls; the complete Summary bundle (full ticket history + per-case Slack
+  thread with visible failure on read errors or overflow, lineage Slack ids
+  from the thread binding); review evidence across the knowledge surface
+  and the official memory list endpoint with per-candidate-type fail-closed
+  downgrade of writable decisions.
+- Reason: fourth acceptance round found the branch based on `bec205e0`,
+  missing `61728e4e`'s memory kind/importance contract and true stale-base
+  probe (its older probe semantics would pass a server that accepts stale
+  bases), and carrying a stale p2-182 registry description.
+- Affected files/config: `backend/services/hermes_case_workflow.py`,
+  `backend/services/hermes_knowledge_workflow.py`,
+  `backend/services/weknora_client.py`,
+  `backend/services/weknora_promotion_adapter.py`,
+  `backend/repositories/ticket_repository.py`, `backend/worker.py`,
+  `backend/contracts/hermes/v1` (regenerated bundle). Probe script and its
+  tests untouched. No schema or env changes.
+- Data impact: mainline governance semantics unchanged and extended only by
+  the fail-closed review/summary guarantees and lineage-capable writes.
+- Verification: governance batch 125 passed on the merged state including
+  `test_weknora_probe_capabilities.py` unchanged; targeted tests 21 passed;
+  broad regression 209 passed; disposable PostgreSQL-14 integration 25
+  passed with `RUN_POSTGRES_INTEGRATION=1`; `test_worker` failures
+  identical to clean main.
+
 ## 2026-09-30 - n8n knowledge source migration to SupportPortal ingestion (p2-183, draft only)
 
 - Summary: the two n8n KB workflows (`[kb]Build|Solved Cases`, `[kb]Build|CSD`)
