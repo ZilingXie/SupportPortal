@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T08:25:32.417Z",
+  "capturedAt": "2026-10-01T08:00:06.677Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD",
     "snapshotKind": "published",
-    "versionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
-    "draftVersionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
-    "publishedVersionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
-    "updatedAt": "2026-09-16T04:11:43.137Z",
+    "versionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "draftVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "publishedVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "updatedAt": "2026-10-01T03:11:36.375Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
     "name": "[kb]Build|CSD",
-    "description": "定时扫描近期已解决的 CSD Bug，经 PostgreSQL 去重和 AI 筛选后生成英文 Zendesk KB 草稿，并在 SupportPortal Memory 创建 Wiki、上传正文、触发 ingest。",
+    "description": "定时扫描近期已解决的 CSD Bug（保留现有 JQL 作为来源范围），取得完整 issue 快照（fields=*,comment）后投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；移除 AI 前置筛选、本地先写去重与旧 Memory Wiki 直写；Zendesk KB 草稿节点保留但已断开禁用，待 Review 输出链对接。",
     "nodes": [
       {
         "parameters": {
@@ -77,19 +77,6 @@
         ],
         "id": "f4e552ed-77d4-4e7a-9cd2-0fd8890a1297",
         "name": "Loop Over Items"
-      },
-      {
-        "parameters": {
-          "jsCode": "// 创建一个对象来存储每个评论的body内容，使用简单的自增数字作为ID\nconst commentsObject = {};\n\n// 遍历输入数据，为每个评论创建独立的键值对，使用简单数字ID\n$input.first().json.fields.comment.comments.forEach((comment, index) => {\n  // 使用简单的自增数字作为键名，从1开始\n  const commentKey = `comment ${index + 1}`;\n  commentsObject[commentKey] = comment.body;\n});\n\n// 将整个commentsObject转换为格式化的JSON字符串\nconst jsonString = JSON.stringify(commentsObject, null, 2);\n\n// 返回字符串结果，符合n8n的数组格式要求\nreturn [{ json: { combinedString: jsonString } }];"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          -1072,
-          1088
-        ],
-        "id": "203672a7-14ce-4793-87bf-c67d451d97ac",
-        "name": "Structure_comment"
       },
       {
         "parameters": {
@@ -191,7 +178,7 @@
             "parameters": [
               {
                 "name": "fields",
-                "value": "description, assignee, customfield_10700, customfield_13915, comment"
+                "value": "*,comment"
               }
             ]
           },
@@ -229,191 +216,18 @@
       },
       {
         "parameters": {
-          "modelId": {
-            "__rl": true,
-            "value": "gpt-5.6-luna",
-            "mode": "list",
-            "cachedResultName": "GPT-5.6-LUNA"
-          },
-          "responses": {
-            "values": [
-              {
-                "role": "system",
-                "content": "Analyze Jira ticket comments to determine if the **cause** or **solution** is clearly stated.\n\n# Steps\n\n1. **Read all comments** — review user-provided Jira comments carefully.  \n2. **Evaluate clarity** — check if the comments explicitly describe a confirmed cause or a clear, actionable solution.  \n3. **Decision logic:**  \n   - If the cause or solution is clearly explained → return **true**.  \n   - If neither is clear, specific, or confirmed → return **false**.  \n\n# Output Format\n\nReturn only a single value:\n\ntrue  \nor  \nfalse"
-              },
-              {
-                "content": "=Jira ticket details:\nIssue Description: {{ $('Get_CSD_Detail').item.json.fields.description }}\nOS: {{ $('Get_CSD_Detail').item.json.fields.customfield_10700[0].value }}\nIssue Catagory: {{ $('Get_CSD_Detail').item.json.fields.customfield_13915.value }}, {{ $('Get_CSD_Detail').item.json.fields.customfield_13915.child.value }}\nComments:{{ $('Structure_comment').item.json.combinedString }}"
-              }
-            ]
-          },
-          "builtInTools": {},
-          "options": {}
-        },
-        "type": "@n8n/n8n-nodes-langchain.openAi",
-        "typeVersion": 2.1,
-        "position": [
-          -400,
-          1088
-        ],
-        "id": "30fa1757-991c-4656-8a76-7156efd3ecf8",
-        "name": "Message a model1",
-        "credentials": {
-          "openAiApi": {
-            "id": "YRyAKkkVeN9iPoKS",
-            "name": "Zac_Openai"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict",
-              "version": 3
-            },
-            "conditions": [
-              {
-                "id": "6aa3b212-0b72-4f47-a714-6cb254f453d4",
-                "leftValue": "={{ $json.output[0].content[0].text }}",
-                "rightValue": "true",
-                "operator": {
-                  "type": "string",
-                  "operation": "equals"
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.3,
-        "position": [
-          -48,
-          1088
-        ],
-        "id": "42c51a47-c504-435e-9ebd-75d15b50bc52",
-        "name": "If"
-      },
-      {
-        "parameters": {
-          "jsCode": "// 使用可选链操作符(?.)和空值合并运算符(??)来安全地访问属性并提供默认值\nconst outputData = {\n  \"issue description\": $('Get_CSD_Detail').first().json.fields?.description ?? \"unknown\",\n  \"OS\": $('Get_CSD_Detail').first().json.fields?.customfield_10700?.[0]?.value ?? \"unknown\",\n  \"Category\": (($('Get_CSD_Detail').first().json.fields?.customfield_13915?.value ?? \"\") + ($('Get_CSD_Detail').first().json.fields?.customfield_13915?.child?.value ?? \"\")) || \"unknown\",\n  \"comments\": $('Structure_comment').first().json?.combinedString ?? \"unknown\"\n};\n\nreturn outputData;"
-        },
-        "type": "n8n-nodes-base.code",
-        "typeVersion": 2,
-        "position": [
-          176,
-          1088
-        ],
-        "id": "053f3e26-21f9-4763-be89-f20f0a281b63",
-        "name": "structure"
-      },
-      {
-        "parameters": {
-          "modelId": {
-            "__rl": true,
-            "value": "gpt-5.6-luna",
-            "mode": "list",
-            "cachedResultName": "GPT-5.6-LUNA"
-          },
-          "messages": {
-            "values": [
-              {
-                "content": "={{ $('Geneate_KB_Content').item.json.choices[0].message.content }}"
-              },
-              {
-                "content": "Convert the given content into html format. Do not include html``` and ```. Refer to the example below:\n<h2 id=\"h_01JXYM3SPWW1Y0ZFBK0DZ73FDN\">Issue Description:</h2>\n<p>\n  Users need to enable log upload in the Agora Web SDK to send SDK logs to Agora's\n  servers for debugging and troubleshooting purposes.\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM42P5KQPG78V3E24TME8E\">Platform/SDK:</h2>\n<p>Agora Web SDK (v4.x)</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM48GYGS6VA4H34BEMJXM4\">Error Message (optional):</h2>\n<p>N/A</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM4DGP0793VHZV0FZ2C89H\">Step by Step Solution:</h2>\n<h3 id=\"h_01JXYM4JVGXY22EWEFD0FTJZ8H\">\n  1. <strong>Enable Log Upload:</strong>\n</h3>\n<p>\n  - Use the <code>enableLogUpload()</code> method from the <code>AgoraRTC</code>\n  global interface to start uploading logs.\n</p>\n<p>\n  <code>AgoraRTC.enableLogUpload();</code>\n</p>\n<p>\n  This begins automatic log uploads immediately with no parameters required.\n</p>\n<p>&nbsp;</p>\n<h3 id=\"h_01JXYM4NRY5Q8B0TPF92XBD3HV\">\n  2. <strong>(Optional) Set Log Level:</strong>\n</h3>\n<p>\n  - To manage which logs are recorded and uploaded, apply the\n  <code>setLogLevel()</code> function with the desired log level:\n</p>\n<p>\n  <code>AgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.DEBUG); // For the most detailed logs</code>\n</p>\n<p>\n  <code>or</code>\n</p>\n<p>\n  <code>AgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.INFO); // Default setting</code>\n</p>\n<p>&nbsp;</p>\n<h3 id=\"h_01JXYM4VJNNNTXXSX951B4GKBW\">\n  3. <strong>(Optional) Disable Log Upload:</strong>\n</h3>\n<p>\n  - When logging is no longer needed, stop the log uploads using:\n</p>\n<p>\n  <code>AgoraRTC.disableLogUpload();</code>\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM4ZQ4DVCDQ5N523EX5T1S\">Root Cause:</h2>\n<p>\n  Users require a mechanism to gather and upload logs for debugging purposes when\n  they encounter audio/video issues or connection problems, which the SDK supports\n  via the <code>enableLogUpload</code> function.\n</p>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM563BGHWZ7MHRT783K2RM\">Prevention/Best Practice:</h2>\n<p>\n  Always set an appropriate log level to ensure only necessary information is collected\n  and shared. Be cautious about leaving log upload enabled in production environments\n  unless required for ongoing troubleshooting. Example\n</p>\n<pre><code>javascript\n// Initialize AgoraRTC and enable logs\nAgoraRTC.setLogLevel(AgoraRTC.LOG_LEVEL.DEBUG); // Optional\nAgoraRTC.enableLogUpload(); // Start uploading logs\n\n// Later, if needed:\nAgoraRTC.disableLogUpload(); // Stop uploading</code></pre>\n<p>&nbsp;</p>\n<h2 id=\"h_01JXYM593KRCQ9EEHPGXJKTR0B\">Corresponding Document/Link (optional):</h2>\n<p>\n  - <a href=\"#\">AgoraRTC.enableLogUpload() Documentation</a>\n</p>\n<p>\n  - <a href=\"#\">AgoraRTC.setLogLevel() Documentation</a>\n</p>\n",
-                "role": "system"
-              }
-            ]
-          },
-          "simplify": false,
-          "options": {}
-        },
-        "type": "@n8n/n8n-nodes-langchain.openAi",
-        "typeVersion": 1.8,
-        "position": [
-          1104,
-          1088
-        ],
-        "id": "a1cf3f18-1197-4b9c-9544-1bd13fb3507d",
-        "name": "Convert_HTML",
-        "credentials": {
-          "openAiApi": {
-            "id": "YRyAKkkVeN9iPoKS",
-            "name": "Zac_Openai"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "modelId": {
-            "__rl": true,
-            "value": "gpt-5.6-luna",
-            "mode": "list",
-            "cachedResultName": "GPT-5.6-LUNA"
-          },
-          "messages": {
-            "values": [
-              {
-                "content": "# Role\nYou are a Senior Customer Support Engineer and Technical Writer at Agora. Convert raw customer support tickets into clear, accurate, publishable KB articles for end users.\n\n# Task\nFor each distinct issue, generate one KB article. Do not add a title unless requested.\n\nWrite the article in English only, regardless of the input language. Translate all natural-language content into professional English.\n\nNon-English text may be preserved only when it must remain exact, such as an error message, log, code, API or SDK name, configuration key, command, URL, identifier, or official product term.\n\n# Source Fidelity\nUse only information supported by the ticket, support comments, or provided documentation.\n\nDo not invent versions, platforms, errors, root causes, solution steps, configuration names, or links.\n\nIf the root cause is unconfirmed, write exactly:\nThe ticket does not provide enough information to confirm the root cause.\n\nIf the resolution is unconfirmed, write exactly:\nThe ticket does not provide enough information to confirm the resolution steps.\n\n# Classification\nDefault to External/Public KB.\n\nUse `Article Type: Internal SOP` if the ticket includes private configuration, customer-specific data, credentials, tokens, App IDs, channel names, server addresses, private parameters, internal operations, unreleased features, or non-public troubleshooting steps.\n\nOtherwise, use `Article Type: External/Public KB`.\n\nRemove or mask private customer information.\n\n# Style\n- Use concise, professional, user-friendly English.\n- Avoid \"you\" and \"your\".\n- Avoid em dashes, casual phrasing, speculation, and unsupported claims.\n- Avoid explanatory parentheses unless they are part of an exact technical term or error message.\n- Preserve technical names, versions, commands, error messages, and URLs exactly as provided.\n\n# Required Structure\nStart with the classification line, then use this order:\n\n### Issue Description\nBriefly describe the user-facing issue and when it occurs.\n\n### Platform and SDK Context\nUse bullets for only the available environment details, such as OS, product or SDK, version, client, browser, framework, device, integration type, or product category.\n\n### Error Message\nInclude only explicitly reported error messages. Omit this section if none is available.\n\n### Root Cause Analysis\nState the confirmed cause in one or two sentences, or use the required unconfirmed-cause statement.\n\n### Step-by-Step Solution\nUse a numbered list based only on supported guidance. Start every item with a short bold action label.\nIf no confirmed solution exists, use the required unconfirmed-resolution statement.\n\n### Summary and Best Practice\nSummarize the confirmed resolution. Include prevention guidance only when supported.\n\n### Corresponding Document/Link\nInclude only official or ticket-provided links. Omit this section if none is available.\n\n# Output\nReturn only the final KB article in English Markdown. No analysis, notes, or conversational text.",
-                "role": "system"
-              },
-              {
-                "content": "=Ticket Info:\nCSD Link: https://jira.agoralab.co/browse/{{ $('Get_CSD_Detail').item.json.key }}\nIssue Description: {{ $json[\"issue description\"] }}\nOS: {{ $json.OS }}\nCategory: {{ $json.Category }}\nComments: {{ $json.comments }}"
-              }
-            ]
-          },
-          "simplify": false,
-          "options": {}
-        },
-        "type": "@n8n/n8n-nodes-langchain.openAi",
-        "typeVersion": 1.8,
-        "position": [
-          400,
-          1088
-        ],
-        "id": "af4cee1c-d87b-4bd5-8613-ae42b7e67154",
-        "name": "Geneate_KB_Content",
-        "retryOnFail": true,
-        "credentials": {
-          "openAiApi": {
-            "id": "YRyAKkkVeN9iPoKS",
-            "name": "Zac_Openai"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "method": "POST",
-          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "Cookie",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "cookie",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
+          "authentication": "predefinedCredentialType",
           "jsonBody": "={\n  \"article\": {\n    \"body\": {{ JSON.stringify($('Convert_HTML').item.json.choices[0].message.content) }},\n    \"locale\": \"en-us\",\n    \"permission_group_id\": 32310220630420,\n    \"title\": \"{{ $('Generate_KB_Title').item.json.choices[0].message.content }}\",\n    \"user_segment_id\": 27214812738964,\n    \"draft\": true\n  },\n  \"notify_subscribers\": false\n}",
+          "method": "POST",
+          "nodeCredentialType": "zendeskApi",
           "options": {
             "redirect": {
               "redirect": {}
             }
-          }
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles"
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
@@ -422,45 +236,12 @@
           1088
         ],
         "id": "f5669ce8-c935-465a-9586-7fb451c6cbae",
-        "name": "HTTP_Create_KB"
-      },
-      {
-        "parameters": {
-          "modelId": {
-            "__rl": true,
-            "value": "gpt-5.6-luna",
-            "mode": "list",
-            "cachedResultName": "GPT-5.6-LUNA"
-          },
-          "messages": {
-            "values": [
-              {
-                "content": "=Generate a short, precise, and descriptive title for a technical knowledge base article.\n\n# Steps\n\n1. **Read the article content** — understand the main issue, platform, and resolution described.  \n2. **Identify core elements** — extract the key topic (e.g., login issue, SDK error, configuration fix) and platform or environment if applicable.  \n3. **Formulate a concise title** — summarize the issue and/or solution in under 12 words, using clear and accessible language.  \n4. **get the ticket nubmer** - {{ $('Get_CSD_Detail').item.json.key }}\n5. **Prefix the title** with: `[AI Generated][CSD2KB]`.\n6. Make sure the title is always in English\n\n# Output Format\n\n[AI Generated][CSD2KB][{{ $('Get_CSD_Detail').item.json.key }}][Concise, descriptive title]\n\n# Example\n\nIf the article is about login failures due to token configuration on Android SDK:  \nOutput:  \n[AI Generated][CSD2KB][CSD-56342]Login Failure Caused by Invalid Token Configuration on Android SDK",
-                "role": "assistant"
-              },
-              {
-                "content": "={{ $json.choices[0].message.content }}"
-              },
-              {
-                "content": "=ticket number:  {{ $('Get_CSD_Detail').item.json.key }}"
-              }
-            ]
-          },
-          "simplify": false,
-          "options": {}
-        },
-        "type": "@n8n/n8n-nodes-langchain.openAi",
-        "typeVersion": 1.8,
-        "position": [
-          752,
-          1088
-        ],
-        "id": "eaac1d4a-dc19-44d0-acbc-a39b2d16e536",
-        "name": "Generate_KB_Title",
+        "name": "HTTP_Create_KB",
+        "disabled": true,
         "credentials": {
-          "openAiApi": {
-            "id": "YRyAKkkVeN9iPoKS",
-            "name": "Zac_Openai"
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
           }
         }
       },
@@ -511,63 +292,6 @@
         ],
         "id": "8b7d8a8b-7edc-4ea0-bbeb-9bf639cc2efa",
         "name": "When clicking ‘Execute workflow’"
-      },
-      {
-        "parameters": {
-          "operation": "executeQuery",
-          "query": "INSERT INTO csd (ticket) \nVALUES ($1) \nON CONFLICT (ticket) \nDO NOTHING\nRETURNING ticket;",
-          "options": {
-            "queryReplacement": "={{ $('Get_CSD_Detail').item.json.key }}"
-          }
-        },
-        "type": "n8n-nodes-base.postgres",
-        "typeVersion": 2.6,
-        "position": [
-          -848,
-          1088
-        ],
-        "id": "d1649c9c-9222-4a01-a8d8-d68d9cc818e2",
-        "name": "Update_DB1",
-        "credentials": {
-          "postgres": {
-            "id": "ddbl9KA6m6Aq8O9l",
-            "name": "aws-posgre-zac"
-          }
-        }
-      },
-      {
-        "parameters": {
-          "conditions": {
-            "options": {
-              "caseSensitive": true,
-              "leftValue": "",
-              "typeValidation": "strict",
-              "version": 3
-            },
-            "conditions": [
-              {
-                "id": "0b82f951-858c-4cca-a376-b5f384d077dd",
-                "leftValue": "={{ $json.ticket }}",
-                "rightValue": 0,
-                "operator": {
-                  "type": "string",
-                  "operation": "exists",
-                  "singleValue": true
-                }
-              }
-            ],
-            "combinator": "and"
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.if",
-        "typeVersion": 2.3,
-        "position": [
-          -624,
-          1088
-        ],
-        "id": "608d56a5-69af-4814-b780-e4877197113b",
-        "name": "If1"
       },
       {
         "parameters": {
@@ -624,138 +348,186 @@
         "disabled": true
       },
       {
-        "parameters": {
-          "method": "POST",
-          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/create",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-Tdai-Service-Id",
-                "value": "default"
-              },
-              {
-                "name": "X-Tdai-User-Key",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
-          "sendBody": true,
-          "bodyParameters": {
-            "parameters": [
-              {
-                "name": "team_id",
-                "value": "team-7oif6fsv17"
-              },
-              {
-                "name": "name",
-                "value": "={{ $('Generate_KB_Title').item.json.choices[0].message.content }}"
-              }
-            ]
-          },
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
+        "id": "644d8556-d08e-45f3-91fd-b4d888a8f69f",
+        "name": "Build Source Snapshot",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
         "position": [
-          1680,
+          -1072,
           1088
         ],
-        "id": "6323b081-5175-4d00-9d85-75db1c17c547",
-        "name": "2_tencent_title"
+        "parameters": {
+          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nconst comment = fields.comment;\nif (!comment || typeof comment !== 'object' || !Array.isArray(comment.comments) || typeof comment.total !== 'number') {\n  throw new Error(`CSD comment structure missing or malformed (issue ${detail.key})`);\n}\nif (comment.comments.length < comment.total) {\n  throw new Error(`CSD comment pagination incomplete: got ${comment.comments.length} of ${comment.total} (issue ${detail.key})`);\n}\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
+        }
       },
       {
+        "id": "dc402532-22d2-4dfa-a7d0-d353a8db2235",
+        "name": "Deliver Source Snapshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -848,
+          1088
+        ],
         "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "jsonBody": "={{ $json }}",
           "method": "POST",
-          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/raw/write",
-          "sendHeaders": true,
-          "specifyHeaders": "keypair",
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "X-Tdai-Service-Id",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
-              },
-              {
-                "name": "X-Tdai-User-Key",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
-              },
-              {
-                "name": "Content-Type",
-                "value": "application/json"
-              }
-            ]
+          "options": {
+            "timeout": 30000
           },
           "sendBody": true,
-          "contentType": "json",
           "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ team_id: $json.team_id, wiki_id: $json.wiki_id, files: $json.files }) }}",
-          "options": {}
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources"
         },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          2128,
-          1088
-        ],
-        "id": "91065419-a215-4777-9065-7260f95793c7",
-        "name": "2_tencent_body"
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
       },
       {
+        "id": "e2fa9fdc-8e0f-47e7-ab44-de16de50df84",
+        "name": "Check Delivery Receipt",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -624,
+          1088
+        ],
         "parameters": {
-          "method": "POST",
-          "url": "https://supportcenter.stellarix.space/dashboard/memory/api/v1/knowledge/wiki/ingest",
-          "sendHeaders": true,
-          "specifyHeaders": "keypair",
-          "headerParameters": {
-            "parameters": [
+          "conditions": {
+            "combinator": "or",
+            "conditions": [
               {
-                "name": "X-Tdai-Service-Id",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-Service-Id').value }}"
+                "id": "c2-accepted",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "accepted"
               },
               {
-                "name": "X-Tdai-User-Key",
-                "value": "={{ $('2_tencent_title').params.headerParameters.parameters.find(p => p.name === 'X-Tdai-User-Key').value }}"
+                "id": "c2-already",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "already_exists"
               },
               {
-                "name": "Content-Type",
-                "value": "application/json"
+                "id": "c2-stale",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "stale_ignored"
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
+      },
+      {
+        "id": "9f04f7a3-c465-440e-90b3-0c7e949e6097",
+        "name": "Record Delivery Receipt",
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -400,
+          1008
+        ],
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "={{ $json.status }}"
+              },
+              {
+                "key": "task_id",
+                "value": "={{ $json.task_id }}"
+              },
+              {
+                "key": "source_id",
+                "value": "={{ $('Build Source Snapshot').item.json.source_id }}"
               }
             ]
-          },
-          "sendBody": true,
-          "contentType": "json",
-          "specifyBody": "json",
-          "jsonBody": "={{ JSON.stringify({ wiki_id: $('Edit Fields').item.json.wiki_id }) }}",
-          "options": {}
-        },
-        "type": "n8n-nodes-base.httpRequest",
-        "typeVersion": 4.4,
-        "position": [
-          2352,
-          1088
-        ],
-        "id": "c66b283b-344a-4218-a8fe-fc1f4ba38766",
-        "name": "2_tencent_ingest"
+          }
+        }
       },
       {
-        "parameters": {
-          "mode": "raw",
-          "jsonOutput": "={{ JSON.stringify({\n   team_id: \"team-7oif6fsv17\",\n   wiki_id: $json.data.wiki_id,\n   files: [{ filename: \"article.md\", content:$('Geneate_KB_Content').item.json.choices[0].message.content }]\n}) }} ",
-          "includeOtherFields": true,
-          "options": {}
-        },
-        "type": "n8n-nodes-base.set",
-        "typeVersion": 3.4,
+        "id": "f2531518-45e5-49e4-a7a3-13a742f3837b",
+        "name": "Raise Delivery Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
         "position": [
-          1904,
-          1088
+          -400,
+          1152
         ],
-        "id": "c3ca7e93-5c2e-42f4-bf42-d3e2aa3c0e51",
-        "name": "Edit Fields"
+        "parameters": {
+          "jsCode": "throw new Error(`Unexpected delivery receipt: ${JSON.stringify($input.first().json)}`);"
+        }
+      },
+      {
+        "id": "aa3102c8-e763-4a9a-9987-3e393363e551",
+        "name": "Check Receipt Task",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -176,
+          1008
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c4-taskid",
+                "leftValue": "={{ $json.task_id }}",
+                "operator": {
+                  "operation": "notEmpty",
+                  "singleValue": true,
+                  "type": "string"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
       }
     ],
     "connections": {
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "get_access_token",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "get_access_token": {
         "main": [
           [
@@ -765,40 +537,6 @@
               "index": 0
             }
           ]
-        ]
-      },
-      "Loop Over Items": {
-        "main": [
-          [
-            {
-              "node": "Aggregate",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Get_CSD_Detail",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Structure_comment": {
-        "main": [
-          [
-            {
-              "node": "Update_DB1",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Split Out": {
-        "main": [
-          []
         ]
       },
       "Query_CSD_list": {
@@ -823,73 +561,18 @@
           ]
         ]
       },
-      "Get_CSD_Detail": {
+      "Loop Over Items": {
         "main": [
           [
             {
-              "node": "Structure_comment",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Message a model1": {
-        "main": [
-          [
-            {
-              "node": "If",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "If": {
-        "main": [
-          [
-            {
-              "node": "structure",
+              "node": "Aggregate",
               "type": "main",
               "index": 0
             }
           ],
           [
             {
-              "node": "Loop Over Items",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "structure": {
-        "main": [
-          [
-            {
-              "node": "Geneate_KB_Content",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Convert_HTML": {
-        "main": [
-          [
-            {
-              "node": "HTTP_Create_KB",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Geneate_KB_Content": {
-        "main": [
-          [
-            {
-              "node": "Generate_KB_Title",
+              "node": "Get_CSD_Detail",
               "type": "main",
               "index": 0
             }
@@ -907,74 +590,58 @@
           ]
         ]
       },
-      "HTTP_Create_KB": {
+      "Get_CSD_Detail": {
         "main": [
           [
             {
-              "node": "2_tencent_title",
+              "node": "Build Source Snapshot",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Generate_KB_Title": {
+      "Build Source Snapshot": {
         "main": [
           [
             {
-              "node": "Convert_HTML",
+              "node": "Deliver Source Snapshot",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Schedule Trigger": {
+      "Deliver Source Snapshot": {
         "main": [
           [
             {
-              "node": "get_access_token",
+              "node": "Check Delivery Receipt",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "When clicking ‘Execute workflow’": {
-        "main": [
-          []
-        ]
-      },
-      "Update_DB1": {
+      "Check Delivery Receipt": {
         "main": [
           [
             {
-              "node": "If1",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "If1": {
-        "main": [
-          [
-            {
-              "node": "Message a model1",
+              "node": "Check Receipt Task",
               "type": "main",
               "index": 0
             }
           ],
           [
             {
-              "node": "Loop Over Items",
+              "node": "Raise Delivery Error",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "Execution Data2": {
+      "Record Delivery Receipt": {
         "main": [
           [
             {
@@ -996,44 +663,29 @@
           ]
         ]
       },
-      "2_tencent_title": {
+      "Execution Data2": {
         "main": [
           [
             {
-              "node": "Edit Fields",
+              "node": "Loop Over Items",
               "type": "main",
               "index": 0
             }
           ]
         ]
       },
-      "2_tencent_body": {
+      "Check Receipt Task": {
         "main": [
           [
             {
-              "node": "2_tencent_ingest",
+              "node": "Record Delivery Receipt",
               "type": "main",
               "index": 0
             }
-          ]
-        ]
-      },
-      "2_tencent_ingest": {
-        "main": [
+          ],
           [
             {
-              "node": "2_rag",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "Edit Fields": {
-        "main": [
-          [
-            {
-              "node": "2_tencent_body",
+              "node": "Raise Delivery Error",
               "type": "main",
               "index": 0
             }
@@ -1053,7 +705,7 @@
     "tags": []
   },
   "restoreNotes": {
-    "activeAtCapture": true,
+    "activeAtCapture": false,
     "redactedValues": [
       {
         "nodeName": "get_access_token",
@@ -1065,30 +717,6 @@
         "nodeName": "get_access_token",
         "path": "nodes.get_access_token.parameters.bodyParameters.parameters.4.value",
         "field": "password",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.1.value",
-        "field": "Cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.2.value",
-        "field": "cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "2_tencent_title",
-        "path": "nodes.2_tencent_title.parameters.headerParameters.parameters.1.value",
-        "field": "X-Tdai-User-Key",
         "reason": "secret_named_field"
       }
     ],

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T08:45:48Z",
-  "source_base_commit": "f17da3ef9029246db97f8261f5348aa24a0df1f2",
-  "registry_digest": "cd7db9d03649d36d5ea0e96f68129c3ac6f50cc7724d284dc74cba6b22f9bbc8",
+  "generated_at": "2026-10-01T08:59:23Z",
+  "source_base_commit": "989ac001750d5b63d3ccded53a5b85780a49f1e5",
+  "registry_digest": "3e8f15faa07a69e0b384ff769bfe6b2fb6e52edade3a5968c5a6e9d1c2ef548e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4901,6 +4901,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Round-5 contract preservation check",
           "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
+        },
+        {
+          "type": "document",
+          "label": "n8n 旧写入路径迁移（2026-10-01）",
+          "details": "通过 n8n MCP 读取 active/draft 后发布已准备的 knowledge-source-v1 draft：MM3Z3T469Eru3Q1I activeVersion=743bba31-73c1-43ae-a1b1-2e5d79110123，GgDxPEWtW7ltT5BW activeVersion=544bdb70-cebe-497c-8e28-eac0c87e0501；两者 active 均不再包含 Tencent Memory/Wiki 直写，快照 manifest 通过 validate_workflow_snapshots.py。"
         }
       ],
       "source_refs": [
@@ -15235,7 +15240,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-10-01",
       "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。 【修复轮 2 2026-10-01，响应第二轮验收未通过】(1) supplement 与 replace/merge 一致强制 Review base_version（缺失=invalid_candidate），不再把未确认的当前版本当作 Review 基准；比对改严格相等，不一致或不可读均 human_review。(2) Client 请求字段映射：契约操作支持 body 模板（值为 $语义字段引用 或字面量，模板存在时只发已定义字段、被引用字段缺失/空值 fail-closed）与 query_params 模板（GET 无 body）；官方 memory 形态（POST /api/v1/memory/items 的 kind/content/importance）用模板精确发出，不再泄漏 user_id/幂等键/metadata；memory_query→memory_list（官方列表语义）；memory 语义字段新增 kind/importance 并入候选契约。(3) conditional_update 能力声明：update 操作须显式 conditional_update=true（探针证据），缺省视为不支持——定向更新无证据时转 human_review，不执行不可验证的覆盖。",
-      "next_action": "治理层叠加（skill 边界/Slack 完整历史/binding lineage/memory list evidence/lineage metadata）已通过第七轮验收并 finalize→PR；随下一次常规 Preproduction 发布携带（主线 round-4 的 r20261001-3856643 部署不包含该叠加）。激活前置不变，均被 WeKnora 访问阻塞：用户提供 endpoint/凭证/知识库 ID/共享 memory identity→只读 contract probe→隔离对象写能力 probe（幂等+stale 拒绝）→stale 证据成立后为 update 操作声明 conditional_update=true→端到端写入验证（新建/补充/替代/合并/幂等/版本冲突/stale 拒绝）→n8n 旧 Tencent Memory 写入路径迁移。",
+      "next_action": "n8n 旧 Tencent Memory/Wiki 直写已迁移：MM3Z3T469Eru3Q1I 与 GgDxPEWtW7ltT5BW 均已发布 knowledge-source-v1 active，active/draft 快照与 manifest 已回读并校验。治理 overlay 首次 Preproduction 发布因现有 PostgreSQL Slack outbox 查询漏返回导致 worker CloudWatch TypeError 自动回滚；已在当前 worktree 做最小修复，需以新 main commit 重建发布并完成运行回读。WeKnora 激活前置仍被 endpoint/凭证/知识库 ID/shared memory identity 缺失阻塞：取得配置后执行只读 contract probe→隔离写能力 probe（幂等+stale 拒绝）→声明 conditional_update=true→端到端写入验证。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
         "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、回读须证明对象/内容/版本一致）",
@@ -15295,6 +15300,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Round-5 contract preservation check",
           "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
+        },
+        {
+          "type": "document",
+          "label": "n8n 旧写入路径迁移（2026-10-01）",
+          "details": "通过 n8n MCP 读取 active/draft 后发布已准备的 knowledge-source-v1 draft：MM3Z3T469Eru3Q1I activeVersion=743bba31-73c1-43ae-a1b1-2e5d79110123，GgDxPEWtW7ltT5BW activeVersion=544bdb70-cebe-497c-8e28-eac0c87e0501；两者 active 均不再包含 Tencent Memory/Wiki 直写，快照 manifest 通过 validate_workflow_snapshots.py。"
         }
       ],
       "history": [
@@ -15307,6 +15317,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "followup",
           "summary": "SupportPortal 治理层计划第七轮验收通过（对象 1c8ea8c7：5cb140d1 运行时叠加 + 登记收口），结论释放 finalize→PR。本条在 rebase 到 main(01666d65) 时合并主线 round-4 验收与 Preproduction 部署（r20261001-3856643）记录：该部署不包含本治理叠加，叠加随下一次常规发布携带；真实 WeKnora endpoint/凭证/写能力探针与 Preproduction E2E 仍为激活前置（本计划验收明确不释放线上部署）。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "继续执行 p2-182：n8n 两条知识来源 workflow 的已验收 draft 已通过 MCP 发布并完成 active 回读；首次从 main@f17da3e 部署治理 overlay 时，worker CloudWatch 暴露既有 Postgres list_engineer_slack_events 漏 return 的 TypeError，正式管线自动回滚到 r20261001-3856643。当前 worktree 已补最小 return 修复，准备新 commit 重建发布；WeKnora 实链仍等待 AWS 中不存在的 endpoint/凭证/知识库 ID/shared identity。"
         }
       ],
       "legacy_ids": [],
