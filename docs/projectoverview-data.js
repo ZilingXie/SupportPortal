@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T08:59:23Z",
-  "source_base_commit": "989ac001750d5b63d3ccded53a5b85780a49f1e5",
-  "registry_digest": "3e8f15faa07a69e0b384ff769bfe6b2fb6e52edade3a5968c5a6e9d1c2ef548e",
+  "generated_at": "2026-10-01T17:57:33Z",
+  "source_base_commit": "d01bb0a25a057adc6a59531c8ee9ce7c7c64b361",
+  "registry_digest": "8ef3b80d4eaa5bd32733a626038c7c38d482bb45efd7fcad79378fa4a820e6e9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4906,6 +4906,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "n8n 旧写入路径迁移（2026-10-01）",
           "details": "通过 n8n MCP 读取 active/draft 后发布已准备的 knowledge-source-v1 draft：MM3Z3T469Eru3Q1I activeVersion=743bba31-73c1-43ae-a1b1-2e5d79110123，GgDxPEWtW7ltT5BW activeVersion=544bdb70-cebe-497c-8e28-eac0c87e0501；两者 active 均不再包含 Tencent Memory/Wiki 直写，快照 manifest 通过 validate_workflow_snapshots.py。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 实链初验（2026-10-01）",
+          "details": "n8n MCP workflow MM3Z3T469Eru3Q1I active 版本 ab3563f8… 重放工单 13793：执行 185142 返回 accepted，source intake task=knowledge-source:45544f83b0674341aa71d1bb9b341eb0；重复执行 185156 返回 already_exists；旧 source_updated_at 直接回放返回 stale_ignored。source 状态为 accepted，但 Preproduction 尚无该 ticket 的 Engineer Case，故 engineer_case_id/summary_task_id 为空。受控 ticket.created execution exec-863fd74c6c9a43289ed3fa6a11b9b1b3 route=hermes，随后因缺少 --hermes-agent-enabled 以 hermes_agent_not_configured outcome_unknown 结束；未产生 Summary/Review。"
+        },
+        {
+          "type": "test",
+          "label": "WeKnora Preproduction contract/write probe（2026-10-01）",
+          "details": "AWS SSM 注入 endpoint、X-API-Key 契约、知识库 ID 与 shared memory identity；SSL_CERT_FILE=/etc/ssl/cert.pem 下 health=ok、knowledge search 可用，默认发现路径均 404。知识写 probe：create/readback/普通 update 成功；同幂等 key 产生不同 object，且 stale base_version 被服务端接受并落地，因此 idempotent_recreate 与 stale_base_version_rejected 均 failed，不能声明 conditional_update=true。memory 官方 POST {kind,content,importance}、GET list 和 DELETE 清理成功。两个 knowledge probe object 与 memory probe object 已清理，按 probe 内容再次 search 为空。"
         }
       ],
       "source_refs": [
@@ -15240,7 +15250,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-10-01",
       "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。 【修复轮 2 2026-10-01，响应第二轮验收未通过】(1) supplement 与 replace/merge 一致强制 Review base_version（缺失=invalid_candidate），不再把未确认的当前版本当作 Review 基准；比对改严格相等，不一致或不可读均 human_review。(2) Client 请求字段映射：契约操作支持 body 模板（值为 $语义字段引用 或字面量，模板存在时只发已定义字段、被引用字段缺失/空值 fail-closed）与 query_params 模板（GET 无 body）；官方 memory 形态（POST /api/v1/memory/items 的 kind/content/importance）用模板精确发出，不再泄漏 user_id/幂等键/metadata；memory_query→memory_list（官方列表语义）；memory 语义字段新增 kind/importance 并入候选契约。(3) conditional_update 能力声明：update 操作须显式 conditional_update=true（探针证据），缺省视为不支持——定向更新无证据时转 human_review，不执行不可验证的覆盖。",
-      "next_action": "n8n 旧 Tencent Memory/Wiki 直写已迁移：MM3Z3T469Eru3Q1I 与 GgDxPEWtW7ltT5BW 均已发布 knowledge-source-v1 active，active/draft 快照与 manifest 已回读并校验。治理 overlay 首次 Preproduction 发布因现有 PostgreSQL Slack outbox 查询漏返回导致 worker CloudWatch TypeError 自动回滚；已在当前 worktree 做最小修复，需以新 main commit 重建发布并完成运行回读。WeKnora 激活前置仍被 endpoint/凭证/知识库 ID/shared memory identity 缺失阻塞：取得配置后执行只读 contract probe→隔离写能力 probe（幂等+stale 拒绝）→声明 conditional_update=true→端到端写入验证。",
+      "next_action": "Preproduction 已完成 r20261001-d01bb0a 发布与公开回读，但该 release 的 runner 漏传 --hermes-agent-enabled，受控 ticket.created 验证在 Hermes turn 阶段以 hermes_agent_not_configured 终止，尚未形成 Summary/Review E2E。下一步用当前 main 重建 immutable release 并显式启用 Hermes agent，然后重跑受控 Preproduction case。WeKnora 只读 contract probe 与 memory create/list/delete 已通过；知识写能力 probe 发现服务端未提供幂等去重且接受 stale base_version，因此 conditional_update 保持未声明、定向更新继续 fail-closed，promotion 写入的完整验收仍需服务端能力或明确人工复核路径。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
         "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、回读须证明对象/内容/版本一致）",
@@ -15305,6 +15315,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "n8n 旧写入路径迁移（2026-10-01）",
           "details": "通过 n8n MCP 读取 active/draft 后发布已准备的 knowledge-source-v1 draft：MM3Z3T469Eru3Q1I activeVersion=743bba31-73c1-43ae-a1b1-2e5d79110123，GgDxPEWtW7ltT5BW activeVersion=544bdb70-cebe-497c-8e28-eac0c87e0501；两者 active 均不再包含 Tencent Memory/Wiki 直写，快照 manifest 通过 validate_workflow_snapshots.py。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 实链初验（2026-10-01）",
+          "details": "n8n MCP workflow MM3Z3T469Eru3Q1I active 版本 ab3563f8… 重放工单 13793：执行 185142 返回 accepted，source intake task=knowledge-source:45544f83b0674341aa71d1bb9b341eb0；重复执行 185156 返回 already_exists；旧 source_updated_at 直接回放返回 stale_ignored。source 状态为 accepted，但 Preproduction 尚无该 ticket 的 Engineer Case，故 engineer_case_id/summary_task_id 为空。受控 ticket.created execution exec-863fd74c6c9a43289ed3fa6a11b9b1b3 route=hermes，随后因缺少 --hermes-agent-enabled 以 hermes_agent_not_configured outcome_unknown 结束；未产生 Summary/Review。"
+        },
+        {
+          "type": "test",
+          "label": "WeKnora Preproduction contract/write probe（2026-10-01）",
+          "details": "AWS SSM 注入 endpoint、X-API-Key 契约、知识库 ID 与 shared memory identity；SSL_CERT_FILE=/etc/ssl/cert.pem 下 health=ok、knowledge search 可用，默认发现路径均 404。知识写 probe：create/readback/普通 update 成功；同幂等 key 产生不同 object，且 stale base_version 被服务端接受并落地，因此 idempotent_recreate 与 stale_base_version_rejected 均 failed，不能声明 conditional_update=true。memory 官方 POST {kind,content,importance}、GET list 和 DELETE 清理成功。两个 knowledge probe object 与 memory probe object 已清理，按 probe 内容再次 search 为空。"
         }
       ],
       "history": [
