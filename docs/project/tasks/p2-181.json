@@ -64,6 +64,11 @@
       "type": "decision",
       "label": "Independent acceptance passed (consumption bridge round)",
       "details": "2026-10-01 独立验收结论=通过（验收对象 main@53c0564469400707c7bbd2e6f660ca6020cbc201）：Review→Promotion→Adapter 消费桥闭合（同事务完成+入队、候选级幂等键、worker 同轮衔接、全 lineage）；skill 分流符合设计（写意图桥接 human_review、原始 decision 留 payload、Adapter 零调用、knowledge/memory 走正常决策矩阵）；相关单测 50 passed 3 skipped（独立复跑，.venv pytest），PG 集成以先前 8 项通过证据采信；preprod r20260930→r20261001-9af808a v16 回读与本地栈 9af808ac provenance 证据被采纳。剩余限制=WeKnora 真实凭证未提供（真实探针/写入端到端未执行，属 p2-182 后续验收条件，不阻塞本次）。"
+    },
+    {
+      "type": "test",
+      "label": "Round-5 integration tests",
+      "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
     }
   ],
   "history": [
@@ -96,6 +101,11 @@
       "at": "2026-10-01",
       "event": "done",
       "summary": "消费桥验收通过（阻断项全闭环）；p2-181 收口 done，feature list 条目移入已完成；WeKnora 真实端到端移交 p2-182 凭证条件。"
+    },
+    {
+      "at": "2026-10-01",
+      "event": "followup",
+      "summary": "第四轮验收（eb999da7，基线 bec205e0）未通过：main 新增 ee510a97/8e3c1d86/61728e4e，其中 61728e4e 属同一治理链路（Review memory kind/importance 字段链闭合 + 真实 stale-base 探针：保存更新前版本、服务端接受 stale base 判失败 + test_weknora_probe_capabilities）。第五轮整合：分支 reset 到 61728e4e，保留主线全部契约（kind/importance/memory 分类校验、stale-base 探针及其测试原样未动），最小化叠加治理修复——(1) HermesReviewDecision 在主线 kind/importance/memory 校验之上叠加 skill 边界（仅 no_change/human_review、禁带 WeKnora target）；HermesReviewReport 增 memory_available/downgraded_candidate_ids（不进 content hash），契约 bundle 已用 generate_hermes_contract_bundle.py 同步再生；(2) 携带第四轮的 client metadata semantic/adapter lineage/worker 接线（main 期间未动这些文件）；(3) hermes_knowledge_workflow 的 Summary 完整输入+Slack 三缺陷+memory 证据面（memory_list）+按候选类型降级以 3way 干净应用。旧 eb999da7 存档为 codex/governance-knowledge-curation-round4。"
     }
   ],
   "legacy_ids": [],

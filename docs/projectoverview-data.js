@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T07:01:45Z",
-  "source_base_commit": "8c60bf84869839110e8087df113772f94324e11a",
-  "registry_digest": "fba0850578c7fc052cbc17ca012782ed72e2d8181fc4f9aedd5dfc109112b722",
+  "generated_at": "2026-10-01T06:21:27Z",
+  "source_base_commit": "61728e4e4ddb6610d282c41635037433d65948dd",
+  "registry_digest": "33354876134dca7837132d1f596a2d8e99775f627b872c29aa37635856a0b222",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1331,8 +1331,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
-          "details": "2026-10-01 从零复现实录（在 4da1bb295c77 上直接运行当前脚本）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 0.78s → cleanup verified（removed and no postgres process remains）→ code baseline 4da1bb29…。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt：对真实运行中的实例以 shimmed PG_CTL（参数表含 stop 即 exit 1）调用脚本内 stop_and_clean 函数——输出「cleanup FAILED: postgres still running for /tmp/pp-pg-r9; data directory KEPT」+ rc=1，双向断言（进程存活/目录保留）通过，随后手动恢复（真实 pg_ctl stop + rm）。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\n（字面可执行的完整命令序列与两次实捕原始输出见\ndocs/evidence/p2-163-pg-mirror/pg-test-output.txt；\n仓库路径可用 PP_REPO 覆盖，默认主仓库根目录）",
+          "details": "2026-10-01 从零复现实录（commit bec205e02ae6e9538edcc66a8468dbe467d4d566，worktree pp-pg-evidence-v2；原始输出 artifact=docs/evidence/p2-163-pg-mirror/pg-test-output.txt，rerun 入口=同目录 rerun.sh 已验证端到端）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400）\n3) createdb（显式 createdb 命令）: ok\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.54s」（rerun.sh 复验：1 passed in 0.86s）\n5) pg_ctl stop: ok\n6) 清理验证：/tmp/pp-pg-r9 目录已删除（收尾 rm 与实例停止同轮完成）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         },
         {
           "type": "test",
@@ -3917,6 +3917,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Round-5 integration tests",
+          "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
+        },
+        {
+          "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
           "details": "10+全绿：/production mount 与三件套存在、标题/版本串、API 前缀 withProductionApiBase、promote 代码不存在（app.js/styles.css）、node --check、compose profile 门控与 PRODUCTION_TICKET_DB_DSN、nginx /production 路由与变量 upstream、deploy 脚本 profile 门禁与 DSN 相异校验、.env.example 文档。test_single_host_compose 的 runtime image 计数契约已扩展纳入三个 production 服务。"
@@ -4877,14 +4882,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "第三轮两阻断修复：(1) 探针 stale 测试改用更新前版本作为 base（state.stale_version），服务端接受 stale 时该 capability=failed（含 stale 内容是否落地的读回核对与尽力修复），不再产生 verified+warning 的假证据；新增双态测试（拒 stale 服务器→全部 verified；接受 stale 服务器→stale capability=failed 且 detail 明示不得声明 conditional_update=true）。(2) HermesReviewDecision 新增 kind（memory 决策必填，缺失校验失败）/importance（可选整数），消费桥与 build_weknora_submissions 透传，review prompt 输出规范同步（prompt_change_log 已记，部署前须新 Prompt Release），hermes 契约 bundle 再生；端到端断言 Review memory 决策的 kind/importance 经桥→Adapter 到达 memory_create 调用。定向 86+全量见 PR。"
         },
         {
-          "type": "decision",
-          "label": "第四轮独立验收通过（2026-10-01）",
-          "details": "验收对象 main@61728e4e（PR#1351）：两阻断闭合确认（探针真 stale 版本+接受即 failed；kind/importance 端到端链）；独立定向 215 passed、overview --check、feature list、契约 bundle 哈希、编译与 git diff --check 全过。未验证项：PG 集成、全量回归、真实 WeKnora、Preprod 写入。任务保持 active。"
-        },
-        {
-          "type": "deployment",
-          "label": "Preproduction 部署与回读（2026-10-01）",
-          "details": "r20261001-3856643（git 38566439b19a，含 PR#1331/#1336/#1344/#1351 及后续 docs）：新 Prompt Release pr-22d6c9be1773（hermes-knowledge-review-manual v2 kind/importance，draft→schedule→prepare→validate）随发布激活；api:85/route:84/worker:85 全部 runtime_verified=true，target_health healthy，evidence status=complete（rollback=not_started、schema_bootstrap=skipped_current——v16 已在位）；公开回读 /automation/preproduction/health/release：release_id/git_commit/prompt_release_id/schema-012 全部一致。"
+          "type": "test",
+          "label": "Round-5 contract preservation check",
+          "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
         }
       ],
       "source_refs": [
@@ -13909,8 +13909,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
-          "details": "2026-10-01 从零复现实录（在 4da1bb295c77 上直接运行当前脚本）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 0.78s → cleanup verified（removed and no postgres process remains）→ code baseline 4da1bb29…。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt：对真实运行中的实例以 shimmed PG_CTL（参数表含 stop 即 exit 1）调用脚本内 stop_and_clean 函数——输出「cleanup FAILED: postgres still running for /tmp/pp-pg-r9; data directory KEPT」+ rc=1，双向断言（进程存活/目录保留）通过，随后手动恢复（真实 pg_ctl stop + rm）。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\n（字面可执行的完整命令序列与两次实捕原始输出见\ndocs/evidence/p2-163-pg-mirror/pg-test-output.txt；\n仓库路径可用 PP_REPO 覆盖，默认主仓库根目录）",
+          "details": "2026-10-01 从零复现实录（commit bec205e02ae6e9538edcc66a8468dbe467d4d566，worktree pp-pg-evidence-v2；原始输出 artifact=docs/evidence/p2-163-pg-mirror/pg-test-output.txt，rerun 入口=同目录 rerun.sh 已验证端到端）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400）\n3) createdb（显式 createdb 命令）: ok\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.54s」（rerun.sh 复验：1 passed in 0.86s）\n5) pg_ctl stop: ok\n6) 清理验证：/tmp/pp-pg-r9 目录已删除（收尾 rm 与实例停止同轮完成）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         }
       ],
       "source_refs": [
@@ -15137,6 +15137,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "Independent acceptance passed (consumption bridge round)",
           "details": "2026-10-01 独立验收结论=通过（验收对象 main@53c0564469400707c7bbd2e6f660ca6020cbc201）：Review→Promotion→Adapter 消费桥闭合（同事务完成+入队、候选级幂等键、worker 同轮衔接、全 lineage）；skill 分流符合设计（写意图桥接 human_review、原始 decision 留 payload、Adapter 零调用、knowledge/memory 走正常决策矩阵）；相关单测 50 passed 3 skipped（独立复跑，.venv pytest），PG 集成以先前 8 项通过证据采信；preprod r20260930→r20261001-9af808a v16 回读与本地栈 9af808ac provenance 证据被采纳。剩余限制=WeKnora 真实凭证未提供（真实探针/写入端到端未执行，属 p2-182 后续验收条件，不阻塞本次）。"
+        },
+        {
+          "type": "test",
+          "label": "Round-5 integration tests",
+          "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
         }
       ],
       "history": [
@@ -15169,6 +15174,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "done",
           "summary": "消费桥验收通过（阻断项全闭环）；p2-181 收口 done，feature list 条目移入已完成；WeKnora 真实端到端移交 p2-182 凭证条件。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "第四轮验收（eb999da7，基线 bec205e0）未通过：main 新增 ee510a97/8e3c1d86/61728e4e，其中 61728e4e 属同一治理链路（Review memory kind/importance 字段链闭合 + 真实 stale-base 探针：保存更新前版本、服务端接受 stale base 判失败 + test_weknora_probe_capabilities）。第五轮整合：分支 reset 到 61728e4e，保留主线全部契约（kind/importance/memory 分类校验、stale-base 探针及其测试原样未动），最小化叠加治理修复——(1) HermesReviewDecision 在主线 kind/importance/memory 校验之上叠加 skill 边界（仅 no_change/human_review、禁带 WeKnora target）；HermesReviewReport 增 memory_available/downgraded_candidate_ids（不进 content hash），契约 bundle 已用 generate_hermes_contract_bundle.py 同步再生；(2) 携带第四轮的 client metadata semantic/adapter lineage/worker 接线（main 期间未动这些文件）；(3) hermes_knowledge_workflow 的 Summary 完整输入+Slack 三缺陷+memory 证据面（memory_list）+按候选类型降级以 3way 干净应用。旧 eb999da7 存档为 codex/governance-knowledge-curation-round4。"
         }
       ],
       "legacy_ids": [],
@@ -15198,7 +15208,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-09-30",
       "updated_at": "2026-10-01",
       "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。 【修复轮 2 2026-10-01，响应第二轮验收未通过】(1) supplement 与 replace/merge 一致强制 Review base_version（缺失=invalid_candidate），不再把未确认的当前版本当作 Review 基准；比对改严格相等，不一致或不可读均 human_review。(2) Client 请求字段映射：契约操作支持 body 模板（值为 $语义字段引用 或字面量，模板存在时只发已定义字段、被引用字段缺失/空值 fail-closed）与 query_params 模板（GET 无 body）；官方 memory 形态（POST /api/v1/memory/items 的 kind/content/importance）用模板精确发出，不再泄漏 user_id/幂等键/metadata；memory_query→memory_list（官方列表语义）；memory 语义字段新增 kind/importance 并入候选契约。(3) conditional_update 能力声明：update 操作须显式 conditional_update=true（探针证据），缺省视为不支持——定向更新无证据时转 human_review，不执行不可验证的覆盖。",
-      "next_action": "代码验收已通过（第四轮）并已部署 Preproduction（r20261001-3856643，含 pr-22d6c9be1773 prompt 激活，公开回读一致）。剩余按验收结论顺序，均被 WeKnora 访问阻塞：用户提供 endpoint/凭证/知识库 ID/共享 memory identity→只读 contract probe→隔离对象写能力 probe（幂等+stale 拒绝）→stale 证据成立后为 update 操作声明 conditional_update=true→端到端写入验证（新建/补充/替代/合并/幂等/版本冲突）→n8n 旧 Tencent Memory 写入路径迁移。无该证据前 Adapter 保持 fail-closed（定向更新转 human_review），符合设计。",
+      "next_action": "等待第四轮独立验收（对象=本轮新提交：探针真 stale 版本测试与 stale 接受即 failed；Review memory 决策 kind/importance 端到端字段链）。验收通过后按序：WeKnora Preproduction endpoint/凭证→contract probe+写能力证据（stale 拒绝证据成立才可声明 conditional_update=true）→Preproduction 部署与端到端→n8n 旧路径迁移。部署验收门禁未释放。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
         "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、回读须证明对象/内容/版本一致）",
@@ -15245,17 +15255,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "第三轮两阻断修复：(1) 探针 stale 测试改用更新前版本作为 base（state.stale_version），服务端接受 stale 时该 capability=failed（含 stale 内容是否落地的读回核对与尽力修复），不再产生 verified+warning 的假证据；新增双态测试（拒 stale 服务器→全部 verified；接受 stale 服务器→stale capability=failed 且 detail 明示不得声明 conditional_update=true）。(2) HermesReviewDecision 新增 kind（memory 决策必填，缺失校验失败）/importance（可选整数），消费桥与 build_weknora_submissions 透传，review prompt 输出规范同步（prompt_change_log 已记，部署前须新 Prompt Release），hermes 契约 bundle 再生；端到端断言 Review memory 决策的 kind/importance 经桥→Adapter 到达 memory_create 调用。定向 86+全量见 PR。"
         },
         {
-          "type": "decision",
-          "label": "第四轮独立验收通过（2026-10-01）",
-          "details": "验收对象 main@61728e4e（PR#1351）：两阻断闭合确认（探针真 stale 版本+接受即 failed；kind/importance 端到端链）；独立定向 215 passed、overview --check、feature list、契约 bundle 哈希、编译与 git diff --check 全过。未验证项：PG 集成、全量回归、真实 WeKnora、Preprod 写入。任务保持 active。"
-        },
-        {
-          "type": "deployment",
-          "label": "Preproduction 部署与回读（2026-10-01）",
-          "details": "r20261001-3856643（git 38566439b19a，含 PR#1331/#1336/#1344/#1351 及后续 docs）：新 Prompt Release pr-22d6c9be1773（hermes-knowledge-review-manual v2 kind/importance，draft→schedule→prepare→validate）随发布激活；api:85/route:84/worker:85 全部 runtime_verified=true，target_health healthy，evidence status=complete（rollback=not_started、schema_bootstrap=skipped_current——v16 已在位）；公开回读 /automation/preproduction/health/release：release_id/git_commit/prompt_release_id/schema-012 全部一致。"
+          "type": "test",
+          "label": "Round-5 contract preservation check",
+          "details": "2026-10-01：test_weknora_probe_capabilities、官方请求形状、memory kind/importance 契约用例全部原样通过（未改动）；hermes 契约 bundle 经 generate_hermes_contract_bundle.py 再生。"
         }
       ],
-      "history": [],
+      "history": [
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "第五轮整合（p2-181 治理层验收，基线 61728e4e）：本轮主线契约——memory kind/importance 字段链（HermesReviewDecision→submissions→promotions→adapter→官方请求形状）、真实 stale-base 探针（probe_weknora_contract.py 保存更新前版本、服务端接受 stale base 判失败）及 test_weknora_probe_capabilities 全部原样保留；在其上叠加 lineage metadata 传递（knowledge_update/memory_update metadata semantic，模板契约下由 pinned body 决定是否上线）与 adapter 四写调用的全 lineage。本条记录取代前一轮基于 bec205e0 的登记措辞，确认主线第三轮（p2-182 round 3=61728e4e）的 stale-base 与 memory kind/importance 契约为当前基底。"
+        }
+      ],
       "legacy_ids": [],
       "legacy_refs": [
         "p2-181"
