@@ -70,6 +70,19 @@ class DashboardLoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=512)
 
 
+class KnowledgeSourceSnapshot(BaseModel):
+    """Raw source snapshot delivered by an n8n knowledge workflow."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: str = Field(pattern=r"^knowledge-source-v1$")
+    source_type: str = Field(pattern=r"^(zendesk_ticket|csd_issue)$")
+    source_id: str = Field(min_length=1, max_length=256)
+    source_updated_at: str = Field(min_length=1, max_length=128)
+    payload: dict[str, Any]
+    references: dict[str, Any] = Field(default_factory=dict)
+
+
 DASHBOARD_COOKIE_NAME = "supportportal_automation_dashboard"
 _ROUTE_FIELDS = (
     "route_family",
@@ -442,6 +455,98 @@ def create_app(    *,
                 status_code=409,
                 detail={"code": "event_payload_conflict", "execution_id": exc.execution_id},
             ) from exc
+
+    @app.post(f"{base}/v1/knowledge/sources", status_code=202)
+    async def knowledge_source(snapshot: KnowledgeSourceSnapshot) -> JSONResponse:
+        """Accept one raw n8n source and start Summary for a known Zendesk case.
+
+        The receipt only acknowledges durable source acceptance. Review and
+        WeKnora promotion remain asynchronous worker stages.
+        """
+        from backend.repositories.knowledge_source_repository import normalize_source_timestamp
+        from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+
+        try:
+            canonical_timestamp, _ = normalize_source_timestamp(snapshot.source_updated_at)
+            payload = snapshot.model_dump(mode="json")
+            payload["source_updated_at"] = canonical_timestamp
+            repository = _engineer_ticket_repository()
+            now = datetime.now(timezone.utc).isoformat()
+            receipt = await asyncio.to_thread(
+                repository.accept_knowledge_source, payload, now_value=now
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        receipt_status = str(receipt.get("receipt_status") or "")
+        intake_id = str(receipt.get("intake_id") or "")
+        summary_task_id = str(receipt.get("summary_task_id") or "").strip() or None
+        engineer_case_id = str(receipt.get("engineer_case_id") or "").strip() or None
+
+        # A duplicate is still allowed to repair a missing case/task link from
+        # an earlier accepted request; the repository-level task id remains
+        # idempotent, so this never creates a second Summary task.
+        if snapshot.source_type == "zendesk_ticket" and intake_id:
+            try:
+                cases = await asyncio.to_thread(
+                    repository.list_ticket_engineer_cases,
+                    snapshot.source_id,
+                    include_client_messages=False,
+                )
+                candidates = [
+                    item for item in cases
+                    if isinstance(item, dict)
+                    and str(item.get("engineer_case_id") or "").strip()
+                    and isinstance(repository.get_hermes_case_binding(str(item["engineer_case_id"])), dict)
+                ]
+                candidates.sort(
+                    key=lambda item: str(item.get("updated_at") or item.get("created_at") or ""),
+                    reverse=True,
+                )
+                if candidates:
+                    engineer_case_id = str(candidates[0]["engineer_case_id"])
+                    queued = await asyncio.to_thread(
+                        queue_hermes_summary_for_case,
+                        repository,
+                        engineer_case_id=engineer_case_id,
+                        trigger="n8n_source",
+                        now_value=now,
+                    )
+                    if isinstance(queued, dict):
+                        summary_task_id = str(queued.get("summary_task_id") or "").strip() or None
+                        await asyncio.to_thread(
+                            repository.link_knowledge_source_summary,
+                            intake_id,
+                            engineer_case_id=engineer_case_id,
+                            summary_task_id=summary_task_id,
+                            now_value=now,
+                        )
+            except Exception as exc:  # noqa: BLE001 - receipt must expose source acceptance
+                # Keep the durable source receipt, but make the missing async
+                # linkage visible to the caller and logs for retry/repair.
+                raise HTTPException(
+                    status_code=503,
+                    detail="source accepted but Hermes Summary could not be queued",
+                ) from exc
+
+        body = {
+            "status": receipt_status,
+            "task_id": str(receipt.get("task_id") or intake_id),
+        }
+        if engineer_case_id:
+            body["engineer_case_id"] = engineer_case_id
+        if summary_task_id:
+            body["summary_task_id"] = summary_task_id
+        return JSONResponse(content=body, status_code=202)
+
+    @app.get(f"{base}/v1/knowledge/sources/{{task_id}}")
+    async def knowledge_source_state(task_id: str) -> JSONResponse:
+        record = await asyncio.to_thread(_engineer_ticket_repository().get_knowledge_source, task_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail="knowledge source not found")
+        record.pop("payload", None)
+        record.pop("references", None)
+        return JSONResponse(content=jsonable_encoder(record), headers={"Cache-Control": "no-store"})
 
     @app.get(f"{base}/v1/executions/{{execution_id}}")
     async def execution(execution_id: str) -> dict[str, Any]:

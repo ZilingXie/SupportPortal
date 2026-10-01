@@ -2019,7 +2019,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v16-weknora-skill-candidate-key"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v17-knowledge-source-intake"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
