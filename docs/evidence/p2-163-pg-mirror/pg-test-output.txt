@@ -7,7 +7,7 @@ pg_ctl start: ok
 createdb: ok
 === 4. run test ===
 .                                                                        [100%]
-1 passed, 8 deselected in 0.78s
+1 passed, 8 deselected in 2.57s
 === 5. stop, then clean and verify ===
 cleanup verified: /tmp/pp-pg-r9 removed and no postgres process remains
-code baseline: 4da1bb295c77cd5bc0e4cdb42fa67e3d18aabf49
+code baseline: 01666d65704e71b64ca9e1d3fc93e61bbf09512d
