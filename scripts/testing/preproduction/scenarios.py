@@ -173,13 +173,31 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
     return row
 
 
-def _positive_int(value: Any) -> int | None:
-    """Parse a positive-int fencing value; None when missing or malformed."""
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
+def _safe_int(value: Any) -> int | None:
+    """Mirror the real skill's ``_safe_int``: bools are rejected, ints pass,
+    only integer-valued floats pass, numeric strings parse, everything else
+    (including non-numeric text and ``3.5``) is None."""
+    if isinstance(value, bool):
         return None
-    return parsed if parsed > 0 else None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    text_value = str(value or "").strip()
+    if not text_value:
+        return None
+    try:
+        return int(text_value)
+    except ValueError:
+        return None
+
+
+def _positive_int(value: Any) -> int | None:
+    """Parse a strict positive-int fencing value; None when missing,
+    malformed, boolean or non-integer (matches the real skill's _safe_int +
+    positivity)."""
+    parsed = _safe_int(value)
+    return parsed if parsed is not None and parsed > 0 else None
 
 
 def _fetch_relay_task(
@@ -300,7 +318,16 @@ def _verify_current_task_message(
         problems.append(
             f"message request_id={payload.get('request_id')!r} != local {request_row.get('request_id')!r}"
         )
-    if int(payload.get("request_version") or 0) != int(request_row.get("request_version") or 1):
+    message_version = _safe_int(payload.get("request_version"))
+    local_version = _safe_int(request_row.get("request_version"))
+    if message_version is None or local_version is None:
+        # A malformed version is un-verifiable, not a mismatch: fail closed
+        # (int() here would raise ValueError and be swallowed by wait_for).
+        problems.append(
+            f"message request_version={payload.get('request_version')!r} / local "
+            f"{request_row.get('request_version')!r} malformed; binding unverifiable"
+        )
+    elif message_version != local_version:
         problems.append(
             f"message request_version={payload.get('request_version')!r} != local "
             f"{request_row.get('request_version')!r}"

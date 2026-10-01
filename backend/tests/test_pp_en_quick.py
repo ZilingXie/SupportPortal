@@ -429,6 +429,89 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertIn("missing fencing fields", str(ctx.exception))
         self.assertEqual(calls, [], "structural fencing error must not be masked")
 
+    def test_malformed_request_version_between_legal_polls_fails_closed(self) -> None:
+        """Acceptance round 8: legal pending → message with a malformed
+        request_version → legal delivered must END as broken with zero skill
+        calls — int() inside the binding check must not raise a swallowed
+        ValueError."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+        polls = {"n": 0}
+
+        def get(url, **kwargs):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return _relay_task_response(delivery_status="pending")
+            if polls["n"] == 2:
+                malformed = _relay_task_response(delivery_status="pending")
+                # Swap in a current message whose request_version is a string.
+                swapped = _request_message(
+                    "m-2", request_id="enr-AC-13900-v1", zendesk_ticket_id="13900"
+                )
+                swapped["parts"] = [{
+                    "kind": "text",
+                    "text": json.dumps({
+                        "schema_version": "enablement-relay-request-v1",
+                        "request_id": "enr-AC-13900-v1",
+                        "request_version": "not-an-int",
+                        "ticket_id": "13900",
+                        "zendesk_ticket_id": "13900",
+                        "app_id": APP_ID,
+                    }),
+                }]
+                malformed["task"]["current_message_id"] = "m-2"
+                malformed["messages"].append(swapped)
+                return malformed
+            return _relay_task_response(delivery_status="delivered")
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("malformed; binding unverifiable", str(ctx.exception))
+        self.assertEqual(calls, [], "structural version error must not be masked")
+
+    def test_fencing_rejects_non_integer_and_boolean_values(self) -> None:
+        # 3.5 truncates to 3 under int(); True coerces to 1 — both must be
+        # rejected as structural fencing errors (real skill _safe_int).
+        for bad in (3.5, True):
+            engine = FakeEngine()
+            _happy_queue(engine, outcome="enabled", write=True)
+            engine.db_queue = engine.db_queue[:6]
+            fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+            calls: list = []
+
+            def get(url, **kwargs):
+                response = _relay_task_response(delivery_status="pending")
+                response["task"]["turn_sequence"] = bad
+                return response
+
+            with self.assertRaises(AutomationTestScenarioError) as ctx:
+                pp.run_pp_en_quick(
+                    engine,
+                    skill_runner=_fake_runner("execute", "enabled", True, calls),
+                    relay_base="https://preprod.example.test/automation/preproduction",
+                    relay_token="intake-token",
+                    relay_client_identity=_identity(),
+                    ecs_agent_id=ECS_AGENT_ID,
+                    fetch_json=fetch,
+                    get_json=get,
+                    workdir=self._workdir(),
+                )
+            self.assertIn("missing fencing fields", str(ctx.exception))
+            self.assertEqual(calls, [])
+
     def test_transport_failure_keeps_waiting_then_proceeds(self) -> None:
         """Transport-level read failures stay transient: wait, then proceed."""
         engine = FakeEngine()
