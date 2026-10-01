@@ -23,11 +23,19 @@ echo "pg_ctl resolved: $PG_CTL"
 
 STOPPED=0
 cleanup() {
-  # Safety net for early exits (set -e): never delete the data directory
-  # while the instance might still be running.
+  # Safety net for early exits (set -e): the failure path must also leave
+  # nothing behind — stop the instance AND remove the data directory.
   if [[ "$STOPPED" != "1" ]]; then
-    "$PG_CTL" -D "$CLUSTER_DIR" stop > /dev/null 2>&1 || true
+    set +e
+    "$PG_CTL" -D "$CLUSTER_DIR" stop > /dev/null 2>&1
     STOPPED=1
+    rm -rf "$CLUSTER_DIR"
+    if [[ -d "$CLUSTER_DIR" ]]; then
+      echo "cleanup FAILED: $CLUSTER_DIR still exists" >&2
+    else
+      echo "cleanup: $CLUSTER_DIR removed (failure-path trap)"
+    fi
+    set -Eeuo pipefail
   fi
 }
 trap cleanup EXIT
