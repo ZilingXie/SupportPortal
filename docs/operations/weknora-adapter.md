@@ -1,6 +1,6 @@
 # WeKnora 适配层（知识/记忆受控写入）
 
-源码核对日期：2026-09-30（任务 p2-181，分支 `codex/weknora-adapter`）。本页描述配置契约与探针流程；线上是否启用以目标环境 SSM/env 只读回读为准。
+源码核对日期：2026-10-01（任务 p2-182，Preproduction 实链收口）。本页描述配置契约与探针流程；线上是否启用以目标环境 SSM/env 只读回读为准。
 
 ## 定位
 
@@ -29,6 +29,20 @@ SupportPortal 是 WeKnora 知识与记忆的**唯一写入方**：Hermes Summary
 | `WEKNORA_TENANT_ID` / `WEKNORA_TIMEOUT_SECONDS` | 租户注入与超时（默认 30s） |
 | `WEKNORA_PROMOTION_ENABLED` | 总门禁（`1`），要求契约已固定；未启用时 close 流程零变化 |
 
+Preproduction 的官方实例使用 `https://knowledge.convoai.club/weknora` 作为
+`*_BASE_URL`，认证头为 `X-API-Key`（`WEKNORA_AUTH_SCHEME` 为空）。ECS Worker
+从 `/supportportal/preproduction/` 的 SSM 参数注入这些键；Production 渲染器不会注入
+WeKnora 参数或凭证。
+
+当前已实测并固定的官方操作是：
+
+- 知识检索：`POST /api/v1/knowledge-bases/{knowledge_base_id}/hybrid-search`，请求体 `query_text`/`match_count`，响应结果位于 `data`。
+- 知识读写：`GET /api/v1/knowledge/{id}`、`POST /api/v1/knowledge-bases/{kb}/knowledge/manual`、`PUT /api/v1/knowledge/manual/{id}`；内容和版本分别从 `data.metadata.content` 与 `data.updated_at` 读取。
+- 记忆：`GET/POST /api/v1/memory/items`、`PUT /api/v1/memory/items/{id}`、`POST /confirm`/`reject`，列表和回执使用 `data`。
+
+WeKnora 当前没有服务端幂等键语义，且过期 `base_version` 更新实测会被接受；因此契约不声明
+`conditional_update=true`，定向更新继续转人工复核，探针也会把这两项标记为失败，禁止误启用。
+
 ## Contract probe（启用前置条件）
 
 计划要求 API 版本、认证方式、字段名以 Preproduction 实测固定，不按文档猜测：
@@ -48,6 +62,11 @@ python3 scripts/weknora/probe_weknora_contract.py
 ```
 
 `write_capabilities` 段对同一探针对象依次验证 create→回读内容一致→同幂等键重建返回同对象（服务端去重）→条件更新→**过期 base_version 被拒**（若服务端接受过期版本会显式 warning：版本保护仅客户端侧）。全部 verified 才满足"写入、幂等、版本冲突能力成立"的启用证据；探针证据（去凭证）记录到 `docs/project/tasks/p2-182.json`，之后才可开 `WEKNORA_PROMOTION_ENABLED`。
+
+2026-10-01 Preproduction 实测：health、契约操作、知识 create/read/parse/search、Memory
+create/list 均成功；`idempotent_recreate` 失败（同一键生成不同知识对象），
+`stale_base_version_rejected` 失败（服务端接受旧版本），所以当前只允许新建写入和
+回读证明，replace/merge/supplement 仍由适配器转人工复核。探针对象已清理。
 
 ## 相关源码
 

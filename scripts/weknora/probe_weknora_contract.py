@@ -36,13 +36,14 @@ from backend.services.weknora_client import WEKNORA_OPERATIONS, WeKnoraClient, W
 DEFAULT_DISCOVERY_PATHS = ("/", "/v3/api-docs", "/swagger.json", "/openapi.json")
 
 
-def _probe_discovery(base_url: str, token: str | None, paths: list[str]) -> list[dict]:
+def _probe_discovery(client: WeKnoraClient, paths: list[str]) -> list[dict]:
     findings: list[dict] = []
     for path in paths:
-        request = urllib.request.Request(f"{base_url.rstrip('/')}{path}", method="GET")
-        request.add_header("Accept", "application/json")
-        if token:
-            request.add_header("Authorization", f"Bearer {token}")
+        request = urllib.request.Request(
+            f"{client._base_url.rstrip('/')}{path}",
+            method="GET",
+            headers=client._headers(),
+        )
         try:
             with urllib.request.urlopen(request, timeout=10) as response:
                 body = response.read(65536).decode("utf-8", errors="replace")
@@ -75,7 +76,7 @@ def main() -> int:
         "memory_identity_configured": client.has_memory_identity(),
         "health": client.probe().get("health"),
         "discovery": _probe_discovery(
-            client._base_url, client._api_token or None, list(DEFAULT_DISCOVERY_PATHS) + extra_paths
+            client, list(DEFAULT_DISCOVERY_PATHS) + extra_paths
         ),
     }
     try:

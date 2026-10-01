@@ -8,11 +8,10 @@ the adapter layer defined here. Nothing in this module writes knowledge: the
 submission records produced by the adapter are the controlled interface a
 future WeKnora writer will consume.
 
-The transport targets the WeKnora knowledge search API
-(`POST /v1/knowledge/search`); it is the single seam to adjust when the real
-endpoint contract lands. Every transport failure is reported as unavailable —
-the workflow then fails closed to human review instead of inventing
-similarity evidence.
+The transport targets the official WeKnora hybrid-search API
+(`POST /api/v1/knowledge-bases/{knowledge_base_id}/hybrid-search`). Every
+transport or contract failure is reported as unavailable — the workflow then
+fails closed to human review instead of inventing similarity evidence.
 """
 
 from __future__ import annotations
@@ -21,12 +20,13 @@ import json
 import logging
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
 LOGGER = logging.getLogger("supportportal.hermes_weknora")
 
-WEKNORA_SEARCH_PATH = "/v1/knowledge/search"
+WEKNORA_SEARCH_PATH = "/api/v1/knowledge-bases/{knowledge_base_id}/hybrid-search"
 WEKNORA_SEARCH_TOP_K = 3
 WEKNORA_REQUEST_TIMEOUT_SECONDS = 15.0
 
@@ -40,10 +40,15 @@ class HermesWeKnoraClient:
 
     def __init__(
         self, *, base_url: str | None = None, api_token: str | None = None,
-        timeout_seconds: float | None = None,
+        knowledge_base_id: str | None = None, timeout_seconds: float | None = None,
     ) -> None:
         self.base_url = str(base_url if base_url is not None else os.getenv("HERMES_WEKNORA_BASE_URL") or "").strip().rstrip("/")
         self.api_token = str(api_token if api_token is not None else os.getenv("HERMES_WEKNORA_API_TOKEN") or "").strip()
+        self.knowledge_base_id = str(
+            knowledge_base_id
+            if knowledge_base_id is not None
+            else os.getenv("HERMES_WEKNORA_KNOWLEDGE_BASE_ID") or ""
+        ).strip()
         self.timeout_seconds = float(
             timeout_seconds
             if timeout_seconds is not None
@@ -51,7 +56,7 @@ class HermesWeKnoraClient:
         )
 
     def configured(self) -> bool:
-        return bool(self.base_url and self.api_token)
+        return bool(self.base_url and self.api_token and self.knowledge_base_id)
 
     def search(self, query: str, *, top_k: int = WEKNORA_SEARCH_TOP_K) -> list[dict[str, Any]]:
         """Search similar knowledge entries; raises WeKnoraUnavailable on any failure."""
@@ -60,15 +65,19 @@ class HermesWeKnoraClient:
             raise WeKnoraUnavailable("empty weknora query")
         if not self.configured():
             raise WeKnoraUnavailable("weknora client not configured")
-        body = json.dumps({"query": normalized, "top_k": int(top_k)}).encode("utf-8")
+        body = json.dumps({"query_text": normalized, "match_count": int(top_k)}).encode("utf-8")
         request = urllib.request.Request(
-            self.base_url + WEKNORA_SEARCH_PATH,
+            self.base_url
+            + WEKNORA_SEARCH_PATH.format(
+                knowledge_base_id=urllib.parse.quote(self.knowledge_base_id, safe="")
+            ),
             data=body,
             method="POST",
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
-                "Authorization": f"Bearer {self.api_token}",
+                "User-Agent": "supportportal-weknora/1",
+                "X-API-Key": self.api_token,
             },
         )
         try:
@@ -80,18 +89,20 @@ class HermesWeKnoraClient:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise WeKnoraUnavailable("weknora search returned a non-JSON body") from exc
-        results = payload.get("results") if isinstance(payload, dict) else None
+        results = payload.get("data") if isinstance(payload, dict) else None
+        if results is None:
+            return []
         if not isinstance(results, list):
-            raise WeKnoraUnavailable("weknora search response missing results")
+            raise WeKnoraUnavailable("weknora search response missing data list")
         normalized_results: list[dict[str, Any]] = []
         for item in results:
             if not isinstance(item, dict):
                 continue
             normalized_results.append({
-                "object_id": str(item.get("object_id") or item.get("id") or ""),
-                "version": str(item.get("version") or ""),
-                "title": str(item.get("title") or ""),
-                "snippet": str(item.get("snippet") or item.get("content") or ""),
+                "object_id": str(item.get("knowledge_id") or item.get("id") or ""),
+                "version": str(item.get("content_revision") or ""),
+                "title": str(item.get("knowledge_title") or item.get("title") or ""),
+                "snippet": str(item.get("content") or item.get("matched_content") or ""),
                 "score": item.get("score"),
             })
         return normalized_results

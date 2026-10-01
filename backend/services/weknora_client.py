@@ -183,7 +183,13 @@ class WeKnoraClient:
         return url
 
     def _headers(self) -> dict[str, str]:
-        headers = {"Accept": "application/json"}
+        headers = {
+            "Accept": "application/json",
+            # The Preproduction reverse proxy rejects the stdlib urllib
+            # default user agent; keep the client identifyable without
+            # exposing credentials in logs.
+            "User-Agent": "supportportal-weknora/1",
+        }
         if self._api_token:
             scheme = self._auth_scheme
             headers[self._auth_header_name] = f"{scheme} {self._api_token}".strip()
@@ -332,6 +338,8 @@ class WeKnoraClient:
             json_body={"query": str(query), "knowledge_base_id": self._require_knowledge_base(), "top_k": top_k},
         )
         results = _extract(payload, self._field("results_key", "results"))
+        if results is None:
+            return []
         if not isinstance(results, list):
             raise WeKnoraError(
                 "WeKnora search response is missing the results list",
@@ -437,6 +445,8 @@ class WeKnoraClient:
             json_body=self._memory_semantics({"top_k": top_k}),
         )
         results = _extract(payload, self._field("results_key", "results"))
+        if results is None:
+            return []
         if not isinstance(results, list):
             raise WeKnoraError(
                 "WeKnora memory list response is missing the results list",
@@ -459,12 +469,14 @@ class WeKnoraClient:
                 "content": str(content or ""),
                 "idempotency_key": str(idempotency_key or "").strip(),
                 "kind": str(kind or ""),
-                "importance": importance,
+                # The official API models importance as an integer and treats
+                # an omitted value as zero.  Keep the semantic field present
+                # so a pinned body template can render it without inventing a
+                # wire-level field or failing closed for optional Review data.
+                "importance": 0 if importance is None else int(importance),
                 "metadata": metadata or {},
             }
         )
-        if importance is not None:
-            semantics["importance"] = int(importance)
         payload = self._request("memory_create", json_body=self._legacy_memory_body(semantics))
         return self._normalize_write_receipt(payload, operation="memory_create")
 
@@ -486,7 +498,7 @@ class WeKnoraClient:
                 "content": str(content or ""),
                 "idempotency_key": str(idempotency_key or "").strip(),
                 "kind": str(kind or ""),
-                "importance": importance,
+                "importance": 0 if importance is None else int(importance),
                 # Lineage metadata semantic: a pinned body template decides
                 # whether it reaches the wire (official APIs that do not
                 # define it never receive it); legacy bodies carry it like
@@ -494,8 +506,6 @@ class WeKnoraClient:
                 "metadata": metadata or {},
             }
         )
-        if importance is not None:
-            semantics["importance"] = int(importance)
         payload = self._request("memory_update", json_body=self._legacy_memory_body(semantics))
         return self._normalize_write_receipt(payload, operation="memory_update")
 
