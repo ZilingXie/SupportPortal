@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.automation_hermes_agent import (
     KNOWLEDGE_REVIEW_TOOLSETS,
@@ -128,6 +130,17 @@ class FakeWeKnora:
 
 
 def _summary_output(candidate_id: str = "cand-1") -> str:
+    return _summary_output_candidates([
+        {
+            "candidate_id": candidate_id,
+            "statement": "A misconfigured region causes join failures.",
+            "context": "Single-case evidence.",
+            "evidence_references": ["output-1"],
+        }
+    ])
+
+
+def _summary_output_candidates(candidates: list[dict]) -> str:
     payload = {
         "problem_description": "Customer cannot join channels.",
         "timeline": "Opened; investigated; solved.",
@@ -137,14 +150,7 @@ def _summary_output(candidate_id: str = "cand-1") -> str:
         "verification_results": "Customer confirmed join works.",
         "limitations_and_unconfirmed": "Long-term stability is unconfirmed.",
         "evidence_references": ["output-1"],
-        "candidates": [
-            {
-                "candidate_id": candidate_id,
-                "statement": "A misconfigured region causes join failures.",
-                "context": "Single-case evidence.",
-                "evidence_references": ["output-1"],
-            }
-        ],
+        "candidates": candidates,
     }
     return "Summary follows.\n```json\n" + json.dumps(payload) + "\n```"
 
@@ -164,6 +170,34 @@ def _supplement_decision(candidate_id: str = "cand-1") -> dict:
         "target_object": "weknora:kb:join-failures",
         "target_version": "3",
         "source_references": ["weknora:kb:join-failures"],
+    }
+
+
+def _memory_new_decision(candidate_id: str = "cand-2") -> dict:
+    return {
+        "candidate_id": candidate_id,
+        "candidate_type": "memory",
+        "decision": "new",
+        "confidence": 0.7,
+        "rationale": "No existing memory covers this case pattern.",
+        "proposed_content": "Case pattern: region misconfiguration join failure.",
+        "target_object": None,
+        "target_version": None,
+        "source_references": ["output-1"],
+    }
+
+
+def _skill_decision(candidate_id: str = "cand-3", decision: str = "human_review") -> dict:
+    return {
+        "candidate_id": candidate_id,
+        "candidate_type": "skill",
+        "decision": decision,
+        "confidence": 0.3,
+        "rationale": "Proposes a skill edit; skills are human-maintained.",
+        "proposed_content": "Add a region-misconfiguration step to the join skill.",
+        "target_object": None if decision == "human_review" else "skill:join",
+        "target_version": None if decision == "human_review" else "2",
+        "source_references": [],
     }
 
 
@@ -262,7 +296,34 @@ def test_summary_then_review_run_on_separate_sessions_with_readonly_toolsets(mon
         f"weknora-submission:{review_task['report']['review_id']}:cand-1"
     )
 
+    # Consumption bridge: the completed review atomically enqueued one WeKnora
+    # promotion task per decision, with the full cross-system lineage.
     binding_session = repository.get_hermes_case_binding("123-1")["hermes_session_id"]
+    promotions = repository.list_weknora_promotions()
+    assert len(promotions) == 1
+    promotion = promotions[0]
+    assert promotion["source_type"] == "hermes_knowledge_review"
+    assert promotion["source_id"] == f"{review_task['report']['review_id']}:cand-1"
+    assert promotion["source_version"] == review_task["report"]["content_hash"]
+    assert promotion["candidate_type"] == "knowledge"
+    assert promotion["decision"] == "supplement"
+    assert promotion["status"] == "queued"
+    assert promotion["client_ticket_id"] == "123"
+    assert promotion["summary_session_id"] == binding_session
+    assert promotion["summary_run_id"] == "run-1"
+    assert promotion["review_session_id"] == review_session_id_for("123-1", 1)
+    assert promotion["review_run_id"] == "run-2"
+    assert promotion["candidate_payload"]["target_object_id"] == "weknora:kb:join-failures"
+    assert promotion["candidate_payload"]["base_version"] == "3"
+    assert promotion["candidate_payload"]["title"] == (
+        "A misconfigured region causes join failures."
+    )
+    submission_lineage = review_task["weknora_submissions"][0]["lineage"]
+    assert submission_lineage["client_ticket_id"] == "123"
+    assert submission_lineage["summary_session_id"] == binding_session
+    assert submission_lineage["review_session_id"] == review_session_id_for("123-1", 1)
+    assert submission_lineage["review_run_id"] == "run-2"
+
     assert client.started[0]["session_id"] == binding_session
     assert client.started[0]["enabled_toolsets"] == list(KNOWLEDGE_SUMMARY_TOOLSETS)
     assert client.started[1]["session_id"] == review_session_id_for("123-1", 1)
@@ -270,6 +331,192 @@ def test_summary_then_review_run_on_separate_sessions_with_readonly_toolsets(mon
     assert client.started[1]["enabled_toolsets"] == list(KNOWLEDGE_REVIEW_TOOLSETS)
     assert client.started[1]["idempotency_key"] == review_task["idempotency_key"]
     assert weknora.queries == ["A misconfigured region causes join failures."]
+
+
+class FakeWeKnoraWriteClient:
+    """Write-side fake for the WeKnoraPromotionAdapter (p2-182 contract)."""
+
+    def __init__(self, *, memory_identity: bool = True) -> None:
+        self.calls: list[tuple[str, dict]] = []
+        self.memory_identity = memory_identity
+
+    def has_memory_identity(self) -> bool:
+        return self.memory_identity
+
+    def knowledge_read(self, *, object_id: str) -> dict:
+        self.calls.append(("knowledge_read", {"object_id": object_id}))
+        return {
+            "object_id": object_id,
+            "version": "3",
+            "title": "Join failures",
+            "content": "Existing entry.",
+        }
+
+    def knowledge_create(self, *, title: str, content: str, idempotency_key: str) -> dict:
+        self.calls.append(("knowledge_create", {"title": title, "key": idempotency_key}))
+        return {"object_id": "kb-new-1", "version": "1", "receipt": {"ok": True}}
+
+    def knowledge_update(self, *, object_id: str, base_version: str, title: str, content: str, idempotency_key: str) -> dict:
+        self.calls.append((
+            "knowledge_update",
+            {"object_id": object_id, "base_version": base_version, "key": idempotency_key},
+        ))
+        return {"object_id": object_id, "version": "4", "receipt": {"ok": True}}
+
+    def memory_query(self, *, query: str) -> list[dict]:
+        self.calls.append(("memory_query", {"query": query}))
+        return [{
+            "object_id": "mem-new-1",
+            "version": "1",
+            "title": "",
+            "content": "Case pattern: region misconfiguration join failure.",
+        }]
+
+    def memory_create(self, *, content: str, idempotency_key: str) -> dict:
+        self.calls.append(("memory_create", {"key": idempotency_key}))
+        return {"object_id": "mem-new-1", "version": "1", "receipt": {"ok": True}}
+
+    def memory_update(self, *, object_id: str, base_version: str, content: str, idempotency_key: str) -> dict:
+        self.calls.append(("memory_update", {"object_id": object_id, "key": idempotency_key}))
+        return {"object_id": object_id, "version": "2", "receipt": {"ok": True}}
+
+
+def _drain_weknora_promotions_like_worker(repository: Any, adapter: Any) -> int:
+    """The worker's claim -> execute -> complete loop, verbatim semantics."""
+    processed = 0
+    for promotion in repository.list_weknora_promotions():
+        if promotion["status"] not in {"queued", "active"}:
+            continue
+        claimed = repository.claim_weknora_promotion(
+            promotion["promotion_id"], owner_token="weknora-promotion-worker:test",
+            claimed_at="2026-09-05T09:30:00Z", lease_expires_at="2026-09-05T09:32:00Z",
+        )
+        if not claimed:
+            continue
+        outcome = adapter.execute(claimed)
+        repository.complete_weknora_promotion(
+            claimed["promotion_id"], owner_token="weknora-promotion-worker:test",
+            status=outcome.status,
+            weknora_object_id=outcome.weknora_object_id,
+            weknora_version=outcome.weknora_version,
+            receipt=outcome.receipt,
+            failure_code=outcome.failure_code,
+            failure_detail=outcome.failure_detail,
+            completed_at="2026-09-05T09:30:01Z",
+        )
+        processed += 1
+    return processed
+
+
+def test_completed_review_feeds_the_weknora_promotion_worker_end_to_end(monkeypatch) -> None:
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+
+    client = FakeHermesAgentClient(
+        summary_output=_summary_output_candidates([
+            {
+                "candidate_id": "cand-1",
+                "statement": "A misconfigured region causes join failures.",
+                "context": "Single-case evidence.",
+                "evidence_references": ["output-1"],
+            },
+            {
+                "candidate_id": "cand-2",
+                "statement": "Case pattern worth remembering for this account.",
+                "context": "",
+                "evidence_references": ["output-1"],
+            },
+            {
+                "candidate_id": "cand-3",
+                "statement": "Join troubleshooting skill should add a region check.",
+                "context": "",
+                "evidence_references": [],
+            },
+        ]),
+        review_output=_review_output([
+            _supplement_decision("cand-1"),
+            _memory_new_decision("cand-2"),
+            _skill_decision("cand-3"),
+        ]),
+    )
+    processed = drain_hermes_knowledge_tasks(
+        repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+    )
+    assert processed == 2
+
+    promotions = {
+        row["source_id"].rsplit(":", 1)[-1]: row
+        for row in repository.list_weknora_promotions()
+    }
+    assert sorted(promotions) == ["cand-1", "cand-2", "cand-3"]
+    assert promotions["cand-1"]["decision"] == "supplement"
+    assert promotions["cand-2"]["decision"] == "new"
+    assert promotions["cand-3"]["candidate_type"] == "skill"
+    assert promotions["cand-3"]["decision"] == "human_review"
+    assert promotions["cand-3"]["candidate_payload"]["skill_proposal"] is True
+    assert promotions["cand-3"]["candidate_payload"]["decision"] == "human_review"
+
+    write_client = FakeWeKnoraWriteClient()
+    adapter = WeKnoraPromotionAdapter(write_client)
+    assert _drain_weknora_promotions_like_worker(repository, adapter) == 3
+    statuses = {
+        row["source_id"].rsplit(":", 1)[-1]: row["status"]
+        for row in repository.list_weknora_promotions()
+    }
+    assert statuses == {"cand-1": "accepted", "cand-2": "accepted", "cand-3": "human_review"}
+    operations = [name for name, _ in write_client.calls]
+    assert "knowledge_update" in operations
+    assert "memory_create" in operations
+    update_call = next(kwargs for name, kwargs in write_client.calls if name == "knowledge_update")
+    assert update_call["object_id"] == "weknora:kb:join-failures"
+    assert update_call["base_version"] == "3"
+
+    # Idempotency: nothing left to claim, and re-enqueueing the same report
+    # from the completed review does not duplicate rows.
+    assert _drain_weknora_promotions_like_worker(repository, adapter) == 0
+    assert len(repository.list_weknora_promotions()) == 3
+
+
+def test_bridge_routes_any_skill_write_intent_to_human_review_only() -> None:
+    from backend.services.hermes_knowledge_workflow import (
+        build_weknora_promotions_from_review_report,
+    )
+    from backend.repositories.weknora_promotion_repository import (
+        normalize_weknora_promotion_task,
+    )
+
+    report = {
+        "review_id": "hermes-review:case-1:1",
+        "engineer_case_id": "case-1",
+        "client_ticket_id": "ticket-1",
+        "investigation_id": "INV-1",
+        "content_hash": "a" * 64,
+        "decisions": [_skill_decision("cand-9", decision="new")],
+    }
+    packet = {"candidates": [{"candidate_id": "cand-9", "statement": "Skill edit proposal."}]}
+    summary_task = {"hermes_session_id": "hermes-session:case-1", "run_id": "run-1"}
+    review_task = {"review_session_id": "hermes-session:kr", "run_id": "run-2"}
+    tasks = build_weknora_promotions_from_review_report(
+        report, summary_task=summary_task, review_task=review_task,
+        review_run_id="run-2", packet=packet,
+    )
+    assert len(tasks) == 1
+    assert tasks[0]["candidate_type"] == "skill"
+    assert tasks[0]["decision"] == "human_review"
+    assert tasks[0]["candidate_payload"]["decision"] == "new"
+    assert tasks[0]["candidate_payload"]["skill_proposal"] is True
+    normalized = normalize_weknora_promotion_task(tasks[0], now_value="2026-09-30T00:00:00Z")
+    assert normalized["status"] == "queued"
+
+    # A direct skill write-intent enqueue is rejected at the repository gate.
+    with pytest.raises(ValueError, match="human_review"):
+        normalize_weknora_promotion_task(
+            {**tasks[0], "decision": "new"}, now_value="2026-09-30T00:00:00Z"
+        )
 
 
 def test_weknora_unavailable_completes_with_human_review_fail_closed(monkeypatch) -> None:

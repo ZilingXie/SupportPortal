@@ -54,6 +54,18 @@ class WeKnoraPromotionAdapter:
             return WeKnoraPromotionOutcome(
                 status="human_review", failure_code="review_requested_human_review"
             )
+        if candidate_type == "skill":
+            # Skills are human-maintained: even a malformed write-intent skill
+            # row becomes an explicit human-review record instead of a write
+            # or a silent drop.
+            return WeKnoraPromotionOutcome(
+                status="human_review",
+                failure_code="skill_change_requires_human_review",
+                failure_detail=(
+                    "skill candidates are proposals for human maintainers; "
+                    "the adapter never writes skills"
+                ),
+            )
         if decision not in WRITE_DECISIONS or candidate_type not in {"knowledge", "memory"}:
             return WeKnoraPromotionOutcome(
                 status="failed", failure_code="invalid_candidate",

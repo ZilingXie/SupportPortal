@@ -49,10 +49,12 @@ from backend.services.hermes_agent_runtime import (
 from backend.services.hermes_case_workflow import (
     HermesReviewReport,
     HermesSummaryPacket,
+    WeKnoraPromotionCandidate,
     hermes_workflow_mode,
     review_report_content_hash,
     summary_packet_content_hash,
 )
+from backend.services.hermes_case_workflow import _weknora_candidate_hash
 from backend.services.hermes_weknora import (
     HermesWeKnoraClient,
     WeKnoraUnavailable,
@@ -513,6 +515,102 @@ def _collect_weknora_evidence(
     return results, all_available
 
 
+# ------------------------------------------------- consumption bridge (p2-182)
+
+
+def _slack_thread_lineage(repository: Any, engineer_case_id: str) -> tuple[str | None, str | None]:
+    binding = repository.get_engineer_slack_thread_binding(
+        engineer_case_id, active_only=False
+    )
+    if not isinstance(binding, dict):
+        return None, None
+    return (
+        str(binding.get("slack_channel_id") or "") or None,
+        str(binding.get("slack_thread_ts") or "") or None,
+    )
+
+
+def build_weknora_promotions_from_review_report(
+    report: dict[str, Any],
+    *,
+    summary_task: dict[str, Any],
+    review_task: dict[str, Any],
+    review_run_id: str | None,
+    packet: dict[str, Any],
+    slack_channel_id: str | None = None,
+    slack_thread_ts: str | None = None,
+) -> list[dict[str, Any]]:
+    """Consumption bridge: one WeKnora promotion task per review decision.
+
+    knowledge/memory decisions pass through unchanged (payloads validated
+    against the adapter's candidate contract). Every skill decision is routed
+    to an explicit human-review (or no-op) promotion record — skills are
+    human-maintained and never written — with the original decision preserved
+    in the payload for audit. Source identity is per-candidate and
+    content-addressed by the report hash, so re-completing the same report
+    enqueues idempotently while a changed report yields new rows.
+    """
+    statements = {
+        str(item.get("candidate_id") or ""): str(item.get("statement") or "")
+        for item in (packet.get("candidates") or [])
+        if isinstance(item, dict)
+    }
+    lineage = {
+        "engineer_case_id": str(report.get("engineer_case_id") or ""),
+        "client_ticket_id": str(report.get("client_ticket_id") or ""),
+        "investigation_id": str(report.get("investigation_id") or ""),
+        "summary_session_id": str(summary_task.get("hermes_session_id") or ""),
+        "summary_run_id": str(summary_task.get("run_id") or ""),
+        "review_session_id": str(review_task.get("review_session_id") or ""),
+        "review_run_id": str(review_run_id or ""),
+        "slack_channel_id": str(slack_channel_id or ""),
+        "slack_thread_ts": str(slack_thread_ts or ""),
+        "source_type": "hermes_knowledge_review",
+        "source_version": str(report.get("content_hash") or ""),
+    }
+    tasks: list[dict[str, Any]] = []
+    for decision in report.get("decisions") or []:
+        if not isinstance(decision, dict):
+            continue
+        candidate_id = str(decision.get("candidate_id") or "")
+        original_type = str(decision.get("candidate_type") or "")
+        original_decision = str(decision.get("decision") or "")
+        statement = statements.get(candidate_id, "")
+        title = statement.splitlines()[0].strip()[:80] if statement.strip() else ""
+        payload = {
+            "schema_version": "v1",
+            "candidate_type": original_type,
+            "decision": original_decision,
+            "title": title,
+            "content": (
+                "" if original_decision == "merge"
+                else str(decision.get("proposed_content") or "")
+            ),
+            "merged_content": (
+                str(decision.get("proposed_content") or "")
+                if original_decision == "merge" else ""
+            ),
+            "target_object_id": str(decision.get("target_object") or ""),
+            "base_version": str(decision.get("target_version") or ""),
+            "note": str(decision.get("rationale") or ""),
+        }
+        if original_type == "skill":
+            routed_decision = "no_change" if original_decision == "no_change" else "human_review"
+            payload["skill_proposal"] = True
+        else:
+            routed_decision = original_decision
+            WeKnoraPromotionCandidate.model_validate(payload)
+        tasks.append({
+            **lineage,
+            "source_id": f"{report.get('review_id')}:{candidate_id}",
+            "candidate_type": original_type,
+            "decision": routed_decision,
+            "content_hash": _weknora_candidate_hash(payload),
+            "candidate_payload": payload,
+        })
+    return tasks
+
+
 def run_hermes_review_task(
     repository: Any,
     client: HermesAgentClient,
@@ -638,14 +736,39 @@ def run_hermes_review_task(
         report_payload["content_hash"] = review_report_content_hash(report_payload)
         report = HermesReviewReport.model_validate(report_payload)
         _require_current_lineage(repository, task)
-        submissions = build_weknora_submissions(report.model_dump(mode="json"))
+        slack_channel_id, slack_thread_ts = _slack_thread_lineage(
+            repository, str(task["engineer_case_id"])
+        )
+        report_payload_json = report.model_dump(mode="json")
+        promotions = build_weknora_promotions_from_review_report(
+            report_payload_json,
+            summary_task=summary_task,
+            review_task=task,
+            review_run_id=str(status.get("run_id") or ""),
+            packet=packet,
+            slack_channel_id=slack_channel_id,
+            slack_thread_ts=slack_thread_ts,
+        )
+        submissions = build_weknora_submissions(
+            report_payload_json,
+            lineage_extras={
+                "investigation_id": str(task["investigation_id"]),
+                "summary_session_id": str(summary_task.get("hermes_session_id") or ""),
+                "summary_run_id": str(summary_task.get("run_id") or ""),
+                "review_session_id": str(task["review_session_id"]),
+                "review_run_id": str(status.get("run_id") or ""),
+                "slack_channel_id": slack_channel_id or "",
+                "slack_thread_ts": slack_thread_ts or "",
+            },
+        )
         try:
             repository.complete_hermes_review_task(
                 review_task_id,
                 owner_token=owner_token,
-                report=report.model_dump(mode="json"),
+                report=report_payload_json,
                 weknora_adapter_status="recorded",
                 weknora_submissions=submissions,
+                weknora_promotions=promotions,
                 completed_at=now,
             )
         except HermesRepositoryConflict:
@@ -655,8 +778,10 @@ def run_hermes_review_task(
             )
             return {"review_task_id": review_task_id, "status": "superseded_during_run"}
         LOGGER.info(
-            "hermes_review_completed review_task_id=%s run_id=%s decisions=%s weknora_available=%s",
-            review_task_id, status.get("run_id"), len(report.decisions), weknora_available,
+            "hermes_review_completed review_task_id=%s run_id=%s decisions=%s "
+            "weknora_available=%s weknora_promotions=%s",
+            review_task_id, status.get("run_id"), len(report.decisions),
+            weknora_available, len(promotions),
         )
         return {"review_task_id": review_task_id, "status": "completed"}
     except HermesAgentError as exc:

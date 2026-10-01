@@ -876,6 +876,7 @@ class InMemoryHermesCaseRepositoryMixin:
     def complete_hermes_review_task(
         self, review_task_id: str, *, owner_token: str, report: dict[str, Any],
         weknora_adapter_status: str, weknora_submissions: list[dict[str, Any]] | None,
+        weknora_promotions: list[dict[str, Any]] | None = None,
         completed_at: str = "",
     ) -> dict[str, Any]:
         with self._assignment_lock:
@@ -888,6 +889,14 @@ class InMemoryHermesCaseRepositoryMixin:
                        weknora_submissions=copy.deepcopy(weknora_submissions),
                        error_code=None, error_message=None, lease_expires_at=None,
                        updated_at=completed_at or row["updated_at"])
+            if weknora_promotions:
+                # The consumption bridge: a completed review atomically becomes
+                # WeKnora promotion tasks (one per decision, idempotent by
+                # promotion_id), so a crash can never complete a review
+                # without enqueuing its results.
+                self._enqueue_weknora_promotions_locked(
+                    weknora_promotions, now_value=completed_at or row["updated_at"]
+                )
             return copy.deepcopy(row)
 
     def fail_hermes_review_task(
@@ -1985,6 +1994,7 @@ class PostgresHermesCaseRepositoryMixin:
     def complete_hermes_review_task(
         self, review_task_id: str, *, owner_token: str, report: dict[str, Any],
         weknora_adapter_status: str, weknora_submissions: list[dict[str, Any]] | None,
+        weknora_promotions: list[dict[str, Any]] | None = None,
         completed_at: str = "",
     ) -> dict[str, Any]:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
@@ -2007,6 +2017,14 @@ class PostgresHermesCaseRepositoryMixin:
                 row = _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
                 if row is None:
                     raise HermesRepositoryConflict("stale Hermes review task")
+                if weknora_promotions:
+                    # Same-transaction consumption bridge: completing a review
+                    # and enqueueing its WeKnora promotion tasks succeed or
+                    # roll back together.
+                    self._enqueue_weknora_promotions_cur(
+                        cur, weknora_promotions,
+                        now_value=completed_at or str(row.get("updated_at") or ""),
+                    )
                 return row
         return self._run_with_connection_retry("complete_hermes_review_task", operation)
 

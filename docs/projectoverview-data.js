@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T02:29:35Z",
-  "source_base_commit": "f14fb763ac826904ce645da53761d7dc30ca71b2",
-  "registry_digest": "744c6144d56b97b455189735a5769e9e0bdbaf9a6a6a1bb4ad416c5fa07b6343",
+  "generated_at": "2026-10-01T02:46:43Z",
+  "source_base_commit": "d07bf4b4a3188454cd481b365743ceef9a43c5ff",
+  "registry_digest": "cb9f84c2ea3a20633ed280d5bfc52877687498bf4ae5a9aea5a00e5895680ec6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3887,6 +3887,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Local official stack live verification",
           "details": "2026-09-30：restart_single_host_stack --mode local_lightweight --db remote 于 main dd32c03b85b8，/health ok，app_build.ref=dd32c03b85b8=root main，inspect build_provenance_status=matched、无辅助栈；prompt_runtime(code-78882e9a3f24) prompt_count=41——运行中构建包含两个新知识治理 manual。本地远端库为 check 模式不 bootstrap 新表（管线本地 disabled 休眠，行为中性）；DDL 已由 PG 集成测试与 preprod bootstrap 实证。"
+        },
+        {
+          "type": "test",
+          "label": "Consumption bridge Review->Promotion->Adapter e2e",
+          "details": "2026-10-01：test_hermes_knowledge_workflow 新增全链路用例——三候选（knowledge-supplement/memory-new/skill-human_review）review 完成后同事务入队三条 promotion（逐候选 source、全 lineage 断言），worker 循环消费：knowledge_update(base_version=3)与 memory_create 回读 accepted、skill 零客户端调用终态 human_review；重复排水零重复、公开入队口幂等；skill 写意图在 normalize 门禁被拒（ValueError）；适配器 skill 护栏测试更新为 human_review 契约。57 单测通过（含 weknora client/adapter/workflow/worker 全套回归）。"
         },
         {
           "type": "test",
@@ -14988,8 +14993,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "account-production-environment",
       "created_at": "2026-09-30",
       "updated_at": "2026-09-30",
-      "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。",
-      "next_action": "代码已合入 main（PR#1328/#1330）；发布 r20260930-39144ab：codebuild/preflight/schema bootstrap（one-off task exit 0，schema v13 两张新表已建）/prompt 同步 pr-c47f99044ae0（41 prompts）全部通过，api/worker/route rollout 阶段通过后 collector 阶段因操作者 AWS 会话过期失败，回滚亦被过期凭证阻断（evidence status=rollback_incomplete，route live revision 未知）。待用户 aws login 后 resume 管线（ecs-pipeline-r20260930-39144ab --resume）或按 runbook 收敛服务并激活 release，再完成 preprod 验证。",
+      "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。(5) 消费桥（验收未通过阻断项修复）：Review 完成事务内原子入队 support_weknora_promotions（build_weknora_promotions_from_review_report，source_type=hermes_knowledge_review、source_id=\u003creview_id>:\u003ccandidate_id>、source_version=报告 content_hash 内容寻址，lineage 全量：ticket/investigation/Summary+Review session 与 run/Slack thread）；skill 决策显式分流为仅人工复核记录（candidate_type 枚举扩至 skill，仅 no_change/human_review，仓储门禁拒绝 skill 写意图，适配器零读写护栏 skill_change_requires_human_review，原始 decision 保留于 payload）；schema v14→v15（约束交换）；worker 顺序调整为先知识排水后 promotion 排水。",
+      "next_action": "消费桥已实现待合入与部署：finalize 后重启本地官方栈验证，再重部署当前 main 到 Preproduction（--bootstrap-account-schema，v15 约束交换），随后 WeKnora 真实探针与端到端写入验证（仍缺用户提供的 endpoint/凭证/知识库 ID/共享 memory identity）。",
       "acceptance_criteria": [
         "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
         "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
@@ -15028,6 +15033,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Local official stack live verification",
           "details": "2026-09-30：restart_single_host_stack --mode local_lightweight --db remote 于 main dd32c03b85b8，/health ok，app_build.ref=dd32c03b85b8=root main，inspect build_provenance_status=matched、无辅助栈；prompt_runtime(code-78882e9a3f24) prompt_count=41——运行中构建包含两个新知识治理 manual。本地远端库为 check 模式不 bootstrap 新表（管线本地 disabled 休眠，行为中性）；DDL 已由 PG 集成测试与 preprod bootstrap 实证。"
+        },
+        {
+          "type": "test",
+          "label": "Consumption bridge Review->Promotion->Adapter e2e",
+          "details": "2026-10-01：test_hermes_knowledge_workflow 新增全链路用例——三候选（knowledge-supplement/memory-new/skill-human_review）review 完成后同事务入队三条 promotion（逐候选 source、全 lineage 断言），worker 循环消费：knowledge_update(base_version=3)与 memory_create 回读 accepted、skill 零客户端调用终态 human_review；重复排水零重复、公开入队口幂等；skill 写意图在 normalize 门禁被拒（ValueError）；适配器 skill 护栏测试更新为 human_review 契约。57 单测通过（含 weknora client/adapter/workflow/worker 全套回归）。"
         }
       ],
       "history": [
@@ -15045,6 +15055,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-09-30",
           "event": "followup",
           "summary": "r20260930-39144ab 发布：DB 侧（schema v13 + prompt）全部完成；collector 因 AWS 会话过期失败且回滚受阻（rollback_incomplete），服务收敛与激活待用户重新认证后 resume；feature list 条目暂移未完成。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "验收未通过（消费桥断裂）：实现 review 完成→weknora promotion 原子入队桥（含 skill 人工复核分流、全 lineage、schema v15、worker 顺序），端到端单测与 PG 集成补齐。"
         }
       ],
       "legacy_ids": [],

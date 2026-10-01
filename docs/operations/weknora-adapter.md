@@ -4,12 +4,13 @@
 
 ## 定位
 
-SupportPortal 是 WeKnora 知识与记忆的**唯一写入方**：Hermes Summary/Review 产出结构化候选（`knowledge`/`memory`），由 SupportPortal 的 WeKnora Adapter 校验后写入、回读并记录版本。Review Agent 不直接写 WeKnora；Skill 候选只记录提案，不进入适配层。旧 Hermes `/v1/promotions` 投递与 n8n 直写 Tencent Memory 的迁移是后续独立步骤，不在本页范围。
+SupportPortal 是 WeKnora 知识与记忆的**唯一写入方**：Hermes Summary/Review 产出结构化候选（`knowledge`/`memory`/`skill`），由 SupportPortal 的 WeKnora Adapter 校验后写入、回读并记录版本。Review Agent 不直接写 WeKnora；Skill 候选自消费桥（p2-181/p2-182）起作为**仅人工复核**的 promotion 记录进入本管线（`candidate_type='skill'`，decision 只允许 `no_change`/`human_review`，适配器对其零读写），原始终终决策保留在 `candidate_payload` 供技能维护者审计。旧 Hermes `/v1/promotions` 投递与 n8n 直写 Tencent Memory 的迁移是后续独立步骤，不在本页范围。
 
 ## 数据与状态
 
-- 任务表 `support_weknora_promotions`（ticket-storage schema v12）：lineage 全字段（case/ticket/investigation/Summary、Review session、Slack thread）+ 状态机 `queued/active/accepted/failed/outcome_unknown/human_review/invalidated`。
-- 幂等：`(source_type, source_id, source_version, candidate_type)` 唯一约束；promotion_id 由同一组字段确定性生成。同一来源版本重复 close/事件只产生一行任务。
+- 任务表 `support_weknora_promotions`（ticket-storage schema，版本随 `_TICKET_SCHEMA_VERSION` 演进；skill 枚举自 v15 起生效）：lineage 全字段（case/ticket/investigation/Summary、Review session 与 run、Slack thread）+ 状态机 `queued/active/accepted/failed/outcome_unknown/human_review/invalidated`。
+- 幂等：`(source_type, source_id, source_version, candidate_type)` 唯一约束；promotion_id 由同一组字段确定性生成。消费桥的 `source_type='hermes_knowledge_review'`、`source_id='<review_id>:<candidate_id>'`、`source_version=<report content_hash>`（按报告内容寻址）。
+- 入队来源：(1) 旧 close 候选路径（`hermes_case_promotion`，仅在知识管线未激活时让位前的行为）；(2) 消费桥——Review 任务完成事务内原子入队（`hermes_knowledge_workflow.build_weknora_promotions_from_review_report`），worker 先跑知识排水再跑 promotion 排水，同一轮即可衔接。
 - 失效：`reopen_hermes_case` 在同一事务将 `queued/active` 任务置为 `invalidated`。
 - `outcome_unknown` 不自动重试（禁止盲写），人工核对后用 `requeue_weknora_promotion` 复位。
 
