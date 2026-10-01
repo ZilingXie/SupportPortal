@@ -247,3 +247,121 @@ def test_read_receipt_normalizes_id_alias() -> None:
         read = client.knowledge_read(object_id="doc-5")
     assert read["object_id"] == "doc-5"
     assert read["content"] == "body"
+
+
+# -- review-acceptance round 2: official Memory API request contract --------
+
+OFFICIAL_MEMORY_CONTRACT = {
+    "health": {"method": "GET", "path": "/health"},
+    "memory_create": {
+        "method": "POST",
+        "path": "/api/v1/memory/items",
+        "body": {
+            "kind": {"$": "kind"},
+            "content": {"$": "content"},
+            "importance": {"$": "importance"},
+        },
+    },
+    "memory_list": {
+        "method": "GET",
+        "path": "/api/v1/memory/items",
+        "query_params": {"limit": {"$": "top_k"}},
+    },
+    "memory_update": {
+        "method": "PUT",
+        "path": "/api/v1/memory/items/{object_id}",
+        "body": {
+            "content": {"$": "content"},
+            "importance": {"$": "importance"},
+        },
+        "conditional_update": False,
+    },
+}
+
+
+def test_official_memory_create_sends_exactly_the_official_shape() -> None:
+    client = _client(contract=OFFICIAL_MEMORY_CONTRACT, memory_identity="hermes")
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["has_body"] = request.data is not None
+        if request.data is not None:
+            captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"id": "mem-1", "version": "1"})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        receipt = client.memory_create(
+            content="remember", idempotency_key="wk-1", kind="semantic", importance=3
+        )
+
+    assert captured["url"] == "http://weknora.test/api/v1/memory/items"
+    assert captured["method"] == "POST"
+    # Exactly the official shape: no user_id, no idempotency key, no metadata.
+    assert captured["body"] == {"kind": "semantic", "content": "remember", "importance": 3}
+    assert receipt["object_id"] == "mem-1"
+
+
+def test_official_memory_create_fails_closed_without_required_kind() -> None:
+    client = _client(contract=OFFICIAL_MEMORY_CONTRACT, memory_identity="hermes")
+    with patch("urllib.request.urlopen") as urlopen:
+        with pytest.raises(WeKnoraError) as excinfo:
+            client.memory_create(content="remember", idempotency_key="wk-1", kind="")
+    assert excinfo.value.failure_kind == "not_configured"
+    assert urlopen.call_count == 0
+
+
+def test_official_memory_list_is_get_with_query_params_and_no_body() -> None:
+    client = _client(contract=OFFICIAL_MEMORY_CONTRACT, memory_identity="hermes")
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["has_body"] = request.data is not None
+        return _Response({"results": [{"id": "mem-1", "content": "c"}]})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        items = client.memory_list(top_k=20)
+
+    assert captured["method"] == "GET"
+    assert captured["url"] == "http://weknora.test/api/v1/memory/items?limit=20"
+    assert captured["has_body"] is False
+    assert items == [{"id": "mem-1", "content": "c"}]
+
+
+def test_official_memory_update_uses_path_placeholder_without_extra_fields() -> None:
+    client = _client(contract=OFFICIAL_MEMORY_CONTRACT, memory_identity="hermes")
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"id": "mem/9", "version": "4"})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        receipt = client.memory_update(
+            object_id="mem/9", base_version="3", content="updated",
+            idempotency_key="wk-2", kind="semantic", importance=3,
+        )
+
+    assert captured["method"] == "PUT"
+    assert captured["url"] == "http://weknora.test/api/v1/memory/items/mem%2F9"
+    assert captured["body"] == {"content": "updated", "importance": 3}
+    assert receipt["object_id"] == "mem/9"
+
+
+def test_conditional_update_support_requires_explicit_declaration() -> None:
+    official = _client(contract=OFFICIAL_MEMORY_CONTRACT)
+    assert official.supports_conditional_update("memory") is False
+    declared = _client(
+        contract={
+            **OFFICIAL_MEMORY_CONTRACT,
+            "memory_update": {**OFFICIAL_MEMORY_CONTRACT["memory_update"], "conditional_update": True},
+        }
+    )
+    assert declared.supports_conditional_update("memory") is True
+    # Unpinned operations never claim support.
+    assert _client(contract={}).supports_conditional_update("knowledge") is False

@@ -24,17 +24,22 @@ class FakeWeKnoraStore:
         write_error: WeKnoraError | None = None,
         readback_error: WeKnoraError | None = None,
         created_objects: dict[str, dict[str, Any]] | None = None,
+        conditional_update: bool = True,
     ) -> None:
         self.memory_identity_value = memory_identity
         self.read_error = read_error
         self.write_error = write_error
         self.readback_error = readback_error
+        self.conditional_update = conditional_update
         self.objects: dict[str, dict[str, Any]] = dict(created_objects or {})
         self.next_version = 100
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
     def has_memory_identity(self) -> bool:
         return bool(self.memory_identity_value)
+
+    def supports_conditional_update(self, candidate_type: str) -> bool:
+        return self.conditional_update
 
     # -- knowledge ----------------------------------------------------------
 
@@ -87,14 +92,14 @@ class FakeWeKnoraStore:
 
     # -- memory --------------------------------------------------------------
 
-    def memory_query(self, *, query: str) -> list[dict[str, Any]]:
-        self.calls.append(("memory_query", {"query": query}))
+    def memory_list(self, *, top_k: int | None = None) -> list[dict[str, Any]]:
+        self.calls.append(("memory_list", {}))
         if self.read_error or self.readback_error:
             raise self.read_error or self.readback_error
         return [
             {"object_id": object_id, "version": record["version"], "title": record["title"], "content": record["content"]}
             for object_id, record in self.objects.items()
-            if query in (object_id, record.get("title", ""))
+            if object_id.startswith("mem-")
         ]
 
     def memory_create(self, *, content: str, idempotency_key: str, **kwargs) -> dict[str, Any]:
@@ -257,9 +262,11 @@ def test_supplement_honors_provided_base_version() -> None:
     assert client.calls == [("knowledge_read", {"object_id": "doc-7"})]
 
 
-def test_supplement_without_base_version_appends_at_current_version() -> None:
+def test_supplement_without_base_version_is_rejected() -> None:
+    """Review-acceptance round 2, blocker 1: supplement cannot adopt the
+    current version as an unconfirmed review baseline."""
     client = FakeWeKnoraStore(
-        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "5"}}
+        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "9"}}
     )
     outcome = WeKnoraPromotionAdapter(client).execute(
         _task(
@@ -274,10 +281,60 @@ def test_supplement_without_base_version_appends_at_current_version() -> None:
             },
         )
     )
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "invalid_candidate"
+    assert "base_version" in str(outcome.failure_detail)
+    assert client.calls == []
+
+
+def test_supplement_with_confirmed_base_version_appends() -> None:
+    client = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "5"}}
+    )
+    outcome = WeKnoraPromotionAdapter(client).execute(
+        _task(
+            decision="supplement",
+            payload={
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "supplement",
+                "title": "",
+                "content": "Additional finding",
+                "target_object_id": "doc-7",
+                "base_version": "5",
+            },
+        )
+    )
     assert outcome.status == "accepted"
     update_kwargs = client.calls[1][1]
     assert update_kwargs["base_version"] == "5"
     assert update_kwargs["content"] == "existing\n\nAdditional finding"
+
+
+def test_targeted_update_without_conditional_update_support_goes_to_human_review() -> None:
+    """Without probe-proven conditional updates the adapter never performs a
+    version-protected targeted write."""
+    client = FakeWeKnoraStore(
+        conditional_update=False,
+        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "5"}},
+    )
+    outcome = WeKnoraPromotionAdapter(client).execute(
+        _task(
+            decision="replace",
+            payload={
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "replace",
+                "title": "T",
+                "content": "New body",
+                "target_object_id": "doc-7",
+                "base_version": "5",
+            },
+        )
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "conditional_update_unsupported"
+    assert client.calls == []
 
 
 def test_merge_uses_merged_content_and_review_base_version() -> None:
@@ -468,6 +525,7 @@ def test_read_failure_matrix(error, expected_status, expected_code) -> None:
                 "title": "",
                 "content": "x",
                 "target_object_id": "doc-7",
+                "base_version": "5",
             },
         )
     )
