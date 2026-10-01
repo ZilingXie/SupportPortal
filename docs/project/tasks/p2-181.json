@@ -106,6 +106,11 @@
       "at": "2026-10-01",
       "event": "followup",
       "summary": "第四轮验收（eb999da7，基线 bec205e0）未通过：main 新增 ee510a97/8e3c1d86/61728e4e，其中 61728e4e 属同一治理链路（Review memory kind/importance 字段链闭合 + 真实 stale-base 探针：保存更新前版本、服务端接受 stale base 判失败 + test_weknora_probe_capabilities）。第五轮整合：分支 reset 到 61728e4e，保留主线全部契约（kind/importance/memory 分类校验、stale-base 探针及其测试原样未动），最小化叠加治理修复——(1) HermesReviewDecision 在主线 kind/importance/memory 校验之上叠加 skill 边界（仅 no_change/human_review、禁带 WeKnora target）；HermesReviewReport 增 memory_available/downgraded_candidate_ids（不进 content hash），契约 bundle 已用 generate_hermes_contract_bundle.py 同步再生；(2) 携带第四轮的 client metadata semantic/adapter lineage/worker 接线（main 期间未动这些文件）；(3) hermes_knowledge_workflow 的 Summary 完整输入+Slack 三缺陷+memory 证据面（memory_list）+按候选类型降级以 3way 干净应用。旧 eb999da7 存档为 codex/governance-knowledge-curation-round4。"
+    },
+    {
+      "at": "2026-10-01",
+      "event": "followup",
+      "summary": "SupportPortal 治理层计划第七轮验收通过（对象 1c8ea8c7），释放 finalize→PR。rebase 到 main(01666d65) 时与主线 p2-182 round-4 验收/Preproduction 部署记录语义合并（r20261001-3856643 不含本叠加，随下一次常规发布携带）。"
     }
   ],
   "legacy_ids": [],
