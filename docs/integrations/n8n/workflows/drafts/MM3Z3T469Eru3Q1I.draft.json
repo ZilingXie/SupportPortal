@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-30T12:40:00.000Z",
+  "capturedAt": "2026-10-01T02:40:00.000Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "MM3Z3T469Eru3Q1I",
     "workflowName": "[kb]Build|Solved Cases",
     "snapshotKind": "draft",
-    "versionId": "adb1156a-e9b9-4be1-a3a0-30f85284803d",
-    "draftVersionId": "adb1156a-e9b9-4be1-a3a0-30f85284803d",
+    "versionId": "33b22cd2-3e10-4c75-817e-c7e3c02a0d2a",
+    "draftVersionId": "33b22cd2-3e10-4c75-817e-c7e3c02a0d2a",
     "publishedVersionId": "de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991",
-    "updatedAt": "2026-09-30T12:11:41.196Z",
+    "updatedAt": "2026-10-01T02:23:40.808Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
@@ -18,33 +18,18 @@
     "nodes": [
       {
         "parameters": {
-          "method": "POST",
-          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "Cookie",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "cookie",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
+          "authentication": "predefinedCredentialType",
           "jsonBody": "={\n  \"article\": {\n    \"body\": {{ JSON.stringify($('Convert_HTML').item.json.choices[0].message.content) }},\n    \"locale\": \"en-us\",\n    \"permission_group_id\": 32310220630420,\n    \"title\": \"{{ $('Generate_KB_Title').item.json.choices[0].message.content }}\",\n    \"user_segment_id\": 27214812738964,\n    \"draft\": true\n  },\n  \"notify_subscribers\": false\n}",
+          "method": "POST",
+          "nodeCredentialType": "zendeskApi",
           "options": {
             "redirect": {
               "redirect": {}
             }
-          }
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles"
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
@@ -54,7 +39,13 @@
         ],
         "id": "247276dd-fdcd-4de4-9c94-e23a2415de14",
         "name": "HTTP_Create_KB",
-        "disabled": true
+        "disabled": true,
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
       },
       {
         "parameters": {
@@ -253,22 +244,21 @@
           704
         ],
         "parameters": {
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
           "method": "GET",
           "options": {
             "redirect": {
               "redirect": {}
             }
           },
-          "sendHeaders": true,
-          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}.json"
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}.json",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi"
+        },
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
         }
       },
       {
@@ -281,14 +271,6 @@
           704
         ],
         "parameters": {
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
           "method": "GET",
           "options": {
             "redirect": {
@@ -303,7 +285,6 @@
               }
             }
           },
-          "sendHeaders": true,
           "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}/comments.json",
           "sendQuery": true,
           "queryParameters": {
@@ -313,6 +294,14 @@
                 "value": "100"
               }
             ]
+          },
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "zendeskApi"
+        },
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
           }
         }
       },
@@ -450,6 +439,39 @@
         "parameters": {
           "jsCode": "throw new Error(`Unexpected delivery receipt: ${JSON.stringify($input.first().json)}`);"
         }
+      },
+      {
+        "id": "6238a84b-6255-4d56-bdcd-5e1b8210e624",
+        "name": "Check Receipt Task",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -1152,
+          624
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c3-taskid",
+                "leftValue": "={{ $json.task_id }}",
+                "operator": {
+                  "operation": "notEmpty",
+                  "singleValue": true,
+                  "type": "string"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
       }
     ],
     "connections": {
@@ -523,7 +545,7 @@
         "main": [
           [
             {
-              "node": "Record Delivery Receipt",
+              "node": "Check Receipt Task",
               "type": "main",
               "index": 0
             }
@@ -569,6 +591,24 @@
             }
           ]
         ]
+      },
+      "Check Receipt Task": {
+        "main": [
+          [
+            {
+              "node": "Record Delivery Receipt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Raise Delivery Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -585,38 +625,7 @@
   },
   "restoreNotes": {
     "activeAtCapture": false,
-    "redactedValues": [
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.1.value",
-        "field": "Cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.2.value",
-        "field": "cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "Get Ticket Snapshot",
-        "path": "nodes.Get Ticket Snapshot.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "Get All Comments",
-        "path": "nodes.Get All Comments.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      }
-    ],
+    "redactedValues": [],
     "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
   }
 }

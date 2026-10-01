@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-09-30T12:18:46Z",
-  "source_base_commit": "b6bb3da6e8508ce9ead135b2dcbef9d5afab2ff2",
-  "registry_digest": "343b077b9c3863f1ed31177f3c0db491cb9dd05866f296a1e3d16f0afe85ed86",
+  "generated_at": "2026-10-01T02:28:26Z",
+  "source_base_commit": "29d602bbf94624d0ee07b679949b85f093bea59b",
+  "registry_digest": "301522d262ac5c6fe831ad1fb5ec1c41e25746da7a6ba49cfc79ca6a0e8f37bb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4703,6 +4703,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "快照校验",
           "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
           "result": "Validated 15 published snapshots, 3 divergent drafts, and 75 redacted values.（新增两条 draft 快照，脱敏各 5 处）"
+        },
+        {
+          "type": "document",
+          "label": "round 1 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 11 ops；CSD 8 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 33b22cd2-3e10-4c75-817e-c7e3c02a0d2a（15 节点）、CSD 草稿 381b6fb5-8076-4efb-8c94-cfec51563434（19 节点）。回读确认：三个 Zendesk 节点均为 predefinedCredentialType+zendeskApi(f85Z4a0savbF0l5r) 且无 inline Authorization（update 响应中 HARDCODED_CREDENTIALS 警告消失）；Check Delivery Receipt[0]→Check Receipt Task(task_id notEmpty)→[0]Record/[1]Raise 连接正确；Build Source Snapshot 含 schema_version 与 comment.total 完整性判定；active 版本 de3c1ca8/d7100b18 未变。快照 validate：15 published、3 divergent drafts、67 redacted values，两份 draft 快照零 inline Zendesk 认证。"
         }
       ],
       "source_refs": [
@@ -14890,9 +14896,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-ingestion-pipeline",
       "created_at": "2026-09-30",
-      "updated_at": "2026-09-30",
-      "summary": "按用户批准的 n8n 来源迁移计划实施：n8n 只负责取得并投递来源快照，Review/去重/知识写入移交 SupportPortal 治理模块与 Hermes。两条 KB 工作流草稿改造完成（Solved Cases 版本 adb1156a：36→14 节点；CSD 版本 eea4392d：26→18 节点），均未发布，active 版本不变（de3c1ca8/d7100b18）。变更：(1) 冻结 knowledge-source-v1 来源接收契约（提案：POST /automation/preproduction/v1/knowledge/sources，Bearer 复用 intake credential，回执 accepted/already_exists/stale_ignored，source_type+source_id 唯一、source_updated_at 为版本）；(2) Solved Cases 移除前置 AI 筛选（含客户未确认排除规则）、评论脱敏、KB 生成链、PostgreSQL 先写去重与 Tencent Memory 直写，新增 ticket 全量+评论分页获取（responseContainsNextURL）与完整性显式校验（next_page/评论数）后投递原始快照；(3) CSD 保留 JQL 为来源范围，Get_CSD_Detail 改 fields=*,comment，移除 AI 筛选/先写去重/Memory 直写，投递 csd_issue 契约体；(4) 去重以回执为准，重复/乱序由 already_exists/stale_ignored 吸收，超时节点级重试 3 次后失败告警，无需删去重记录恢复；(5) Zendesk 草稿与 Sheets 输出节点保留但断开禁用，待 Review 输出链对接（其表达式引用已删节点需届时更新）。",
-      "next_action": "等待独立验收（计划名：n8n 来源迁移计划）。发布前置：(a) SupportPortal 治理模块实现来源接收接口并在 Preproduction 可用（当前不存在，为外部依赖）；(b) 独立验收通过。发布后补端到端验证：首次投递/重复 already_exists/更新新版本/评论不完整失败/超时告警/旧 Memory Wiki 写入为零。",
+      "updated_at": "2026-10-01",
+      "summary": "按用户批准的 n8n 来源迁移计划实施：n8n 只负责取得并投递来源快照，Review/去重/知识写入移交 SupportPortal 治理模块与 Hermes。两条 KB 工作流草稿改造完成（Solved Cases 版本 adb1156a：36→14 节点；CSD 版本 eea4392d：26→18 节点），均未发布，active 版本不变（de3c1ca8/d7100b18）。变更：(1) 冻结 knowledge-source-v1 来源接收契约（提案：POST /automation/preproduction/v1/knowledge/sources，Bearer 复用 intake credential，回执 accepted/already_exists/stale_ignored，source_type+source_id 唯一、source_updated_at 为版本）；(2) Solved Cases 移除前置 AI 筛选（含客户未确认排除规则）、评论脱敏、KB 生成链、PostgreSQL 先写去重与 Tencent Memory 直写，新增 ticket 全量+评论分页获取（responseContainsNextURL）与完整性显式校验（next_page/评论数）后投递原始快照；(3) CSD 保留 JQL 为来源范围，Get_CSD_Detail 改 fields=*,comment，移除 AI 筛选/先写去重/Memory 直写，投递 csd_issue 契约体；(4) 去重以回执为准，重复/乱序由 already_exists/stale_ignored 吸收，超时节点级重试 3 次后失败告警，无需删去重记录恢复；(5) Zendesk 草稿与 Sheets 输出节点保留但断开禁用，待 Review 输出链对接（其表达式引用已删节点需届时更新）。 2026-10-01 首轮验收未通过后完成三项阻断修复并补充 CSD 完整性判定：CSD 契约体补 schema_version；两条流程回执校验增加非空 task_id 门禁（Check Receipt Task）；Get Ticket Snapshot/Get All Comments/两处 HTTP_Create_KB 的 inline Authorization 全部替换为 zendeskApi credential 引用（Zendesk account 3）；Build Source Snapshot 增加 fields.comment.total 对照 comments.length 的评论完整性判定。修复后草稿版本：Solved Cases 33b22cd2（15 节点）、CSD 381b6fb5（19 节点），active 版本仍未变。",
+      "next_action": "等待针对修复的复核（计划名：n8n 来源迁移计划，round 1 阻断项已全部处理）。发布前置：(a) SupportPortal 治理模块实现来源接收接口并在 Preproduction 可用（当前不存在，为外部依赖）；(b) 独立验收通过。发布后补端到端验证：首次投递/重复 already_exists/更新新版本/评论不完整失败/超时告警/旧 Memory Wiki 写入为零。",
       "acceptance_criteria": [
         "Solved Cases 草稿：无 AI 前置判断、无 Memory 直写节点、无先写去重；投递节点含 ticket+全部分页评论原始快照；评论分页不完整（next_page 非空或评论数\u003ccomment_count）显式失败且不投递。",
         "CSD 草稿：无 AI 前置判断、无 Memory 直写、无先写去重；JQL 来源范围不变；投递 issue 原始快照（fields=*,comment）。",
@@ -14922,6 +14928,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "快照校验",
           "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
           "result": "Validated 15 published snapshots, 3 divergent drafts, and 75 redacted values.（新增两条 draft 快照，脱敏各 5 处）"
+        },
+        {
+          "type": "document",
+          "label": "round 1 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 11 ops；CSD 8 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 33b22cd2-3e10-4c75-817e-c7e3c02a0d2a（15 节点）、CSD 草稿 381b6fb5-8076-4efb-8c94-cfec51563434（19 节点）。回读确认：三个 Zendesk 节点均为 predefinedCredentialType+zendeskApi(f85Z4a0savbF0l5r) 且无 inline Authorization（update 响应中 HARDCODED_CREDENTIALS 警告消失）；Check Delivery Receipt[0]→Check Receipt Task(task_id notEmpty)→[0]Record/[1]Raise 连接正确；Build Source Snapshot 含 schema_version 与 comment.total 完整性判定；active 版本 de3c1ca8/d7100b18 未变。快照 validate：15 published、3 divergent drafts、67 redacted values，两份 draft 快照零 inline Zendesk 认证。"
         }
       ],
       "source_refs": [

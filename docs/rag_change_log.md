@@ -25,8 +25,8 @@ For each new entry, record:
   independent review to Hermes and audited, controlled writes to SupportPortal;
   n8n only fetches and delivers source snapshots.
 - Affected files/config: n8n workflows MM3Z3T469Eru3Q1I (draft
-  `adb1156a`, 36→14 nodes) and GgDxPEWtW7ltT5BW (draft `eea4392d`, 26→18
-  nodes); contract proposal
+  `33b22cd2`, 36→15 nodes; first draft `adb1156a`) and GgDxPEWtW7ltT5BW
+  (draft `381b6fb5`, 26→19 nodes; first draft `eea4392d`); contract proposal
   `docs/integrations/n8n/knowledge_source_ingestion_contract.md`; snapshots and
   manifest under `docs/integrations/n8n/workflows/`. Active published versions
   (`de3c1ca8` / `d7100b18`) are unchanged.
@@ -37,8 +37,10 @@ For each new entry, record:
 - Verification: pre-change and post-change MCP readbacks (active==published
   before; drafts divergent after with expected nodes/connections/credentials);
   `python3 scripts/n8n/validate_workflow_snapshots.py` → 15 published, 3
-  divergent drafts, 75 redacted values. End-to-end delivery/receipt scenarios
-  remain unverified until the endpoint exists.
+  divergent drafts (67 redacted values after the 2026-10-01 review fixes:
+  credential-based Zendesk auth, `schema_version` on CSD payloads, CSD comment
+  completeness check, non-empty `task_id` receipt gate). End-to-end
+  delivery/receipt scenarios remain unverified until the endpoint exists.
 
 ## 2026-09-30 - RAG outbound model policy convergence (p2-160 single-model tiering)
 

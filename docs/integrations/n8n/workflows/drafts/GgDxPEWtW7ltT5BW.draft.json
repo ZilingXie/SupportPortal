@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-30T12:40:00.000Z",
+  "capturedAt": "2026-10-01T02:40:00.000Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD",
     "snapshotKind": "draft",
-    "versionId": "eea4392d-a76e-47ef-b13b-3f9e93c7cee0",
-    "draftVersionId": "eea4392d-a76e-47ef-b13b-3f9e93c7cee0",
+    "versionId": "381b6fb5-8076-4efb-8c94-cfec51563434",
+    "draftVersionId": "381b6fb5-8076-4efb-8c94-cfec51563434",
     "publishedVersionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
-    "updatedAt": "2026-09-30T12:11:42.863Z",
+    "updatedAt": "2026-10-01T02:24:06.176Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
@@ -216,33 +216,18 @@
       },
       {
         "parameters": {
-          "method": "POST",
-          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles",
-          "sendHeaders": true,
-          "headerParameters": {
-            "parameters": [
-              {
-                "name": "Authorization",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "Cookie",
-                "value": "__REDACTED__"
-              },
-              {
-                "name": "cookie",
-                "value": "__REDACTED__"
-              }
-            ]
-          },
-          "sendBody": true,
-          "specifyBody": "json",
+          "authentication": "predefinedCredentialType",
           "jsonBody": "={\n  \"article\": {\n    \"body\": {{ JSON.stringify($('Convert_HTML').item.json.choices[0].message.content) }},\n    \"locale\": \"en-us\",\n    \"permission_group_id\": 32310220630420,\n    \"title\": \"{{ $('Generate_KB_Title').item.json.choices[0].message.content }}\",\n    \"user_segment_id\": 27214812738964,\n    \"draft\": true\n  },\n  \"notify_subscribers\": false\n}",
+          "method": "POST",
+          "nodeCredentialType": "zendeskApi",
           "options": {
             "redirect": {
               "redirect": {}
             }
-          }
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles"
         },
         "type": "n8n-nodes-base.httpRequest",
         "typeVersion": 4.2,
@@ -252,7 +237,13 @@
         ],
         "id": "f5669ce8-c935-465a-9586-7fb451c6cbae",
         "name": "HTTP_Create_KB",
-        "disabled": true
+        "disabled": true,
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
       },
       {
         "parameters": {
@@ -366,7 +357,7 @@
           1088
         ],
         "parameters": {
-          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nreturn [{ json: {\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
+          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nconst comment = fields.comment;\nif (comment && typeof comment.total === 'number' && Array.isArray(comment.comments) && comment.comments.length < comment.total) {\n  throw new Error(`CSD comment pagination incomplete: got ${comment.comments.length} of ${comment.total} (issue ${detail.key})`);\n}\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
         }
       },
       {
@@ -490,6 +481,39 @@
         "parameters": {
           "jsCode": "throw new Error(`Unexpected delivery receipt: ${JSON.stringify($input.first().json)}`);"
         }
+      },
+      {
+        "id": "aa3102c8-e763-4a9a-9987-3e393363e551",
+        "name": "Check Receipt Task",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -176,
+          1008
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c4-taskid",
+                "leftValue": "={{ $json.task_id }}",
+                "operator": {
+                  "operation": "notEmpty",
+                  "singleValue": true,
+                  "type": "string"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
       }
     ],
     "connections": {
@@ -603,7 +627,7 @@
         "main": [
           [
             {
-              "node": "Record Delivery Receipt",
+              "node": "Check Receipt Task",
               "type": "main",
               "index": 0
             }
@@ -649,6 +673,24 @@
             }
           ]
         ]
+      },
+      "Check Receipt Task": {
+        "main": [
+          [
+            {
+              "node": "Record Delivery Receipt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Raise Delivery Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -675,24 +717,6 @@
         "nodeName": "get_access_token",
         "path": "nodes.get_access_token.parameters.bodyParameters.parameters.4.value",
         "field": "password",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.1.value",
-        "field": "Cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "HTTP_Create_KB",
-        "path": "nodes.HTTP_Create_KB.parameters.headerParameters.parameters.2.value",
-        "field": "cookie",
         "reason": "secret_named_field"
       }
     ],

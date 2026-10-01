@@ -35,6 +35,8 @@
 | `zendesk_ticket` | Zendesk ticket ID | `{ ticket: 完整 ticket 对象, comments: 全部分页后的评论对象 }` | `{ zendesk_url }` |
 | `csd_issue` | Jira issue key（如 CSD-12345） | `{ issue: 完整 Jira issue 对象（fields=*,comment） }` | `{ jira_url }` |
 
+CSD 快照以 `fields.comment.total` 对照 `comments.length` 判定完整性（Jira 单 issue 详情的 comment 字段超过 `maxResults` 时截断）；判定不完整即显式失败，不投递半份快照。
+
 ## 回执契约
 
 HTTP 2xx 且 body 含以下 `status` 之一即视为投递成功：
@@ -45,8 +47,8 @@ HTTP 2xx 且 body 含以下 `status` 之一即视为投递成功：
 | `already_exists` | 同 source_id 且同 source_updated_at 已接收，幂等重投被吸收 | 已有任务 ID |
 | `stale_ignored` | 同 source_id 已存在更新的 source_updated_at，旧版本乱序到达被忽略 | 已有任务 ID |
 
-- 唯一性键：`source_type + source_id`；版本：`source_updated_at`（严格比较）。
-- 回执异常（非 2xx、超时、2xx 但 status 不在三者之内）都使 n8n 执行失败并触发 `[ops]Error Alert`，不允许静默吞掉。
+- 唯一性键：`source_type + source_id`；版本：`source_updated_at`（严格比较）。三种成功状态的回执都必须携带非空 `task_id`（`accepted` 为新建任务 ID，其余为已有任务 ID）；`task_id` 缺失或为空视为异常回执。
+- 回执异常（非 2xx、超时、2xx 但 status 不在三者之内、或 `task_id` 缺失/为空）都使 n8n 执行失败并触发 `[ops]Error Alert`，不允许静默吞掉。
 
 ## 幂等与重投
 
@@ -56,10 +58,11 @@ HTTP 2xx 且 body 含以下 `status` 之一即视为投递成功：
 
 ## n8n 侧不变量（两条来源流程共用）
 
-1. 投递前必须完成**评论分页完整性校验**（`next_page` 为空、评论数不少于来源计数），不完整时显式失败，不投递半份快照。
+1. 投递前必须完成**评论完整性校验**（Zendesk：`next_page` 为空且评论数不少于 `comment_count`；CSD：`fields.comment.comments.length` 不少于 `fields.comment.total`），不完整时显式失败，不投递半份快照。
 2. 投递原始内容，不做脱敏或改写（脱敏与质量判断属于 Review/写入侧）。
 3. 原有 Zendesk KB 草稿与 Google Sheets 输出节点保留在画布但与主链断开并禁用，待 Review 通过后的输出链对接；旧 Memory Wiki 直写节点整体删除。
 4. 定时扫描（CSD JQL）与触发条件（Zendesk SOLVED）只决定**来源范围**，不决定知识质量。
+5. Zendesk 读取与输出节点一律使用 n8n credential 引用（`zendeskApi`，复用 `[case]Intake|ECS Route` 的 `Zendesk account 3`），不在节点参数中保存 inline Authorization/Cookie；回执成功与否由 status 三态 **加** 非空 `task_id` 共同判定（`Check Delivery Receipt` + `Check Receipt Task`）。
 
 ## 开放项
 
