@@ -22,19 +22,31 @@ PG_CTL="$(command -v pg_ctl)" || { echo "pg_ctl not found on PATH" >&2; exit 1; 
 echo "pg_ctl resolved: $PG_CTL"
 
 STOPPED=0
+stop_and_clean() {
+  # Stop the instance and remove the data directory ONLY after confirming
+  # no postgres process remains. Fail closed: if the stop fails and the
+  # postmaster is still alive, the data directory is KEPT (destroying the
+  # data directory of a running cluster is never acceptable) and the
+  # caller/operator must recover it manually.
+  "$PG_CTL" -D "$CLUSTER_DIR" stop > /dev/null 2>&1
+  STOPPED=1
+  if pgrep -f "postgres -D $CLUSTER_DIR" > /dev/null 2>&1; then
+    echo "cleanup FAILED: postgres still running for $CLUSTER_DIR; data directory KEPT" >&2
+    return 1
+  fi
+  rm -rf "$CLUSTER_DIR"
+  if [[ -d "$CLUSTER_DIR" ]]; then
+    echo "cleanup FAILED: $CLUSTER_DIR still exists" >&2
+    return 1
+  fi
+  echo "cleanup verified: $CLUSTER_DIR removed and no postgres process remains"
+}
 cleanup() {
   # Safety net for early exits (set -e): the failure path must also leave
-  # nothing behind — stop the instance AND remove the data directory.
+  # nothing behind — attempt the same fail-closed stop-and-clean.
   if [[ "$STOPPED" != "1" ]]; then
     set +e
-    "$PG_CTL" -D "$CLUSTER_DIR" stop > /dev/null 2>&1
-    STOPPED=1
-    rm -rf "$CLUSTER_DIR"
-    if [[ -d "$CLUSTER_DIR" ]]; then
-      echo "cleanup FAILED: $CLUSTER_DIR still exists" >&2
-    else
-      echo "cleanup: $CLUSTER_DIR removed (failure-path trap)"
-    fi
+    stop_and_clean
     set -Eeuo pipefail
   fi
 }
@@ -60,10 +72,5 @@ TICKET_DB_DSN="postgresql://testuser@127.0.0.1:${PORT}/${DB_NAME}" \
 .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py \
   -k "solved_close_records_mirror" -q
 echo "=== 5. stop, then clean and verify ==="
-"$PG_CTL" -D "$CLUSTER_DIR" stop > /dev/null 2>&1
-STOPPED=1
-echo "pg_ctl stop: ok"
-rm -rf "$CLUSTER_DIR"
-[[ ! -d "$CLUSTER_DIR" ]] || { echo "cleanup failed: $CLUSTER_DIR still exists" >&2; exit 1; }
-echo "cleanup verified: $CLUSTER_DIR removed and gone"
+stop_and_clean
 echo "code baseline: $(git -C "$REPO" rev-parse HEAD)"

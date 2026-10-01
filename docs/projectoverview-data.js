@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T06:31:25Z",
-  "source_base_commit": "38566439b19a57a4ec647e9ba2ebce2764799c96",
-  "registry_digest": "909b177ba1c03bf35e6a4b23602951ee28613fccb82546b4a7464eedf0bed657",
+  "generated_at": "2026-10-01T06:52:53Z",
+  "source_base_commit": "4da1bb295c77cd5bc0e4cdb42fa67e3d18aabf49",
+  "registry_digest": "7147f7db64e9be3c40c12d652577dab1e4166e51c351697e1676ae34496425c8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1331,8 +1331,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 本次运行的 stdout/stderr 原样捕获（无任何脚本外前缀），\n脚本自含 code baseline 行；失败路径清理验证见 pg-test-output-failure-path.txt",
-          "details": "2026-10-01 从零复现实录（在已合并的 38566439b19a 上直接运行修正版脚本）：\n成功路径 artifact=pg-test-output.txt（stdout/stderr 原样捕获，无脚本外前缀；脚本自含 code baseline: 38566439b19a…）：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 1.06s → stop ok → cleanup verified。\n失败路径 artifact=pg-test-output-failure-path.txt（PP_REPO=/nonexistent 诱发第 4 步失败）：EXIT trap 停实例+删目录（「cleanup: /tmp/pp-pg-r9 removed (failure-path trap)」），exit=1，目录确认消失。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
+          "details": "2026-10-01 从零复现实录（在 4da1bb295c77 上直接运行当前脚本）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 0.78s → cleanup verified（removed and no postgres process remains）→ code baseline 4da1bb29…。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt：对真实运行中的实例以 shimmed PG_CTL（参数表含 stop 即 exit 1）调用脚本内 stop_and_clean 函数——输出「cleanup FAILED: postgres still running for /tmp/pp-pg-r9; data directory KEPT」+ rc=1，双向断言（进程存活/目录保留）通过，随后手动恢复（真实 pg_ctl stop + rm）。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         },
         {
           "type": "test",
@@ -13899,8 +13899,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 本次运行的 stdout/stderr 原样捕获（无任何脚本外前缀），\n脚本自含 code baseline 行；失败路径清理验证见 pg-test-output-failure-path.txt",
-          "details": "2026-10-01 从零复现实录（在已合并的 38566439b19a 上直接运行修正版脚本）：\n成功路径 artifact=pg-test-output.txt（stdout/stderr 原样捕获，无脚本外前缀；脚本自含 code baseline: 38566439b19a…）：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 1.06s → stop ok → cleanup verified。\n失败路径 artifact=pg-test-output-failure-path.txt（PP_REPO=/nonexistent 诱发第 4 步失败）：EXIT trap 停实例+删目录（「cleanup: /tmp/pp-pg-r9 removed (failure-path trap)」），exit=1，目录确认消失。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
+          "details": "2026-10-01 从零复现实录（在 4da1bb295c77 上直接运行当前脚本）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 0.78s → cleanup verified（removed and no postgres process remains）→ code baseline 4da1bb29…。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt：对真实运行中的实例以 shimmed PG_CTL（参数表含 stop 即 exit 1）调用脚本内 stop_and_clean 函数——输出「cleanup FAILED: postgres still running for /tmp/pp-pg-r9; data directory KEPT」+ rc=1，双向断言（进程存活/目录保留）通过，随后手动恢复（真实 pg_ctl stop + rm）。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         }
       ],
       "source_refs": [
