@@ -1,0 +1,725 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-01T03:30:00.000Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "GgDxPEWtW7ltT5BW",
+    "workflowName": "[kb]Build|CSD",
+    "snapshotKind": "draft",
+    "versionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "draftVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
+    "publishedVersionId": "d7100b18-1524-468a-ac6f-4d6cbccce67c",
+    "updatedAt": "2026-10-01T03:11:36.377Z",
+    "parentFolderId": "SLMnELm0z3huA2Cr"
+  },
+  "workflow": {
+    "name": "[kb]Build|CSD",
+    "description": "定时扫描近期已解决的 CSD Bug（保留现有 JQL 作为来源范围），取得完整 issue 快照（fields=*,comment）后投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；移除 AI 前置筛选、本地先写去重与旧 Memory Wiki 直写；Zendesk KB 草稿节点保留但已断开禁用，待 Review 输出链对接。",
+    "nodes": [
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://oauth.agoralab.co/oauth/token",
+          "sendBody": true,
+          "contentType": "form-urlencoded",
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "grant_type",
+                "value": "password"
+              },
+              {
+                "name": "client_id",
+                "value": "4k1O3js73PX7FjjN7mH9CGc7FIWlHTdc"
+              },
+              {
+                "name": "=client_secret",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "username",
+                "value": "HsqJMTAjKXIDQ1P4jbwxNecl9FQc1kVW"
+              },
+              {
+                "name": "password",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3,
+        "position": [
+          -2192,
+          1232
+        ],
+        "id": "3632676f-7f3b-4a47-a2b9-8599159d0619",
+        "name": "get_access_token",
+        "retryOnFail": true
+      },
+      {
+        "parameters": {
+          "batchSize": "=1",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          -1520,
+          1232
+        ],
+        "id": "f4e552ed-77d4-4e7a-9cd2-0fd8890a1297",
+        "name": "Loop Over Items"
+      },
+      {
+        "parameters": {
+          "fieldToSplitOut": "output",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.splitOut",
+        "typeVersion": 1,
+        "position": [
+          -2416,
+          448
+        ],
+        "id": "334d12d2-e922-42ab-9945-1cd0e13ee365",
+        "name": "Split Out",
+        "disabled": true
+      },
+      {
+        "parameters": {
+          "aggregate": "aggregateAllItemData",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.aggregate",
+        "typeVersion": 1,
+        "position": [
+          -1296,
+          896
+        ],
+        "id": "04accd08-1028-4511-9342-2995edb45842",
+        "name": "Aggregate"
+      },
+      {
+        "parameters": {
+          "url": "https://jira.agoralab.co/rest/api/2/search",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "=project = CSD AND status = RESOLVED AND Updated > -24h AND created > -60d AND resolution != \"不做任何操作（Won't Do）\" AND resolution != \"重复（Duplicate）\" AND resolution !=  \"拒绝（Reject）\" AND type = Bug ORDER BY updated ASC"
+              },
+              {
+                "name": "fields",
+                "value": "description, assignee, customfield_10700, customfield_13915, comment"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "accessToken",
+                "value": "={{ $json.body.access_token }}"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1968,
+          1232
+        ],
+        "id": "b344fd9d-0d39-4ae9-b6de-452fd3d8fe70",
+        "name": "Query_CSD_list",
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "9byFt3NhaDVn6IKb",
+            "name": "jira_zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Access the issues array from the previous node\nconst issues = $input.first().json.issues || [];\n\n// Map the data into the standard n8n format: an array of objects\nreturn issues.map((item, index) => {\n  return {\n    json: {\n      index: index + 1,\n      url: item.self\n    }\n  };\n});"
+        },
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1744,
+          1232
+        ],
+        "id": "3a0d707f-27be-4f5e-a79b-79edd9a0963d",
+        "name": "Url_list"
+      },
+      {
+        "parameters": {
+          "url": "={{ $json.url }}",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "fields",
+                "value": "*,comment"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "accessToken",
+                "value": "={{ $('get_access_token').item.json.body.access_token }}"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          }
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1296,
+          1088
+        ],
+        "id": "f3d13846-191a-4f01-b488-cf2747c4fd2c",
+        "name": "Get_CSD_Detail",
+        "retryOnFail": true,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "9byFt3NhaDVn6IKb",
+            "name": "jira_zac"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "jsonBody": "={\n  \"article\": {\n    \"body\": {{ JSON.stringify($('Convert_HTML').item.json.choices[0].message.content) }},\n    \"locale\": \"en-us\",\n    \"permission_group_id\": 32310220630420,\n    \"title\": \"{{ $('Generate_KB_Title').item.json.choices[0].message.content }}\",\n    \"user_segment_id\": 27214812738964,\n    \"draft\": true\n  },\n  \"notify_subscribers\": false\n}",
+          "method": "POST",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://agoraio.zendesk.com/api/v2/help_center/sections/33667062804116/articles"
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1456,
+          1088
+        ],
+        "id": "f5669ce8-c935-465a-9586-7fb451c6cbae",
+        "name": "HTTP_Create_KB",
+        "disabled": true,
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "date",
+                "value": "={{$now.toISODate()}}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -1072,
+          896
+        ],
+        "id": "1ffb5967-3c4a-447b-bc94-2ebe3fb9b874",
+        "name": "Execution Data"
+      },
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {}
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3,
+        "position": [
+          -2416,
+          1232
+        ],
+        "id": "d4ba4cac-6268-4ac6-80c5-4acc53e03d09",
+        "name": "Schedule Trigger"
+      },
+      {
+        "parameters": {},
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1,
+        "position": [
+          -2416,
+          672
+        ],
+        "id": "8b7d8a8b-7edc-4ea0-bbeb-9bf639cc2efa",
+        "name": "When clicking ‘Execute workflow’"
+      },
+      {
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "csd",
+                "value": "={{ $('Get_CSD_Detail').item.json.key }}"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          2800,
+          1168
+        ],
+        "id": "aba0d0fa-1b9f-427c-86ba-ef1df21316b3",
+        "name": "Execution Data2"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://support.stellarix.space/api/engineer/knowledge/articles",
+          "sendBody": true,
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "title",
+                "value": "={{ $('Generate_KB_Title').item.json.choices[0].message.content }}"
+              },
+              {
+                "name": "source_url",
+                "value": "={{ $('HTTP_Create_KB').item.json.article.url }}"
+              },
+              {
+                "name": "content",
+                "value": "={{ $('Geneate_KB_Content').item.json.choices[0].message.content }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          2576,
+          1088
+        ],
+        "id": "58a70c4e-3dfc-4c63-9d8a-2af5da6064e4",
+        "name": "2_rag",
+        "retryOnFail": true,
+        "disabled": true
+      },
+      {
+        "id": "644d8556-d08e-45f3-91fd-b4d888a8f69f",
+        "name": "Build Source Snapshot",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1072,
+          1088
+        ],
+        "parameters": {
+          "jsCode": "const detail = $input.first().json;\nif (!detail || !detail.key || !detail.fields) {\n  throw new Error('CSD issue snapshot missing key or fields');\n}\nconst fields = detail.fields;\nif (!fields.updated) {\n  throw new Error('CSD issue snapshot missing updated timestamp');\n}\nconst comment = fields.comment;\nif (!comment || typeof comment !== 'object' || !Array.isArray(comment.comments) || typeof comment.total !== 'number') {\n  throw new Error(`CSD comment structure missing or malformed (issue ${detail.key})`);\n}\nif (comment.comments.length < comment.total) {\n  throw new Error(`CSD comment pagination incomplete: got ${comment.comments.length} of ${comment.total} (issue ${detail.key})`);\n}\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(detail.key),\n  source_updated_at: fields.updated,\n  payload: { issue: detail },\n  references: { jira_url: `https://jira.agoralab.co/browse/${detail.key}` }\n} }];"
+        }
+      },
+      {
+        "id": "dc402532-22d2-4dfa-a7d0-d353a8db2235",
+        "name": "Deliver Source Snapshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -848,
+          1088
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "jsonBody": "={{ $json }}",
+          "method": "POST",
+          "options": {
+            "timeout": 30000
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources"
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "id": "e2fa9fdc-8e0f-47e7-ab44-de16de50df84",
+        "name": "Check Delivery Receipt",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -624,
+          1088
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "or",
+            "conditions": [
+              {
+                "id": "c2-accepted",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "accepted"
+              },
+              {
+                "id": "c2-already",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "already_exists"
+              },
+              {
+                "id": "c2-stale",
+                "leftValue": "={{ $json.status }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "stale_ignored"
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
+      },
+      {
+        "id": "9f04f7a3-c465-440e-90b3-0c7e949e6097",
+        "name": "Record Delivery Receipt",
+        "type": "n8n-nodes-base.executionData",
+        "typeVersion": 1.1,
+        "position": [
+          -400,
+          1008
+        ],
+        "parameters": {
+          "dataToSave": {
+            "values": [
+              {
+                "key": "status",
+                "value": "={{ $json.status }}"
+              },
+              {
+                "key": "task_id",
+                "value": "={{ $json.task_id }}"
+              },
+              {
+                "key": "source_id",
+                "value": "={{ $('Build Source Snapshot').item.json.source_id }}"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "f2531518-45e5-49e4-a7a3-13a742f3837b",
+        "name": "Raise Delivery Error",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -400,
+          1152
+        ],
+        "parameters": {
+          "jsCode": "throw new Error(`Unexpected delivery receipt: ${JSON.stringify($input.first().json)}`);"
+        }
+      },
+      {
+        "id": "aa3102c8-e763-4a9a-9987-3e393363e551",
+        "name": "Check Receipt Task",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -176,
+          1008
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "c4-taskid",
+                "leftValue": "={{ $json.task_id }}",
+                "operator": {
+                  "operation": "notEmpty",
+                  "singleValue": true,
+                  "type": "string"
+                },
+                "rightValue": ""
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "get_access_token",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "get_access_token": {
+        "main": [
+          [
+            {
+              "node": "Query_CSD_list",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Query_CSD_list": {
+        "main": [
+          [
+            {
+              "node": "Url_list",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Url_list": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Items": {
+        "main": [
+          [
+            {
+              "node": "Aggregate",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Get_CSD_Detail",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Aggregate": {
+        "main": [
+          [
+            {
+              "node": "Execution Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get_CSD_Detail": {
+        "main": [
+          [
+            {
+              "node": "Build Source Snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Source Snapshot": {
+        "main": [
+          [
+            {
+              "node": "Deliver Source Snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deliver Source Snapshot": {
+        "main": [
+          [
+            {
+              "node": "Check Delivery Receipt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Delivery Receipt": {
+        "main": [
+          [
+            {
+              "node": "Check Receipt Task",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Raise Delivery Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record Delivery Receipt": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "2_rag": {
+        "main": [
+          [
+            {
+              "node": "Execution Data2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Execution Data2": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Receipt Task": {
+        "main": [
+          [
+            {
+              "node": "Record Delivery Receipt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Raise Delivery Error",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "executionOrder": "v1",
+      "timeSavedMode": "fixed",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "callerPolicy": "workflowsFromSameOwner",
+      "binaryMode": "separate",
+      "availableInMCP": true
+    },
+    "nodeGroups": [],
+    "tags": []
+  },
+  "restoreNotes": {
+    "activeAtCapture": false,
+    "redactedValues": [
+      {
+        "nodeName": "get_access_token",
+        "path": "nodes.get_access_token.parameters.bodyParameters.parameters.2.value",
+        "field": "=client_secret",
+        "reason": "secret_named_field"
+      },
+      {
+        "nodeName": "get_access_token",
+        "path": "nodes.get_access_token.parameters.bodyParameters.parameters.4.value",
+        "field": "password",
+        "reason": "secret_named_field"
+      }
+    ],
+    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+  }
+}
