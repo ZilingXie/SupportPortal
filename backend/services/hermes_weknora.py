@@ -140,6 +140,8 @@ def build_weknora_submissions(
             "proposed_content": str(decision.get("proposed_content") or ""),
             "target_object": decision.get("target_object"),
             "target_version": decision.get("target_version"),
+            "kind": str(decision.get("kind") or ""),
+            "importance": decision.get("importance"),
             "rationale": str(decision.get("rationale") or ""),
             "confidence": decision.get("confidence"),
             "source_references": list(decision.get("source_references") or []),

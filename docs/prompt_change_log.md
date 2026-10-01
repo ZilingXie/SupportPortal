@@ -1,5 +1,11 @@
 # Prompt Change Log
 
+## 2026-10-01 - Review 输出为 memory 候选补 kind/importance 分类字段（p2-182 修复轮 3）
+
+- Area: `hermes-knowledge-review-manual-v1`（Review 角色）输出合同扩展——decision 对象新增 `kind`（memory 候选必填：目标记忆系统的类别标签，取自观察到的 memory 条目；其余类型为空）与 `importance`（memory 候选的整数优先权重；其余为 null）。`HermesReviewDecision` 模型同步（`extra="forbid"`，缺 kind 的 memory 决策校验失败），消费桥与 `build_weknora_submissions` 透传至 WeKnora promotion 候选，使 Review→桥→Adapter→Client 端到端可按官方 memory 形态 `{kind, content, importance}` 写入（hermes 契约 bundle 已再生，`HermesReviewReport.v1.schema.json` + manifest 哈希更新）。
+- 行为：无 kind 的 memory 决策在 Review 合同层失败（不会作为可写候选进入队列）；prompt 侧要求 Review 为 memory 分类给出 kind/importance。
+- 部署提示：prompt 内容变更——Preproduction 启用前须按流程 prepare+activate 新 Prompt Release（与 p2-181 既有要求一致）。
+
 ## 2026-09-30 - Hermes knowledge-governance Summary/Review manuals (p2-181)
 
 - Area: Hermes engineer-case knowledge governance — new Summary and Review
