@@ -14,14 +14,15 @@ SupportPortal 是 WeKnora 知识与记忆的**唯一写入方**：Hermes Summary
 - 失效：`reopen_hermes_case` 在同一事务将 `queued/active` 任务置为 `invalidated`。
 - `outcome_unknown` 不自动重试（禁止盲写），人工核对后用 `requeue_weknora_promotion` 复位；复位后 worker 重跑时 Adapter **先对已记录的 weknora_object_id 做回读核对**（内容/版本一致→直接 accepted；对象不存在→按原幂等键正常写入；不一致→human_review），不会对已知对象二次创建。
 - 回读证明写入：Adapter 的回读必须核对**对象一致、内容一致、版本一致**（receipt 与回读版本都存在时），任何不一致按 `readback_failed` 记 `outcome_unknown`，不算 accepted。
-- 版本保护：`replace`/`merge` 必须携带 Review 依据的 `base_version`（缺失=候选不完整，拒绝写入）；`supplement` 若带 `base_version` 同样参与比对。目标当前版本与依据不一致一律 human_review，绝不覆盖。
+- 版本保护：**全部定向决策（supplement/replace/merge）都必须携带 Review 依据的 `base_version`**（缺失=候选不完整，拒绝写入，绝不把未确认的当前版本当作 Review 基准）；目标当前版本与依据不一致或不可读一律 human_review，绝不覆盖。此外 update 操作须在契约中声明 `conditional_update: true`（探针证据），否则定向更新转 human_review。
+- 官方 Memory 形态：官方接口是 `POST /api/v1/memory/items`（`kind`/`content`/`importance`）+ 列表语义的读取；Client 用 `body` 模板精确发出该形状（不发送官方未定义的 user_id/幂等键/metadata），读取用 `memory_list`（GET+`query_params`）。memory 候选的 `kind`/`importance` 由 Review 候选携带（`WeKnoraPromotionCandidate.kind/importance`），缺失时按模板要求 fail-closed。
 
 ## 配置键（全部 fail-closed，缺省即不启用）
 
 | 键 | 用途 |
 | --- | --- |
 | `WEKNORA_BASE_URL` / `WEKNORA_API_TOKEN` | 服务地址与凭证 |
-| `WEKNORA_API_CONTRACT_JSON` | 探针固定的 API 契约 JSON：每个操作 `{method,path}`（path 支持 `{placeholder}` 动态对象路径，占位符取请求体字段并 URL 编码），及可选字段名映射（`object_id_key`、`version_key`、`results_key`、`content_key`、`idempotency_key_field`、`base_version_field`、`identity_field`、`tenant_field`）。object id 归一在配置键之后自动回退 `object_id`→`id`（官方记忆 API 返回 `id`） |
+| `WEKNORA_API_CONTRACT_JSON` | 探针固定的 API 契约 JSON：每个操作 `{method,path}`（path 支持 `{placeholder}` 动态对象路径，占位符取语义字段并 URL 编码）、可选 `body` 请求模板（`{"字段": {"$": "语义字段"}}` 或字面量；**模板存在时只发模板字段**，语义字段含 content/title/kind/importance/object_id/base_version/idempotency_key/identity/metadata/tenant_id，被引用字段缺失/空值 fail-closed，不向未定义字段的 API 泄漏 user_id/幂等键/metadata）、可选 `query_params` 模板（渲染进 URL query，GET 操作不带 body）、update 操作可选 `conditional_update: true`（**缺省视为不支持**：定向更新在无此声明时转 human_review）。字段名映射（`object_id_key`、`version_key`、`results_key`、`content_key` 等）用于无模板的旧式契约。object id 归一在配置键之后自动回退 `object_id`→`id`（官方记忆 API 返回 `id`） |
 | `WEKNORA_AUTH_HEADER_NAME` / `WEKNORA_AUTH_SCHEME` | 认证头名与 scheme（默认 `Authorization` / `Bearer`） |
 | `WEKNORA_KNOWLEDGE_BASE_ID` | 知识库 ID（知识操作必需） |
 | `WEKNORA_MEMORY_IDENTITY` | 共享 Hermes 服务身份（记忆操作必需；未固定时 memory 候选转 human_review，不写全局记忆） |

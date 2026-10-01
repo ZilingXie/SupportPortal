@@ -356,6 +356,9 @@ class FakeWeKnoraWriteClient:
     def has_memory_identity(self) -> bool:
         return self.memory_identity
 
+    def supports_conditional_update(self, candidate_type: str) -> bool:
+        return True
+
     def knowledge_read(self, *, object_id: str) -> dict:
         self.calls.append(("knowledge_read", {"object_id": object_id}))
         return dict(self.objects[object_id])
@@ -380,22 +383,22 @@ class FakeWeKnoraWriteClient:
             row["title"] = title
         return {"object_id": object_id, "version": row["version"], "receipt": {"ok": True}}
 
-    def memory_query(self, *, query: str) -> list[dict]:
-        self.calls.append(("memory_query", {"query": query}))
+    def memory_list(self) -> list[dict]:
+        self.calls.append(("memory_list", {}))
         return [
             dict(row) for row in self.objects.values()
             if row["object_id"].startswith("mem-")
         ]
 
-    def memory_create(self, *, content: str, idempotency_key: str) -> dict:
-        self.calls.append(("memory_create", {"key": idempotency_key}))
+    def memory_create(self, *, content: str, idempotency_key: str, kind: str = "", importance=None) -> dict:
+        self.calls.append(("memory_create", {"key": idempotency_key, "kind": kind}))
         object_id = f"mem-new-{len(self.objects)}"
         self.objects[object_id] = {
             "object_id": object_id, "version": "1", "title": "", "content": content,
         }
         return {"object_id": object_id, "version": "1", "receipt": {"ok": True}}
 
-    def memory_update(self, *, object_id: str, base_version: str, content: str, idempotency_key: str) -> dict:
+    def memory_update(self, *, object_id: str, base_version: str, content: str, idempotency_key: str, kind: str = "", importance=None) -> dict:
         self.calls.append(("memory_update", {"object_id": object_id, "key": idempotency_key}))
         row = self.objects[object_id]
         row["version"] = str(int(row["version"]) + 1)

@@ -9,6 +9,7 @@ contract is present, so an unconfigured deployment never issues a request.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -30,7 +31,7 @@ WEKNORA_OPERATIONS = (
     "knowledge_create",
     "knowledge_update",
     "knowledge_versions",
-    "memory_query",
+    "memory_list",
     "memory_create",
     "memory_update",
     "memory_confirm",
@@ -188,26 +189,52 @@ class WeKnoraClient:
             headers[self._auth_header_name] = f"{scheme} {self._api_token}".strip()
         return headers
 
-    def _render_path(self, path: str, json_body: dict[str, Any] | None) -> str:
+    def _render_path(self, path: str, semantic: dict[str, Any] | None) -> str:
         """Substitute ``{placeholder}`` tokens in a pinned contract path.
 
         REST APIs address objects through the URL (``/knowledge/{object_id}``);
-        placeholders resolve from the request body values, URL-quoted.  A
-        placeholder without a body value fails closed instead of being sent
+        placeholders resolve from the semantic request values, URL-quoted.  A
+        placeholder without a value fails closed instead of being sent
         literally.
         """
         rendered = str(path)
         for token in set(_PATH_PLACEHOLDER.findall(rendered)):
-            if json_body is None or str(token) not in json_body:
+            if semantic is None or str(token) not in semantic:
                 raise WeKnoraError(
                     f"WeKnora path placeholder {{{token}}} has no request value",
                     failure_kind="not_configured",
                 )
             rendered = rendered.replace(
                 "{" + str(token) + "}",
-                urllib.parse.quote(str(json_body[str(token)]), safe=""),
+                urllib.parse.quote(str(semantic[str(token)]), safe=""),
             )
         return rendered
+
+    def _render_template(
+        self, template: dict[str, Any], semantic: dict[str, Any], *, operation: str, kind: str
+    ) -> dict[str, Any]:
+        """Render a request-field template against the semantic inputs.
+
+        Template values are either literals or ``{"$": "semantic_name"}``.
+        A referenced semantic field that is absent, None, or empty fails
+        closed: the pinned official contract defines that field as required,
+        so sending without it (or inventing a value) is never acceptable.
+        """
+
+        def rendered_value(spec: Any, field: str) -> Any:
+            if isinstance(spec, dict) and set(spec) == {"$"}:
+                name = str(spec["$"])
+                value = semantic.get(name)
+                if value is None or (isinstance(value, str) and not value.strip()) or value == {}:
+                    raise WeKnoraError(
+                        f"WeKnora {operation} {kind} field '{field}' requires semantic "
+                        f"input '{name}', which is missing or empty",
+                        failure_kind="not_configured",
+                    )
+                return copy.deepcopy(value)
+            return copy.deepcopy(spec)
+
+        return {str(field): rendered_value(spec, str(field)) for field, spec in template.items()}
 
     def _request(
         self,
@@ -224,8 +251,28 @@ class WeKnoraClient:
             )
         method = str(entry.get("method") or "GET").strip().upper()
         headers = self._headers()
+        semantic = dict(json_body or {})
+        if self._tenant_id:
+            semantic.setdefault("tenant_id", self._tenant_id)
+
+        body_template = entry.get("body") if isinstance(entry.get("body"), dict) else None
+        query_template = entry.get("query_params") if isinstance(entry.get("query_params"), dict) else None
+        rendered_query = dict(query or {})
+        if query_template is not None:
+            rendered_query.update(
+                self._render_template(query_template, semantic, operation=operation, kind="query")
+            )
+        rendered_query = {k: v for k, v in rendered_query.items() if v is not None}
+
         body: bytes | None = None
-        if json_body is not None:
+        if body_template is not None:
+            # The pinned contract fully owns the wire shape: only templated
+            # fields are sent (no idempotency key, identity, or metadata leaks
+            # into an API that does not define them).
+            payload = self._render_template(body_template, semantic, operation=operation, kind="body")
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            headers["Content-Type"] = "application/json"
+        elif method != "GET" and json_body is not None:
             payload = dict(json_body)
             tenant_field = self._field("tenant_field", "tenant_id")
             if self._tenant_id and tenant_field not in payload:
@@ -233,7 +280,9 @@ class WeKnoraClient:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
-            url=self._build_url(self._render_path(str(entry.get("path")), json_body), query=query),
+            url=self._build_url(
+                self._render_path(str(entry.get("path")), semantic), query=rendered_query
+            ),
             data=body,
             headers=headers,
             method=method,
@@ -349,62 +398,121 @@ class WeKnoraClient:
 
     # -- memory operations --------------------------------------------------
 
-    def _memory_body(self, body: dict[str, Any]) -> dict[str, Any]:
+    def _memory_semantics(self, body: dict[str, Any]) -> dict[str, Any]:
+        """Semantic inputs for a memory operation.
+
+        The identity is provided as the ``identity`` semantic (and, for legacy
+        non-template contracts, injected under the pinned identity field).  A
+        body template decides which of these actually reach the wire, so an
+        official API that does not define ``user_id`` never receives it.
+        """
         if not self._memory_identity:
             raise WeKnoraError(
                 "WeKnora shared memory identity is not configured", failure_kind="not_configured"
             )
         payload = dict(body)
-        payload[self._field("identity_field", "user_id")] = self._memory_identity
+        payload["identity"] = self._memory_identity
         return payload
 
-    def memory_query(self, *, query: str) -> list[dict[str, Any]]:
-        payload = self._request("memory_query", json_body=self._memory_body({"query": str(query)}))
+    def supports_conditional_update(self, candidate_type: str) -> bool:
+        """Whether the pinned contract proves base_version-conditional updates.
+
+        Defaults to False: an update operation must explicitly declare
+        ``"conditional_update": true`` (probe evidence) before the adapter
+        will perform version-protected targeted writes.
+        """
+        operation = "knowledge_update" if candidate_type == "knowledge" else "memory_update"
+        entry = self._operation(operation)
+        return bool(isinstance(entry, dict) and entry.get("conditional_update") is True)
+
+    def memory_list(self, *, top_k: int | None = None) -> list[dict[str, Any]]:
+        """List memory items (the official memory API is a list endpoint)."""
+        payload = self._request(
+            "memory_list",
+            json_body=self._memory_semantics({"top_k": top_k}),
+        )
         results = _extract(payload, self._field("results_key", "results"))
         if not isinstance(results, list):
             raise WeKnoraError(
-                "WeKnora memory query response is missing the results list",
+                "WeKnora memory list response is missing the results list",
                 failure_kind="invalid_response",
                 payload=payload,
             )
         return [item for item in results if isinstance(item, dict)]
 
     def memory_create(
-        self, *, content: str, idempotency_key: str, metadata: dict[str, Any] | None = None
+        self,
+        *,
+        content: str,
+        idempotency_key: str,
+        kind: str = "",
+        importance: int | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        payload = self._request(
-            "memory_create",
-            json_body=self._memory_body(
-                {
-                    "content": str(content or ""),
-                    self._field("idempotency_key_field", "idempotency_key"): str(idempotency_key or "").strip(),
-                    "metadata": metadata or {},
-                }
-            ),
+        semantics = self._memory_semantics(
+            {
+                "content": str(content or ""),
+                "idempotency_key": str(idempotency_key or "").strip(),
+                "kind": str(kind or ""),
+                "importance": importance,
+                "metadata": metadata or {},
+            }
         )
+        if importance is not None:
+            semantics["importance"] = int(importance)
+        payload = self._request("memory_create", json_body=self._legacy_memory_body(semantics))
         return self._normalize_write_receipt(payload, operation="memory_create")
 
     def memory_update(
-        self, *, object_id: str, base_version: str, content: str, idempotency_key: str
+        self,
+        *,
+        object_id: str,
+        base_version: str,
+        content: str,
+        idempotency_key: str,
+        kind: str = "",
+        importance: int | None = None,
     ) -> dict[str, Any]:
-        payload = self._request(
-            "memory_update",
-            json_body=self._memory_body(
-                {
-                    "object_id": str(object_id or "").strip(),
-                    self._field("base_version_field", "base_version"): str(base_version or "").strip(),
-                    "content": str(content or ""),
-                    self._field("idempotency_key_field", "idempotency_key"): str(idempotency_key or "").strip(),
-                }
-            ),
+        semantics = self._memory_semantics(
+            {
+                "object_id": str(object_id or "").strip(),
+                "base_version": str(base_version or "").strip(),
+                "content": str(content or ""),
+                "idempotency_key": str(idempotency_key or "").strip(),
+                "kind": str(kind or ""),
+                "importance": importance,
+            }
         )
+        if importance is not None:
+            semantics["importance"] = int(importance)
+        payload = self._request("memory_update", json_body=self._legacy_memory_body(semantics))
         return self._normalize_write_receipt(payload, operation="memory_update")
 
+    def _legacy_memory_body(self, semantics: dict[str, Any]) -> dict[str, Any]:
+        """Legacy (template-less) memory body for custom pinned APIs."""
+        payload = dict(semantics)
+        identity_field = self._field("identity_field", "user_id")
+        payload[identity_field] = self._memory_identity
+        payload[self._field("idempotency_key_field", "idempotency_key")] = semantics.get(
+            "idempotency_key", ""
+        )
+        payload[self._field("base_version_field", "base_version")] = semantics.get(
+            "base_version", ""
+        )
+        for optional in ("kind", "importance", "metadata", "object_id", "top_k"):
+            if optional in payload and (payload[optional] is None or payload[optional] == ""):
+                del payload[optional]
+        return payload
+
     def memory_confirm(self, *, object_id: str) -> dict[str, Any]:
-        return self._request("memory_confirm", json_body=self._memory_body({"object_id": str(object_id or "").strip()}))
+        return self._request(
+            "memory_confirm", json_body=self._memory_semantics({"object_id": str(object_id or "").strip()})
+        )
 
     def memory_reject(self, *, object_id: str) -> dict[str, Any]:
-        return self._request("memory_reject", json_body=self._memory_body({"object_id": str(object_id or "").strip()}))
+        return self._request(
+            "memory_reject", json_body=self._memory_semantics({"object_id": str(object_id or "").strip()})
+        )
 
     # -- receipts -----------------------------------------------------------
 
