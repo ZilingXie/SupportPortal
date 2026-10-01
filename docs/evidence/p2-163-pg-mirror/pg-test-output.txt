@@ -1,10 +1,3 @@
-=== PP-EN-QUICK mirror-fix isolated PostgreSQL verification ===
-This artifact IS the captured output of rerun.sh (same directory) — the
-script prints its own command steps, so script and record cannot drift.
-Captured: 2026-10-01, exit=0.
-Code baseline: 61728e4e4ddb6610d282c41635037433d65948dd (main at capture;
-Quick-scenario paths unchanged since bec205e0).
-=== captured output ===
 pg_ctl resolved: /opt/homebrew/bin/pg_ctl
 === 1. initdb ===
 initdb: ok
@@ -14,8 +7,8 @@ pg_ctl start: ok
 createdb: ok
 === 4. run test ===
 .                                                                        [100%]
-1 passed, 8 deselected in 1.21s
+1 passed, 8 deselected in 1.06s
 === 5. stop, then clean and verify ===
 pg_ctl stop: ok
 cleanup verified: /tmp/pp-pg-r9 removed and gone
-code baseline: 61728e4e4ddb6610d282c41635037433d65948dd
+code baseline: 38566439b19a57a4ec647e9ba2ebce2764799c96

@@ -1,0 +1,16 @@
+=== FAILURE-PATH cleanup verification (PP_REPO=/nonexistent) ===
+exit code: expected non-zero (step 4 cd fails under set -e); the EXIT trap must stop the instance and remove the cluster directory.
+pg_ctl resolved: /opt/homebrew/bin/pg_ctl
+=== 1. initdb ===
+initdb: ok
+=== 2. pg_ctl start (port 54400) ===
+pg_ctl start: ok
+=== 3. createdb pp_mirror_test2 ===
+createdb: ok
+=== 4. run test ===
+.worktrees/pp-rerun-raw-capture/docs/evidence/p2-163-pg-mirror/rerun.sh: line 57: cd: /nonexistent: No such file or directory
+cleanup: /tmp/pp-pg-r9 removed (failure-path trap)
+failure-exit=1
+---dir check---
+ls: /tmp/pp-pg-r9: No such file or directory
+dir /tmp/pp-pg-r9 gone
