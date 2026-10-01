@@ -1,0 +1,24 @@
+=== PP-EN-QUICK mirror-fix isolated PostgreSQL verification (from zero) ===
+commit: bec205e02ae6e9538edcc66a8468dbe467d4d566
+date: 2026-10-01T04:51:59Z
+=== command sequence (literal, executable) ===
+export PATH="/opt/homebrew/bin:$PATH"
+REPO=/Users/xieziling/Desktop/personal_proj/SupportPortal
+rm -rf /tmp/pp-pg-r9
+initdb -D /tmp/pp-pg-r9 -U testuser --auth=trust
+pg_ctl -D /tmp/pp-pg-r9 -o "-p 54400" -l /tmp/pp-r9-server.log start
+sleep 2
+createdb -h 127.0.0.1 -p 54400 -U testuser pp_mirror_test2
+cd "$REPO"
+RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN="postgresql://testuser@127.0.0.1:54400/pp_mirror_test2" .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py -k "solved_close_records_mirror" -q
+pg_ctl -D /tmp/pp-pg-r9 stop
+rm -rf /tmp/pp-pg-r9
+=== actual run output ===
+initdb: ok
+pg_ctl start: ok
+createdb: ok
+.                                                                        [100%]
+1 passed, 8 deselected in 1.54s
+pg_ctl stop: ok
+cleanup: /tmp/pp-pg-r9 removed
+cleanup verified: directory gone

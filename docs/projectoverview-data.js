@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T04:07:50Z",
-  "source_base_commit": "5421da7bf36b7543e095c9d56a19f35031b1153f",
-  "registry_digest": "e61c011febc6ae36498e6b7ab724e1b60f9eb403f65321d12eabc003f9e39436",
+  "generated_at": "2026-10-01T04:55:37Z",
+  "source_base_commit": "bec205e02ae6e9538edcc66a8468dbe467d4d566",
+  "registry_digest": "b961ac45c764aef370e4dc9d7f0626a00ebfce41ec6f1a8d7674f2bb29bff491",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1331,8 +1331,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "export PATH=\"/opt/homebrew/bin:$PATH\"\nrm -rf /tmp/pp-pg-r9\ninitdb -D /tmp/pp-pg-r9 -U testuser --auth=trust && \\\npg_ctl -D /tmp/pp-pg-r9 -o \"-p 54400\" -l /tmp/pp-r9-server.log start && sleep 2 && \\\npsql -h 127.0.0.1 -p 54400 -U testuser -d postgres -c 'CREATE DATABASE pp_mirror_test2' && \\\ncd \u003crepo> && RUN_POSTGRES_INTEGRATION=1 \\\n  TICKET_DB_DSN='postgresql://testuser@127.0.0.1:54400/pp_mirror_test2' \\\n  .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py \\\n  -k 'solved_close_records_mirror' -q && \\\npg_ctl -D /tmp/pp-pg-r9 stop",
-          "details": "2026-09-30 从零复现实录（commit 53c056446940，worktree pp-pg-evidence-bind）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400，注意 start 输出不可接管道，postgres 持有管道会导致 tail 挂起——用 -l 日志文件+重定向）\n3) createdb: CREATE DATABASE\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.39s」\n5) pg_ctl stop: ok（实例已清理）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\n（字面可执行的完整命令序列与两次实捕原始输出见\ndocs/evidence/p2-163-pg-mirror/pg-test-output.txt；\n仓库路径可用 PP_REPO 覆盖，默认主仓库根目录）",
+          "details": "2026-10-01 从零复现实录（commit bec205e02ae6e9538edcc66a8468dbe467d4d566，worktree pp-pg-evidence-v2；原始输出 artifact=docs/evidence/p2-163-pg-mirror/pg-test-output.txt，rerun 入口=同目录 rerun.sh 已验证端到端）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400）\n3) createdb（显式 createdb 命令）: ok\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.54s」（rerun.sh 复验：1 passed in 0.86s）\n5) pg_ctl stop: ok\n6) 清理验证：/tmp/pp-pg-r9 目录已删除（收尾 rm 与实例停止同轮完成）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         },
         {
           "type": "test",
@@ -13894,8 +13894,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
-          "command": "export PATH=\"/opt/homebrew/bin:$PATH\"\nrm -rf /tmp/pp-pg-r9\ninitdb -D /tmp/pp-pg-r9 -U testuser --auth=trust && \\\npg_ctl -D /tmp/pp-pg-r9 -o \"-p 54400\" -l /tmp/pp-r9-server.log start && sleep 2 && \\\npsql -h 127.0.0.1 -p 54400 -U testuser -d postgres -c 'CREATE DATABASE pp_mirror_test2' && \\\ncd \u003crepo> && RUN_POSTGRES_INTEGRATION=1 \\\n  TICKET_DB_DSN='postgresql://testuser@127.0.0.1:54400/pp_mirror_test2' \\\n  .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py \\\n  -k 'solved_close_records_mirror' -q && \\\npg_ctl -D /tmp/pp-pg-r9 stop",
-          "details": "2026-09-30 从零复现实录（commit 53c056446940，worktree pp-pg-evidence-bind）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400，注意 start 输出不可接管道，postgres 持有管道会导致 tail 挂起——用 -l 日志文件+重定向）\n3) createdb: CREATE DATABASE\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.39s」\n5) pg_ctl stop: ok（实例已清理）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+          "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\n（字面可执行的完整命令序列与两次实捕原始输出见\ndocs/evidence/p2-163-pg-mirror/pg-test-output.txt；\n仓库路径可用 PP_REPO 覆盖，默认主仓库根目录）",
+          "details": "2026-10-01 从零复现实录（commit bec205e02ae6e9538edcc66a8468dbe467d4d566，worktree pp-pg-evidence-v2；原始输出 artifact=docs/evidence/p2-163-pg-mirror/pg-test-output.txt，rerun 入口=同目录 rerun.sh 已验证端到端）：\n1) initdb: ok\n2) pg_ctl start: ok（端口 54400）\n3) createdb（显式 createdb 命令）: ok\n4) pytest -k solved_close_records_mirror: 「. [100%] / 1 passed, 8 deselected in 1.54s」（rerun.sh 复验：1 passed in 0.86s）\n5) pg_ctl stop: ok\n6) 清理验证：/tmp/pp-pg-r9 目录已删除（收尾 rm 与实例停止同轮完成）\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
         }
       ],
       "source_refs": [
