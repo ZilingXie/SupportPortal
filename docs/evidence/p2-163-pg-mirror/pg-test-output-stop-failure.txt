@@ -1,0 +1,13 @@
+=== STOP-FAILURE regression (attempt 2, corrected shim) ===
+--- setup: fresh real instance ---
+initdb: ok
+start: ok
+--- regression: stop_and_clean with shimmed PG_CTL (any arg list containing 'stop' exits 1) ---
+cleanup FAILED: postgres still running for /tmp/pp-pg-r9; data directory KEPT
+stop_and_clean refused with rc=1
+--- fail-closed assertions ---
+assert: postgres still running (alive)
+assert: data directory KEPT (fail-closed)
+--- manual recovery (real pg_ctl) ---
+manual stop: ok
+manual removal: ok
