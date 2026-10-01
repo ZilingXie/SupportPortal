@@ -2012,18 +2012,20 @@ class RepositoryConfigurationTests(unittest.TestCase):
         # already-migrated database applies them on the next bootstrap.
         # Keep the asserted version in sync with the current
         # _TICKET_SCHEMA_VERSION on every bump (v12 case-llm-usage-source ->
-        # v13 hermes-knowledge-tasks -> v14 weknora-promotions).
+        # v13 hermes-knowledge-tasks -> v14 weknora-promotions ->
+        # v15 weknora-candidate-key).
         from backend.repositories.ticket_repository import (
             _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS,
         )
 
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v14-weknora-promotions"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v15-weknora-candidate-key"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
             "2026-single-ai-managed-v12-case-llm-usage-source",
             "2026-single-ai-managed-v13-hermes-knowledge-tasks",
+            "2026-single-ai-managed-v14-weknora-promotions",
         ):
             self.assertIn(previous, _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS)
         migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(

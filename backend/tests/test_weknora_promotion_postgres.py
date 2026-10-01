@@ -171,6 +171,51 @@ def test_close_is_atomic_and_source_version_unique(repository: PostgresTicketRep
     assert len(repository.list_weknora_promotions()) == 1
 
 
+def test_same_type_candidates_are_all_kept_by_candidate_unique_index(
+    repository: PostgresTicketRepository,
+) -> None:
+    """Review-acceptance defect 1: candidate-level uniqueness in PostgreSQL."""
+    _drive_to_close_with_weknora(repository)
+    binding = repository.get_hermes_case_binding("123-1")
+    sanitized = build_mock_sanitized_case_knowledge(
+        {"current_conclusion_next_steps": CANONICAL_TEST_INVESTIGATION_RESULT, "references": ""}
+    )
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=sanitized,
+        binding=dict(binding),
+        review_payload={
+            "weknora_candidates": [
+                {
+                    "schema_version": "v1",
+                    "candidate_type": "knowledge",
+                    "decision": "new",
+                    "title": "First",
+                    "content": "body one",
+                },
+                {
+                    "schema_version": "v1",
+                    "candidate_type": "knowledge",
+                    "decision": "new",
+                    "title": "Second",
+                    "content": "body two",
+                },
+            ]
+        },
+    )
+    inserted = repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:06:00Z")
+    assert len(inserted) == 2
+    rows = repository.list_weknora_promotions()
+    assert len(rows) == 3  # close-time default candidate + two review candidates
+    knowledge_rows = [row for row in rows if row["candidate_type"] == "knowledge"]
+    assert {row["candidate_payload"].get("content") for row in knowledge_rows} >= {
+        "body one",
+        "body two",
+    }
+    # Replay is still idempotent per candidate.
+    assert repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:07:00Z") == []
+    assert len(repository.list_weknora_promotions()) == 3
+
+
 def test_concurrent_claim_has_single_owner(repository: PostgresTicketRepository) -> None:
     _drive_to_close_with_weknora(repository)
     promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]

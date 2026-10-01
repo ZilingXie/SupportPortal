@@ -192,3 +192,58 @@ def test_probe_reports_unpinned_health_without_raising() -> None:
     report = client.probe()
     assert report["configured"] is False
     assert report["health"]["status"] == "health_operation_not_pinned"
+
+
+# -- review-acceptance defect 5: official-API adaptability ------------------
+
+
+def test_path_placeholders_render_from_request_body() -> None:
+    contract = {
+        **CONTRACT,
+        "knowledge_read": {"method": "POST", "path": "/api/v1/knowledge/{object_id}"},
+    }
+    client = _client(contract=contract)
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        return _Response({"object_id": "doc/9", "version": "3", "content": "c"})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        client.knowledge_read(object_id="doc/9")
+    assert captured["url"] == "http://weknora.test/api/v1/knowledge/doc%2F9"
+
+
+def test_path_placeholder_without_request_value_fails_closed() -> None:
+    contract = {
+        **CONTRACT,
+        "knowledge_read": {"method": "GET", "path": "/api/v1/knowledge/{object_id}"},
+    }
+    client = _client(contract=contract)
+    with pytest.raises(WeKnoraError) as excinfo:
+        # GET health-style call has no body to resolve the placeholder from.
+        client._request("knowledge_read")
+    assert excinfo.value.failure_kind == "not_configured"
+    assert "{object_id}" in str(excinfo.value)
+
+
+def test_official_memory_id_alias_is_normalized() -> None:
+    client = _client(memory_identity="hermes-service")
+    # Official memory API answers with `id`, not `object_id`.
+    with patch(
+        "urllib.request.urlopen", return_value=_Response({"id": "mem-77", "version": "v3"})
+    ):
+        receipt = client.memory_create(content="c", idempotency_key="k")
+    assert receipt["object_id"] == "mem-77"
+    assert receipt["version"] == "v3"
+
+
+def test_read_receipt_normalizes_id_alias() -> None:
+    client = _client()
+    with patch(
+        "urllib.request.urlopen",
+        return_value=_Response({"id": "doc-5", "version": "9", "content": "body"}),
+    ):
+        read = client.knowledge_read(object_id="doc-5")
+    assert read["object_id"] == "doc-5"
+    assert read["content"] == "body"
