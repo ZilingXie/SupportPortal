@@ -713,7 +713,7 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     source_id TEXT NOT NULL,
     source_version TEXT NOT NULL,
     content_hash TEXT NOT NULL,
-    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge', 'memory')),
+    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge', 'memory', 'skill')),
     decision TEXT NOT NULL CHECK (decision IN (
         'no_change', 'new', 'supplement', 'replace', 'merge', 'human_review'
     )),

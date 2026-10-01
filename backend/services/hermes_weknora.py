@@ -97,21 +97,36 @@ class HermesWeKnoraClient:
         return normalized_results
 
 
-def build_weknora_submissions(report: dict[str, Any]) -> list[dict[str, Any]]:
+def build_weknora_submissions(
+    report: dict[str, Any],
+    *,
+    lineage_extras: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     """Convert a validated review report into per-decision adapter submissions.
 
     Every decision is handed over — including `human_review`, which stays a
     pending-human record — so the adapter layer is the complete, traceable
     boundary between SupportPortal lineage and WeKnora content.
+    ``lineage_extras`` carries the run-time lineage the report itself cannot
+    know (ticket id, Summary/Review session and run ids, Slack thread) so
+    every submission is independently traceable.
     """
     lineage = {
         "engineer_case_id": str(report.get("engineer_case_id") or ""),
+        "client_ticket_id": str(report.get("client_ticket_id") or ""),
         "episode": int(report.get("episode") or 0),
         "ledger_revision": int(report.get("ledger_revision") or 0),
         "conversation_version": int(report.get("conversation_version") or 0),
         "summary_id": str(report.get("summary_id") or ""),
         "review_id": str(report.get("review_id") or ""),
     }
+    for key in (
+        "investigation_id", "summary_session_id", "summary_run_id",
+        "review_session_id", "review_run_id", "slack_channel_id", "slack_thread_ts",
+    ):
+        value = str((lineage_extras or {}).get(key) or "").strip()
+        if value:
+            lineage[key] = value
     submissions: list[dict[str, Any]] = []
     for decision in report.get("decisions") or []:
         if not isinstance(decision, dict):

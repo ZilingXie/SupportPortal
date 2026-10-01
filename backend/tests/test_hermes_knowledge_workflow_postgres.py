@@ -174,17 +174,66 @@ def test_summary_claim_complete_creates_review_and_review_completes(
         claimed_at="2026-09-05T08:07:30Z", lease_expires_at="2026-09-05T08:22:30Z",
     )
     assert review_claimed is not None
+    report = {
+        "review_id": "hermes-review:123-1:1",
+        "content_hash": "b" * 64,
+        "client_ticket_id": "123",
+        "engineer_case_id": "123-1",
+    }
+    promotions = [
+        {
+            "engineer_case_id": "123-1",
+            "client_ticket_id": "123",
+            "source_type": "hermes_knowledge_review",
+            "source_id": "hermes-review:123-1:1:cand-1",
+            "source_version": "b" * 64,
+            "candidate_type": "knowledge",
+            "decision": "supplement",
+            "content_hash": "c" * 64,
+            "candidate_payload": {"schema_version": "v1", "content": "Add this."},
+            "summary_session_id": "hermes-session:123-1",
+            "summary_run_id": "run-1",
+            "review_session_id": review_session_id_for("123-1", 1),
+            "review_run_id": "run-2",
+        },
+        {
+            "engineer_case_id": "123-1",
+            "client_ticket_id": "123",
+            "source_type": "hermes_knowledge_review",
+            "source_id": "hermes-review:123-1:1:cand-2",
+            "source_version": "b" * 64,
+            "candidate_type": "skill",
+            "decision": "human_review",
+            "content_hash": "d" * 64,
+            "candidate_payload": {"schema_version": "v1", "skill_proposal": True},
+        },
+    ]
     repository.complete_hermes_review_task(
         review_task_id,
         owner_token="worker-1",
-        report={"review_id": "hermes-review:123-1:1", "content_hash": "b" * 64},
+        report=report,
         weknora_adapter_status="recorded",
         weknora_submissions=[{"submission_id": "weknora-submission:r:cand-1"}],
+        weknora_promotions=promotions,
         completed_at="2026-09-05T08:08:00Z",
     )
     review = repository.get_hermes_review_task_for_summary(task_id)
     assert review["status"] == "completed"
     assert review["weknora_submissions"][0]["submission_id"] == "weknora-submission:r:cand-1"
+
+    # The bridge landed in the same transaction: both decisions — including
+    # the human-review-only skill row — are real promotion rows on PostgreSQL.
+    enqueued = repository.list_weknora_promotions()
+    assert {row["source_id"].rsplit(":", 1)[-1] for row in enqueued} == {"cand-1", "cand-2"}
+    by_candidate = {row["source_id"].rsplit(":", 1)[-1]: row for row in enqueued}
+    assert by_candidate["cand-1"]["status"] == "queued"
+    assert by_candidate["cand-1"]["review_run_id"] == "run-2"
+    assert by_candidate["cand-2"]["candidate_type"] == "skill"
+    assert by_candidate["cand-2"]["decision"] == "human_review"
+    # Re-completing cannot happen (task terminal), and re-enqueueing the same
+    # report through the public gate is idempotent.
+    repository.enqueue_weknora_promotions(promotions, now_value="2026-09-05T08:09:00Z")
+    assert len(repository.list_weknora_promotions()) == 2
 
 
 def test_reopen_invalidates_open_knowledge_tasks_on_postgres(

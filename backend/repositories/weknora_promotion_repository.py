@@ -129,8 +129,19 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         )
         if not normalized[field]
     ]
-    if normalized["candidate_type"] not in {"knowledge", "memory"}:
+    if normalized["candidate_type"] not in {"knowledge", "memory", "skill"}:
         missing.append("candidate_type")
+    elif normalized["candidate_type"] == "skill" and normalized["decision"] not in {
+        "no_change",
+        "human_review",
+    }:
+        # Skills are human-maintained: a skill proposal may only enter the
+        # promotion pipeline as an explicit human-review (or no-op) record,
+        # never as a write intent.
+        raise ValueError(
+            "WeKnora promotion skill candidates must be routed to human_review, "
+            f"got decision={normalized['decision']!r}"
+        )
     if normalized["decision"] not in {
         "no_change",
         "new",
@@ -272,7 +283,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     slack_channel_id TEXT, slack_thread_ts TEXT,
                     source_type TEXT NOT NULL, source_id TEXT NOT NULL,
                     source_version TEXT NOT NULL, content_hash TEXT NOT NULL,
-                    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge','memory')),
+                    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge','memory','skill')),
                     decision TEXT NOT NULL CHECK (decision IN (
                         'no_change','new','supplement','replace','merge','human_review'
                     )),
@@ -313,6 +324,25 @@ class PostgresWeKnoraPromotionRepositoryMixin:
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at, promotion_id)").format(
                 sql.Identifier("idx_support_weknora_promotions_claim"),
                 self._table(_WEKNORA_PROMOTION_TABLE),
+            )
+        )
+        # v16: skill proposals enter the pipeline as human-review-only records;
+        # swap the legacy (knowledge, memory) check on databases created before
+        # the enum extension.
+        promotion_table = self._table(_WEKNORA_PROMOTION_TABLE)
+        cur.execute(
+            sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                promotion_table,
+                sql.Identifier("support_weknora_promotions_candidate_type_check"),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+                "(candidate_type IN ('knowledge','memory','skill'))"
+            ).format(
+                promotion_table,
+                sql.Identifier("support_weknora_promotions_candidate_type_check"),
             )
         )
 

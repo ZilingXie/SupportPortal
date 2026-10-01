@@ -2013,19 +2013,21 @@ class RepositoryConfigurationTests(unittest.TestCase):
         # Keep the asserted version in sync with the current
         # _TICKET_SCHEMA_VERSION on every bump (v12 case-llm-usage-source ->
         # v13 hermes-knowledge-tasks -> v14 weknora-promotions ->
-        # v15 weknora-candidate-key).
+        # v15 weknora-candidate-key -> v16 weknora-skill-candidate-key).
         from backend.repositories.ticket_repository import (
             _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS,
         )
 
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v15-weknora-candidate-key"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v16-weknora-skill-candidate-key"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
             "2026-single-ai-managed-v12-case-llm-usage-source",
             "2026-single-ai-managed-v13-hermes-knowledge-tasks",
             "2026-single-ai-managed-v14-weknora-promotions",
+            "2026-single-ai-managed-v15-weknora-candidate-key",
+            "2026-single-ai-managed-v15-weknora-skill-review",
         ):
             self.assertIn(previous, _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS)
         migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(

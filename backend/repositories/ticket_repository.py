@@ -1276,15 +1276,19 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v15-weknora-candidate-key"
+# v16 combines the two v15-level changes (neither separately deployed): the
+# per-candidate idempotency key from p2-182's review fixes and the skill
+# human-review routing from the p2-181 consumption bridge.
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v16-weknora-skill-candidate-key"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v10-enablement-relay",
-    "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v12-case-llm-usage-source",
     "2026-single-ai-managed-v12-weknora-promotions",
     "2026-single-ai-managed-v13-hermes-knowledge-tasks",
     "2026-single-ai-managed-v14-weknora-promotions",
+    "2026-single-ai-managed-v15-weknora-candidate-key",
+    "2026-single-ai-managed-v15-weknora-skill-review",
     "2026-single-ai-managed-v2",
     "2026-single-ai-managed-v9-product-selection-state",
     "2026-single-ai-managed-v3",

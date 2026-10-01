@@ -501,10 +501,11 @@ def test_write_failure_matrix(error, expected_status, expected_code) -> None:
     assert outcome.failure_code == expected_code
 
 
-def test_unclassifiable_candidate_is_rejected() -> None:
+def test_skill_candidate_becomes_explicit_human_review_never_a_write() -> None:
     client = FakeWeKnoraStore()
     outcome = WeKnoraPromotionAdapter(client).execute(
         _task(candidate_type="skill", decision="new")
     )
-    assert outcome.status == "failed"
-    assert outcome.failure_code == "invalid_candidate"
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "skill_change_requires_human_review"
+    assert client.calls == []

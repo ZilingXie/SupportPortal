@@ -3408,8 +3408,11 @@ def process_account_automation_once() -> None:
     if _drain_real_hermes_turns(limit=20):
         _drain_engineer_slack_events(limit=20)
     _drain_real_hermes_promotions(limit=20)
-    _drain_weknora_promotions(limit=20)
+    # Knowledge drain first: a completed review enqueues WeKnora promotions in
+    # its completion transaction, so the promotion drain picks them up in the
+    # same poller cycle.
     _drain_hermes_knowledge_tasks(limit=5)
+    _drain_weknora_promotions(limit=20)
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
