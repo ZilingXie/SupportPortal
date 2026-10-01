@@ -850,6 +850,43 @@ def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Pa
     }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
 
 
+def test_initial_preproduction_worker_injects_weknora_contract(tmp_path: Path) -> None:
+    rendered = render_initial_task_definition(
+        role="worker",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        hermes_case_workflow_mode="real",
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
+        agent_model="gpt-6-sol",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert values["WEKNORA_AUTH_HEADER_NAME"] == "X-API-Key"
+    assert values["WEKNORA_AUTH_SCHEME"] == ""
+    assert values["WEKNORA_PROMOTION_ENABLED"] == "1"
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert secrets["WEKNORA_API_TOKEN"].endswith(
+        "/supportportal/preproduction/weknora-api-token"
+    )
+    assert secrets["WEKNORA_API_CONTRACT_JSON"].endswith(
+        "/supportportal/preproduction/weknora-api-contract-json"
+    )
+    assert secrets["HERMES_WEKNORA_KNOWLEDGE_BASE_ID"].endswith(
+        "/supportportal/preproduction/weknora-knowledge-base-id"
+    )
+
+
 def test_render_schema_bootstrap_uses_api_image_and_secret_references(
     tmp_path: Path,
 ) -> None:

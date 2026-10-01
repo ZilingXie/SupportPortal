@@ -5313,3 +5313,10 @@ For each new entry, record:
   - Hash lock generation and `--check` completed successfully.
   - Full image built successfully, passed `pip check`, imported PyTorch/Sentence Transformers/Transformers/Accelerate and the embedding provider, contained no CUDA/NVIDIA packages, and measured 489,760,121 bytes versus 3,046,167,508 bytes previously.
   - Lightweight image built successfully, passed `pip check`, omitted torch, and measured 187,233,165 bytes.
+# 2026-10-01 - WeKnora official hybrid search contract for Hermes governance (p2-182)
+
+- Summary: Hermes Review similarity checks now call WeKnora's official `POST /api/v1/knowledge-bases/{id}/hybrid-search` endpoint with `X-API-Key`, `query_text`, and `match_count`; SupportPortal's write client accepts the official `data` response envelope and treats an empty `data` result as an empty retrieval set.
+- Reason: The deployed WeKnora instance does not expose the previous `/v1/knowledge/search`/Bearer contract. The old client could not prove connectivity or provide duplicate evidence to Review.
+- Affected files/config: `backend/services/hermes_weknora.py`, `backend/services/weknora_client.py`, `backend/scripts/automation_ecs_deploy.py`, `scripts/weknora/probe_weknora_contract.py`; Preproduction SSM contract and WeKnora knowledge-base settings.
+- Data impact: No SupportPortal vector tables or historical RAG data changed. A temporary WeKnora probe knowledge/memory set was created, verified, and deleted. The WeKnora knowledge base is now initialized with the configured remote LLM/embedding models.
+- Verification: Official read probe returned health `ok`, all pinned operations present, and an empty hybrid-search result was handled safely; live create/read/parse/search and memory create/list calls succeeded against Preproduction, with synthetic objects removed afterward. Targeted client, probe, Hermes workflow, and ECS renderer tests passed.

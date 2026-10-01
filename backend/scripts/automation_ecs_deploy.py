@@ -139,6 +139,20 @@ AGENTRELAY_SECRET_SUFFIXES = {
     "AGENTRELAY_USERNAME": "agentrelay-username",
     "AGENTRELAY_TOKEN": "agentrelay-token",
 }
+# WeKnora is a Preproduction-only dependency until the real write path has
+# passed its contract and end-to-end gates.  The same API key is exposed under
+# the write-side and Hermes read-side names because both clients are isolated
+# by their operation surface, while the actual value remains in SSM.
+WEKNORA_SECRET_SUFFIXES = {
+    "WEKNORA_BASE_URL": "weknora-base-url",
+    "WEKNORA_API_TOKEN": "weknora-api-token",
+    "WEKNORA_API_CONTRACT_JSON": "weknora-api-contract-json",
+    "WEKNORA_KNOWLEDGE_BASE_ID": "weknora-knowledge-base-id",
+    "WEKNORA_MEMORY_IDENTITY": "weknora-memory-identity",
+    "HERMES_WEKNORA_BASE_URL": "weknora-base-url",
+    "HERMES_WEKNORA_API_TOKEN": "weknora-api-token",
+    "HERMES_WEKNORA_KNOWLEDGE_BASE_ID": "weknora-knowledge-base-id",
+}
 # Retired Enablement runtime dependency gate (p2-149/p2-163): Worker task
 # definitions must not carry the Archer credential in either mode — since
 # p2-163 the auto workflow dispatches AgentRelay tasks executed on the Mac via
@@ -451,6 +465,20 @@ def _base_environment(
                 "ENABLEMENT_WORKFLOW_MODE": enablement_workflow_mode,
             }
         )
+    if role == "worker" and environment == "preproduction":
+        # Keep the official WeKnora auth shape explicit in the task definition
+        # while the token, contract, KB and shared memory identity stay in SSM.
+        # Promotion writes remain disabled until the caller selects the real
+        # Hermes workflow mode and the live contract probe has passed.
+        values.update(
+            {
+                "WEKNORA_AUTH_HEADER_NAME": "X-API-Key",
+                "WEKNORA_AUTH_SCHEME": "",
+                "WEKNORA_PROMOTION_ENABLED": (
+                    "1" if hermes_case_workflow_mode == "real" else "0"
+                ),
+            }
+        )
     if role in {"route", "worker"}:
         values.update(
             {
@@ -622,6 +650,8 @@ def render_initial_task_definition(
         )
     if role == "worker":
         secret_names[role].update(AGENTRELAY_SECRET_SUFFIXES)
+        if environment == "preproduction":
+            secret_names[role].update(WEKNORA_SECRET_SUFFIXES)
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -948,6 +978,21 @@ def render_task_definition(
             for name, suffix in sorted(AGENTRELAY_SECRET_SUFFIXES.items()):
                 _set_secret_reference(
                     container, name, _parameter_arn(relay_prefix_arn, suffix)
+                )
+        if environment == "preproduction" and relay_prefix_arn:
+            # Carry the WeKnora read/write contract onto every Preproduction
+            # worker revision. Production never receives these credentials.
+            for name, suffix in sorted(WEKNORA_SECRET_SUFFIXES.items()):
+                _set_secret_reference(
+                    container, name, _parameter_arn(relay_prefix_arn, suffix)
+                )
+            _set_environment_value(container, "WEKNORA_AUTH_HEADER_NAME", "X-API-Key")
+            _set_environment_value(container, "WEKNORA_AUTH_SCHEME", "")
+            if hermes_case_workflow_mode is not None:
+                _set_environment_value(
+                    container,
+                    "WEKNORA_PROMOTION_ENABLED",
+                    "1" if hermes_case_workflow_mode == "real" else "0",
                 )
     if role in {"api", "worker"}:
         # Ensure the Zendesk side-effects gate is enabled on every rendered
