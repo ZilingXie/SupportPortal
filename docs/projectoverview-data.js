@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T04:01:20Z",
-  "source_base_commit": "53c0564469400707c7bbd2e6f660ca6020cbc201",
-  "registry_digest": "d0e8f6a1a230060a6d100c6cb16387f36921c8ff8bba2e43dd52d589c4e3bf85",
+  "generated_at": "2026-10-01T04:07:50Z",
+  "source_base_commit": "5421da7bf36b7543e095c9d56a19f35031b1153f",
+  "registry_digest": "e61c011febc6ae36498e6b7ab724e1b60f9eb403f65321d12eabc003f9e39436",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3911,6 +3911,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "details": "2026-10-01：PR#1340（消费桥+skill 分流+全 lineage+v16，合并 #1336 候选级幂等成 v16-weknora-skill-candidate-key）合入 main 9af808ac。发布 r20261001-9af808a：codebuild/preflight/prompt_schema(bootstrap)/route_worker/api/collector/activation/release_note 全 passed（复收敛了 r20260930-39144ab 的 rollback_incomplete 残局）；只读回读：supportportal_preproduction 三表在位、candidate_type CHECK 含 skill、idx_support_weknora_promotions_candidate_unique 五列、schema_meta=v16@2026-10-01T03:21:44Z。本地官方栈 9af808acacb7 /health ok+provenance matched+prompt_count=41。WeKnora 真实端到端仍未执行（缺凭证），knowledge 管线在 preprod 仍为 disabled 休眠。"
         },
         {
+          "type": "decision",
+          "label": "Independent acceptance passed (consumption bridge round)",
+          "details": "2026-10-01 独立验收结论=通过（验收对象 main@53c0564469400707c7bbd2e6f660ca6020cbc201）：Review→Promotion→Adapter 消费桥闭合（同事务完成+入队、候选级幂等键、worker 同轮衔接、全 lineage）；skill 分流符合设计（写意图桥接 human_review、原始 decision 留 payload、Adapter 零调用、knowledge/memory 走正常决策矩阵）；相关单测 50 passed 3 skipped（独立复跑，.venv pytest），PG 集成以先前 8 项通过证据采信；preprod r20260930→r20261001-9af808a v16 回读与本地栈 9af808ac provenance 证据被采纳。剩余限制=WeKnora 真实凭证未提供（真实探针/写入端到端未执行，属 p2-182 后续验收条件，不阻塞本次）。"
+        },
+        {
           "type": "test",
           "label": "Production UI/deploy contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy .venv/bin/python -m unittest backend.tests.test_production_ui_contract backend.tests.test_account_ui_contract backend.tests.test_single_host_compose",
@@ -4255,7 +4260,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 44,
-      "done_count": 21,
+      "done_count": 22,
       "blocked_count": 0
     },
     {
@@ -15055,15 +15060,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-181",
       "title": "Hermes Case Summary 与知识治理 Review 双角色（独立会话 + 结构化合同 + WeKnora 只读适配层）",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-2",
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "created_at": "2026-09-30",
-      "updated_at": "2026-09-30",
+      "updated_at": "2026-10-01",
       "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。(5) 消费桥（验收未通过阻断项修复）：Review 完成事务内原子入队 support_weknora_promotions（build_weknora_promotions_from_review_report，source_type=hermes_knowledge_review、source_id=\u003creview_id>:\u003ccandidate_id>、source_version=报告 content_hash 内容寻址，lineage 全量：ticket/investigation/Summary+Review session 与 run/Slack thread）；skill 决策显式分流为仅人工复核记录（candidate_type 枚举扩至 skill，仅 no_change/human_review，仓储门禁拒绝 skill 写意图，适配器零读写护栏 skill_change_requires_human_review，原始 decision 保留于 payload）；schema 合并为 v16（与 #1336 的候选级幂等 v15 合并：v16-weknora-skill-candidate-key，约束交换+候选级唯一索引并存）；worker 顺序调整为先知识排水后 promotion 排水。",
-      "next_action": "消费桥已合入（PR#1340）并部署 Preproduction r20261001-9af808a 全阶段 passed（含 v16 bootstrap 与 Prompt Release 激活，只读回读确认 skill 约束/候选级索引/三表/schema=v16）。剩余：WeKnora 真实探针与端到端写入验证——待用户提供 endpoint/凭证/知识库 ID/共享 memory identity（scripts/weknora/probe_weknora_contract.py + 真实管线激活 HERMES_CASE_WORKFLOW_MODE=real）。",
+      "next_action": "验收通过（消费桥轮）：p2-181 收口 done。后续 WeKnora 真实探针/端到端为 p2-182 的验收条件（待用户提供 endpoint/凭证/知识库 ID/共享 memory identity）；知识管线激活（HERMES_CASE_WORKFLOW_MODE=real）另需部署决策。",
       "acceptance_criteria": [
         "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
         "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
@@ -15112,6 +15117,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Consumption bridge merged and deployed (r20261001-9af808a)",
           "details": "2026-10-01：PR#1340（消费桥+skill 分流+全 lineage+v16，合并 #1336 候选级幂等成 v16-weknora-skill-candidate-key）合入 main 9af808ac。发布 r20261001-9af808a：codebuild/preflight/prompt_schema(bootstrap)/route_worker/api/collector/activation/release_note 全 passed（复收敛了 r20260930-39144ab 的 rollback_incomplete 残局）；只读回读：supportportal_preproduction 三表在位、candidate_type CHECK 含 skill、idx_support_weknora_promotions_candidate_unique 五列、schema_meta=v16@2026-10-01T03:21:44Z。本地官方栈 9af808acacb7 /health ok+provenance matched+prompt_count=41。WeKnora 真实端到端仍未执行（缺凭证），knowledge 管线在 preprod 仍为 disabled 休眠。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance passed (consumption bridge round)",
+          "details": "2026-10-01 独立验收结论=通过（验收对象 main@53c0564469400707c7bbd2e6f660ca6020cbc201）：Review→Promotion→Adapter 消费桥闭合（同事务完成+入队、候选级幂等键、worker 同轮衔接、全 lineage）；skill 分流符合设计（写意图桥接 human_review、原始 decision 留 payload、Adapter 零调用、knowledge/memory 走正常决策矩阵）；相关单测 50 passed 3 skipped（独立复跑，.venv pytest），PG 集成以先前 8 项通过证据采信；preprod r20260930→r20261001-9af808a v16 回读与本地栈 9af808ac provenance 证据被采纳。剩余限制=WeKnora 真实凭证未提供（真实探针/写入端到端未执行，属 p2-182 后续验收条件，不阻塞本次）。"
         }
       ],
       "history": [
@@ -15139,6 +15149,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "followup",
           "summary": "验收阻断项（消费桥）修复并部署：Review→Promotion→Adapter 全链路打通（skill 仅人工复核），Preproduction r20261001-9af808a 激活并回读确认；仅剩 WeKnora 真实探针/端到端待用户凭证。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "done",
+          "summary": "消费桥验收通过（阻断项全闭环）；p2-181 收口 done，feature list 条目移入已完成；WeKnora 真实端到端移交 p2-182 凭证条件。"
         }
       ],
       "legacy_ids": [],
@@ -20633,6 +20648,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "title": "Engineer 端",
       "completed": [
+        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "升级工单会进入工程师任务池。",
         "工程师可切换托管与接管模式。",
         "证据不足时会转工程师处理。",
@@ -20666,7 +20682,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。"
       ],
       "planned": [
-        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
         "对话支持上传图片和 txt/log/md 文件。",
         "对话支持流式输出。"
       ]

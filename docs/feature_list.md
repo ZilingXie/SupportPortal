@@ -67,6 +67,7 @@
 ## Engineer 端
 
 ### 已完成
+- Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。
 - 升级工单会进入工程师任务池。
 - 工程师可切换托管与接管模式。
 - 证据不足时会转工程师处理。
@@ -100,7 +101,6 @@
 - Production Automation 分类完成后会将 Case 链接、客户问题和分类 path 邮件通知负责人。
 
 ### 未完成
-- Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。
 - 对话支持上传图片和 txt/log/md 文件。
 - 对话支持流式输出。
 
