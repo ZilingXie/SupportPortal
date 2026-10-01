@@ -39,13 +39,16 @@ class FakeAdapterClient:
     def has_memory_identity(self) -> bool:
         return True
 
+    def supports_conditional_update(self, candidate_type):
+        return True
+
     def knowledge_create(self, *, title, content, idempotency_key, **kwargs):
         return {"object_id": "doc-1", "version": "2", "receipt": {"ok": True}}
 
     def knowledge_read(self, *, object_id):
         return {"object_id": object_id, "version": "2", "title": "T", "content": "C"}
 
-    def memory_query(self, *, query):
+    def memory_list(self, *, top_k=None):
         return []
 
     def memory_create(self, *, content, idempotency_key, **kwargs):

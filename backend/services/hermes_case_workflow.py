@@ -283,6 +283,11 @@ class WeKnoraPromotionCandidate(_StrictModel):
     merged_content: str = ""
     target_object_id: str = ""
     base_version: str = ""
+    # Official WeKnora memory items carry a kind and an importance; the review
+    # forwards them when it can and the adapter passes them to the client,
+    # whose body template decides whether they reach the wire.
+    kind: str = ""
+    importance: int | None = None
     note: str = ""
 
 

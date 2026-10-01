@@ -8,7 +8,8 @@ WeKnora adapter plan:
 - incomplete review output      -> failed (no write)
 - search/read failure           -> no write, outcome_unknown or human review
 - target version changed        -> no overwrite, human review
-- replace/merge without the review's base version -> failed (no write)
+- targeted decision without the review's base version -> failed (no write)
+- update op without probe-proven conditional-update support -> human review
 - 401/403                       -> failed (no retry)
 - network timeout on write      -> outcome_unknown (same idempotency key on retry)
 - write ok but readback cannot prove object/content/version -> outcome_unknown
@@ -97,7 +98,7 @@ class WeKnoraPromotionAdapter:
                 failure_detail="incomplete review output: new knowledge requires a title",
             )
         base_version = str(candidate.get("base_version") or "").strip()
-        if decision in {"replace", "merge"} and not base_version:
+        if decision in TARGETED_DECISIONS and not base_version:
             return WeKnoraPromotionOutcome(
                 status="failed", failure_code="invalid_candidate",
                 failure_detail=(
@@ -119,13 +120,31 @@ class WeKnoraPromotionAdapter:
                     status="failed", failure_code="invalid_candidate",
                     failure_detail=f"{decision} requires target_object_id",
                 )
+            # A version-protected update requires probe-proven conditional
+            # update support; without that evidence the task goes to humans
+            # instead of an unverifiable overwrite.
+            if not self._client.supports_conditional_update(candidate_type):
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="conditional_update_unsupported",
+                    failure_detail=(
+                        "the pinned WeKnora contract does not declare "
+                        f"{candidate_type}_update conditional_update=true; refusing "
+                        "version-protected targeted writes without probe evidence"
+                    ),
+                )
             current = self._read_target(candidate_type, target_object_id)
             if isinstance(current, WeKnoraPromotionOutcome):
                 return current
             current_version = str(current.get("version") or "").strip()
+            if not current_version:
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="target_version_unknown",
+                    failure_detail="target current version is not readable; refusing to overwrite",
+                    weknora_object_id=target_object_id,
+                )
             # The review must pin the version it based its decision on; a
             # changed target is never silently overwritten with current.
-            if base_version and current_version and base_version != current_version:
+            if base_version != current_version:
                 return WeKnoraPromotionOutcome(
                     status="human_review", failure_code="target_version_conflict",
                     failure_detail=f"target is at version {current_version or 'unknown'}, review based on {base_version}",
@@ -174,6 +193,8 @@ class WeKnoraPromotionAdapter:
             target_object_id=target_object_id or None,
             base_version=resolved_base_version,
             idempotency_key=idempotency_key,
+            kind=str(candidate.get("kind") or "").strip(),
+            importance=candidate.get("importance"),
         )
 
     # -- internals ----------------------------------------------------------
@@ -187,8 +208,9 @@ class WeKnoraPromotionAdapter:
         """Read one object; raises WeKnoraError (not_found when absent)."""
         if candidate_type == "knowledge":
             return self._client.knowledge_read(object_id=object_id)
-        results = self._client.memory_query(query=object_id)
-        for item in results:
+        # The official memory API is a list endpoint: fetch the items the
+        # identity owns and match by object id.
+        for item in self._client.memory_list():
             if _item_object_id(item) == object_id:
                 return {
                     "object_id": object_id,
@@ -296,6 +318,8 @@ class WeKnoraPromotionAdapter:
         target_object_id: str | None,
         base_version: str,
         idempotency_key: str,
+        kind: str = "",
+        importance: int | None = None,
     ) -> WeKnoraPromotionOutcome:
         try:
             if candidate_type == "knowledge":
@@ -314,7 +338,8 @@ class WeKnoraPromotionAdapter:
             else:
                 if decision == "new":
                     write = self._client.memory_create(
-                        content=content, idempotency_key=idempotency_key
+                        content=content, idempotency_key=idempotency_key,
+                        kind=kind, importance=importance,
                     )
                 else:
                     write = self._client.memory_update(
@@ -322,6 +347,7 @@ class WeKnoraPromotionAdapter:
                         base_version=base_version,
                         content=content,
                         idempotency_key=idempotency_key,
+                        kind=kind, importance=importance,
                     )
         except WeKnoraError as exc:
             if exc.failure_kind == "auth":
