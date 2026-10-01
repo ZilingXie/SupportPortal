@@ -144,6 +144,9 @@ def _probe_write_capabilities(client: WeKnoraClient) -> dict[str, Any]:
     def _update() -> dict:
         if not state.get("version"):
             raise WeKnoraError("no version from create; cannot verify conditional update", failure_kind="not_configured")
+        # Remember the pre-update version: the stale-base check below must use
+        # a version the object has moved past, never the current one.
+        state["stale_version"] = state["version"]
         updated = client.knowledge_update(
             object_id=state["object_id"], base_version=str(state["version"]),
             title="SupportPortal contract probe", content=f"{key}-v2", idempotency_key=f"{key}:u1",
@@ -152,20 +155,40 @@ def _probe_write_capabilities(client: WeKnoraClient) -> dict[str, Any]:
         return updated
 
     def _stale_update_rejected() -> dict:
+        stale = str(state.get("stale_version") or "")
+        if not stale:
+            raise WeKnoraError("no pre-update version captured; cannot test a stale base", failure_kind="not_configured")
         try:
             client.knowledge_update(
-                object_id=state["object_id"], base_version=str(state["version"]),
+                object_id=state["object_id"], base_version=stale,
                 title="SupportPortal contract probe", content="must-not-land",
                 idempotency_key=f"{key}:stale",
             )
         except WeKnoraError as exc:
             if exc.failure_kind == "conflict":
-                return {"rejected": True}
+                return {"rejected": True, "stale_base_version": stale}
             raise
-        # Succeeded with the SAME current version twice: either the server
-        # ignores base_version (no optimistic locking) or versions are not
-        # advancing. Both mean version protection is client-side only.
-        return {"rejected": False, "warning": "server accepted a stale base_version; version conflict detection is NOT server-enforced"}
+        # The server accepted an outdated base_version. That is a FAILED
+        # capability check, not a warning: declaring conditional_update=true
+        # on this contract would be false evidence.
+        current = client.knowledge_read(object_id=state["object_id"])
+        landed = str(current.get("content") or "").strip() == "must-not-land"
+        if landed:
+            # Best-effort repair of the probe object before reporting failure.
+            try:
+                client.knowledge_update(
+                    object_id=state["object_id"], base_version=str(current.get("version") or ""),
+                    title="SupportPortal contract probe", content=f"{key}-v2",
+                    idempotency_key=f"{key}:repair",
+                )
+            except WeKnoraError:
+                pass
+        raise WeKnoraError(
+            "server ACCEPTED a stale base_version"
+            + (" and the stale content landed" if landed else "")
+            + "; conditional update protection is NOT server-enforced and conditional_update=true must not be declared",
+            failure_kind="invalid_response",
+        )
 
     check("create", _create)
     if caps.get("create", {}).get("status") == "verified":

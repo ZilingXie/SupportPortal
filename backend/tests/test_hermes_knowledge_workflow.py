@@ -183,8 +183,16 @@ def _memory_new_decision(candidate_id: str = "cand-2") -> dict:
         "proposed_content": "Case pattern: region misconfiguration join failure.",
         "target_object": None,
         "target_version": None,
+        "kind": "semantic",
+        "importance": 3,
         "source_references": ["output-1"],
     }
+
+
+def _memory_new_decision_without_kind(candidate_id: str = "cand-2") -> dict:
+    decision = _memory_new_decision(candidate_id)
+    decision["kind"] = ""
+    return decision
 
 
 def _skill_decision(candidate_id: str = "cand-3", decision: str = "human_review") -> dict:
@@ -391,7 +399,7 @@ class FakeWeKnoraWriteClient:
         ]
 
     def memory_create(self, *, content: str, idempotency_key: str, kind: str = "", importance=None) -> dict:
-        self.calls.append(("memory_create", {"key": idempotency_key, "kind": kind}))
+        self.calls.append(("memory_create", {"key": idempotency_key, "kind": kind, "importance": importance}))
         object_id = f"mem-new-{len(self.objects)}"
         self.objects[object_id] = {
             "object_id": object_id, "version": "1", "title": "", "content": content,
@@ -499,6 +507,11 @@ def test_completed_review_feeds_the_weknora_promotion_worker_end_to_end(monkeypa
     update_call = next(kwargs for name, kwargs in write_client.calls if name == "knowledge_update")
     assert update_call["object_id"] == "weknora:kb:join-failures"
     assert update_call["base_version"] == "3"
+    # Review -> bridge -> Adapter memory field chain: the review's kind and
+    # importance classification survive into the memory write call.
+    memory_call = next(kwargs for name, kwargs in write_client.calls if name == "memory_create")
+    assert memory_call["kind"] == "semantic"
+    assert memory_call["importance"] == 3
 
     # Idempotency: nothing left to claim, and re-enqueueing the same report
     # from the completed review does not duplicate rows.
@@ -542,6 +555,19 @@ def test_bridge_routes_any_skill_write_intent_to_human_review_only() -> None:
         normalize_weknora_promotion_task(
             {**tasks[0], "decision": "new"}, now_value="2026-09-30T00:00:00Z"
         )
+
+
+def test_memory_decision_without_kind_fails_the_review_contract() -> None:
+    """Review-acceptance round 3: an unclassified memory decision cannot
+    pass the review contract, so it never reaches the write chain."""
+    from backend.services.hermes_case_workflow import HermesReviewDecision
+
+    with pytest.raises(ValueError, match="memory kind"):
+        HermesReviewDecision.model_validate(_memory_new_decision_without_kind())
+    # With the classification the decision validates and the bridge forwards it.
+    decision = HermesReviewDecision.model_validate(_memory_new_decision())
+    assert decision.kind == "semantic"
+    assert decision.importance == 3
 
 
 def test_weknora_unavailable_completes_with_human_review_fail_closed(monkeypatch) -> None:

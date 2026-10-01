@@ -36,6 +36,24 @@
           "title": "Decision",
           "type": "string"
         },
+        "importance": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Importance"
+        },
+        "kind": {
+          "default": "",
+          "title": "Kind",
+          "type": "string"
+        },
         "proposed_content": {
           "default": "",
           "title": "Proposed Content",

@@ -592,6 +592,8 @@ def build_weknora_promotions_from_review_report(
             ),
             "target_object_id": str(decision.get("target_object") or ""),
             "base_version": str(decision.get("target_version") or ""),
+            "kind": str(decision.get("kind") or ""),
+            "importance": decision.get("importance"),
             "note": str(decision.get("rationale") or ""),
         }
         if original_type == "skill":

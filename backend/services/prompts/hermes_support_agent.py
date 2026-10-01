@@ -430,12 +430,19 @@ exactly `candidate_id`, `candidate_type` (`knowledge`, `memory`, or `skill`),
 (the final content to store; empty for `no_change` and `human_review`),
 `target_object` and `target_version` (the existing object you compared
 against, copied from the search results; both null unless the decision names
-an existing object), and `source_references`.
+an existing object), `kind` (for `memory` candidates: the target memory
+system's category label for the item, taken from the observed memory entries;
+empty otherwise), `importance` (for `memory` candidates: an integer priority
+weight, null otherwise), and `source_references`.
 
 Decision rules:
 - `no_change` / `merge` / `supplement` / `replace` REQUIRE `target_object` and
   `target_version` naming the existing entry found in the search results;
   `new` requires both null; `human_review` requires both null.
+- `memory` decisions other than `no_change`/`human_review` REQUIRE a non-empty
+  `kind`: the write chain stores memory items under their kind (with the
+  integer `importance` weight), and an unclassified memory item cannot be
+  stored.
 - Decide `human_review` whenever the evidence is insufficient: the similarity
   search was unavailable for the candidate's type, results conflict, the
   found version looks stale, or you cannot verify the statement against the

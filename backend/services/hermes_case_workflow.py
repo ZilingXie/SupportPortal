@@ -384,6 +384,11 @@ class HermesReviewDecision(_StrictModel):
     proposed_content: str = ""
     target_object: str | None = None
     target_version: str | None = None
+    # Memory items in the official WeKnora API carry a kind and an integer
+    # importance; the Review classifies memory candidates with both so the
+    # write chain can emit the official shape without inventing values.
+    kind: str = ""
+    importance: int | None = Field(default=None, ge=0)
     source_references: tuple[str, ...] = ()
 
     @model_validator(mode="after")
@@ -396,6 +401,9 @@ class HermesReviewDecision(_StrictModel):
                 raise ValueError(f"{self.decision} requires target_object and target_version")
         if self.decision == "new" and has_target:
             raise ValueError("new must not reference an existing target")
+        if self.candidate_type == "memory" and self.decision not in {"no_change", "human_review"}:
+            if not self.kind.strip():
+                raise ValueError("memory decisions must carry the target memory kind")
         return self
 
 
