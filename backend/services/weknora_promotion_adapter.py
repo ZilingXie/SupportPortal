@@ -8,9 +8,12 @@ WeKnora adapter plan:
 - incomplete review output      -> failed (no write)
 - search/read failure           -> no write, outcome_unknown or human review
 - target version changed        -> no overwrite, human review
+- replace/merge without the review's base version -> failed (no write)
 - 401/403                       -> failed (no retry)
 - network timeout on write      -> outcome_unknown (same idempotency key on retry)
-- write ok but readback failed  -> outcome_unknown (never blind-write again)
+- write ok but readback cannot prove object/content/version -> outcome_unknown
+- retried task with a known object -> readback reconciliation first, never a
+  blind second write
 - memory without shared identity-> human review (no global memory write)
 """
 
@@ -33,6 +36,11 @@ class WeKnoraPromotionOutcome:
     weknora_object_id: str | None = None
     weknora_version: str | None = None
     receipt: dict[str, Any] | None = None
+
+
+def _item_object_id(item: dict[str, Any]) -> str:
+    """WeKnora APIs may answer with ``id`` instead of ``object_id``."""
+    return str(item.get("object_id") or item.get("id") or "").strip()
 
 
 class WeKnoraPromotionAdapter:
@@ -88,6 +96,15 @@ class WeKnoraPromotionAdapter:
                 status="failed", failure_code="invalid_candidate",
                 failure_detail="incomplete review output: new knowledge requires a title",
             )
+        base_version = str(candidate.get("base_version") or "").strip()
+        if decision in {"replace", "merge"} and not base_version:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate",
+                failure_detail=(
+                    f"{decision} requires the base_version the review based its content on; "
+                    "refusing to update against an unpinned current version"
+                ),
+            )
 
         if candidate_type == "memory" and not self._client.has_memory_identity():
             return WeKnoraPromotionOutcome(
@@ -105,8 +122,9 @@ class WeKnoraPromotionAdapter:
             current = self._read_target(candidate_type, target_object_id)
             if isinstance(current, WeKnoraPromotionOutcome):
                 return current
-            base_version = self._expected_base_version(candidate, decision)
             current_version = str(current.get("version") or "").strip()
+            # The review must pin the version it based its decision on; a
+            # changed target is never silently overwritten with current.
             if base_version and current_version and base_version != current_version:
                 return WeKnoraPromotionOutcome(
                     status="human_review", failure_code="target_version_conflict",
@@ -132,7 +150,21 @@ class WeKnoraPromotionAdapter:
         else:
             resolved_content = content
             resolved_title = title
-            resolved_base_version = str(candidate.get("base_version") or "").strip()
+            resolved_base_version = ""
+
+        known_object_id = str(task.get("weknora_object_id") or "").strip()
+        if known_object_id:
+            reconciliation = self._reconcile_known_object(
+                candidate_type=candidate_type,
+                decision=decision,
+                known_object_id=known_object_id,
+                known_version=str(task.get("weknora_version") or "").strip(),
+                expected_content=resolved_content,
+                supplement_content=content if decision == "supplement" else "",
+                target_object_id=target_object_id,
+            )
+            if reconciliation is not None:
+                return reconciliation
 
         return self._write_and_readback(
             candidate_type=candidate_type,
@@ -151,25 +183,24 @@ class WeKnoraPromotionAdapter:
             return str(candidate.get("merged_content") or "").strip()
         return str(candidate.get("content") or "").strip()
 
-    def _expected_base_version(self, candidate: dict[str, Any], decision: str) -> str:
-        if decision == "supplement":
-            return ""
-        return str(candidate.get("base_version") or "").strip()
+    def _read_object(self, candidate_type: str, object_id: str) -> dict[str, Any]:
+        """Read one object; raises WeKnoraError (not_found when absent)."""
+        if candidate_type == "knowledge":
+            return self._client.knowledge_read(object_id=object_id)
+        results = self._client.memory_query(query=object_id)
+        for item in results:
+            if _item_object_id(item) == object_id:
+                return {
+                    "object_id": object_id,
+                    "version": str(item.get("version") or ""),
+                    "title": str(item.get("title") or ""),
+                    "content": str(item.get("content") or ""),
+                }
+        raise WeKnoraError("memory target not found", failure_kind="not_found")
 
     def _read_target(self, candidate_type: str, target_object_id: str) -> dict[str, Any] | WeKnoraPromotionOutcome:
         try:
-            if candidate_type == "knowledge":
-                return self._client.knowledge_read(object_id=target_object_id)
-            results = self._client.memory_query(query=target_object_id)
-            for item in results:
-                if str(item.get("object_id") or "") == target_object_id:
-                    return {
-                        "object_id": target_object_id,
-                        "version": str(item.get("version") or ""),
-                        "title": str(item.get("title") or ""),
-                        "content": str(item.get("content") or ""),
-                    }
-            raise WeKnoraError("memory target not found", failure_kind="not_found")
+            return self._read_object(candidate_type, target_object_id)
         except WeKnoraError as exc:
             if exc.failure_kind == "not_found":
                 return WeKnoraPromotionOutcome(
@@ -188,6 +219,72 @@ class WeKnoraPromotionAdapter:
             return WeKnoraPromotionOutcome(
                 status="failed", failure_code=f"weknora_read_{exc.failure_kind}", failure_detail=str(exc)
             )
+
+    def _reconcile_known_object(
+        self,
+        *,
+        candidate_type: str,
+        decision: str,
+        known_object_id: str,
+        known_version: str,
+        expected_content: str,
+        supplement_content: str,
+        target_object_id: str,
+    ) -> WeKnoraPromotionOutcome | None:
+        """A retried task that already recorded a WeKnora object must prove the
+        earlier write state by readback before any new external call.
+
+        Returns None when reconciliation proves the earlier write never landed
+        (object absent), letting the normal write path proceed with the same
+        idempotency key.
+        """
+        try:
+            read = self._read_object(candidate_type, known_object_id)
+        except WeKnoraError as exc:
+            if exc.failure_kind == "not_found":
+                return None  # prior write never landed; safe to write now
+            if exc.failure_kind == "auth":
+                return WeKnoraPromotionOutcome(
+                    status="failed", failure_code="weknora_auth_rejected", failure_detail=str(exc),
+                    weknora_object_id=known_object_id,
+                )
+            if exc.failure_kind in {"timeout", "transport", "http", "invalid_response"}:
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown", failure_code=f"reconcile_read_{exc.failure_kind}",
+                    failure_detail=str(exc), weknora_object_id=known_object_id,
+                )
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code=f"reconcile_read_{exc.failure_kind}", failure_detail=str(exc),
+                weknora_object_id=known_object_id,
+            )
+
+        read_content = str(read.get("content") or "").strip()
+        if decision == "supplement" and supplement_content:
+            content_matches = read_content.endswith(supplement_content)
+        else:
+            content_matches = read_content == expected_content
+        read_version = str(read.get("version") or "").strip()
+        version_matches = not known_version or not read_version or known_version == read_version
+        if content_matches and version_matches:
+            return WeKnoraPromotionOutcome(
+                status="accepted",
+                weknora_object_id=known_object_id,
+                weknora_version=read_version or known_version or None,
+                receipt={
+                    "operation": "reconciled_existing",
+                    "object_id": known_object_id,
+                    "version": read_version or known_version or None,
+                },
+            )
+        return WeKnoraPromotionOutcome(
+            status="human_review", failure_code="reconcile_content_mismatch",
+            failure_detail=(
+                f"object {known_object_id} exists with different content/version than this "
+                "task recorded; refusing to overwrite without human decision"
+            ),
+            weknora_object_id=known_object_id,
+            weknora_version=read_version or None,
+        )
 
     def _write_and_readback(
         self,
@@ -257,23 +354,23 @@ class WeKnoraPromotionAdapter:
         version = str(write.get("version") or "").strip() or None
         readback_error: str | None = None
         try:
-            read = (
-                self._client.knowledge_read(object_id=object_id)
-                if candidate_type == "knowledge"
-                else None
-            )
-            if candidate_type == "memory":
-                results = self._client.memory_query(query=object_id)
-                read = next(
-                    (item for item in results if str(item.get("object_id") or "") == object_id),
-                    None,
-                )
-                if read is None:
-                    raise WeKnoraError("memory readback not found", failure_kind="not_found")
-            if read is None or str(read.get("content") or "").strip() == "":
-                raise WeKnoraError("readback returned empty content", failure_kind="invalid_response")
+            read = self._read_object(candidate_type, object_id)
         except WeKnoraError as exc:
+            read = None
             readback_error = f"{exc.failure_kind}: {exc}"
+
+        if readback_error is None:
+            read_object_id = _item_object_id(read)
+            read_content = str(read.get("content") or "").strip()
+            read_version = str(read.get("version") or "").strip()
+            # Readback must prove the write: same object, same content, and a
+            # consistent version. Anything else is an unproven write.
+            if read_object_id != object_id:
+                readback_error = f"object mismatch: wrote {object_id}, read back {read_object_id or 'none'}"
+            elif read_content != content:
+                readback_error = "content mismatch: readback does not match the written content"
+            elif version and read_version and version != read_version:
+                readback_error = f"version mismatch: receipt {version}, readback {read_version}"
 
         if readback_error is not None:
             return WeKnoraPromotionOutcome(

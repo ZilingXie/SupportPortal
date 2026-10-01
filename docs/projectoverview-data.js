@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T02:46:43Z",
-  "source_base_commit": "d07bf4b4a3188454cd481b365743ceef9a43c5ff",
-  "registry_digest": "cb9f84c2ea3a20633ed280d5bfc52877687498bf4ae5a9aea5a00e5895680ec6",
+  "generated_at": "2026-10-01T02:52:35Z",
+  "source_base_commit": "10dab7305da76843c9313db0db9bd865d25838ff",
+  "registry_digest": "851fdfaf4272e5c520f988b84232f9191b1eeac9ac4e2aead8d3f0735e85f9c0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4808,6 +4808,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "回归矩阵",
           "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
+        },
+        {
+          "type": "test",
+          "label": "修复轮定向验证（2026-10-01）",
+          "details": "五缺陷各补回归用例后：WeKnora client/adapter/workflow/worker+repository configuration 共 189 passed（含：同类型双候选 InMemory 双行且重放幂等；回读旧内容/版本偏移/对象错位→outcome_unknown readback_failed；requeue 匹配对象零 create/缺失对象恰好一次 create/分叉→human_review/核对读失败→outcome_unknown；replace/merge 缺 base_version 拒绝；supplement 带版本冲突→human_review；{placeholder} 渲染与缺值 fail-closed；官方记忆 id 别名归一）。隔离 PostgreSQL 14 集成 31 passed（v15 bootstrap、候选级唯一索引下双候选共存+重放幂等、close 原子、并发领取、reopen 失效）；hermes/zendesk/engineer_slack/ecs worker 回归 222 passed。"
         }
       ],
       "source_refs": [
@@ -15087,9 +15092,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-knowledge-promotion",
       "created_at": "2026-09-30",
-      "updated_at": "2026-09-30",
-      "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。",
-      "next_action": "等待 WeKnora Preproduction endpoint/凭证运行 scripts/weknora/probe_weknora_contract.py 固定 WEKNORA_API_CONTRACT_JSON；随后接入 p2-181 review 任务 weknora_submissions → 本 promotion 表的消费桥；再做 Preproduction 端到端（新建/补充/替代/合并/幂等/版本冲突）与 n8n 旧 Tencent Memory 写入路径迁移。",
+      "updated_at": "2026-10-01",
+      "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。",
+      "next_action": "等待重新验收（验收对象=本轮修复后的新提交）；验收通过后的既有顺序不变：WeKnora Preproduction endpoint/凭证→contract probe+写能力证据→接入 p2-181 review 任务 weknora_submissions 消费桥（集成线程）→Preproduction 端到端→n8n 旧路径迁移。部署验收门禁未释放。",
       "acceptance_criteria": [
         "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
         "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、版本冲突人工复核）",
@@ -15116,6 +15121,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "回归矩阵",
           "details": "2026-09-30：hermes workflow/contracts/runtime+engineer_slack+ecs admin reader 80 passed；zendesk agent(+tools) 125 passed；ecs worker 15 passed；repository configuration 128 passed；全量 pytest 工作区 vs 干净 main 失败清单对比仅 1 例并行干扰（单跑通过），零真实回归。"
+        },
+        {
+          "type": "test",
+          "label": "修复轮定向验证（2026-10-01）",
+          "details": "五缺陷各补回归用例后：WeKnora client/adapter/workflow/worker+repository configuration 共 189 passed（含：同类型双候选 InMemory 双行且重放幂等；回读旧内容/版本偏移/对象错位→outcome_unknown readback_failed；requeue 匹配对象零 create/缺失对象恰好一次 create/分叉→human_review/核对读失败→outcome_unknown；replace/merge 缺 base_version 拒绝；supplement 带版本冲突→human_review；{placeholder} 渲染与缺值 fail-closed；官方记忆 id 别名归一）。隔离 PostgreSQL 14 集成 31 passed（v15 bootstrap、候选级唯一索引下双候选共存+重放幂等、close 原子、并发领取、reopen 失效）；hermes/zendesk/engineer_slack/ecs worker 回归 222 passed。"
         }
       ],
       "history": [],

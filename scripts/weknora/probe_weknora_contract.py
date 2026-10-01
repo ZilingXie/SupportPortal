@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 import urllib.error
 import urllib.request
 
@@ -89,8 +90,90 @@ def main() -> int:
             "failure_kind": exc.failure_kind,
             "detail": str(exc),
         }
+    if str(os.getenv("WEKNORA_PROBE_WRITE_CAPABILITIES") or "").strip().lower() in {"1", "true", "yes"}:
+        report["write_capabilities"] = _probe_write_capabilities(client)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
+
+
+def _probe_write_capabilities(client: WeKnoraClient) -> dict[str, Any]:
+    """Opt-in write/idempotency/version-conflict evidence (real writes!).
+
+    Only run against a throwaway knowledge base: this creates, updates, and
+    deliberately stale-updates one probe object. A passing health probe alone
+    never proves write, idempotency, or version-conflict capability — this
+    block is the evidence the WeKnora adapter plan requires before enabling
+    promotion writes.
+    """
+    caps: dict[str, Any] = {"note": "real writes against WEKNORA_KNOWLEDGE_BASE_ID; use a probe-only base"}
+
+    def check(name: str, fn) -> None:
+        try:
+            caps[name] = {"status": "verified", "result": fn()}
+        except WeKnoraError as exc:
+            caps[name] = {"status": "failed", "failure_kind": exc.failure_kind, "detail": str(exc)}
+
+    key = f"supportportal-probe:{time.strftime('%Y%m%d%H%M%S')}"
+    state: dict[str, Any] = {}
+
+    def _create() -> dict:
+        write = client.knowledge_create(
+            title="SupportPortal contract probe", content=key, idempotency_key=key
+        )
+        state["object_id"] = write["object_id"]
+        state["version"] = write.get("version")
+        return write
+
+    def _readback() -> dict:
+        read = client.knowledge_read(object_id=state["object_id"])
+        if str(read.get("content") or "").strip() != key:
+            raise WeKnoraError("readback content mismatch", failure_kind="invalid_response")
+        return {"object_id": read["object_id"], "version": read.get("version")}
+
+    def _idempotent_recreate() -> dict:
+        again = client.knowledge_create(
+            title="SupportPortal contract probe", content=key, idempotency_key=key
+        )
+        if again["object_id"] != state["object_id"]:
+            raise WeKnoraError(
+                "same idempotency key produced a different object; server-side dedupe is absent",
+                failure_kind="invalid_response",
+            )
+        return {"object_id": again["object_id"]}
+
+    def _update() -> dict:
+        if not state.get("version"):
+            raise WeKnoraError("no version from create; cannot verify conditional update", failure_kind="not_configured")
+        updated = client.knowledge_update(
+            object_id=state["object_id"], base_version=str(state["version"]),
+            title="SupportPortal contract probe", content=f"{key}-v2", idempotency_key=f"{key}:u1",
+        )
+        state["version"] = updated.get("version") or state["version"]
+        return updated
+
+    def _stale_update_rejected() -> dict:
+        try:
+            client.knowledge_update(
+                object_id=state["object_id"], base_version=str(state["version"]),
+                title="SupportPortal contract probe", content="must-not-land",
+                idempotency_key=f"{key}:stale",
+            )
+        except WeKnoraError as exc:
+            if exc.failure_kind == "conflict":
+                return {"rejected": True}
+            raise
+        # Succeeded with the SAME current version twice: either the server
+        # ignores base_version (no optimistic locking) or versions are not
+        # advancing. Both mean version protection is client-side only.
+        return {"rejected": False, "warning": "server accepted a stale base_version; version conflict detection is NOT server-enforced"}
+
+    check("create", _create)
+    if caps.get("create", {}).get("status") == "verified":
+        check("readback", _readback)
+        check("idempotent_recreate", _idempotent_recreate)
+        check("conditional_update", _update)
+        check("stale_base_version_rejected", _stale_update_rejected)
+    return caps
 
 
 if __name__ == "__main__":

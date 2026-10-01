@@ -59,9 +59,22 @@ WEKNORA_PROMOTION_FIELDS = (
 )
 
 
-def weknora_promotion_id(*, source_type: str, source_id: str, source_version: str, candidate_type: str) -> str:
+def weknora_promotion_id(
+    *,
+    source_type: str,
+    source_id: str,
+    source_version: str,
+    candidate_type: str,
+    content_hash: str,
+) -> str:
+    """Stable per-candidate identity.
+
+    The candidate content hash discriminates same-type candidates from one
+    source version (two different knowledge entries both survive), while a
+    replayed event produces the same hash and therefore the same id.
+    """
     return (
-        f"weknora:{source_type}:{source_id}:{source_version}:{candidate_type}"
+        f"weknora:{source_type}:{source_id}:{source_version}:{candidate_type}:{content_hash}"
     )
 
 
@@ -71,6 +84,7 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         source_id=str(task.get("source_id") or ""),
         source_version=str(task.get("source_version") or ""),
         candidate_type=str(task.get("candidate_type") or ""),
+        content_hash=str(task.get("content_hash") or ""),
     )
     normalized = {
         "promotion_id": promotion_id,
@@ -289,11 +303,20 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 self._table("support_engineer_cases"),
             )
         )
+        # v15: uniqueness is per candidate (content hash), not per source
+        # version, so multiple same-type candidates from one close survive
+        # while replayed events still dedupe. The v14 index is replaced.
+        cur.execute(
+            sql.SQL("DROP INDEX IF EXISTS {}").format(
+                sql.Identifier("idx_support_weknora_promotions_source_unique")
+            )
+        )
         cur.execute(
             sql.SQL(
-                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (source_type, source_id, source_version, candidate_type)"
+                "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} "
+                "(source_type, source_id, source_version, candidate_type, content_hash)"
             ).format(
-                sql.Identifier("idx_support_weknora_promotions_source_unique"),
+                sql.Identifier("idx_support_weknora_promotions_candidate_unique"),
                 self._table(_WEKNORA_PROMOTION_TABLE),
             )
         )
@@ -303,7 +326,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 self._table(_WEKNORA_PROMOTION_TABLE),
             )
         )
-        # v15: skill proposals enter the pipeline as human-review-only records;
+        # v16: skill proposals enter the pipeline as human-review-only records;
         # swap the legacy (knowledge, memory) check on databases created before
         # the enum extension.
         promotion_table = self._table(_WEKNORA_PROMOTION_TABLE)
