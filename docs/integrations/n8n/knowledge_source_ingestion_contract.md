@@ -1,6 +1,6 @@
 # 知识来源接收契约（n8n → SupportPortal）v1
 
-状态：**提案冻结（frozen proposal）**。本契约由 n8n 来源迁移计划（p2-183）按计划步骤 1 整理并冻结字段与回执语义；SupportPortal 侧接收接口尚未实现，路径与认证为提案值，须由治理模块实现时确认或修订（见[开放项](#开放项)）。在 SP 侧确认前，本契约只约束 n8n 侧投递节点的结构，不声明任何线上端点已可用。
+状态：**Preproduction 已实现（v1）**。SupportPortal 已提供受 intake Bearer 保护的 `POST /automation/preproduction/v1/knowledge/sources` 和只读状态回读；n8n 仍只负责投递原始快照，回执只代表来源已持久化/排队，不代表 Review 或 WeKnora 写入完成。
 
 ## 背景与边界
 
@@ -11,7 +11,7 @@
 - n8n 收到成功回执只表示**已接收**，不表示已通过 Review 或已写入知识库。
 - Case ID、Hermes session 和 Slack thread 由 SupportPortal 关联；n8n 不猜测、不填充这些值。
 
-## 端点与认证（提案）
+## 端点与认证
 
 - 端点：`POST {automation base}/v1/knowledge/sources`，automation base 先指向 Preproduction：
   `https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources`
@@ -66,18 +66,16 @@ HTTP 2xx 且 body 含以下 `status` 之一即视为投递成功：
 
 ## 开放项
 
-1. **SP 接收接口实现**：本契约的端点路径、认证机制、回执字段需由 SupportPortal 治理模块实现时确认；如最终路径或认证不同，仅需修改两条 n8n 流程中的 `Deliver Source Snapshot` 节点。
-2. **接口就绪前不发布**：n8n 草稿完成并通过独立验收后，仍须等待 Preproduction 接口可用才能发布，否则投递必然失败并中断知识入库链路。
-3. **Review 输出链**：Hermes 总结与 Review 链尚不存在；Zendesk 草稿与 Sheets 的"Review 通过后触发"对接为后续工作。
-4. **WeKnora 写入链**：SupportPortal 受控写入目标，尚未建设。
+1. **Review 输出链**：Hermes 总结与 Review 已由 worker 异步消费；CSD 来源在尚未绑定 Hermes case 时只保留 source intake，后续需单独触发 Review。
+2. **WeKnora 写入链**：SupportPortal 受控 promotion worker 已部署；真实写入仍按 WeKnora 能力探针结果对定向更新 fail-closed，新建候选才可直接写入。
 
 ## 验证矩阵（对应计划验收项）
 
 | 场景 | 验证方式 | 前置 |
 | --- | --- | --- |
-| 首次投递 → accepted | 真实/测试来源投递后核对回执与 SP 持久化 | SP 接口就绪 |
-| 重复事件 → already_exists | 同版本重投 | SP 接口就绪 |
-| 更新后新版本 → accepted；旧版本 → stale_ignored | 更新来源后重投 | SP 接口就绪 |
+| 首次投递 → accepted | 真实/测试来源投递后核对回执与 SP 持久化 | Preproduction endpoint |
+| 重复事件 → already_exists | 同版本重投 | Preproduction endpoint |
+| 更新后新版本 → accepted；旧版本 → stale_ignored | 更新来源后重投 | Preproduction endpoint |
 | 评论不完整 → 显式失败 | 构造分页不完整输入，确认执行失败且未投递 | 草稿级可验 |
 | SP 超时 → 失败告警，重投安全 | 断开接口/模拟超时 | SP 接口就绪 |
 | Review 拒绝不影响 n8n | Review 链行为，n8n 侧无动作 | Review 链就绪 |

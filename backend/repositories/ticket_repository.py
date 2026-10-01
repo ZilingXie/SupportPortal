@@ -64,6 +64,10 @@ from backend.repositories.weknora_promotion_repository import (
     InMemoryWeKnoraPromotionRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
 )
+from backend.repositories.knowledge_source_repository import (
+    InMemoryKnowledgeSourceRepositoryMixin,
+    PostgresKnowledgeSourceRepositoryMixin,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -1279,8 +1283,9 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v16 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v16-weknora-skill-candidate-key"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v17-knowledge-source-intake"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v16-weknora-skill-candidate-key",
     "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v10-enablement-relay",
     "2026-single-ai-managed-v12-case-llm-usage-source",
@@ -2021,6 +2026,18 @@ class TicketRepository(Protocol):
         ...
 
     def get_ticket(self, ticket_id: str) -> dict[str, Any] | None:
+        ...
+
+    def accept_knowledge_source(self, payload: dict[str, Any], *, now_value: str) -> dict[str, Any]:
+        ...
+
+    def link_knowledge_source_summary(
+        self, intake_id: str, *, engineer_case_id: str | None,
+        summary_task_id: str | None, now_value: str,
+    ) -> dict[str, Any] | None:
+        ...
+
+    def get_knowledge_source(self, intake_id: str) -> dict[str, Any] | None:
         ...
 
     def list_tickets(self, include_messages: bool = True) -> list[dict[str, Any]]:
@@ -3098,6 +3115,7 @@ class InMemoryTicketRepository(
     InMemoryHermesCaseRepositoryMixin,
     InMemoryEnablementRelayRepositoryMixin,
     InMemoryWeKnoraPromotionRepositoryMixin,
+    InMemoryKnowledgeSourceRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -4236,6 +4254,7 @@ class InMemoryTicketRepository(
         self._account_case_llm_usage: list[dict[str, Any]] = []
         self._initialize_hermes_state()
         self._initialize_enablement_relay_state()
+        self._initialize_knowledge_source_state()
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -8265,6 +8284,7 @@ class PostgresTicketRepository(
     PostgresHermesCaseRepositoryMixin,
     PostgresEnablementRelayRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
+    PostgresKnowledgeSourceRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -12696,6 +12716,7 @@ class PostgresTicketRepository(
                 self._initialize_hermes_schema(cur)
                 self._initialize_enablement_relay_schema(cur)
                 self._initialize_weknora_schema(cur)
+                self._initialize_knowledge_source_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:
