@@ -1,6 +1,6 @@
 # 启用 n8n 工作流说明
 
-范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。旧 EC2 Staging 后续已取消发布。本页各节标题保留旧名。15 段 **n8n description** 与远端回读一致；其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。旧 EC2 Staging 后续已取消发布。本页各节标题保留旧名。13 段 **n8n description** 与已发布版本一致；两条 KB 流程（`[kb]Build|CSD`、`[kb]Build|Solved Cases`）于 2026-09-30 保存了来源迁移草稿（p2-183，未发布，详见各节与[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)），本页两节按草稿描述。其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
 
 说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
 
@@ -57,15 +57,15 @@
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/GgDxPEWtW7ltT5BW) · 知识入库 / CSD
 
-**n8n description**
+**n8n description（2026-09-30 草稿，未发布）**
 
-> 定时扫描近期已解决的 CSD Bug，经 PostgreSQL 去重和 AI 筛选后生成英文 Zendesk KB 草稿，并在 SupportPortal Memory 创建 Wiki、上传正文、触发 ingest。
+> 定时扫描近期已解决的 CSD Bug（保留现有 JQL 作为来源范围），取得完整 issue 快照（fields=*,comment）后投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；移除 AI 前置筛选、本地先写去重与旧 Memory Wiki 直写；Zendesk KB 草稿节点保留但已断开禁用，待 Review 输出链对接。
 
-- **入口与主路径**：Schedule Trigger → OAuth → Jira → 顺序处理 → PostgreSQL 去重 → AI 筛选/生成英文 KB → Zendesk 草稿 → SupportPortal Memory。
-- **筛选与输出**：查询 CSD 项目中 RESOLVED 的 Bug，更新时间在过去 24 小时、创建时间在过去 60 天，排除 Won't Do、Duplicate、Reject。AI 判断是否具备清晰原因和解决方案。
-- **与项目的关系**：调用 `/dashboard/memory/api/v1/knowledge/wiki/create`、`/wiki/raw/write`、`/wiki/ingest`；契约来源见 [Memory 接入说明](../../deploy_hermes_investigator_ecs.md)。Zendesk 设置 `draft=true`、`notify_subscribers=false`。
-- **画布与依赖**：手动触发节点没有连接主链；旧 `2_rag` 节点禁用。依赖 Jira/OAuth、PostgreSQL、AI、Zendesk、Memory；错误交给 `[ops]Error Alert`。
-- **排错与重试**：`csd` 去重记录在 AI 和外部写入之前产生。整轮重跑可能跳过未完成条目；直接删去重记录又可能重复创建草稿/Wiki。先定位已完成的外部写入和失败步骤，再决定恢复方式。本次未重放历史失败执行。
+- **草稿主路径（版本 `544bdb70`，2026-10-01 二轮验收修复）**：Schedule Trigger → OAuth → Jira JQL（原扫描条件不变，仅作来源范围）→ 逐条 Get_CSD_Detail（`fields=*,comment`，Jira `jira_zac` basic credential）→ Build Source Snapshot（组装 `knowledge-source-v1` 契约体含 `schema_version`；缺 key/fields/updated、**comment 结构缺失或异常（对象/数组/数值型 total 任一不满足）或 Jira 评论不完整（`comments.length` < `total`）均显式失败（fail-closed）**）→ 投递 `/automation/preproduction/v1/knowledge/sources`（Bearer credential 复用 intake，节点级重试 3 次）→ 回执 status 三态校验 → **非空 `task_id` 门禁（Check Receipt Task）** → 记录回执 → 循环下一条。任一校验不过走 Raise Delivery Error 显式失败。
+- **已移除**：AI 筛选（Message a model1/If）、评论重组与 KB 生成链、PostgreSQL `csd` 先写去重（Update_DB1/If1）、SupportPortal Memory 直写四节点。Zendesk 草稿节点保留但断开禁用，且已改用 `zendeskApi` credential 引用（`Zendesk account 3`，与 `[case]Intake|ECS Route` 相同），不再保存 inline Authorization/Cookie。
+- **与项目的关系**：投递目标为 SupportPortal 治理模块的来源接收接口（提案契约，接口未实现）；契约见[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)。回执异常（非 2xx/超时/意外 status）使执行失败并触发 `[ops]Error Alert`。
+- **发布前置**：SP 接收接口在 Preproduction 可用 + 独立验收通过，二者缺一不可发布；接口未就绪发布会导致投递全部失败并中断知识入库。
+- **已发布版本（`d7100b18`，当前 active）**：仍为旧行为——JQL 扫描 → PostgreSQL 去重 → AI 筛选 → Zendesk 草稿 → SupportPortal Memory 创建 Wiki/写正文/触发 ingest。排错时注意 active 与草稿的差异：active 版本 `csd` 去重记录仍在 AI 与外部写入之前产生，整轮重跑可能跳过未完成条目，直接删去重记录可能重复创建草稿/Wiki。
 
 <a id="w-dV5vNA6l1MbDMHZt"></a>
 
@@ -225,15 +225,18 @@
 
 [n8n 工作流](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) · 知识入库 / Zendesk
 
-**n8n description**
+**n8n description（2026-09-30 草稿，未发布）**
 
-> 接收 Zendesk SOLVED 事件，排除 Media Relay enablement 等非知识型请求，经 PostgreSQL 去重、评论脱敏和 AI 筛选生成英文 KB 草稿；同步至 Tencent Memory，创建 Wiki、写入 Markdown 并触发 ingest，再写入 Google Sheets 和 SupportPortal 知识库。
+> 接收 Zendesk SOLVED 事件，取得完整 ticket 与全部分页评论并校验完整性后，将原始快照投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；不再本地预判知识价值，不直写旧 Memory Wiki，Zendesk KB 草稿与 Google Sheets 输出节点保留但已断开禁用，待 Review 通过后的输出链对接。
 
-- **入口与主路径**：Zendesk 关闭事件 POST Webhook → 仅 SOLVED → PostgreSQL `ticket(solved_ticket)` 去重 → 评论/作者查询、脱敏与对话组装 → AI 技术问题筛选 → KB 标题、正文和 HTML。`AI_Approval` 保留原有通用 product activation 判断，并明确拒绝 Media Relay、Cross-Channel Media Stream Relay 的开通、配置下发和完成记录，即使其中包含技术讨论或内部执行细节。
-- **输出与项目关系**：Zendesk 草稿（`draft=true`、`notify_subscribers=false`）→ Tencent Memory 中创建 Wiki、写入 `article.md` 并触发 ingest → Google Sheets → `support.stellarix.space` 的 `/api/engineer/knowledge/articles`。Memory 使用与 `[kb]Build|CSD` 相同的 team 和认证头，不存储明文于 Git 快照。
-- **人工门控现状**：Slack 审批节点禁用或未连入主链；当前实际链路依赖 AI 筛选，不能描述为经过人工批准后入库。
-- **依赖与重试**：依赖 Zendesk、PostgreSQL、AI、Tencent Memory、Google Sheets、SupportPortal，错误交给 `[ops]Error Alert`。去重 INSERT ON CONFLICT 在下游处理前执行；整轮重跑可能跳过半成品，强行清除记录可能重复创建 Zendesk 草稿和 Memory Wiki。失败时先核对四个输出位置，再决定从哪一步恢复。
-- **发布记录**：2026-09-17 从基线 `05c7588b-bba0-40b0-ab67-14e9b12820e6` 更新并发布 `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991`，最终仅修改 `AI_Approval` 规则和 description；保留此前禁用的 `2_rag`、Tencent 节点参数、全部连接、settings 与凭据引用。MCP 回读 draft/active 一致，未重放历史 execution；等待后续自然 SOLVED 事件验证分类结果。2026-09-16 的 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`。
+- **草稿主路径（版本 `743bba31`，2026-10-01 二轮验收修复）**：Webhook（不变）→ 仅 SOLVED → Get Ticket Snapshot（完整 ticket）→ Get All Comments（`per_page=100`，`responseContainsNextURL` 跟随 `next_page` 自动分页）→ Validate Snapshot Completeness（`next_page` 非空、评论数少于 `ticket.comment_count`、ticket 缺失均显式失败，不投半份快照）→ 投递 `/automation/preproduction/v1/knowledge/sources`（`zendesk_ticket` 契约体，原始未脱敏内容，Bearer credential 复用 intake，节点级重试 3 次）→ 回执 status 三态校验 → **非空 `task_id` 门禁（Check Receipt Task）** → 记录回执。任一校验不过走 Raise Delivery Error 显式失败。
+- **已移除**：前置 AI 筛选（AI_Approval/AI_Filter 及 Media Relay 排除规则——该职责移交 Review 链）、评论脱敏与对话组装链、KB 标题/正文/HTML 生成链、PostgreSQL `ticket(solved_ticket)` 先写去重、Tencent Memory 直写四节点，以及 Sheets 尾链的两个孤儿转换节点（Code in JavaScript/Code in JavaScript1，其 Append row in sheet→…→2_rag 三条连接已全部消除）。
+- **凭据结构**：Get Ticket Snapshot、Get All Comments 与禁用的 HTTP_Create_KB 均使用 `zendeskApi` credential 引用（`Zendesk account 3`，与 `[case]Intake|ECS Route` 相同），不再保存 inline Authorization/Cookie。
+- **保留待 Review 链**：Zendesk KB 草稿（HTTP_Create_KB）、Google Sheets 及其辅助节点断开并禁用，参数仍引用已删除节点（`Get_Case_Comment`/`If1`/`Generate_KB_Title` 等），对接 Review 输出链时必须一并更新这些表达式引用。
+- **与项目的关系**：重复/乱序事件由回执 `already_exists`/`stale_ignored` 吸收，n8n 不再写去重表；超时或失败可整轮重跑，无需删除任何去重记录。回执异常触发 `[ops]Error Alert`。契约见[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)。
+- **发布前置**：SP 接收接口在 Preproduction 可用 + 独立验收通过；接口未就绪发布会中断全部 SOLVED 工单的知识入库。
+- **已发布版本（`de3c1ca8`，当前 active）**：仍为旧行为——PostgreSQL 去重 → 评论脱敏/AI 筛选 → Zendesk 草稿 → Tencent Memory → Sheets → SupportPortal 知识库。排错按旧链四个输出位置核对；草稿与 active 的恢复基线分别见 `drafts/` 与 `active/` 快照。
+- **发布记录**：2026-09-17 从基线 `05c7588b-bba0-40b0-ab67-14e9b12820e6` 更新并发布 `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991`，最终仅修改 `AI_Approval` 规则和 description；保留此前禁用的 `2_rag`、Tencent 节点参数、全部连接、settings 与凭据引用。MCP 回读 draft/active 一致，未重放历史 execution；等待后续自然 SOLVED 事件验证分类结果。2026-09-16 的 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`。2026-09-30 保存来源迁移草稿（p2-183，36→14 节点），2026-10-01 按两轮验收意见修复：首轮 `33b22cd2`（三个 Zendesk 节点改 credential 引用、新增非空 task_id 门禁），二轮 `743bba31-73c1-43ae-a1b1-2e5d79110123`（13 节点：Sheets 尾链连接全部消除并删除两个孤儿转换节点），未发布；MCP 回读确认 active 仍为 `de3c1ca8`、连接/credential/门禁与设计一致，草稿快照见 `workflows/drafts/`。
 
 <a id="configuration-findings"></a>
 

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T03:37:33Z",
-  "source_base_commit": "9af808acacb7f18c55b42755478513e4f7276ea3",
-  "registry_digest": "08fd425b99daa1b2cc6dcfd0523ad77cc0c8b9a543e60a09958facd7bbf7f137",
+  "generated_at": "2026-10-01T03:39:26Z",
+  "source_base_commit": "9cc2ae0d18e209ada41885044b60b8fb6d06d037",
+  "registry_digest": "3b2aedb4600d7b5a11f27b0a765929c0ee63a2c3ff093db0ffe05325de5c99eb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1325,8 +1325,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "deployment",
           "label": "PP-EN-QUICK authorized run — current valid evidence (12 PASS/1 FAIL/13 steps + PG mirror verification)",
-          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction，工单 13782。12 PASS/1 FAIL（共 13 步）：绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 记录+独立回读 enabled/maxSubscribeLoad=10/region=2 @03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 未更新——根因=close 事务无该字段写入者（非 n8n），已修复并部署 r20260930-414ed4e。PostgreSQL 隔离验证：RUN_POSTGRES_INTEGRATION 下真实 close 事务落 mirror=solved（test_postgres_solved_close_records_mirror_status）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。撤回计数澄清：两条旧 Quick evidence 被标注 [已撤回/被取代]（其一含 9/10 与 msg_096ec720 错记，其二含 n8n 归因），本条为其唯一替代。"
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test .venv/bin/python -m pytest -q backend/tests/test_pp_en_quick.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_account_reply_publication_postgres.py  # 40 passed, 9 skipped（PG 文件 9 条需 RUN_POSTGRES_INTEGRATION=1，见独立 PG 验证条目）",
+          "details": "2026-09-30 Preproduction，工单 13782。实跑报告 .deployments/pp-en-quick-authorized.json：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 记录+独立回读 enabled/maxSubscribeLoad=10/region=2 @03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 未更新——已修复并部署 r20260930-414ed4e。撤回计数澄清：两条旧 Quick evidence 被标注 [已撤回/被取代]（其一含 9/10 与 msg_096ec720 错记，其二含 n8n 归因），本条为其唯一替代。"
+        },
+        {
+          "type": "test",
+          "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
+          "command": "initdb -D /tmp/pp-pg-mirror -U testuser --auth=trust && pg_ctl -D /tmp/pp-pg-mirror -o '-p 54399' start && RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN='postgresql://testuser@127.0.0.1:54399/pp_mirror_test' .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py -k 'solved_close_records_mirror' -q  # 1 passed",
+          "details": "隔离 PostgreSQL 实例（PostgreSQL 14 Homebrew，port 54399）实跑：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下验证通过。"
         },
         {
           "type": "test",
@@ -4737,6 +4743,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Final Git snapshot validation",
           "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
           "details": "发布后脱敏快照与 manifest 更新为 de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991；15 个 published snapshot、1 个 divergent draft、65 个 redacted value 校验通过。"
+        },
+        {
+          "type": "document",
+          "label": "改造前线上回读（计划要求的实施前重读）",
+          "command": "n8n MCP get_workflow_details MM3Z3T469Eru3Q1I / GgDxPEWtW7ltT5BW",
+          "result": "改造前两条 activeVersion.sameAsDraft=true，版本 de3c1ca8/d7100b18 与仓库 manifest 一致，确认线上无后续改动；确认 Solved Cases Get_Case_Comment 无分页参数、两流程去重先于外部写入。"
+        },
+        {
+          "type": "document",
+          "label": "草稿改造与回读",
+          "command": "n8n MCP update_workflow（Solved Cases 46+1 ops；CSD 28 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 adb1156a-e9b9-4be1-a3a0-30f85284803d（14 节点）、CSD 草稿 eea4392d-a76e-47ef-b13b-3f9e93c7cee0（18 节点）；回读确认新主链连接、Deliver 节点 credential（httpBearerAuth toE81efBqb60KXsy）与重试设置（3 次/5s）、Get_CSD_Detail fields=*,comment、保留输出节点断开+disabled、active 版本未变。"
+        },
+        {
+          "type": "test",
+          "label": "快照校验",
+          "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
+          "result": "Validated 15 published snapshots, 3 divergent drafts, and 75 redacted values.（新增两条 draft 快照，脱敏各 5 处）"
+        },
+        {
+          "type": "document",
+          "label": "round 1 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 11 ops；CSD 8 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 33b22cd2-3e10-4c75-817e-c7e3c02a0d2a（15 节点）、CSD 草稿 381b6fb5-8076-4efb-8c94-cfec51563434（19 节点）。回读确认：三个 Zendesk 节点均为 predefinedCredentialType+zendeskApi(f85Z4a0savbF0l5r) 且无 inline Authorization（update 响应中 HARDCODED_CREDENTIALS 警告消失）；Check Delivery Receipt[0]→Check Receipt Task(task_id notEmpty)→[0]Record/[1]Raise 连接正确；Build Source Snapshot 含 schema_version 与 comment.total 完整性判定；active 版本 de3c1ca8/d7100b18 未变。快照 validate：15 published、3 divergent drafts、67 redacted values，两份 draft 快照零 inline Zendesk 认证。"
+        },
+        {
+          "type": "document",
+          "label": "round 2 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 2 ops：删两个尾链节点；CSD 1 op：jsCode fail-closed）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 743bba31-73c1-43ae-a1b1-2e5d79110123（13 节点）：connections 仅剩主链 8 键，Append row in sheet 无任何出边（快照断言验证）；2_rag 断开（DISCONNECTED 警告如期出现）。CSD 草稿 544bdb70-cebe-497c-8e28-eac0c87e0501（19 节点）：Build Source Snapshot jsCode 为 fail-closed 结构校验+数量比较。active 版本 de3c1ca8/d7100b18 未变。validate：15 published、3 divergent drafts、67 redacted values。"
         }
       ],
       "source_refs": [
@@ -4744,7 +4780,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 5,
+      "task_count": 6,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -13691,7 +13727,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）——本字段为唯一有效结论；历史版本中的错误内容（msg_096ec720… 误标为回传、n8n case_status_sync 归因、9/10 步数、网关回归归因）均已撤回，以本条与带 [已撤回/被取代] 标注的 evidence 条目为准。已实证链路：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表+投递等待逐轮重核验）→归属/dry-run 预检→测试自动批准（digest 绑定）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一 FAIL 步（本地 case 镜像 zendesk_ticket_status 未更新）已修复：根因=close 事务（record_account_zendesk_internal_comment_result）无该字段写入者且 ECS 无状态同步路由（非 n8n）；修复=close 事务补写 solved（PG+InMemory 对等），PostgreSQL 隔离验证通过。投递等待已改为逐轮重核验全部绑定（消息换/task 终态/轮次转移/畸形 fencing 均结构化拒绝，仅传输失败重试）。剩余：①13782 为 already_satisfied 分支——真实新增 Archer 写入与人工审批门禁仍未由受控运行覆盖（a06094d1 需先手动清理其旧 UAP 配置）；②镜像修复已部署 r20260930-414ed4e，最终全绿运行待规划线程放行。",
+      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）——本字段为唯一有效结论，历史错误内容（msg_096ec720… 误标为回传、n8n case_status_sync 归因、9/10 步数、网关回归归因）均已撤回，以本条与带 [已撤回/被取代] 标注的 evidence 条目为准。已实证链路：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表+投递等待逐轮全绑定重核验）→归属/dry-run 预检→测试自动批准（digest 绑定）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一 FAIL 步（本地 case 镜像 zendesk_ticket_status 未更新）已修复并部署 r20260930-414ed4e：根因=close 事务（record_account_zendesk_internal_comment_result）无该字段写入者且 ECS 无状态同步路由（非 n8n）；修复=close 事务补写 solved（PG+InMemory 对等）。投递等待已为逐轮重核验+严格 fencing（对齐真实 skill _safe_int：拒布尔/非整数浮点/非数字；request_version 畸形=结构化拒绝不吞异常）。剩余：①13782 为 already_satisfied 分支——真实新增 Archer 写入与人工审批门禁仍未由受控运行覆盖（a06094d1 需先手动清理其旧 UAP 配置）；②最终全绿运行待规划线程放行。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13842,8 +13878,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "deployment",
           "label": "PP-EN-QUICK authorized run — current valid evidence (12 PASS/1 FAIL/13 steps + PG mirror verification)",
-          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-authorized.json",
-          "details": "2026-09-30 Preproduction，工单 13782。12 PASS/1 FAIL（共 13 步）：绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 记录+独立回读 enabled/maxSubscribeLoad=10/region=2 @03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 未更新——根因=close 事务无该字段写入者（非 n8n），已修复并部署 r20260930-414ed4e。PostgreSQL 隔离验证：RUN_POSTGRES_INTEGRATION 下真实 close 事务落 mirror=solved（test_postgres_solved_close_records_mirror_status）。前置：三活跃申请（13698/13733/13774）合同取消，13774 cancellation readback=cancelled。撤回计数澄清：两条旧 Quick evidence 被标注 [已撤回/被取代]（其一含 9/10 与 msg_096ec720 错记，其二含 n8n 归因），本条为其唯一替代。"
+          "command": "TICKET_DB_DSN=postgresql://example.invalid/test .venv/bin/python -m pytest -q backend/tests/test_pp_en_quick.py backend/tests/test_account_zendesk_internal_comment_service.py backend/tests/test_account_reply_publication_postgres.py  # 40 passed, 9 skipped（PG 文件 9 条需 RUN_POSTGRES_INTEGRATION=1，见独立 PG 验证条目）",
+          "details": "2026-09-30 Preproduction，工单 13782。实跑报告 .deployments/pp-en-quick-authorized.json：12 PASS/1 FAIL（共 13 步）。绑定=enr-AC-13782-v1/v1/ticket 13782/task_00a519ca…；execute=already_satisfied write_attempted=False（skill 记录+独立回读 enabled/maxSubscribeLoad=10/region=2 @03:46:15）；Relay 结果回传=zac-agent 发出 msg_880ac02f651449ae…（reply 目标=ECS 请求消息 msg_096ec720…）；ECS 应用 result_received；完成回复 job enablement-relay-complete-… published(close=true)+评论 54078158201236 delivered(target_status=solved)；独立 Zendesk API 回读 status=solved(03:55:12)。FAIL 步=本地镜像 zendesk_ticket_status 未更新——已修复并部署 r20260930-414ed4e。撤回计数澄清：两条旧 Quick evidence 被标注 [已撤回/被取代]（其一含 9/10 与 msg_096ec720 错记，其二含 n8n 归因），本条为其唯一替代。"
+        },
+        {
+          "type": "test",
+          "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
+          "command": "initdb -D /tmp/pp-pg-mirror -U testuser --auth=trust && pg_ctl -D /tmp/pp-pg-mirror -o '-p 54399' start && RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN='postgresql://testuser@127.0.0.1:54399/pp_mirror_test' .venv/bin/python -m pytest backend/tests/test_account_reply_publication_postgres.py -k 'solved_close_records_mirror' -q  # 1 passed",
+          "details": "隔离 PostgreSQL 实例（PostgreSQL 14 Homebrew，port 54399）实跑：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下验证通过。"
         }
       ],
       "source_refs": [
@@ -15165,6 +15207,73 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py",
         "docs/operations/weknora-adapter.md"
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-183",
+      "title": "n8n 来源迁移：两条 KB 流程改为投递原始快照至 SupportPortal 来源接收接口（草稿）",
+      "status": "review",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-ingestion-pipeline",
+      "created_at": "2026-09-30",
+      "updated_at": "2026-10-01",
+      "summary": "按用户批准的 n8n 来源迁移计划实施：n8n 只负责取得并投递来源快照，Review/去重/知识写入移交 SupportPortal 治理模块与 Hermes。两条 KB 工作流草稿改造完成（Solved Cases 版本 adb1156a：36→14 节点；CSD 版本 eea4392d：26→18 节点），均未发布，active 版本不变（de3c1ca8/d7100b18）。变更：(1) 冻结 knowledge-source-v1 来源接收契约（提案：POST /automation/preproduction/v1/knowledge/sources，Bearer 复用 intake credential，回执 accepted/already_exists/stale_ignored，source_type+source_id 唯一、source_updated_at 为版本）；(2) Solved Cases 移除前置 AI 筛选（含客户未确认排除规则）、评论脱敏、KB 生成链、PostgreSQL 先写去重与 Tencent Memory 直写，新增 ticket 全量+评论分页获取（responseContainsNextURL）与完整性显式校验（next_page/评论数）后投递原始快照；(3) CSD 保留 JQL 为来源范围，Get_CSD_Detail 改 fields=*,comment，移除 AI 筛选/先写去重/Memory 直写，投递 csd_issue 契约体；(4) 去重以回执为准，重复/乱序由 already_exists/stale_ignored 吸收，超时节点级重试 3 次后失败告警，无需删去重记录恢复；(5) Zendesk 草稿与 Sheets 输出节点保留但断开禁用，待 Review 输出链对接（其表达式引用已删节点需届时更新）。 2026-10-01 首轮验收未通过后完成三项阻断修复并补充 CSD 完整性判定：CSD 契约体补 schema_version；两条流程回执校验增加非空 task_id 门禁（Check Receipt Task）；Get Ticket Snapshot/Get All Comments/两处 HTTP_Create_KB 的 inline Authorization 全部替换为 zendeskApi credential 引用（Zendesk account 3）；Build Source Snapshot 增加 fields.comment.total 对照 comments.length 的评论完整性判定。修复后草稿版本：Solved Cases 33b22cd2（15 节点）、CSD 381b6fb5（19 节点），active 版本仍未变。 2026-10-01 二轮验收两阻断修复：Solved Cases 移除 Sheets 尾链（Append row in sheet→Code in JavaScript→Code in JavaScript1→2_rag 三条连接全部消除，两个孤儿转换节点删除，Append row in sheet 与 2_rag 保留为禁用无连接）；CSD 评论完整性检查改 fail-closed（comment 对象/comments 数组/数值型 total 任一缺失或异常即显式失败，数量比较在结构校验后执行）。二轮修复后草稿版本：Solved Cases 743bba31（13 节点）、CSD 544bdb70（19 节点）。",
+      "next_action": "等待针对修复的复核（计划名：n8n 来源迁移计划，round 1 阻断项已全部处理）。发布前置：(a) SupportPortal 治理模块实现来源接收接口并在 Preproduction 可用（当前不存在，为外部依赖）；(b) 独立验收通过。发布后补端到端验证：首次投递/重复 already_exists/更新新版本/评论不完整失败/超时告警/旧 Memory Wiki 写入为零。",
+      "acceptance_criteria": [
+        "Solved Cases 草稿：无 AI 前置判断、无 Memory 直写节点、无先写去重；投递节点含 ticket+全部分页评论原始快照；评论分页不完整（next_page 非空或评论数\u003ccomment_count）显式失败且不投递。",
+        "CSD 草稿：无 AI 前置判断、无 Memory 直写、无先写去重；JQL 来源范围不变；投递 issue 原始快照（fields=*,comment）。",
+        "两流程投递契约一致（knowledge-source-v1，三态回执），回执异常与非 2xx/超时均失败并触发 Error Alert；同一来源版本重投幂等（already_exists），旧版本 stale_ignored。",
+        "Zendesk 草稿与 Sheets 节点保留但断开禁用，不再先于 Review 发布。",
+        "草稿与发布版均经线上回读验证；快照/manifest 经 validate_workflow_snapshots.py 通过；不重放会产生真实外部写入的历史执行。",
+        "发布前置满足后：线上确认两条来源不再直写旧 Memory Wiki，同一来源只进入一条正式入库路径。"
+      ],
+      "blockers": [
+        "SupportPortal 来源接收接口未实现（代码/任务注册/跨会话记忆均无踪迹）——阻塞发布与端到端投递验证，不阻塞草稿级验收；接口归属与最终路径/认证确认待治理模块计划明确。"
+      ],
+      "evidence": [
+        {
+          "type": "document",
+          "label": "改造前线上回读（计划要求的实施前重读）",
+          "command": "n8n MCP get_workflow_details MM3Z3T469Eru3Q1I / GgDxPEWtW7ltT5BW",
+          "result": "改造前两条 activeVersion.sameAsDraft=true，版本 de3c1ca8/d7100b18 与仓库 manifest 一致，确认线上无后续改动；确认 Solved Cases Get_Case_Comment 无分页参数、两流程去重先于外部写入。"
+        },
+        {
+          "type": "document",
+          "label": "草稿改造与回读",
+          "command": "n8n MCP update_workflow（Solved Cases 46+1 ops；CSD 28 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 adb1156a-e9b9-4be1-a3a0-30f85284803d（14 节点）、CSD 草稿 eea4392d-a76e-47ef-b13b-3f9e93c7cee0（18 节点）；回读确认新主链连接、Deliver 节点 credential（httpBearerAuth toE81efBqb60KXsy）与重试设置（3 次/5s）、Get_CSD_Detail fields=*,comment、保留输出节点断开+disabled、active 版本未变。"
+        },
+        {
+          "type": "test",
+          "label": "快照校验",
+          "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
+          "result": "Validated 15 published snapshots, 3 divergent drafts, and 75 redacted values.（新增两条 draft 快照，脱敏各 5 处）"
+        },
+        {
+          "type": "document",
+          "label": "round 1 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 11 ops；CSD 8 ops）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 33b22cd2-3e10-4c75-817e-c7e3c02a0d2a（15 节点）、CSD 草稿 381b6fb5-8076-4efb-8c94-cfec51563434（19 节点）。回读确认：三个 Zendesk 节点均为 predefinedCredentialType+zendeskApi(f85Z4a0savbF0l5r) 且无 inline Authorization（update 响应中 HARDCODED_CREDENTIALS 警告消失）；Check Delivery Receipt[0]→Check Receipt Task(task_id notEmpty)→[0]Record/[1]Raise 连接正确；Build Source Snapshot 含 schema_version 与 comment.total 完整性判定；active 版本 de3c1ca8/d7100b18 未变。快照 validate：15 published、3 divergent drafts、67 redacted values，两份 draft 快照零 inline Zendesk 认证。"
+        },
+        {
+          "type": "document",
+          "label": "round 2 验收修复与回读（2026-10-01）",
+          "command": "n8n MCP update_workflow（Solved Cases 2 ops：删两个尾链节点；CSD 1 op：jsCode fail-closed）→ get_workflow_details 回读",
+          "result": "Solved Cases 草稿 743bba31-73c1-43ae-a1b1-2e5d79110123（13 节点）：connections 仅剩主链 8 键，Append row in sheet 无任何出边（快照断言验证）；2_rag 断开（DISCONNECTED 警告如期出现）。CSD 草稿 544bdb70-cebe-497c-8e28-eac0c87e0501（19 节点）：Build Source Snapshot jsCode 为 fail-closed 结构校验+数量比较。active 版本 de3c1ca8/d7100b18 未变。validate：15 published、3 divergent drafts、67 redacted values。"
+        }
+      ],
+      "source_refs": [
+        "docs/integrations/n8n/knowledge_source_ingestion_contract.md",
+        "docs/integrations/n8n/workflows/drafts/MM3Z3T469Eru3Q1I.draft.json",
+        "docs/integrations/n8n/workflows/drafts/GgDxPEWtW7ltT5BW.draft.json",
+        "docs/integrations/n8n/workflows/manifest.json",
+        "docs/operations/n8n/active-workflows.md"
+      ],
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": []
     },
     {
       "schema_version": 2,
