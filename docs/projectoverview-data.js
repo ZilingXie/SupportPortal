@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T02:52:06Z",
-  "source_base_commit": "caaca00aca34869704ed39406f107a31f77b968d",
-  "registry_digest": "7c86679102a0a8ace4815529a02dcedbf7fd07e4f18b257a60e56c52be866e84",
+  "generated_at": "2026-10-01T02:53:26Z",
+  "source_base_commit": "ccb7b759ec9f78f77198c5fc1bbdbe30f4c6620b",
+  "registry_digest": "93e4006785b259d2eb3ab057fedecbdbbc9d7bea49fc112263eb6c95a494cfe6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3664,9 +3664,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "最终发布与运行态读回（2026-09-30）",
-          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
-          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+          "label": "部署与运行态读回（随环境推进滚动更新，2026-09-30 第三轮）",
+          "command": "health/release 读回 + ECS describe-services/describe-task-definition（api:83/route:82/worker:83）+ SSM get-parameter + preprod 库 bindings/turn_runs 只读查询",
+          "result": "当前运行 r20260930-39144ab（git 39144abb，schema-012，prompt pr-c47f99044ae0），为本计划首发 r20260930-2e0a352（schema-011）之后的他线后继发布；api:83/route:82/worker:83 三 td 读回 AGENT_MODEL_ID=gpt-6-sol 且无旧 per-scenario override，模型策略在新 release 仍生效；SSM agent-model v1=gpt-6-sol 未变。DB：47 旧 binding NULL + 3 新 binding gpt-6-sol；turn_runs gpt-6-sol/medium/completed ×5。investigation turn 全库 46 个均为部署前旧流量，reasoning_effort=xhigh 的 run 为 0——验收第 9 条 investigation 回读仍待首个自然调查 case。"
         },
         {
           "type": "test",
@@ -3678,7 +3678,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "真实业务链路模型回读（automation 方向闭环，2026-09-30）",
           "command": "preprod 库只读查询 automation_hermes_case_bindings / automation_hermes_turn_runs / automation_hermes_agent_turns / support_account_case_llm_usage；Hermes dashboard sessions API 读回",
-          "result": "部署后 3 个新 binding 固定 agent_model=gpt-6-sol（47 个旧 binding 保持 NULL 旧行为）；5 个 turn-run 行固定 gpt-6-sol/medium 并 completed（工单 13789/13792/13793 的 route/work）；usage 台账 7 条记录全部 model=gpt-6-sol（hermes_agent_run×5 + automation_persona×2，persona reasoning 31-32）；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol（reasoning 161-323，真实工具调用 2-4 次），部署分界前旧 session 全部 gpt-6-astra——实际执行模型切换与部署时间完全吻合。direction=investigation 真实 case 尚未出现。"
+          "result": "部署后 3 个新 binding 固定 agent_model=gpt-6-sol（47 个旧 binding 保持 NULL 旧行为）；5 个 turn-run 行固定 gpt-6-sol/medium 并 completed（工单 13789/13792 的 route/work 与 13793 的 route；13793 的 agent_turn 后因 migration_automation_ecs_004 窗口被标记 superseded，其 turn_run completed 不代表整条工单链路闭环）；usage 台账 7 条记录全部 model=gpt-6-sol（hermes_agent_run×5 + automation_persona×2，persona reasoning 31-32）；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol（reasoning 161-323，真实工具调用 2-4 次），部署分界前旧 session 全部 gpt-6-astra——实际执行模型切换与部署时间完全吻合。direction=investigation 真实 case 尚未出现。"
         },
         {
           "type": "test",
@@ -13380,9 +13380,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "account-production-environment",
       "title": "Preproduction Agent 单模型分档：gpt-6-sol（业务/RAG=medium、调查=xhigh）",
-      "summary": "p2-160 从 2026-09-14 的 astra/luna 双模型策略演进出单模型分档：Preproduction 由非敏感 String SSM /supportportal/preproduction/agent-model（v1=gpt-6-sol）在发布时固定 AGENT_MODEL_ID 进同次 api/route/worker task definition（发布前后校验 SSM 版本一致；修改 SSM 不热切换，须走新发布才生效——计划固定设计第 1 条）。纳入场景统一该模型：业务生成与 RAG 回答 medium、工程师调查回复（Hermes /v1/responses 显式 provider=custom + model_options）与 Hermes investigation work（/v1/runs 显式 model+model_options）xhigh；模型/DeepSeek fallback 与 temperature 清除。case binding 与 turn-run 行持久固定模型与强度（schema-010），丢回执重试重发相同请求体。排除场景：离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话、工单标题（实测超 2s 时限，保持 gpt-5.4-nano/none，待用户最终确认）。Production 渲染剥离该策略。",
+      "summary": "p2-160 从 2026-09-14 的 astra/luna 双模型策略演进出单模型分档：Preproduction 由非敏感 String SSM /supportportal/preproduction/agent-model（v1=gpt-6-sol）在发布时固定 AGENT_MODEL_ID 进同次 api/route/worker task definition（发布前后校验 SSM 版本一致；修改 SSM 不热切换，须走新发布才生效——计划固定设计第 1 条）。纳入场景统一该模型：业务生成与 RAG 回答 medium、工程师调查回复（Hermes /v1/responses 显式 provider=custom + model_options）与 Hermes investigation work（/v1/runs 显式 model+model_options）xhigh；模型/DeepSeek fallback 与 temperature 清除。case binding 与 turn-run 行持久固定模型与强度（schema-010），丢回执重试重发相同请求体。排除场景：离线 benchmark、knowledge 入库、deploy report、Hermes Dashboard 会话、工单标题（实测超 2s 时限，保持 gpt-5.4-nano/none，已定案继续排除，纳入需另行批准时限与预算）。Production 渲染剥离该策略。",
       "status": "active",
-      "next_action": "代码与部署已收口（PR#1316/#1321/#1324，r20260930-2e0a352 上线，schema-011）；SSM 发布时固定语义与标题场景排除均已定案并双处文档一致。剩余唯一验收待办：首个 direction=investigation 真实 case 后补 xhigh 业务链路回读（当前部署后无调查工单自然流量，不可控等待；人为测试工单受回归停手令约束需另行授权）；另有 ready 端点 196 条旧 heartbeat mismatch 为运维残留待清理。",
+      "next_action": "代码与部署已收口（PR#1316/#1321/#1324/#1334；策略随环境推进在 r20260930-39144ab/schema-012 上继续生效，td :83/:82/:83 读回一致）；SSM 发布时固定语义与标题排除均已定案且登记一致。唯一验收待办：等待首个自然产生的 direction=investigation 真实 case，回读 turn_runs.reasoning_effort=xhigh 与 Hermes session 实际执行模型后本任务转 done（人为测试工单受回归停手令约束，需另行授权）；ready 端点 196 条旧 heartbeat mismatch 为独立运维残留待清理。",
       "owner": "codex",
       "acceptance_criteria": [
         "SSM /supportportal/preproduction/agent-model 存在且非空（v1=gpt-6-sol）；发布读取一次值+版本并注入 AGENT_MODEL_ID，注册前与激活前复核版本一致；缺失/为空阻止 Preproduction 渲染（fail-closed）。",
@@ -13428,9 +13428,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "最终发布与运行态读回（2026-09-30）",
-          "command": "release pipeline --release-commit 2e0a3528…（含 PR#1316/#1321）；/health/release、ECS describe-services、td env 读回、SSM get-parameter",
-          "result": "Preproduction 运行 r20260930-2e0a352 / git 2e0a3528 / schema-011；api/route/worker 三服务 ACTIVE 1/1；td 读回 AGENT_MODEL_ID=gpt-6-sol（api/route/worker 三角色），SSM agent-model v1=gpt-6-sol（发布前后版本一致）；Hermes preproduction 服务 1/1 五容器健康。此前中间版 r20260930-414ed4e 为同链首个含 PR#1316 的部署。"
+          "label": "部署与运行态读回（随环境推进滚动更新，2026-09-30 第三轮）",
+          "command": "health/release 读回 + ECS describe-services/describe-task-definition（api:83/route:82/worker:83）+ SSM get-parameter + preprod 库 bindings/turn_runs 只读查询",
+          "result": "当前运行 r20260930-39144ab（git 39144abb，schema-012，prompt pr-c47f99044ae0），为本计划首发 r20260930-2e0a352（schema-011）之后的他线后继发布；api:83/route:82/worker:83 三 td 读回 AGENT_MODEL_ID=gpt-6-sol 且无旧 per-scenario override，模型策略在新 release 仍生效；SSM agent-model v1=gpt-6-sol 未变。DB：47 旧 binding NULL + 3 新 binding gpt-6-sol；turn_runs gpt-6-sol/medium/completed ×5。investigation turn 全库 46 个均为部署前旧流量，reasoning_effort=xhigh 的 run 为 0——验收第 9 条 investigation 回读仍待首个自然调查 case。"
         },
         {
           "type": "test",
@@ -13442,7 +13442,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "真实业务链路模型回读（automation 方向闭环，2026-09-30）",
           "command": "preprod 库只读查询 automation_hermes_case_bindings / automation_hermes_turn_runs / automation_hermes_agent_turns / support_account_case_llm_usage；Hermes dashboard sessions API 读回",
-          "result": "部署后 3 个新 binding 固定 agent_model=gpt-6-sol（47 个旧 binding 保持 NULL 旧行为）；5 个 turn-run 行固定 gpt-6-sol/medium 并 completed（工单 13789/13792/13793 的 route/work）；usage 台账 7 条记录全部 model=gpt-6-sol（hermes_agent_run×5 + automation_persona×2，persona reasoning 31-32）；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol（reasoning 161-323，真实工具调用 2-4 次），部署分界前旧 session 全部 gpt-6-astra——实际执行模型切换与部署时间完全吻合。direction=investigation 真实 case 尚未出现。"
+          "result": "部署后 3 个新 binding 固定 agent_model=gpt-6-sol（47 个旧 binding 保持 NULL 旧行为）；5 个 turn-run 行固定 gpt-6-sol/medium 并 completed（工单 13789/13792 的 route/work 与 13793 的 route；13793 的 agent_turn 后因 migration_automation_ecs_004 窗口被标记 superseded，其 turn_run completed 不代表整条工单链路闭环）；usage 台账 7 条记录全部 model=gpt-6-sol（hermes_agent_run×5 + automation_persona×2，persona reasoning 31-32）；Hermes sessions 同批 hermes-session 实际执行 model=gpt-6-sol（reasoning 161-323，真实工具调用 2-4 次），部署分界前旧 session 全部 gpt-6-astra——实际执行模型切换与部署时间完全吻合。direction=investigation 真实 case 尚未出现。"
         }
       ],
       "history": [
@@ -13460,7 +13460,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "legacy_refs": [],
       "created_at": "2026-09-14",
-      "updated_at": "2026-09-30T09:20:00Z"
+      "updated_at": "2026-09-30T10:30:00Z"
     },
     {
       "schema_version": 2,
