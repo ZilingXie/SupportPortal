@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T08:53:49Z",
-  "source_base_commit": "f17da3ef9029246db97f8261f5348aa24a0df1f2",
-  "registry_digest": "d2b90286da5d8a439fab44a4de34203d7304b77dceb728ab83a9084b192db7b0",
+  "generated_at": "2026-10-01T08:59:23Z",
+  "source_base_commit": "989ac001750d5b63d3ccded53a5b85780a49f1e5",
+  "registry_digest": "3e8f15faa07a69e0b384ff769bfe6b2fb6e52edade3a5968c5a6e9d1c2ef548e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1333,6 +1333,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
           "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
           "details": "2026-10-01 从零复现实录（在当前 main 01666d65704e71b64ca9e1d3fc93e61bbf09512d 上直接运行当前脚本——8c60bf84 之后仅一个 docs-only 提交，Quick 场景路径与 rerun.sh 零变化，git diff 8c60bf84..HEAD 对上述路径为空）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 2.57s → cleanup verified（removed and no postgres process remains）→ code baseline 01666d65704e…（脚本自含）。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt（基线 4da1bb295c77，脚本清理逻辑相同）：shimmed PG_CTL 调用 stop_and_clean——「cleanup FAILED: postgres still running … data directory KEPT」+ rc=1，进程存活/目录保留双向断言通过，随后手动恢复。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "13804 run: manual-mode environment confirmed (attribution correction)",
+          "command": "aws ecs describe-task-definition --task-definition supportportal-preproduction-worker:85 --query 'taskDefinition.containerDefinitions[0].environment[?name==`ENABLEMENT_WORKFLOW_MODE`]' # -> ENABLEMENT_WORKFLOW_MODE=manual（AUTOMATION_CASE_ENGINE 缺失=legacy）",
+          "details": "2026-10-01 只读回读：live worker td:85 ENABLEMENT_WORKFLOW_MODE=manual。13804（10-01 授权轮，前四步 PASS 至确认评论 54120515203092 投递）无 relay request 的原因=运行环境为 manual 模式：manual 分支走人工 review，不自动派发（worker.py:4604、automation_account_intake.py:693/:1102）。先前「p2-182 Hermes runtime 归因」撤回——r20261001-3856643 部署 checkpoint 实为 legacy+manual+Hermes disabled，是并行线程部署丢失 archer flag（与 hermes-agent-enabled 丢失同类）。恢复动作=按 p2-163 前置以 archer 重新发布。"
         },
         {
           "type": "test",
@@ -13926,6 +13932,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Mirror fix isolated PostgreSQL verification (solved close writes mirror)",
           "command": "bash docs/evidence/p2-163-pg-mirror/rerun.sh\npg-test-output.txt = 该脚本 stdout/stderr 原样捕获（无脚本外前缀，脚本自含 code baseline 行）；\nstop 失败回归见 pg-test-output-stop-failure.txt",
           "details": "2026-10-01 从零复现实录（在当前 main 01666d65704e71b64ca9e1d3fc93e61bbf09512d 上直接运行当前脚本——8c60bf84 之后仅一个 docs-only 提交，Quick 场景路径与 rerun.sh 零变化，git diff 8c60bf84..HEAD 对上述路径为空）：\n成功路径 artifact=pg-test-output.txt：pg_ctl resolved → initdb ok → start ok → createdb ok → pytest 1 passed/8 deselected in 2.57s → cleanup verified（removed and no postgres process remains）→ code baseline 01666d65704e…（脚本自含）。\nstop 失败回归 artifact=pg-test-output-stop-failure.txt（基线 4da1bb295c77，脚本清理逻辑相同）：shimmed PG_CTL 调用 stop_and_clean——「cleanup FAILED: postgres still running … data directory KEPT」+ rc=1，进程存活/目录保留双向断言通过，随后手动恢复。\n验证内容：真实 publish_account_reply(close_after_publish=True 自建 target_status='solved' 的 delivery)+close 事务后，case 镜像 zendesk_ticket_status='solved'、zendesk_status_synced_at 落值、本地 ticket resolved——PR#1320 的 PG 分支在真实 PostgreSQL 语义下通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "13804 run: manual-mode environment confirmed (attribution correction)",
+          "command": "aws ecs describe-task-definition --task-definition supportportal-preproduction-worker:85 --query 'taskDefinition.containerDefinitions[0].environment[?name==`ENABLEMENT_WORKFLOW_MODE`]' # -> ENABLEMENT_WORKFLOW_MODE=manual（AUTOMATION_CASE_ENGINE 缺失=legacy）",
+          "details": "2026-10-01 只读回读：live worker td:85 ENABLEMENT_WORKFLOW_MODE=manual。13804（10-01 授权轮，前四步 PASS 至确认评论 54120515203092 投递）无 relay request 的原因=运行环境为 manual 模式：manual 分支走人工 review，不自动派发（worker.py:4604、automation_account_intake.py:693/:1102）。先前「p2-182 Hermes runtime 归因」撤回——r20261001-3856643 部署 checkpoint 实为 legacy+manual+Hermes disabled，是并行线程部署丢失 archer flag（与 hermes-agent-enabled 丢失同类）。恢复动作=按 p2-163 前置以 archer 重新发布。"
         }
       ],
       "source_refs": [
