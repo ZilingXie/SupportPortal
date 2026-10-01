@@ -1,0 +1,388 @@
+"""Map a reviewed WeKnora promotion candidate to controlled WeKnora operations.
+
+The Adapter never decides whether content is knowledge, memory, or a skill:
+classification and decision come from the Review output.  The Adapter only
+validates the candidate and executes it with the failure model agreed in the
+WeKnora adapter plan:
+
+- incomplete review output      -> failed (no write)
+- search/read failure           -> no write, outcome_unknown or human review
+- target version changed        -> no overwrite, human review
+- replace/merge without the review's base version -> failed (no write)
+- 401/403                       -> failed (no retry)
+- network timeout on write      -> outcome_unknown (same idempotency key on retry)
+- write ok but readback cannot prove object/content/version -> outcome_unknown
+- retried task with a known object -> readback reconciliation first, never a
+  blind second write
+- memory without shared identity-> human review (no global memory write)
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from backend.services.weknora_client import WeKnoraClient, WeKnoraError
+
+WRITE_DECISIONS = frozenset({"new", "supplement", "replace", "merge"})
+TARGETED_DECISIONS = frozenset({"supplement", "replace", "merge"})
+
+
+@dataclass(frozen=True)
+class WeKnoraPromotionOutcome:
+    status: str  # accepted | failed | outcome_unknown | human_review
+    failure_code: str | None = None
+    failure_detail: str | None = None
+    weknora_object_id: str | None = None
+    weknora_version: str | None = None
+    receipt: dict[str, Any] | None = None
+
+
+def _item_object_id(item: dict[str, Any]) -> str:
+    """WeKnora APIs may answer with ``id`` instead of ``object_id``."""
+    return str(item.get("object_id") or item.get("id") or "").strip()
+
+
+class WeKnoraPromotionAdapter:
+    def __init__(self, client: WeKnoraClient) -> None:
+        self._client = client
+
+    def execute(self, task: dict[str, Any]) -> WeKnoraPromotionOutcome:
+        candidate = task.get("candidate_payload") if isinstance(task.get("candidate_payload"), dict) else {}
+        decision = str(task.get("decision") or "").strip()
+        candidate_type = str(task.get("candidate_type") or "").strip()
+        idempotency_key = str(task.get("promotion_id") or "").strip()
+
+        if decision == "no_change":
+            return WeKnoraPromotionOutcome(
+                status="accepted",
+                receipt={"operation": "no_change", "decision": decision},
+            )
+        if decision == "human_review":
+            return WeKnoraPromotionOutcome(
+                status="human_review", failure_code="review_requested_human_review"
+            )
+        if candidate_type == "skill":
+            # Skills are human-maintained: even a malformed write-intent skill
+            # row becomes an explicit human-review record instead of a write
+            # or a silent drop.
+            return WeKnoraPromotionOutcome(
+                status="human_review",
+                failure_code="skill_change_requires_human_review",
+                failure_detail=(
+                    "skill candidates are proposals for human maintainers; "
+                    "the adapter never writes skills"
+                ),
+            )
+        if decision not in WRITE_DECISIONS or candidate_type not in {"knowledge", "memory"}:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate",
+                failure_detail="unsupported candidate_type/decision",
+            )
+        if not idempotency_key:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate", failure_detail="missing promotion_id"
+            )
+
+        content = self._write_content(candidate, decision)
+        title = str(candidate.get("title") or "").strip()
+        if not content:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate",
+                failure_detail="incomplete review output: content is required",
+            )
+        if decision == "new" and candidate_type == "knowledge" and not title:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate",
+                failure_detail="incomplete review output: new knowledge requires a title",
+            )
+        base_version = str(candidate.get("base_version") or "").strip()
+        if decision in {"replace", "merge"} and not base_version:
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code="invalid_candidate",
+                failure_detail=(
+                    f"{decision} requires the base_version the review based its content on; "
+                    "refusing to update against an unpinned current version"
+                ),
+            )
+
+        if candidate_type == "memory" and not self._client.has_memory_identity():
+            return WeKnoraPromotionOutcome(
+                status="human_review", failure_code="memory_identity_not_configured",
+                failure_detail="shared Hermes memory identity is not pinned; refusing to write global memory",
+            )
+
+        target_object_id = str(candidate.get("target_object_id") or "").strip()
+        if decision in TARGETED_DECISIONS:
+            if not target_object_id:
+                return WeKnoraPromotionOutcome(
+                    status="failed", failure_code="invalid_candidate",
+                    failure_detail=f"{decision} requires target_object_id",
+                )
+            current = self._read_target(candidate_type, target_object_id)
+            if isinstance(current, WeKnoraPromotionOutcome):
+                return current
+            current_version = str(current.get("version") or "").strip()
+            # The review must pin the version it based its decision on; a
+            # changed target is never silently overwritten with current.
+            if base_version and current_version and base_version != current_version:
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="target_version_conflict",
+                    failure_detail=f"target is at version {current_version or 'unknown'}, review based on {base_version}",
+                    weknora_object_id=target_object_id,
+                    weknora_version=current_version or None,
+                )
+            if not current_version:
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="target_version_unknown",
+                    failure_detail="target current version is not readable; refusing to overwrite",
+                    weknora_object_id=target_object_id,
+                )
+            if decision == "supplement":
+                current_content = str(current.get("content") or "").strip()
+                resolved_content = (
+                    f"{current_content}\n\n{content}" if current_content else content
+                )
+            else:
+                resolved_content = content
+            resolved_title = title or str(current.get("title") or "")
+            resolved_base_version = current_version
+        else:
+            resolved_content = content
+            resolved_title = title
+            resolved_base_version = ""
+
+        known_object_id = str(task.get("weknora_object_id") or "").strip()
+        if known_object_id:
+            reconciliation = self._reconcile_known_object(
+                candidate_type=candidate_type,
+                decision=decision,
+                known_object_id=known_object_id,
+                known_version=str(task.get("weknora_version") or "").strip(),
+                expected_content=resolved_content,
+                supplement_content=content if decision == "supplement" else "",
+                target_object_id=target_object_id,
+            )
+            if reconciliation is not None:
+                return reconciliation
+
+        return self._write_and_readback(
+            candidate_type=candidate_type,
+            decision=decision,
+            title=resolved_title,
+            content=resolved_content,
+            target_object_id=target_object_id or None,
+            base_version=resolved_base_version,
+            idempotency_key=idempotency_key,
+        )
+
+    # -- internals ----------------------------------------------------------
+
+    def _write_content(self, candidate: dict[str, Any], decision: str) -> str:
+        if decision == "merge":
+            return str(candidate.get("merged_content") or "").strip()
+        return str(candidate.get("content") or "").strip()
+
+    def _read_object(self, candidate_type: str, object_id: str) -> dict[str, Any]:
+        """Read one object; raises WeKnoraError (not_found when absent)."""
+        if candidate_type == "knowledge":
+            return self._client.knowledge_read(object_id=object_id)
+        results = self._client.memory_query(query=object_id)
+        for item in results:
+            if _item_object_id(item) == object_id:
+                return {
+                    "object_id": object_id,
+                    "version": str(item.get("version") or ""),
+                    "title": str(item.get("title") or ""),
+                    "content": str(item.get("content") or ""),
+                }
+        raise WeKnoraError("memory target not found", failure_kind="not_found")
+
+    def _read_target(self, candidate_type: str, target_object_id: str) -> dict[str, Any] | WeKnoraPromotionOutcome:
+        try:
+            return self._read_object(candidate_type, target_object_id)
+        except WeKnoraError as exc:
+            if exc.failure_kind == "not_found":
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="target_not_found",
+                    failure_detail=str(exc), weknora_object_id=target_object_id,
+                )
+            if exc.failure_kind == "auth":
+                return WeKnoraPromotionOutcome(
+                    status="failed", failure_code="weknora_auth_rejected", failure_detail=str(exc)
+                )
+            if exc.failure_kind in {"timeout", "transport", "http", "invalid_response"}:
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown", failure_code=f"weknora_read_{exc.failure_kind}",
+                    failure_detail=str(exc),
+                )
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code=f"weknora_read_{exc.failure_kind}", failure_detail=str(exc)
+            )
+
+    def _reconcile_known_object(
+        self,
+        *,
+        candidate_type: str,
+        decision: str,
+        known_object_id: str,
+        known_version: str,
+        expected_content: str,
+        supplement_content: str,
+        target_object_id: str,
+    ) -> WeKnoraPromotionOutcome | None:
+        """A retried task that already recorded a WeKnora object must prove the
+        earlier write state by readback before any new external call.
+
+        Returns None when reconciliation proves the earlier write never landed
+        (object absent), letting the normal write path proceed with the same
+        idempotency key.
+        """
+        try:
+            read = self._read_object(candidate_type, known_object_id)
+        except WeKnoraError as exc:
+            if exc.failure_kind == "not_found":
+                return None  # prior write never landed; safe to write now
+            if exc.failure_kind == "auth":
+                return WeKnoraPromotionOutcome(
+                    status="failed", failure_code="weknora_auth_rejected", failure_detail=str(exc),
+                    weknora_object_id=known_object_id,
+                )
+            if exc.failure_kind in {"timeout", "transport", "http", "invalid_response"}:
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown", failure_code=f"reconcile_read_{exc.failure_kind}",
+                    failure_detail=str(exc), weknora_object_id=known_object_id,
+                )
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code=f"reconcile_read_{exc.failure_kind}", failure_detail=str(exc),
+                weknora_object_id=known_object_id,
+            )
+
+        read_content = str(read.get("content") or "").strip()
+        if decision == "supplement" and supplement_content:
+            content_matches = read_content.endswith(supplement_content)
+        else:
+            content_matches = read_content == expected_content
+        read_version = str(read.get("version") or "").strip()
+        version_matches = not known_version or not read_version or known_version == read_version
+        if content_matches and version_matches:
+            return WeKnoraPromotionOutcome(
+                status="accepted",
+                weknora_object_id=known_object_id,
+                weknora_version=read_version or known_version or None,
+                receipt={
+                    "operation": "reconciled_existing",
+                    "object_id": known_object_id,
+                    "version": read_version or known_version or None,
+                },
+            )
+        return WeKnoraPromotionOutcome(
+            status="human_review", failure_code="reconcile_content_mismatch",
+            failure_detail=(
+                f"object {known_object_id} exists with different content/version than this "
+                "task recorded; refusing to overwrite without human decision"
+            ),
+            weknora_object_id=known_object_id,
+            weknora_version=read_version or None,
+        )
+
+    def _write_and_readback(
+        self,
+        *,
+        candidate_type: str,
+        decision: str,
+        title: str,
+        content: str,
+        target_object_id: str | None,
+        base_version: str,
+        idempotency_key: str,
+    ) -> WeKnoraPromotionOutcome:
+        try:
+            if candidate_type == "knowledge":
+                if decision == "new":
+                    write = self._client.knowledge_create(
+                        title=title, content=content, idempotency_key=idempotency_key
+                    )
+                else:
+                    write = self._client.knowledge_update(
+                        object_id=str(target_object_id or ""),
+                        base_version=base_version,
+                        title=title,
+                        content=content,
+                        idempotency_key=idempotency_key,
+                    )
+            else:
+                if decision == "new":
+                    write = self._client.memory_create(
+                        content=content, idempotency_key=idempotency_key
+                    )
+                else:
+                    write = self._client.memory_update(
+                        object_id=str(target_object_id or ""),
+                        base_version=base_version,
+                        content=content,
+                        idempotency_key=idempotency_key,
+                    )
+        except WeKnoraError as exc:
+            if exc.failure_kind == "auth":
+                return WeKnoraPromotionOutcome(
+                    status="failed", failure_code="weknora_auth_rejected", failure_detail=str(exc)
+                )
+            if exc.failure_kind == "conflict":
+                return WeKnoraPromotionOutcome(
+                    status="human_review", failure_code="target_version_conflict",
+                    failure_detail=str(exc),
+                )
+            if exc.failure_kind in {"timeout", "transport"} or (
+                exc.failure_kind == "http" and exc.status_code is not None and exc.status_code >= 500
+            ):
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown", failure_code=f"weknora_write_{exc.failure_kind}",
+                    failure_detail=str(exc),
+                )
+            if exc.failure_kind == "invalid_response":
+                # The write may have landed but the receipt could not be parsed.
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown", failure_code="weknora_write_invalid_receipt",
+                    failure_detail=str(exc),
+                )
+            return WeKnoraPromotionOutcome(
+                status="failed", failure_code=f"weknora_write_{exc.failure_kind}", failure_detail=str(exc)
+            )
+
+        object_id = str(write.get("object_id") or "").strip()
+        version = str(write.get("version") or "").strip() or None
+        readback_error: str | None = None
+        try:
+            read = self._read_object(candidate_type, object_id)
+        except WeKnoraError as exc:
+            read = None
+            readback_error = f"{exc.failure_kind}: {exc}"
+
+        if readback_error is None:
+            read_object_id = _item_object_id(read)
+            read_content = str(read.get("content") or "").strip()
+            read_version = str(read.get("version") or "").strip()
+            # Readback must prove the write: same object, same content, and a
+            # consistent version. Anything else is an unproven write.
+            if read_object_id != object_id:
+                readback_error = f"object mismatch: wrote {object_id}, read back {read_object_id or 'none'}"
+            elif read_content != content:
+                readback_error = "content mismatch: readback does not match the written content"
+            elif version and read_version and version != read_version:
+                readback_error = f"version mismatch: receipt {version}, readback {read_version}"
+
+        if readback_error is not None:
+            return WeKnoraPromotionOutcome(
+                status="outcome_unknown", failure_code="readback_failed",
+                failure_detail=readback_error,
+                weknora_object_id=object_id or None,
+                weknora_version=version,
+                receipt=write.get("receipt") if isinstance(write.get("receipt"), dict) else None,
+            )
+        return WeKnoraPromotionOutcome(
+            status="accepted",
+            weknora_object_id=object_id,
+            weknora_version=version,
+            receipt=write.get("receipt") if isinstance(write.get("receipt"), dict) else None,
+        )

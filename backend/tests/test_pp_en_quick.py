@@ -282,7 +282,10 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertEqual(len(fetch_calls), 1)
         self.assertIn("/v1/enablement-relay/requests/enr-AC-13900-v1", fetch_calls[0]["url"])
         self.assertEqual(fetch_calls[0]["token"], "intake-token")
-        self.assertEqual(len(gets), 3, "task fetched for binding, delivery wait, and reply fencing")
+        self.assertEqual(
+            len(gets), 2,
+            "one fetch inside the unified binding probe (polls until delivered), one for the reply",
+        )
         # Result reply: real mutation contract — nested task envelope unwrapped,
         # current message id included, fencing from the fresh GET, and EXACTLY
         # the six server-allowed fields (protocol_v06 rejects unknown keys,
@@ -390,6 +393,126 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertTrue(engine.all_passed())
         self.assertEqual(report["relay_outcome"], "already_satisfied")
 
+    def test_malformed_fencing_between_legal_polls_fails_closed(self) -> None:
+        """Acceptance round 7: legal pending → malformed fencing → legal
+        delivered must END as broken with zero skill calls — the structural
+        error must not be masked by later legal responses."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+        polls = {"n": 0}
+
+        def get(url, **kwargs):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return _relay_task_response(delivery_status="pending")
+            if polls["n"] == 2:
+                malformed = _relay_task_response(delivery_status="pending")
+                malformed["task"]["turn_sequence"] = "not-a-number"
+                return malformed
+            return _relay_task_response(delivery_status="delivered")
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("missing fencing fields", str(ctx.exception))
+        self.assertEqual(calls, [], "structural fencing error must not be masked")
+
+    def test_transport_failure_keeps_waiting_then_proceeds(self) -> None:
+        """Transport-level read failures stay transient: wait, then proceed."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="already_satisfied", write=False)
+        calls: list = []
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        polls = {"n": 0}
+
+        def get(url, **kwargs):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                raise OSError("temporary network outage")
+            return _relay_task_response(delivery_status="delivered")
+
+        report = pp.run_pp_en_quick(
+            engine,
+            skill_runner=_fake_runner("already_satisfied", "already_satisfied", False, calls),
+            relay_base="https://preprod.example.test/automation/preproduction",
+            relay_token="intake-token",
+            relay_client_identity=_identity(),
+            ecs_agent_id=ECS_AGENT_ID,
+            fetch_json=fetch,
+            post_json=lambda *a, **k: {"ok": True},
+            get_json=get,
+            workdir=self._workdir(),
+        )
+        self.assertTrue(engine.all_passed())
+        self.assertEqual(report["relay_outcome"], "already_satisfied")
+
+    def _stale_binding_run(self, second_response: dict, calls: list):
+        """Drive the wait with a binding that CHANGES after the first poll."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        engine.db_queue = engine.db_queue[:6]
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        polls = {"n": 0}
+
+        def get(url, **kwargs):
+            polls["n"] += 1
+            if polls["n"] == 1:
+                return _relay_task_response(delivery_status="pending")
+            return second_response
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        return ctx.exception
+
+    def test_request_swapped_during_wait_refuses(self) -> None:
+        calls: list = []
+        # The current message becomes a NEW dispatch message carrying a
+        # different request: the verified binding no longer holds.
+        swapped = _relay_task_response(request_id="enr-OTHER-v2", delivery_status="delivered")
+        swapped["task"]["current_message_id"] = "m-2"
+        swapped["messages"].append(_request_message("m-2", request_id="enr-OTHER-v2"))
+        error = self._stale_binding_run(swapped, calls)
+        # The unified probe re-verifies the full message binding on every
+        # poll: a swapped current message fails the request-identity check.
+        self.assertIn("does not match this application", str(error))
+        self.assertEqual(calls, [], "no pilot write on a swapped binding")
+
+    def test_task_turned_terminal_during_wait_refuses(self) -> None:
+        calls: list = []
+        terminal = _relay_task_response(delivery_status="delivered", task_status="completed")
+        error = self._stale_binding_run(terminal, calls)
+        self.assertIn("became terminal", str(error))
+        self.assertEqual(calls, [])
+
+    def test_turn_transferred_during_wait_refuses(self) -> None:
+        calls: list = []
+        transferred = _relay_task_response(delivery_status="delivered", to_agent_id="someone-else")
+        error = self._stale_binding_run(transferred, calls)
+        self.assertIn("turn moved away", str(error))  # wrapped in "binding verification failed:"
+        self.assertEqual(calls, [])
+
     def test_turn_not_ours_stops_before_pilot(self) -> None:
         engine = FakeEngine()
         _happy_queue(engine, outcome="enabled", write=True)
@@ -412,7 +535,7 @@ class PpEnQuickTests(unittest.TestCase):
                 get_json=get,
                 workdir=self._workdir(),
             )
-        self.assertIn("not this client's turn", str(ctx.exception))
+        self.assertIn("turn moved away from this client", str(ctx.exception))
         self.assertEqual(calls, [])
 
     def test_message_ticket_mismatch_stops_before_skill(self) -> None:

@@ -698,6 +698,112 @@ CREATE TABLE IF NOT EXISTS support_hermes_case_promotions (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS support_weknora_promotions (
+    promotion_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT,
+    summary_session_id TEXT,
+    summary_run_id TEXT,
+    review_session_id TEXT,
+    review_run_id TEXT,
+    slack_channel_id TEXT,
+    slack_thread_ts TEXT,
+    source_type TEXT NOT NULL,
+    source_id TEXT NOT NULL,
+    source_version TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    candidate_type TEXT NOT NULL CHECK (candidate_type IN ('knowledge', 'memory', 'skill')),
+    decision TEXT NOT NULL CHECK (decision IN (
+        'no_change', 'new', 'supplement', 'replace', 'merge', 'human_review'
+    )),
+    candidate_payload JSONB NOT NULL,
+    status TEXT NOT NULL CHECK (status IN (
+        'queued', 'active', 'accepted', 'failed', 'outcome_unknown', 'human_review', 'invalidated'
+    )),
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    weknora_object_id TEXT,
+    weknora_version TEXT,
+    operation_receipt JSONB,
+    failure_code TEXT,
+    failure_detail TEXT,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+DROP INDEX IF EXISTS idx_support_weknora_promotions_source_unique;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_weknora_promotions_candidate_unique
+    ON support_weknora_promotions (source_type, source_id, source_version, candidate_type, content_hash);
+
+CREATE INDEX IF NOT EXISTS idx_support_weknora_promotions_claim
+    ON support_weknora_promotions (status, created_at, promotion_id);
+
+CREATE TABLE IF NOT EXISTS support_hermes_summary_tasks (
+    summary_task_id TEXT PRIMARY KEY,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    episode INTEGER NOT NULL CHECK (episode >= 1),
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    hermes_session_id TEXT NOT NULL,
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved', 'local_resolved', 'closed')),
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
+    idempotency_key TEXT NOT NULL,
+    run_id TEXT,
+    prompt_version TEXT,
+    agent_model TEXT,
+    reasoning_effort TEXT,
+    packet JSONB,
+    packet_hash TEXT,
+    error_code TEXT,
+    error_message TEXT,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_hermes_summary_tasks_episode
+    ON support_hermes_summary_tasks (engineer_case_id, episode);
+
+CREATE TABLE IF NOT EXISTS support_hermes_review_tasks (
+    review_task_id TEXT PRIMARY KEY,
+    summary_task_id TEXT NOT NULL UNIQUE REFERENCES support_hermes_summary_tasks(summary_task_id) ON DELETE CASCADE,
+    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT NOT NULL,
+    investigation_id TEXT NOT NULL,
+    episode INTEGER NOT NULL,
+    ledger_revision INTEGER NOT NULL,
+    conversation_version INTEGER NOT NULL,
+    review_session_id TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
+    idempotency_key TEXT NOT NULL,
+    run_id TEXT,
+    prompt_version TEXT,
+    skill_version TEXT,
+    agent_model TEXT,
+    reasoning_effort TEXT,
+    weknora_available BOOLEAN,
+    weknora_query TEXT,
+    report JSONB,
+    report_hash TEXT,
+    weknora_adapter_status TEXT,
+    weknora_submissions JSONB,
+    error_code TEXT,
+    error_message TEXT,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS support_workspace_accounts (
     account_id TEXT PRIMARY KEY,
     email TEXT,

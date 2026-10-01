@@ -1279,6 +1279,22 @@ async def _process_account_customer_reply_impl(
     }
 
 
+def _latest_hermes_slack_thread(
+    repository: Any, engineer_case_id: str
+) -> tuple[str | None, str | None]:
+    """Newest Hermes turn request that carries a Slack thread binding."""
+    try:
+        requests = repository.list_hermes_turn_requests(engineer_case_id) or []
+    except Exception:  # noqa: BLE001 - lineage enrichment must not block the close
+        return None, None
+    for request in reversed(requests):
+        channel = str((request or {}).get("slack_channel_id") or "").strip()
+        thread = str((request or {}).get("slack_thread_ts") or "").strip()
+        if channel and thread:
+            return channel, thread
+    return None, None
+
+
 def _active_investigation_from_case_payload(engineer_case: dict[str, Any]) -> dict[str, Any] | None:
     active = engineer_case.get("active_investigation")
     if isinstance(active, dict):
@@ -1342,6 +1358,25 @@ def _close_engineer_case_for_customer_resolution(
     engineer_case["investigation_state"] = "closed"
     ticket["active_engineer_case_id"] = None
     return engineer_case, investigation_messages
+
+
+def _queue_hermes_knowledge_summary(repository: Any, engineer_case_id: str, *, trigger: str) -> None:
+    """Best-effort Summary task creation at a case terminal transition.
+
+    Creation is idempotent per case episode; failures never break the status
+    sync — the knowledge pipeline keeps its own task rows and error states.
+    """
+    from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+
+    try:
+        queue_hermes_summary_for_case(
+            repository, engineer_case_id=engineer_case_id, trigger=trigger
+        )
+    except Exception:  # noqa: BLE001 - knowledge governance must not break the status sync
+        LOGGER.warning(
+            "hermes_knowledge_summary_queue_failed engineer_case_id=%s trigger=%s",
+            engineer_case_id, trigger, exc_info=True,
+        )
 
 
 async def sync_account_case_ticket_status(
@@ -1427,10 +1462,13 @@ async def sync_account_case_ticket_status(
         from backend.services.hermes_case_workflow import (
             HermesWorkflowConflict,
             build_mock_sanitized_case_knowledge,
+            build_weknora_promotion_tasks,
             close_hermes_case,
             record_case_solved,
             reopen_hermes_case,
         )
+        from backend.services.hermes_knowledge_workflow import knowledge_workflow_active
+        from backend.services.weknora_client import weknora_promotion_enabled
 
         hermes_case_id = str(hermes_binding["engineer_case_id"])
         if normalized_zendesk_status == "solved":
@@ -1466,6 +1504,7 @@ async def sync_account_case_ticket_status(
                 slack_events=[review_event],
             )
             hermes_lifecycle_status = "awaiting_closed"
+            _queue_hermes_knowledge_summary(repository, hermes_case_id, trigger="solved")
         elif normalized_zendesk_status in {"new", "open", "pending", "hold"} and str(
             hermes_binding.get("status") or ""
         ) == "awaiting_closed":
@@ -1479,13 +1518,35 @@ async def sync_account_case_ticket_status(
         elif normalized_zendesk_status == "closed":
             ledger = repository.get_hermes_case_ledger(hermes_case_id) or {}
             try:
+                sanitized_payload = build_mock_sanitized_case_knowledge(ledger)
+                weknora_promotions = None
+                # When the p2-181 knowledge Summary/Review pipeline owns candidate
+                # production, this default-candidate path stands down: one producer
+                # per case close, no duplicate WeKnora objects.
+                if weknora_promotion_enabled() and not knowledge_workflow_active():
+                    slack_channel_id, slack_thread_ts = _latest_hermes_slack_thread(
+                        repository, hermes_case_id
+                    )
+                    weknora_promotions = build_weknora_promotion_tasks(
+                        sanitized_payload=sanitized_payload,
+                        binding=hermes_binding,
+                        slack_channel_id=slack_channel_id,
+                        slack_thread_ts=slack_thread_ts,
+                        review_session_id=(
+                            f"hermes-close-review:{hermes_case_id}:"
+                            f"{hermes_binding['episode']}:"
+                            f"{hermes_binding['current_ledger_revision']}"
+                        ),
+                    )
                 close_hermes_case(
                     repository,
                     engineer_case_id=hermes_case_id,
-                    sanitized_payload=build_mock_sanitized_case_knowledge(ledger),
+                    sanitized_payload=sanitized_payload,
                     now_value=_now_iso(),
+                    weknora_promotions=weknora_promotions,
                 )
                 hermes_lifecycle_status = "awaiting_transport"
+                _queue_hermes_knowledge_summary(repository, hermes_case_id, trigger="closed")
             except HermesWorkflowConflict:
                 hermes_lifecycle_status = "awaiting_close_review"
     if (

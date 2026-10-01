@@ -48,6 +48,8 @@ Terraform 管理稳定基础设施；部署脚本管理 ECS task-definition revi
 
 Preproduction Terraform 包含 Hermes 的独立 IAM、EFS access point 和服务发现配置。Hermes 的实际运行位置、实例数、状态目录和启用模式需结合 [Hermes 部署说明](../deploy_hermes_investigator_ecs.md) 与目标环境只读证据核对，不从 Terraform 文件存在与否推断在线状态。
 
+Hermes 知识治理（Case Summary / knowledge Review，p2-181）复用现有 Hermes agent gateway，仅在 `HERMES_CASE_WORKFLOW_MODE=real` 且 gateway 已配置时激活；WeKnora 相似检索是可选只读边界（`HERMES_WEKNORA_BASE_URL` / `HERMES_WEKNORA_API_TOKEN` / `HERMES_WEKNORA_TIMEOUT_SECONDS`，未配置或失败即 fail-closed 转 `human_review`）。任务表 `support_hermes_summary_tasks` / `support_hermes_review_tasks` 与消费桥目标表 `support_weknora_promotions` 均由 bootstrap DDL 创建（schema 版本随 `_TICKET_SCHEMA_VERSION` 演进，以代码为准）；Review 完成即在同事务把每个 decision（含仅人工复核的 skill 记录）入队为 WeKnora promotion，由 WeKnora Adapter Worker 消费，见 [WeKnora 适配层](./weknora-adapter.md)。
+
 ## 部署与验证入口
 
 | 操作 | 入口与预期边界 |

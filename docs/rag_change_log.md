@@ -11,7 +11,7 @@ For each new entry, record:
 - Data impact
 - Verification
 
-## 2026-09-30 - n8n knowledge source migration to SupportPortal ingestion (p2-181, draft only)
+## 2026-09-30 - n8n knowledge source migration to SupportPortal ingestion (p2-183, draft only)
 
 - Summary: the two n8n KB workflows (`[kb]Build|Solved Cases`, `[kb]Build|CSD`)
   were reworked as **unpublished drafts** to deliver raw source snapshots

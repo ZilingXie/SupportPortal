@@ -1,0 +1,34 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "cand-1",
+      "context": "Observed in one synthetic case.",
+      "evidence_references": [
+        "output-investigation-result.json"
+      ],
+      "statement": "The synthetic symptom indicates this misconfiguration."
+    }
+  ],
+  "client_ticket_id": "ticket-1",
+  "confirmed_facts": "The synthetic symptom reproduces under load.",
+  "content_hash": "7f0f74b0fa86d7f61be2d2553da24b9bf8554b0a4c2116a6e43863cd9352d80b",
+  "conversation_version": 0,
+  "created_at": "2026-09-05T09:10:00Z",
+  "engineer_case_id": "case-1",
+  "episode": 1,
+  "evidence_references": [
+    "output-investigation-result.json"
+  ],
+  "hermes_session_id": "hermes-session:case-1",
+  "investigation_id": "investigation-1",
+  "investigation_process": "Checked the synthetic evidence chain.",
+  "ledger_revision": 1,
+  "limitations_and_unconfirmed": "Scale behavior was never confirmed.",
+  "problem_description": "See https://slack.com/archives/C1/p1 for details.",
+  "root_cause_and_solution": "Misconfiguration; corrected by the documented step.",
+  "schema_version": "v1",
+  "summary_id": "hermes-summary:case-1:1",
+  "timeline": "Opened; investigated; solved.",
+  "trigger": "solved",
+  "verification_results": "Verified via the synthetic check."
+}

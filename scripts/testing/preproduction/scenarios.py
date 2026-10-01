@@ -173,6 +173,15 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
     return row
 
 
+def _positive_int(value: Any) -> int | None:
+    """Parse a positive-int fencing value; None when missing or malformed."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _fetch_relay_task(
     relay_task_id: str,
     *,
@@ -185,8 +194,9 @@ def _fetch_relay_task(
     the server answers ``{"data"?: {"task": {...}, "messages": [...]}}`` where
     ``messages`` is a SIBLING of ``task`` for v0.5/v0.6 tasks — the merged
     view combines task fields with the sibling message list. Fencing fields
-    are required positive ints; a missing value must fail closed instead of
-    silently degrading to 1 (wrong fencing would 409 as stale).
+    are required positive ints; a missing or malformed value must fail closed
+    (structural AutomationTestScenarioError) instead of silently degrading to
+    1 (wrong fencing would 409 as stale).
     """
     raw = get_json(
         f"{identity['base_url'].rstrip('/')}/tasks/{relay_task_id}",
@@ -213,14 +223,10 @@ def _fetch_relay_task(
         task = {**task, "messages": sibling_messages}
     fencing = {
         "current_message_id": str(task.get("current_message_id") or task.get("currentMessageId") or ""),
-        "turn_sequence": task.get("turn_sequence") or task.get("turnSequence"),
-        "task_version": task.get("task_version") or task.get("taskVersion"),
+        "turn_sequence": _positive_int(task.get("turn_sequence") or task.get("turnSequence")),
+        "task_version": _positive_int(task.get("task_version") or task.get("taskVersion")),
     }
-    missing = [
-        name
-        for name, value in fencing.items()
-        if not value or (name != "current_message_id" and int(value) <= 0)
-    ]
+    missing = [name for name, value in fencing.items() if value is None]
     if missing:
         raise AutomationTestScenarioError(
             f"relay task {relay_task_id} is missing fencing fields "
@@ -355,46 +361,67 @@ def verify_relay_binding(
         raise AutomationTestScenarioError(
             f"request {request_id} has no relay_task_id; refusing to execute"
         )
-    task_detail = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
-    task = task_detail["task"]
-    current_message = _current_task_message(task, task_detail["fencing"])
-    _verify_current_task_message(
-        current_message,
-        request_row,
-        identity=identity,
-        ecs_agent_id=ecs_agent_id,
-        zendesk_ticket_id=str(ctx.zendesk_ticket_id),
-        client_ticket_id=str(ctx.client_ticket_id),
-    )
+    latest: dict[str, Any] = {}
+    structural_error: str | None = None
 
-    # Reply-readiness gates (agentrelay-v05 contract): replying an undelivered
-    # message or out-of-turn would only fail AFTER the irreversible pilot
-    # write, so both are verified here — before the skill runs. Terminal
-    # status and turn ownership fail fast; a freshly dispatched message is
-    # legitimately `pending` for a few beats, so delivery waits (transient)
-    # instead of refusing.
-    if str(task.get("status") or "") != "open":
-        raise AutomationTestScenarioError(
-            f"relay task is terminal (status={task.get('status')!r}); refusing to execute"
-        )
-    task_to_agent = str(task.get("to_agent_id") or task.get("toAgentId") or "")
-    if task_to_agent != identity["agent_id"]:
-        raise AutomationTestScenarioError(
-            f"it is not this client's turn (task to_agent_id={task_to_agent!r} "
-            f"!= client={identity['agent_id']!r}); refusing to execute"
-        )
+    def binding_probe():
+        """One poll: fetch the task and run the FULL structural verification.
 
-    def delivery_probe():
-        fresh = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
-        message = _current_task_message(fresh["task"], fresh["fencing"])
-        if str(message.get("delivery_status") or "") == "delivered":
-            return message
-        return None
+        Returns ``"delivered"`` when the current message is bound and
+        delivered, ``None`` while it is still pending (transient) or on a
+        transport-level read failure (retried), and ``"broken"`` when a
+        structural contract error must abort the wait. wait_for() swallows
+        probe exceptions and keeps polling, so structural findings travel
+        via the nonlocal ``structural_error`` instead of being raised —
+        otherwise they would be masked by later legal responses and a stale
+        binding could bless the pilot write.
+        """
+        nonlocal structural_error, latest
+        try:
+            fresh = _fetch_relay_task(relay_task_id, identity=identity, get_json=get_json)
+            fresh_task = fresh["task"]
+            fresh_message = _current_task_message(fresh_task, fresh["fencing"])
+        except AutomationTestScenarioError as exc:
+            # Malformed envelope/fencing/current-message is a structural
+            # contract error, not a transient read failure.
+            structural_error = str(exc)
+            return "broken"
+        except Exception:
+            # Transport-level failure (network, HTTP): transient, keep polling.
+            return None
+        if str(fresh_task.get("status") or "") != "open":
+            structural_error = (
+                f"relay task became terminal during the wait (status={fresh_task.get('status')!r})"
+            )
+            return "broken"
+        fresh_to_agent = str(fresh_task.get("to_agent_id") or fresh_task.get("toAgentId") or "")
+        if fresh_to_agent != identity["agent_id"]:
+            structural_error = (
+                f"turn moved away from this client during the wait "
+                f"(to_agent_id={fresh_to_agent!r})"
+            )
+            return "broken"
+        try:
+            _verify_current_task_message(
+                fresh_message,
+                request_row,
+                identity=identity,
+                ecs_agent_id=ecs_agent_id,
+                zendesk_ticket_id=str(ctx.zendesk_ticket_id),
+                client_ticket_id=str(ctx.client_ticket_id),
+            )
+        except AutomationTestScenarioError as exc:
+            structural_error = str(exc)
+            return "broken"
+        latest = {"task": fresh_task, "message": fresh_message}
+        if str(fresh_message.get("delivery_status") or "") == "delivered":
+            return "delivered"
+        return None  # still pending; keep waiting
 
     try:
-        self_message = engine.wait_for(
-            "current relay message delivered to this client",
-            delivery_probe,
+        verdict = engine.wait_for(
+            "current relay message bound and delivered to this client",
+            binding_probe,
             engine.relay_timeout_min * 60,
         )
     except TimeoutError as exc:
@@ -402,8 +429,12 @@ def verify_relay_binding(
             f"current message never reached delivery_status=delivered ({exc}); "
             "refusing to execute before the reply is possible"
         ) from exc
-    if str(self_message.get("delivery_status") or "") != "delivered":  # pragma: no cover
-        raise AutomationTestScenarioError("current message delivery did not settle")
+    if verdict != "delivered":
+        raise AutomationTestScenarioError(
+            f"binding verification failed: {structural_error or verdict}"
+        )
+    task = latest["task"]
+    current_message = latest["message"]
 
     url = f"{relay_api_base.rstrip('/')}/v1/enablement-relay/requests/{request_id}"
     try:

@@ -41,6 +41,7 @@ ACCOUNT_RUNTIME_TABLES = frozenset(
         "support_hermes_human_authority_events",
         "support_hermes_close_reviews",
         "support_hermes_case_promotions",
+        "support_weknora_promotions",
         "support_workspace_accounts",
         "support_engineer_schedules",
         "support_workspace_audit_events",

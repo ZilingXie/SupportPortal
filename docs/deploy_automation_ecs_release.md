@@ -392,10 +392,12 @@ Preproduction 的 Agent 模型统一由一个非敏感 String SSM 参数控制�
   工单标题不在范围内（标题经 2026-09-30 实测：gpt-6-sol/medium 超出建单同步
   2 秒时限且 24-token 输出预算下约半数请求被 reasoning 耗尽，保持
   gpt-5.4-nano/none 现状，避免降级为启发式标题；如需纳入改一行场景集合再发布）。
-- 固定语义：case binding 创建时固定模型（schema-010 `agent_model` 列），此后 SSM
-  切换只影响新 session；每个 turn-run 行固定当次请求的模型与强度，丢回执重试重发
-  相同请求体（网关幂等指纹覆盖整个请求体）。旧行/旧 binding 为 NULL，保持网关
-  默认模型的旧请求格式。
+- 固定语义：case binding 创建时把**容器 env `AGENT_MODEL_ID` 的当前值**固定进
+  schema-010 `agent_model` 列（注意：固定的是发布时注入的 env 值，不是 SSM 的
+  实时值——按上文生效语义，模型值只随新发布变化，届时只有新创建的 binding 用
+  新值，既有 binding/session 一律保持原值）；每个 turn-run 行固定当次请求的模型
+  与强度，丢回执重试重发相同请求体（网关幂等指纹覆盖整个请求体）。旧行/旧
+  binding 为 NULL，保持网关默认模型的旧请求格式。
 - Production 渲染显式剥离 `AGENT_MODEL_ID` 与旧 p2-160 per-scenario luna/astra
   覆盖（两者在 Preproduction 渲染中也被替换为单一 `AGENT_MODEL_ID` 注入）。
 - 回滚：先阻止新 Hermes case run 并核对在途与已固定 session，不得让旧 Worker

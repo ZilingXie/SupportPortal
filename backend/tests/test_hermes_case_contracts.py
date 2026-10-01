@@ -11,6 +11,8 @@ from backend.services.hermes_case_workflow import (
     HermesInvestigationOutput,
     HermesLedgerDelta,
     HermesOutputAction,
+    HermesReviewReport,
+    HermesSummaryPacket,
     HermesTurnRequest,
     HumanAuthorityEvent,
     _promotion_content_hash,
@@ -239,6 +241,8 @@ def test_canonical_contract_bundle_fixtures_match_supportportal_validators() -> 
         "turn": HermesTurnRequest,
         "output": HermesInvestigationOutput,
         "promotion": CaseKnowledgePromotion,
+        "summary": HermesSummaryPacket,
+        "review": HermesReviewReport,
     }
     for path in sorted((root / "valid").glob("*.json")):
         validators[path.name.split("-", 1)[0]].model_validate(

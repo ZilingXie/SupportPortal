@@ -1,6 +1,6 @@
 # 启用 n8n 工作流说明
 
-范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。旧 EC2 Staging 后续已取消发布。本页各节标题保留旧名。13 段 **n8n description** 与已发布版本一致；两条 KB 流程（`[kb]Build|CSD`、`[kb]Build|Solved Cases`）于 2026-09-30 保存了来源迁移草稿（p2-181，未发布，详见各节与[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)），本页两节按草稿描述。其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
+范围、命名规则、目录结构和旧名对照见[工作流目录](./README.md)；2026-09-16 已完成统一改名，并按用户要求回退当日第一批修复。旧 EC2 Staging 后续已取消发布。本页各节标题保留旧名。13 段 **n8n description** 与已发布版本一致；两条 KB 流程（`[kb]Build|CSD`、`[kb]Build|Solved Cases`）于 2026-09-30 保存了来源迁移草稿（p2-183，未发布，详见各节与[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)），本页两节按草稿描述。其后的入口、主路径和注意事项是配置分析，不是执行成功证明。流程 ID 取自各标题的 n8n 链接。
 
 说明优先使用已发布图；画布上禁用或未连接的节点不计入当前主路径。知识生成、Slack 操作与质检流程仍各自承担原有职责，纳入本地文档不代表都直接调用 SupportPortal。
 
@@ -236,7 +236,7 @@
 - **与项目的关系**：重复/乱序事件由回执 `already_exists`/`stale_ignored` 吸收，n8n 不再写去重表；超时或失败可整轮重跑，无需删除任何去重记录。回执异常触发 `[ops]Error Alert`。契约见[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)。
 - **发布前置**：SP 接收接口在 Preproduction 可用 + 独立验收通过；接口未就绪发布会中断全部 SOLVED 工单的知识入库。
 - **已发布版本（`de3c1ca8`，当前 active）**：仍为旧行为——PostgreSQL 去重 → 评论脱敏/AI 筛选 → Zendesk 草稿 → Tencent Memory → Sheets → SupportPortal 知识库。排错按旧链四个输出位置核对；草稿与 active 的恢复基线分别见 `drafts/` 与 `active/` 快照。
-- **发布记录**：2026-09-17 从基线 `05c7588b-bba0-40b0-ab67-14e9b12820e6` 更新并发布 `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991`，最终仅修改 `AI_Approval` 规则和 description；保留此前禁用的 `2_rag`、Tencent 节点参数、全部连接、settings 与凭据引用。MCP 回读 draft/active 一致，未重放历史 execution；等待后续自然 SOLVED 事件验证分类结果。2026-09-16 的 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`。2026-09-30 保存来源迁移草稿（p2-181，36→14 节点），2026-10-01 按两轮验收意见修复：首轮 `33b22cd2`（三个 Zendesk 节点改 credential 引用、新增非空 task_id 门禁），二轮 `743bba31-73c1-43ae-a1b1-2e5d79110123`（13 节点：Sheets 尾链连接全部消除并删除两个孤儿转换节点），未发布；MCP 回读确认 active 仍为 `de3c1ca8`、连接/credential/门禁与设计一致，草稿快照见 `workflows/drafts/`。
+- **发布记录**：2026-09-17 从基线 `05c7588b-bba0-40b0-ab67-14e9b12820e6` 更新并发布 `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991`，最终仅修改 `AI_Approval` 规则和 description；保留此前禁用的 `2_rag`、Tencent 节点参数、全部连接、settings 与凭据引用。MCP 回读 draft/active 一致，未重放历史 execution；等待后续自然 SOLVED 事件验证分类结果。2026-09-16 的 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`。2026-09-30 保存来源迁移草稿（p2-183，36→14 节点），2026-10-01 按两轮验收意见修复：首轮 `33b22cd2`（三个 Zendesk 节点改 credential 引用、新增非空 task_id 门禁），二轮 `743bba31-73c1-43ae-a1b1-2e5d79110123`（13 节点：Sheets 尾链连接全部消除并删除两个孤儿转换节点），未发布；MCP 回读确认 active 仍为 `de3c1ca8`、连接/credential/门禁与设计一致，草稿快照见 `workflows/drafts/`。
 
 <a id="configuration-findings"></a>
 

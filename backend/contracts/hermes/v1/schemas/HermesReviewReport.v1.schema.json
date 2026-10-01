@@ -1,0 +1,188 @@
+{
+  "$defs": {
+    "HermesReviewDecision": {
+      "additionalProperties": false,
+      "description": "One candidate's governance decision produced by the Review role.",
+      "properties": {
+        "candidate_id": {
+          "minLength": 1,
+          "title": "Candidate Id",
+          "type": "string"
+        },
+        "candidate_type": {
+          "enum": [
+            "knowledge",
+            "memory",
+            "skill"
+          ],
+          "title": "Candidate Type",
+          "type": "string"
+        },
+        "confidence": {
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "decision": {
+          "enum": [
+            "no_change",
+            "merge",
+            "supplement",
+            "replace",
+            "new",
+            "human_review"
+          ],
+          "title": "Decision",
+          "type": "string"
+        },
+        "proposed_content": {
+          "default": "",
+          "title": "Proposed Content",
+          "type": "string"
+        },
+        "rationale": {
+          "minLength": 1,
+          "title": "Rationale",
+          "type": "string"
+        },
+        "source_references": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Source References",
+          "type": "array"
+        },
+        "target_object": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Object"
+        },
+        "target_version": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Version"
+        }
+      },
+      "required": [
+        "candidate_id",
+        "candidate_type",
+        "decision",
+        "confidence",
+        "rationale"
+      ],
+      "title": "HermesReviewDecision",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Validated review outcome returned to SupportPortal by the Review role.",
+  "properties": {
+    "client_ticket_id": {
+      "minLength": 1,
+      "title": "Client Ticket Id",
+      "type": "string"
+    },
+    "content_hash": {
+      "maxLength": 64,
+      "minLength": 64,
+      "title": "Content Hash",
+      "type": "string"
+    },
+    "conversation_version": {
+      "minimum": 0,
+      "title": "Conversation Version",
+      "type": "integer"
+    },
+    "created_at": {
+      "minLength": 1,
+      "title": "Created At",
+      "type": "string"
+    },
+    "decisions": {
+      "items": {
+        "$ref": "#/$defs/HermesReviewDecision"
+      },
+      "title": "Decisions",
+      "type": "array"
+    },
+    "engineer_case_id": {
+      "minLength": 1,
+      "title": "Engineer Case Id",
+      "type": "string"
+    },
+    "episode": {
+      "minimum": 1,
+      "title": "Episode",
+      "type": "integer"
+    },
+    "investigation_id": {
+      "minLength": 1,
+      "title": "Investigation Id",
+      "type": "string"
+    },
+    "ledger_revision": {
+      "minimum": 0,
+      "title": "Ledger Revision",
+      "type": "integer"
+    },
+    "review_id": {
+      "minLength": 1,
+      "title": "Review Id",
+      "type": "string"
+    },
+    "review_session_id": {
+      "minLength": 1,
+      "title": "Review Session Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "summary_id": {
+      "minLength": 1,
+      "title": "Summary Id",
+      "type": "string"
+    },
+    "weknora_available": {
+      "title": "Weknora Available",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "schema_version",
+    "review_id",
+    "summary_id",
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "episode",
+    "ledger_revision",
+    "conversation_version",
+    "review_session_id",
+    "weknora_available",
+    "decisions",
+    "content_hash",
+    "created_at"
+  ],
+  "title": "HermesReviewReport",
+  "type": "object"
+}

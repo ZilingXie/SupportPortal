@@ -20,6 +20,16 @@ HERMES_OUTPUT_VERSION = "v1"
 HERMES_LEDGER_DELTA_VERSION = "v1"
 HUMAN_AUTHORITY_VERSION = "v1"
 CASE_KNOWLEDGE_PROMOTION_VERSION = "v1"
+HERMES_SUMMARY_PACKET_VERSION = "v1"
+HERMES_REVIEW_REPORT_VERSION = "v1"
+
+# Knowledge-governance artifacts (summary packets, review reports) must never
+# leak the same restricted identifiers as promotions: workspace credentials and
+# agent-only URLs stay out of anything that travels to knowledge consumers.
+_RESTRICTED_KNOWLEDGE_MARKERS = (
+    "<restricted>", "authorization:", "x-hermes-callback-token",
+    "slack.com/archives/", "zendesk.com/agent/tickets/",
+)
 
 
 class _StrictModel(BaseModel):
@@ -238,6 +248,196 @@ class CaseKnowledgePromotion(_StrictModel):
         serialized = json.dumps(promotable, sort_keys=True).lower()
         if any(marker in serialized for marker in restricted):
             raise ValueError("promotion contains a restricted identifier")
+        return self
+
+
+WEKNORA_CANDIDATE_TYPES = ("knowledge", "memory")
+WEKNORA_CANDIDATE_DECISIONS = (
+    "no_change",
+    "new",
+    "supplement",
+    "replace",
+    "merge",
+    "human_review",
+)
+
+
+class WeKnoraPromotionCandidate(_StrictModel):
+    """Structured promotion candidate from the Hermes Review output.
+
+    Only the classification contract is enforced here: candidate_type and
+    decision must be recognizable.  Content completeness (content, target,
+    base version, merged content) is validated by the WeKnora adapter, which
+    records incomplete review output as a failed write.  Skill proposals are
+    intentionally not representable: they stay proposals and never enter the
+    WeKnora adapter.
+    """
+
+    schema_version: Literal["v1"]
+    candidate_type: Literal["knowledge", "memory"]
+    decision: Literal[
+        "no_change", "new", "supplement", "replace", "merge", "human_review"
+    ]
+    title: str = ""
+    content: str = ""
+    merged_content: str = ""
+    target_object_id: str = ""
+    base_version: str = ""
+    note: str = ""
+
+
+class HermesSummaryCandidate(_StrictModel):
+    """One piece of case knowledge proposed for review, type-agnostic by design.
+
+    The Summary role proposes candidates; only the Review role decides whether
+    a candidate is knowledge, memory, or a skill change.
+    """
+
+    candidate_id: str = Field(min_length=1)
+    statement: str = Field(min_length=1)
+    context: str = ""
+    evidence_references: tuple[str, ...] = ()
+
+
+def _summary_packet_content(payload: dict[str, Any]) -> dict[str, Any]:
+    candidates = [
+        HermesSummaryCandidate.model_validate(item).model_dump(mode="json")
+        for item in (payload.get("candidates") or [])
+    ]
+    return {
+        "problem_description": str(payload.get("problem_description") or ""),
+        "timeline": str(payload.get("timeline") or ""),
+        "investigation_process": str(payload.get("investigation_process") or ""),
+        "confirmed_facts": str(payload.get("confirmed_facts") or ""),
+        "root_cause_and_solution": str(payload.get("root_cause_and_solution") or ""),
+        "verification_results": str(payload.get("verification_results") or ""),
+        "limitations_and_unconfirmed": str(payload.get("limitations_and_unconfirmed") or ""),
+        "evidence_references": list(payload.get("evidence_references") or []),
+        "candidates": candidates,
+    }
+
+
+def summary_packet_content_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(_summary_packet_content(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class HermesSummaryPacket(_StrictModel):
+    """Structured close-of-case summary produced by the Summary role.
+
+    Lineage fields bind the packet to one engineer-case episode/revision; the
+    content hash covers only the narrative content so lineage bookkeeping can
+    never forge a packet's substance.
+    """
+
+    schema_version: Literal["v1"]
+    summary_id: str = Field(min_length=1)
+    engineer_case_id: str = Field(min_length=1)
+    client_ticket_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    episode: int = Field(ge=1)
+    ledger_revision: int = Field(ge=0)
+    conversation_version: int = Field(ge=0)
+    hermes_session_id: str = Field(min_length=1)
+    trigger: Literal["solved", "local_resolved", "closed"]
+    problem_description: str = Field(min_length=1)
+    timeline: str = ""
+    investigation_process: str = Field(min_length=1)
+    confirmed_facts: str = ""
+    root_cause_and_solution: str = ""
+    verification_results: str = ""
+    limitations_and_unconfirmed: str = Field(min_length=1)
+    evidence_references: tuple[str, ...] = ()
+    candidates: tuple[HermesSummaryCandidate, ...] = ()
+    content_hash: str = Field(min_length=64, max_length=64)
+    created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_packet(self) -> "HermesSummaryPacket":
+        candidate_ids = [item.candidate_id for item in self.candidates]
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("summary candidates must have unique ids")
+        payload = self.model_dump(mode="json")
+        actual = summary_packet_content_hash(payload)
+        if not hmac.compare_digest(self.content_hash, actual):
+            raise ValueError("content_hash does not match summary content")
+        serialized = json.dumps(_summary_packet_content(payload), sort_keys=True).lower()
+        if any(marker in serialized for marker in _RESTRICTED_KNOWLEDGE_MARKERS):
+            raise ValueError("summary packet contains a restricted identifier")
+        return self
+
+
+class HermesReviewDecision(_StrictModel):
+    """One candidate's governance decision produced by the Review role."""
+
+    candidate_id: str = Field(min_length=1)
+    candidate_type: Literal["knowledge", "memory", "skill"]
+    decision: Literal["no_change", "merge", "supplement", "replace", "new", "human_review"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str = Field(min_length=1)
+    proposed_content: str = ""
+    target_object: str | None = None
+    target_version: str | None = None
+    source_references: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_decision(self) -> "HermesReviewDecision":
+        has_target = bool(self.target_object) or bool(self.target_version)
+        if self.decision == "human_review" and has_target:
+            raise ValueError("human_review must not claim a resolved target")
+        if self.decision in {"no_change", "merge", "supplement", "replace"}:
+            if not self.target_object or not self.target_version:
+                raise ValueError(f"{self.decision} requires target_object and target_version")
+        if self.decision == "new" and has_target:
+            raise ValueError("new must not reference an existing target")
+        return self
+
+
+def _review_report_content(payload: dict[str, Any]) -> dict[str, Any]:
+    decisions = [
+        HermesReviewDecision.model_validate(item).model_dump(mode="json")
+        for item in (payload.get("decisions") or [])
+    ]
+    return {"decisions": decisions}
+
+
+def review_report_content_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(_review_report_content(payload), sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
+class HermesReviewReport(_StrictModel):
+    """Validated review outcome returned to SupportPortal by the Review role."""
+
+    schema_version: Literal["v1"]
+    review_id: str = Field(min_length=1)
+    summary_id: str = Field(min_length=1)
+    engineer_case_id: str = Field(min_length=1)
+    client_ticket_id: str = Field(min_length=1)
+    investigation_id: str = Field(min_length=1)
+    episode: int = Field(ge=1)
+    ledger_revision: int = Field(ge=0)
+    conversation_version: int = Field(ge=0)
+    review_session_id: str = Field(min_length=1)
+    weknora_available: bool
+    decisions: tuple[HermesReviewDecision, ...]
+    content_hash: str = Field(min_length=64, max_length=64)
+    created_at: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_report(self) -> "HermesReviewReport":
+        candidate_ids = [item.candidate_id for item in self.decisions]
+        if len(set(candidate_ids)) != len(candidate_ids):
+            raise ValueError("review decisions must cover each candidate at most once")
+        payload = self.model_dump(mode="json")
+        actual = review_report_content_hash(payload)
+        if not hmac.compare_digest(self.content_hash, actual):
+            raise ValueError("content_hash does not match review decisions")
+        serialized = json.dumps(_review_report_content(payload), sort_keys=True).lower()
+        if any(marker in serialized for marker in _RESTRICTED_KNOWLEDGE_MARKERS):
+            raise ValueError("review report contains a restricted identifier")
         return self
 
 
@@ -638,9 +838,120 @@ def reopen_hermes_case(
     return request
 
 
+def build_weknora_promotion_tasks(
+    *,
+    sanitized_payload: dict[str, Any],
+    binding: dict[str, Any],
+    review_payload: dict[str, Any] | None = None,
+    slack_channel_id: str | None = None,
+    slack_thread_ts: str | None = None,
+    summary_session_id: str | None = None,
+    summary_run_id: str | None = None,
+    review_session_id: str | None = None,
+    review_run_id: str | None = None,
+) -> list[dict[str, Any]]:
+    """Map Review output to WeKnora promotion tasks (knowledge/memory only).
+
+    When the review provides ``weknora_candidates``, each entry is validated
+    against :class:`WeKnoraPromotionCandidate`; structurally invalid entries are
+    preserved as synthetic ``human_review`` tasks instead of being dropped, and
+    incomplete-but-classifiable candidates pass through for the adapter to
+    record as failed writes.  When the review provides no candidates, the
+    sanitized close knowledge is promoted as a single ``new`` knowledge
+    candidate (the current close-review contract has no memory/skill output).
+    """
+    source_id = f"{binding['engineer_case_id']}:{binding['episode']}"
+    source_version = str(binding["current_ledger_revision"])
+    lineage = {
+        "engineer_case_id": str(binding["engineer_case_id"]),
+        "client_ticket_id": str(binding["client_ticket_id"]),
+        "investigation_id": str(binding.get("investigation_id") or "") or None,
+        "slack_channel_id": str(slack_channel_id or "") or None,
+        "slack_thread_ts": str(slack_thread_ts or "") or None,
+        "summary_session_id": str(summary_session_id or "") or None,
+        "summary_run_id": str(summary_run_id or "") or None,
+        "review_session_id": str(review_session_id or "") or None,
+        "review_run_id": str(review_run_id or "") or None,
+        "source_type": "hermes_case_promotion",
+        "source_id": source_id,
+        "source_version": source_version,
+    }
+    raw_candidates: list[Any] = []
+    if isinstance(review_payload, dict):
+        value = review_payload.get("weknora_candidates")
+        if isinstance(value, list):
+            raw_candidates = value
+
+    tasks: list[dict[str, Any]] = []
+    for entry in raw_candidates:
+        raw = dict(entry) if isinstance(entry, dict) else {"raw_value": entry}
+        raw.setdefault("schema_version", "v1")
+        try:
+            candidate = WeKnoraPromotionCandidate.model_validate(raw)
+        except ValueError as exc:
+            tasks.append(
+                {
+                    **lineage,
+                    "candidate_type": "knowledge",
+                    "decision": "human_review",
+                    "content_hash": hashlib.sha256(
+                        json.dumps(entry, sort_keys=True, default=str).encode("utf-8")
+                    ).hexdigest(),
+                    "candidate_payload": {
+                        "synthetic_invalid_candidate": True,
+                        "validation_error": str(exc),
+                        "raw_entry": entry,
+                    },
+                }
+            )
+            continue
+        payload = candidate.model_dump(mode="json")
+        tasks.append(
+            {
+                **lineage,
+                "candidate_type": candidate.candidate_type,
+                "decision": candidate.decision,
+                "content_hash": _weknora_candidate_hash(payload),
+                "candidate_payload": payload,
+            }
+        )
+    if tasks:
+        return tasks
+
+    knowledge = SanitizedCaseKnowledge.model_validate(sanitized_payload["sanitized_knowledge"])
+    content = json.dumps(
+        knowledge.model_dump(mode="json"), sort_keys=True, ensure_ascii=False
+    )
+    return [
+        {
+            **lineage,
+            "candidate_type": "knowledge",
+            "decision": "new",
+            "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            "candidate_payload": {
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "new",
+                "title": (
+                    f"Hermes case {binding['client_ticket_id']} "
+                    f"episode {binding['episode']}"
+                ),
+                "content": content,
+            },
+        }
+    ]
+
+
+def _weknora_candidate_hash(payload: dict[str, Any]) -> str:
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+
+
 def close_hermes_case(
     repository: Any, *, engineer_case_id: str, sanitized_payload: dict[str, Any],
     now_value: str | None = None,
+    weknora_promotions: list[dict[str, Any]] | None = None,
 ) -> CaseKnowledgePromotion:
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not binding:
@@ -679,7 +990,10 @@ def close_hermes_case(
         )
     except ValueError as exc:
         raise HermesWorkflowConflict("sanitized promotion payload is required") from exc
-    repository.close_hermes_case(promotion.model_dump(mode="json"), now_value=now)
+    repository.close_hermes_case(
+        promotion.model_dump(mode="json"), now_value=now,
+        weknora_promotions=weknora_promotions,
+    )
     return promotion
 
 

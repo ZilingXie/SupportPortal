@@ -42,6 +42,8 @@ class InMemoryHermesCaseRepositoryMixin:
         self._hermes_close_reviews: dict[str, dict[str, Any]] = {}
         self._hermes_promotions: dict[str, dict[str, Any]] = {}
         self._hermes_rejection_receipts: dict[str, dict[str, Any]] = {}
+        self._hermes_summary_tasks: dict[str, dict[str, Any]] = {}
+        self._hermes_review_tasks: dict[str, dict[str, Any]] = {}
 
     def start_hermes_case(self, request: dict[str, Any]) -> dict[str, Any]:
         case_id = str(request["engineer_case_id"])
@@ -617,6 +619,22 @@ class InMemoryHermesCaseRepositoryMixin:
             for promotion in self._hermes_promotions.values():
                 if promotion["engineer_case_id"] == case_id and promotion["status"] != "invalidated":
                     promotion.update(status="invalidated", updated_at=request["created_at"])
+            for weknora in self._weknora_promotion_state().values():
+                if weknora["engineer_case_id"] == case_id and weknora["status"] in {"queued", "active"}:
+                    weknora.update(status="invalidated", lease_expires_at=None,
+                                   updated_at=request["created_at"])
+            for summary_task in self._hermes_summary_tasks.values():
+                if (
+                    summary_task["engineer_case_id"] == case_id
+                    and summary_task["status"] in {"pending", "running"}
+                ):
+                    summary_task.update(status="invalidated", updated_at=request["created_at"])
+            for review_task in self._hermes_review_tasks.values():
+                if (
+                    review_task["engineer_case_id"] == case_id
+                    and review_task["status"] in {"pending", "running"}
+                ):
+                    review_task.update(status="invalidated", updated_at=request["created_at"])
             for snapshot in self._hermes_summary_snapshots.values():
                 if snapshot["engineer_case_id"] == case_id and snapshot["status"] == "frozen":
                     snapshot.update(status="superseded", updated_at=request["created_at"])
@@ -630,7 +648,13 @@ class InMemoryHermesCaseRepositoryMixin:
                                      draft_customer_reply="", updated_at=request["created_at"])
             return copy.deepcopy(request)
 
-    def close_hermes_case(self, promotion: dict[str, Any], *, now_value: str) -> dict[str, Any]:
+    def close_hermes_case(
+        self,
+        promotion: dict[str, Any],
+        *,
+        now_value: str,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         case_id = str(promotion["engineer_case_id"])
         with self._assignment_lock:
             binding = self._hermes_case_bindings.get(case_id)
@@ -654,6 +678,7 @@ class InMemoryHermesCaseRepositoryMixin:
                 "lease_expires_at": None, "runtime_receipt": None, "failure_code": None,
                 "updated_at": now_value,
             })
+            self._enqueue_weknora_promotions_locked(weknora_promotions or [], now_value=now_value)
             binding.update(status="closed", updated_at=now_value)
             self._hermes_case_ledgers[case_id].update(status="closed", updated_at=now_value)
             for request in self._hermes_turn_requests.values():
@@ -693,6 +718,197 @@ class InMemoryHermesCaseRepositoryMixin:
                 raise HermesRepositoryConflict("stale Hermes promotion delivery")
             row.update(status=status, runtime_receipt=copy.deepcopy(receipt),
                        failure_code=failure_code, lease_expires_at=None, updated_at=completed_at)
+            return copy.deepcopy(row)
+
+    def ensure_hermes_summary_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._assignment_lock:
+            existing = self._hermes_summary_tasks.get(str(payload["summary_task_id"]))
+            if existing is not None:
+                return copy.deepcopy(existing)
+            row = {
+                **copy.deepcopy(payload),
+                "status": "pending", "run_id": None, "packet": None, "packet_hash": None,
+                "error_code": None, "error_message": None,
+                "owner_token": None, "claimed_at": None, "lease_expires_at": None,
+                "updated_at": payload["created_at"],
+            }
+            self._hermes_summary_tasks[row["summary_task_id"]] = row
+            return copy.deepcopy(row)
+
+    def get_hermes_summary_task(self, summary_task_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            value = self._hermes_summary_tasks.get(str(summary_task_id))
+            return copy.deepcopy(value) if value else None
+
+    def list_hermes_summary_tasks(self) -> list[dict[str, Any]]:
+        with self._assignment_lock:
+            return [copy.deepcopy(row) for row in self._hermes_summary_tasks.values()]
+
+    def claim_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            row = self._hermes_summary_tasks.get(str(summary_task_id))
+            if row is None or row["status"] not in {"pending", "running"}:
+                return None
+            if (
+                row["status"] == "running"
+                and str(row.get("lease_expires_at") or "") > claimed_at
+                and row.get("owner_token") != owner_token
+            ):
+                return None
+            row.update(status="running", owner_token=owner_token, claimed_at=claimed_at,
+                       lease_expires_at=lease_expires_at, updated_at=claimed_at)
+            return copy.deepcopy(row)
+
+    def record_hermes_summary_run(
+        self, summary_task_id: str, *, run_id: str, now_value: str
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_summary_tasks.get(str(summary_task_id))
+            if row is None or row["status"] != "running":
+                raise HermesRepositoryConflict("stale Hermes summary task")
+            row.update(run_id=row.get("run_id") or run_id, updated_at=now_value)
+            return copy.deepcopy(row)
+
+    def complete_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, packet: dict[str, Any],
+        review_task: dict[str, Any] | None = None, completed_at: str = "",
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_summary_tasks.get(str(summary_task_id))
+            if row is None or row["status"] != "running" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes summary task")
+            row.update(status="completed", packet=copy.deepcopy(packet),
+                       packet_hash=str(packet.get("content_hash") or ""),
+                       error_code=None, error_message=None, lease_expires_at=None,
+                       updated_at=completed_at or row["updated_at"])
+            if review_task is not None:
+                self._ensure_hermes_review_task_locked(review_task)
+            return copy.deepcopy(row)
+
+    def fail_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, error_code: str,
+        error_message: str, failed_at: str = "",
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_summary_tasks.get(str(summary_task_id))
+            if row is None or row["status"] != "running" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes summary task")
+            row.update(status="failed", error_code=error_code, error_message=error_message,
+                       lease_expires_at=None, updated_at=failed_at or row["updated_at"])
+            return copy.deepcopy(row)
+
+    def _ensure_hermes_review_task_locked(self, payload: dict[str, Any]) -> dict[str, Any]:
+        existing = self._hermes_review_tasks.get(str(payload["review_task_id"]))
+        if existing is not None:
+            return copy.deepcopy(existing)
+        row = {
+            **copy.deepcopy(payload),
+            "status": "pending", "run_id": None, "report": None, "report_hash": None,
+            "weknora_adapter_status": None, "weknora_submissions": None,
+            "error_code": None, "error_message": None,
+            "owner_token": None, "claimed_at": None, "lease_expires_at": None,
+            "updated_at": payload["created_at"],
+        }
+        self._hermes_review_tasks[row["review_task_id"]] = row
+        return copy.deepcopy(row)
+
+    def ensure_hermes_review_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        with self._assignment_lock:
+            return self._ensure_hermes_review_task_locked(payload)
+
+    def get_hermes_review_task(self, review_task_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            value = self._hermes_review_tasks.get(str(review_task_id))
+            return copy.deepcopy(value) if value else None
+
+    def get_hermes_review_task_for_summary(self, summary_task_id: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            for row in self._hermes_review_tasks.values():
+                if row.get("summary_task_id") == str(summary_task_id):
+                    return copy.deepcopy(row)
+            return None
+
+    def list_hermes_review_tasks(self) -> list[dict[str, Any]]:
+        with self._assignment_lock:
+            return [copy.deepcopy(row) for row in self._hermes_review_tasks.values()]
+
+    def claim_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            row = self._hermes_review_tasks.get(str(review_task_id))
+            if row is None or row["status"] not in {"pending", "running"}:
+                return None
+            if (
+                row["status"] == "running"
+                and str(row.get("lease_expires_at") or "") > claimed_at
+                and row.get("owner_token") != owner_token
+            ):
+                return None
+            row.update(status="running", owner_token=owner_token, claimed_at=claimed_at,
+                       lease_expires_at=lease_expires_at, updated_at=claimed_at)
+            return copy.deepcopy(row)
+
+    def record_hermes_review_run(
+        self, review_task_id: str, *, run_id: str, now_value: str
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_review_tasks.get(str(review_task_id))
+            if row is None or row["status"] != "running":
+                raise HermesRepositoryConflict("stale Hermes review task")
+            row.update(run_id=row.get("run_id") or run_id, updated_at=now_value)
+            return copy.deepcopy(row)
+
+    def record_hermes_review_weknora_context(
+        self, review_task_id: str, *, weknora_available: bool, weknora_query: str | None,
+        now_value: str,
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_review_tasks.get(str(review_task_id))
+            if row is None or row["status"] != "running":
+                raise HermesRepositoryConflict("stale Hermes review task")
+            row.update(weknora_available=weknora_available, weknora_query=weknora_query,
+                       updated_at=now_value)
+            return copy.deepcopy(row)
+
+    def complete_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, report: dict[str, Any],
+        weknora_adapter_status: str, weknora_submissions: list[dict[str, Any]] | None,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+        completed_at: str = "",
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_review_tasks.get(str(review_task_id))
+            if row is None or row["status"] != "running" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes review task")
+            row.update(status="completed", report=copy.deepcopy(report),
+                       report_hash=str(report.get("content_hash") or ""),
+                       weknora_adapter_status=weknora_adapter_status,
+                       weknora_submissions=copy.deepcopy(weknora_submissions),
+                       error_code=None, error_message=None, lease_expires_at=None,
+                       updated_at=completed_at or row["updated_at"])
+            if weknora_promotions:
+                # The consumption bridge: a completed review atomically becomes
+                # WeKnora promotion tasks (one per decision, idempotent by
+                # promotion_id), so a crash can never complete a review
+                # without enqueuing its results.
+                self._enqueue_weknora_promotions_locked(
+                    weknora_promotions, now_value=completed_at or row["updated_at"]
+                )
+            return copy.deepcopy(row)
+
+    def fail_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, error_code: str,
+        error_message: str, failed_at: str = "",
+    ) -> dict[str, Any]:
+        with self._assignment_lock:
+            row = self._hermes_review_tasks.get(str(review_task_id))
+            if row is None or row["status"] != "running" or row.get("owner_token") != owner_token:
+                raise HermesRepositoryConflict("stale Hermes review task")
+            row.update(status="failed", error_code=error_code, error_message=error_message,
+                       lease_expires_at=None, updated_at=failed_at or row["updated_at"])
             return copy.deepcopy(row)
 
 
@@ -778,6 +994,40 @@ class PostgresHermesCaseRepositoryMixin:
                 runtime_receipt JSONB, failure_code TEXT,
                 created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
             """, (self._table("support_engineer_cases"),)),
+            ("support_hermes_summary_tasks", """
+                summary_task_id TEXT PRIMARY KEY,
+                engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                episode INTEGER NOT NULL CHECK (episode >= 1), client_ticket_id TEXT NOT NULL,
+                investigation_id TEXT NOT NULL, ledger_revision INTEGER NOT NULL,
+                conversation_version INTEGER NOT NULL, hermes_session_id TEXT NOT NULL,
+                trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved','local_resolved','closed')),
+                status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','invalidated')),
+                idempotency_key TEXT NOT NULL, run_id TEXT,
+                prompt_version TEXT, agent_model TEXT, reasoning_effort TEXT,
+                packet JSONB, packet_hash TEXT, error_code TEXT, error_message TEXT,
+                owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+            """, (self._table("support_engineer_cases"),)),
+            ("support_hermes_review_tasks", """
+                review_task_id TEXT PRIMARY KEY,
+                summary_task_id TEXT NOT NULL UNIQUE REFERENCES {}(summary_task_id) ON DELETE CASCADE,
+                engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                client_ticket_id TEXT NOT NULL, investigation_id TEXT NOT NULL,
+                episode INTEGER NOT NULL, ledger_revision INTEGER NOT NULL, conversation_version INTEGER NOT NULL,
+                review_session_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','invalidated')),
+                idempotency_key TEXT NOT NULL, run_id TEXT,
+                prompt_version TEXT, skill_version TEXT, agent_model TEXT, reasoning_effort TEXT,
+                weknora_available BOOLEAN, weknora_query TEXT,
+                report JSONB, report_hash TEXT,
+                weknora_adapter_status TEXT, weknora_submissions JSONB,
+                error_code TEXT, error_message TEXT,
+                owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
+            """, (
+                self._table("support_hermes_summary_tasks"),
+                self._table("support_engineer_cases"),
+            )),
         )
         for table_name, definition, identifiers in tables:
             cur.execute(
@@ -789,6 +1039,9 @@ class PostgresHermesCaseRepositoryMixin:
             sql.Identifier("idx_support_hermes_turn_requests_claim"), self._table("support_hermes_turn_requests")))
         cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id) WHERE status='active'").format(
             sql.Identifier("idx_support_hermes_turn_requests_one_active"), self._table("support_hermes_turn_requests")))
+        cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, episode)").format(
+            sql.Identifier("idx_support_hermes_summary_tasks_episode"),
+            self._table("support_hermes_summary_tasks")))
         turn_table = self._table("support_hermes_turn_requests")
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS runtime_receipt JSONB").format(turn_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_code TEXT").format(turn_table))
@@ -1367,11 +1620,20 @@ class PostgresHermesCaseRepositoryMixin:
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded', updated_at=%s WHERE engineer_case_id=%s AND status='frozen'").format(self._table("support_hermes_summary_snapshots")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_close_reviews")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_case_promotions")), (request["created_at"], request["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active')").format(self._table("support_weknora_promotions")), (request["created_at"], request["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status IN ('pending','running')").format(self._table("support_hermes_summary_tasks")), (request["created_at"], request["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status IN ('pending','running')").format(self._table("support_hermes_review_tasks")), (request["created_at"], request["engineer_case_id"]))
                 self._insert_hermes_turn(cur, request)
                 return copy.deepcopy(request)
         return self._run_with_connection_retry("reopen_hermes_case", operation)
 
-    def close_hermes_case(self, promotion: dict[str, Any], *, now_value: str) -> dict[str, Any]:
+    def close_hermes_case(
+        self,
+        promotion: dict[str, Any],
+        *,
+        now_value: str,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql.SQL("SELECT episode, current_ledger_revision FROM {} WHERE engineer_case_id=%s FOR UPDATE").format(self._table("support_hermes_case_bindings")), (promotion["engineer_case_id"],))
@@ -1385,6 +1647,7 @@ class PostgresHermesCaseRepositoryMixin:
                 if cur.fetchone() is None:
                     raise HermesRepositoryConflict("current summary guardrail is required")
                 cur.execute(sql.SQL("INSERT INTO {} (promotion_id, engineer_case_id, episode, ledger_revision, promotion_payload, status, created_at, updated_at) VALUES (%s,%s,%s,%s,%s,'awaiting_transport',%s,%s) ON CONFLICT (promotion_id) DO NOTHING").format(self._table("support_hermes_case_promotions")), (promotion["promotion_id"], promotion["engineer_case_id"], promotion["episode"], promotion["ledger_revision"], Json(promotion), now_value, now_value))
+                self._enqueue_weknora_promotions_cur(cur, weknora_promotions or [], now_value=now_value)
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_bindings")), (now_value, promotion["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='closed', updated_at=%s WHERE engineer_case_id=%s").format(self._table("support_hermes_case_ledgers")), (now_value, promotion["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='cancelled', updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active','awaiting_result')").format(self._table("support_hermes_turn_requests")), (now_value, promotion["engineer_case_id"]))
@@ -1450,3 +1713,338 @@ class PostgresHermesCaseRepositoryMixin:
                 return {**dict(row[0]), "status": status,
                         "runtime_receipt": receipt, "failure_code": failure_code}
         return self._run_with_connection_retry("complete_hermes_promotion_delivery", operation)
+
+    _SUMMARY_TASK_FIELDS = (
+        "summary_task_id", "engineer_case_id", "episode", "client_ticket_id",
+        "investigation_id", "ledger_revision", "conversation_version",
+        "hermes_session_id", "trigger_kind", "status", "idempotency_key", "run_id",
+        "prompt_version", "agent_model", "reasoning_effort",
+        "packet", "packet_hash", "error_code", "error_message",
+        "owner_token", "claimed_at", "lease_expires_at", "created_at", "updated_at",
+    )
+    _REVIEW_TASK_FIELDS = (
+        "review_task_id", "summary_task_id", "engineer_case_id", "client_ticket_id",
+        "investigation_id", "episode", "ledger_revision", "conversation_version",
+        "review_session_id", "status", "idempotency_key", "run_id",
+        "prompt_version", "skill_version", "agent_model", "reasoning_effort",
+        "weknora_available", "weknora_query", "report", "report_hash",
+        "weknora_adapter_status", "weknora_submissions", "error_code", "error_message",
+        "owner_token", "claimed_at", "lease_expires_at", "created_at", "updated_at",
+    )
+
+    @classmethod
+    def _summary_task_row(cls, row: tuple[Any, ...] | None) -> dict[str, Any] | None:
+        result = _row_dict(row, cls._SUMMARY_TASK_FIELDS)
+        if result is not None:
+            result["trigger"] = result.pop("trigger_kind")
+        return result
+
+    def ensure_hermes_summary_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    INSERT INTO {} (summary_task_id, engineer_case_id, episode, client_ticket_id,
+                        investigation_id, ledger_revision, conversation_version, hermes_session_id,
+                        trigger_kind, status, idempotency_key, prompt_version, agent_model,
+                        reasoning_effort, created_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (engineer_case_id, episode) DO NOTHING
+                """).format(self._table("support_hermes_summary_tasks")), (
+                    payload["summary_task_id"], payload["engineer_case_id"],
+                    payload["episode"], payload["client_ticket_id"], payload["investigation_id"],
+                    payload["ledger_revision"], payload["conversation_version"],
+                    payload["hermes_session_id"], payload["trigger"], payload["idempotency_key"],
+                    payload.get("prompt_version"), payload.get("agent_model"),
+                    payload.get("reasoning_effort"), payload["created_at"], payload["created_at"],
+                ))
+                cur.execute(sql.SQL("SELECT {} FROM {} WHERE engineer_case_id=%s AND episode=%s").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                    self._table("support_hermes_summary_tasks"),
+                ), (payload["engineer_case_id"], payload["episode"]))
+                return self._summary_task_row(cur.fetchone()) or {}
+        return self._run_with_connection_retry("ensure_hermes_summary_task", operation)
+
+    def get_hermes_summary_task(self, summary_task_id: str) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT {} FROM {} WHERE summary_task_id=%s").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                    self._table("support_hermes_summary_tasks"),
+                ), (summary_task_id,))
+                return self._summary_task_row(cur.fetchone())
+        return self._run_with_connection_retry("get_hermes_summary_task", operation)
+
+    def list_hermes_summary_tasks(self) -> list[dict[str, Any]]:
+        def operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT {} FROM {} ORDER BY created_at, summary_task_id").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                    self._table("support_hermes_summary_tasks"),
+                ))
+                return [row for row in map(self._summary_task_row, cur.fetchall()) if row]
+        return self._run_with_connection_retry("list_hermes_summary_tasks", operation)
+
+    def claim_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='running', owner_token=%s, claimed_at=%s,
+                    lease_expires_at=%s, updated_at=%s WHERE summary_task_id=%s AND
+                    (status='pending' OR (status='running' AND
+                      (lease_expires_at IS NULL OR lease_expires_at<=%s OR owner_token=%s)))
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_summary_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                ), (
+                    owner_token, claimed_at, lease_expires_at, claimed_at,
+                    summary_task_id, claimed_at, owner_token,
+                ))
+                return self._summary_task_row(cur.fetchone())
+        return self._run_with_connection_retry("claim_hermes_summary_task", operation)
+
+    def record_hermes_summary_run(
+        self, summary_task_id: str, *, run_id: str, now_value: str
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET run_id=COALESCE(run_id,%s), updated_at=%s
+                    WHERE summary_task_id=%s AND status='running' RETURNING {}
+                """).format(
+                    self._table("support_hermes_summary_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                ), (run_id, now_value, summary_task_id))
+                row = self._summary_task_row(cur.fetchone())
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes summary task")
+                return row
+        return self._run_with_connection_retry("record_hermes_summary_run", operation)
+
+    def _insert_hermes_review_task_cur(
+        self, cur: psycopg.Cursor[Any], payload: dict[str, Any]
+    ) -> None:
+        cur.execute(sql.SQL("""
+            INSERT INTO {} (review_task_id, summary_task_id, engineer_case_id, client_ticket_id,
+                investigation_id, episode, ledger_revision, conversation_version, review_session_id,
+                status, idempotency_key, prompt_version, skill_version, agent_model,
+                reasoning_effort, created_at, updated_at)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s)
+            ON CONFLICT DO NOTHING
+        """).format(self._table("support_hermes_review_tasks")), (
+            payload["review_task_id"], payload["summary_task_id"], payload["engineer_case_id"],
+            payload["client_ticket_id"], payload["investigation_id"], payload["episode"],
+            payload["ledger_revision"], payload["conversation_version"],
+            payload["review_session_id"], payload["idempotency_key"],
+            payload.get("prompt_version"), payload.get("skill_version"),
+            payload.get("agent_model"), payload.get("reasoning_effort"),
+            payload["created_at"], payload["created_at"],
+        ))
+
+    def complete_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, packet: dict[str, Any],
+        review_task: dict[str, Any] | None = None, completed_at: str = "",
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='completed', packet=%s, packet_hash=%s,
+                    error_code=NULL, error_message=NULL, lease_expires_at=NULL, updated_at=%s
+                    WHERE summary_task_id=%s AND status='running' AND owner_token=%s
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_summary_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                ), (
+                    Json(packet), str(packet.get("content_hash") or ""), completed_at,
+                    summary_task_id, owner_token,
+                ))
+                row = self._summary_task_row(cur.fetchone())
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes summary task")
+                if review_task is not None:
+                    self._insert_hermes_review_task_cur(cur, review_task)
+                return row
+        return self._run_with_connection_retry("complete_hermes_summary_task", operation)
+
+    def fail_hermes_summary_task(
+        self, summary_task_id: str, *, owner_token: str, error_code: str,
+        error_message: str, failed_at: str = "",
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='failed', error_code=%s, error_message=%s,
+                    lease_expires_at=NULL, updated_at=%s
+                    WHERE summary_task_id=%s AND status='running' AND owner_token=%s
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_summary_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                ), (error_code, error_message, failed_at, summary_task_id, owner_token))
+                row = self._summary_task_row(cur.fetchone())
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes summary task")
+                return row
+        return self._run_with_connection_retry("fail_hermes_summary_task", operation)
+
+    def ensure_hermes_review_task(self, payload: dict[str, Any]) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                self._insert_hermes_review_task_cur(cur, payload)
+                cur.execute(sql.SQL("SELECT {} FROM {} WHERE review_task_id=%s").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                    self._table("support_hermes_review_tasks"),
+                ), (payload["review_task_id"],))
+                return _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS) or {}
+        return self._run_with_connection_retry("ensure_hermes_review_task", operation)
+
+    def get_hermes_review_task(self, review_task_id: str) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT {} FROM {} WHERE review_task_id=%s").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                    self._table("support_hermes_review_tasks"),
+                ), (review_task_id,))
+                return _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+        return self._run_with_connection_retry("get_hermes_review_task", operation)
+
+    def get_hermes_review_task_for_summary(self, summary_task_id: str) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT {} FROM {} WHERE summary_task_id=%s").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                    self._table("support_hermes_review_tasks"),
+                ), (summary_task_id,))
+                return _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+        return self._run_with_connection_retry("get_hermes_review_task_for_summary", operation)
+
+    def list_hermes_review_tasks(self) -> list[dict[str, Any]]:
+        def operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT {} FROM {} ORDER BY created_at, review_task_id").format(
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                    self._table("support_hermes_review_tasks"),
+                ))
+                return [row for row in map(
+                    lambda r: _row_dict(r, self._REVIEW_TASK_FIELDS), cur.fetchall()
+                ) if row]
+        return self._run_with_connection_retry("list_hermes_review_tasks", operation)
+
+    def claim_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, claimed_at: str, lease_expires_at: str
+    ) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='running', owner_token=%s, claimed_at=%s,
+                    lease_expires_at=%s, updated_at=%s WHERE review_task_id=%s AND
+                    (status='pending' OR (status='running' AND
+                      (lease_expires_at IS NULL OR lease_expires_at<=%s OR owner_token=%s)))
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_review_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                ), (
+                    owner_token, claimed_at, lease_expires_at, claimed_at,
+                    review_task_id, claimed_at, owner_token,
+                ))
+                return _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+        return self._run_with_connection_retry("claim_hermes_review_task", operation)
+
+    def record_hermes_review_run(
+        self, review_task_id: str, *, run_id: str, now_value: str
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET run_id=COALESCE(run_id,%s), updated_at=%s
+                    WHERE review_task_id=%s AND status='running' RETURNING {}
+                """).format(
+                    self._table("support_hermes_review_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                ), (run_id, now_value, review_task_id))
+                row = _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes review task")
+                return row
+        return self._run_with_connection_retry("record_hermes_review_run", operation)
+
+    def record_hermes_review_weknora_context(
+        self, review_task_id: str, *, weknora_available: bool, weknora_query: str | None,
+        now_value: str,
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET weknora_available=%s, weknora_query=%s, updated_at=%s
+                    WHERE review_task_id=%s AND status='running' RETURNING {}
+                """).format(
+                    self._table("support_hermes_review_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                ), (weknora_available, weknora_query, now_value, review_task_id))
+                row = _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes review task")
+                return row
+        return self._run_with_connection_retry("record_hermes_review_weknora_context", operation)
+
+    def complete_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, report: dict[str, Any],
+        weknora_adapter_status: str, weknora_submissions: list[dict[str, Any]] | None,
+        weknora_promotions: list[dict[str, Any]] | None = None,
+        completed_at: str = "",
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='completed', report=%s, report_hash=%s,
+                    weknora_adapter_status=%s, weknora_submissions=%s,
+                    error_code=NULL, error_message=NULL, lease_expires_at=NULL, updated_at=%s
+                    WHERE review_task_id=%s AND status='running' AND owner_token=%s
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_review_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                ), (
+                    Json(report), str(report.get("content_hash") or ""),
+                    weknora_adapter_status,
+                    Json(weknora_submissions) if weknora_submissions is not None else None,
+                    completed_at, review_task_id, owner_token,
+                ))
+                row = _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes review task")
+                if weknora_promotions:
+                    # Same-transaction consumption bridge: completing a review
+                    # and enqueueing its WeKnora promotion tasks succeed or
+                    # roll back together.
+                    self._enqueue_weknora_promotions_cur(
+                        cur, weknora_promotions,
+                        now_value=completed_at or str(row.get("updated_at") or ""),
+                    )
+                return row
+        return self._run_with_connection_retry("complete_hermes_review_task", operation)
+
+    def fail_hermes_review_task(
+        self, review_task_id: str, *, owner_token: str, error_code: str,
+        error_message: str, failed_at: str = "",
+    ) -> dict[str, Any]:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {} SET status='failed', error_code=%s, error_message=%s,
+                    lease_expires_at=NULL, updated_at=%s
+                    WHERE review_task_id=%s AND status='running' AND owner_token=%s
+                    RETURNING {}
+                """).format(
+                    self._table("support_hermes_review_tasks"),
+                    sql.SQL(",").join(map(sql.Identifier, self._REVIEW_TASK_FIELDS)),
+                ), (error_code, error_message, failed_at, review_task_id, owner_token))
+                row = _row_dict(cur.fetchone(), self._REVIEW_TASK_FIELDS)
+                if row is None:
+                    raise HermesRepositoryConflict("stale Hermes review task")
+                return row
+        return self._run_with_connection_retry("fail_hermes_review_task", operation)

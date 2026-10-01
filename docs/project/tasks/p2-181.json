@@ -1,67 +1,95 @@
 {
- "schema_version": 2,
- "task_id": "p2-181",
- "title": "n8n 来源迁移：两条 KB 流程改为投递原始快照至 SupportPortal 来源接收接口（草稿）",
- "status": "review",
- "owner": "codex",
- "phase_id": "phase-2",
- "module_id": "rag-knowledge",
- "function_id": "rag-ingestion-pipeline",
- "created_at": "2026-09-30",
- "updated_at": "2026-10-01",
- "summary": "按用户批准的 n8n 来源迁移计划实施：n8n 只负责取得并投递来源快照，Review/去重/知识写入移交 SupportPortal 治理模块与 Hermes。两条 KB 工作流草稿改造完成（Solved Cases 版本 adb1156a：36→14 节点；CSD 版本 eea4392d：26→18 节点），均未发布，active 版本不变（de3c1ca8/d7100b18）。变更：(1) 冻结 knowledge-source-v1 来源接收契约（提案：POST /automation/preproduction/v1/knowledge/sources，Bearer 复用 intake credential，回执 accepted/already_exists/stale_ignored，source_type+source_id 唯一、source_updated_at 为版本）；(2) Solved Cases 移除前置 AI 筛选（含客户未确认排除规则）、评论脱敏、KB 生成链、PostgreSQL 先写去重与 Tencent Memory 直写，新增 ticket 全量+评论分页获取（responseContainsNextURL）与完整性显式校验（next_page/评论数）后投递原始快照；(3) CSD 保留 JQL 为来源范围，Get_CSD_Detail 改 fields=*,comment，移除 AI 筛选/先写去重/Memory 直写，投递 csd_issue 契约体；(4) 去重以回执为准，重复/乱序由 already_exists/stale_ignored 吸收，超时节点级重试 3 次后失败告警，无需删去重记录恢复；(5) Zendesk 草稿与 Sheets 输出节点保留但断开禁用，待 Review 输出链对接（其表达式引用已删节点需届时更新）。 2026-10-01 首轮验收未通过后完成三项阻断修复并补充 CSD 完整性判定：CSD 契约体补 schema_version；两条流程回执校验增加非空 task_id 门禁（Check Receipt Task）；Get Ticket Snapshot/Get All Comments/两处 HTTP_Create_KB 的 inline Authorization 全部替换为 zendeskApi credential 引用（Zendesk account 3）；Build Source Snapshot 增加 fields.comment.total 对照 comments.length 的评论完整性判定。修复后草稿版本：Solved Cases 33b22cd2（15 节点）、CSD 381b6fb5（19 节点），active 版本仍未变。 2026-10-01 二轮验收两阻断修复：Solved Cases 移除 Sheets 尾链（Append row in sheet→Code in JavaScript→Code in JavaScript1→2_rag 三条连接全部消除，两个孤儿转换节点删除，Append row in sheet 与 2_rag 保留为禁用无连接）；CSD 评论完整性检查改 fail-closed（comment 对象/comments 数组/数值型 total 任一缺失或异常即显式失败，数量比较在结构校验后执行）。二轮修复后草稿版本：Solved Cases 743bba31（13 节点）、CSD 544bdb70（19 节点）。",
- "next_action": "等待针对修复的复核（计划名：n8n 来源迁移计划，round 1 阻断项已全部处理）。发布前置：(a) SupportPortal 治理模块实现来源接收接口并在 Preproduction 可用（当前不存在，为外部依赖）；(b) 独立验收通过。发布后补端到端验证：首次投递/重复 already_exists/更新新版本/评论不完整失败/超时告警/旧 Memory Wiki 写入为零。",
- "acceptance_criteria": [
-  "Solved Cases 草稿：无 AI 前置判断、无 Memory 直写节点、无先写去重；投递节点含 ticket+全部分页评论原始快照；评论分页不完整（next_page 非空或评论数<comment_count）显式失败且不投递。",
-  "CSD 草稿：无 AI 前置判断、无 Memory 直写、无先写去重；JQL 来源范围不变；投递 issue 原始快照（fields=*,comment）。",
-  "两流程投递契约一致（knowledge-source-v1，三态回执），回执异常与非 2xx/超时均失败并触发 Error Alert；同一来源版本重投幂等（already_exists），旧版本 stale_ignored。",
-  "Zendesk 草稿与 Sheets 节点保留但断开禁用，不再先于 Review 发布。",
-  "草稿与发布版均经线上回读验证；快照/manifest 经 validate_workflow_snapshots.py 通过；不重放会产生真实外部写入的历史执行。",
-  "发布前置满足后：线上确认两条来源不再直写旧 Memory Wiki，同一来源只进入一条正式入库路径。"
- ],
- "blockers": [
-  "SupportPortal 来源接收接口未实现（代码/任务注册/跨会话记忆均无踪迹）——阻塞发布与端到端投递验证，不阻塞草稿级验收；接口归属与最终路径/认证确认待治理模块计划明确。"
- ],
- "evidence": [
-  {
-   "type": "document",
-   "label": "改造前线上回读（计划要求的实施前重读）",
-   "command": "n8n MCP get_workflow_details MM3Z3T469Eru3Q1I / GgDxPEWtW7ltT5BW",
-   "result": "改造前两条 activeVersion.sameAsDraft=true，版本 de3c1ca8/d7100b18 与仓库 manifest 一致，确认线上无后续改动；确认 Solved Cases Get_Case_Comment 无分页参数、两流程去重先于外部写入。"
-  },
-  {
-   "type": "document",
-   "label": "草稿改造与回读",
-   "command": "n8n MCP update_workflow（Solved Cases 46+1 ops；CSD 28 ops）→ get_workflow_details 回读",
-   "result": "Solved Cases 草稿 adb1156a-e9b9-4be1-a3a0-30f85284803d（14 节点）、CSD 草稿 eea4392d-a76e-47ef-b13b-3f9e93c7cee0（18 节点）；回读确认新主链连接、Deliver 节点 credential（httpBearerAuth toE81efBqb60KXsy）与重试设置（3 次/5s）、Get_CSD_Detail fields=*,comment、保留输出节点断开+disabled、active 版本未变。"
-  },
-  {
-   "type": "test",
-   "label": "快照校验",
-   "command": "python3 scripts/n8n/validate_workflow_snapshots.py",
-   "result": "Validated 15 published snapshots, 3 divergent drafts, and 75 redacted values.（新增两条 draft 快照，脱敏各 5 处）"
-  },
-  {
-   "type": "document",
-   "label": "round 1 验收修复与回读（2026-10-01）",
-   "command": "n8n MCP update_workflow（Solved Cases 11 ops；CSD 8 ops）→ get_workflow_details 回读",
-   "result": "Solved Cases 草稿 33b22cd2-3e10-4c75-817e-c7e3c02a0d2a（15 节点）、CSD 草稿 381b6fb5-8076-4efb-8c94-cfec51563434（19 节点）。回读确认：三个 Zendesk 节点均为 predefinedCredentialType+zendeskApi(f85Z4a0savbF0l5r) 且无 inline Authorization（update 响应中 HARDCODED_CREDENTIALS 警告消失）；Check Delivery Receipt[0]→Check Receipt Task(task_id notEmpty)→[0]Record/[1]Raise 连接正确；Build Source Snapshot 含 schema_version 与 comment.total 完整性判定；active 版本 de3c1ca8/d7100b18 未变。快照 validate：15 published、3 divergent drafts、67 redacted values，两份 draft 快照零 inline Zendesk 认证。"
-  },
-  {
-   "type": "document",
-   "label": "round 2 验收修复与回读（2026-10-01）",
-   "command": "n8n MCP update_workflow（Solved Cases 2 ops：删两个尾链节点；CSD 1 op：jsCode fail-closed）→ get_workflow_details 回读",
-   "result": "Solved Cases 草稿 743bba31-73c1-43ae-a1b1-2e5d79110123（13 节点）：connections 仅剩主链 8 键，Append row in sheet 无任何出边（快照断言验证）；2_rag 断开（DISCONNECTED 警告如期出现）。CSD 草稿 544bdb70-cebe-497c-8e28-eac0c87e0501（19 节点）：Build Source Snapshot jsCode 为 fail-closed 结构校验+数量比较。active 版本 de3c1ca8/d7100b18 未变。validate：15 published、3 divergent drafts、67 redacted values。"
-  }
- ],
- "source_refs": [
-  "docs/integrations/n8n/knowledge_source_ingestion_contract.md",
-  "docs/integrations/n8n/workflows/drafts/MM3Z3T469Eru3Q1I.draft.json",
-  "docs/integrations/n8n/workflows/drafts/GgDxPEWtW7ltT5BW.draft.json",
-  "docs/integrations/n8n/workflows/manifest.json",
-  "docs/operations/n8n/active-workflows.md"
- ],
- "legacy_ids": [],
- "legacy_refs": [],
- "history": []
+  "schema_version": 2,
+  "task_id": "p2-181",
+  "title": "Hermes Case Summary 与知识治理 Review 双角色（独立会话 + 结构化合同 + WeKnora 只读适配层）",
+  "status": "active",
+  "owner": "codex",
+  "phase_id": "phase-2",
+  "module_id": "account-automation",
+  "function_id": "account-production-environment",
+  "created_at": "2026-09-30",
+  "updated_at": "2026-09-30",
+  "summary": "按用户批准的 Hermes Summary/Review 计划实施：不部署新模型服务，两个逻辑角色都跑在现有 Hermes 上。(1) 合同：HermesSummaryPacket/HermesSummaryCandidate/HermesReviewDecision/HermesReviewReport 严格 pydantic 合同（content_hash 覆盖内容字段、受限标识符扫描、decision-target 一致性：no_change/merge/supplement/replace 必须带 target，new/human_review 必须不带），旧 CaseKnowledgePromotion v1 原样保留，contract bundle 扩展 5 schema+16 fixtures 再生成。(2) 数据层：support_hermes_summary_tasks（UNIQUE(engineer_case_id,episode) 首次终态转换幂等）与 support_hermes_review_tasks（UNIQUE(summary_task_id)）双实现（InMemory+PG+ticket_storage.sql），_TICKET_SCHEMA_VERSION v12→v13，记录 run/session/prompt/skill 版本与幂等键（hmknow: 前缀），租约式 claim（pending/running+过期）。(3) 编排 hermes_knowledge_workflow：Summary 在原 case session（toolset=common 只读）跑 hermes-case-summary-manual-v1，run 末尾 fenced JSON 解析+服务端注入 lineage/content_hash 构造 packet；成功后同事务创建 Review 任务，失败不进 Review。Review 在新独立 session（review_session_id_for 派生，toolset=skills，含 knowledge-review-v1 skill）跑 hermes-knowledge-review-manual-v1，SupportPortal 代做 WeKnora 只读相似检索（HermesWeKnoraClient，HERMES_WEKNORA_* fail-closed）嵌入输入，回传后校验 schema/lineage/content_hash/session/受限标识/候选覆盖，经 build_weknora_submissions 交给适配层（recorded，无外部写入；Hermes 不存知识不写 WeKnora）。(4) 触发：sync_account_case_ticket_status solved/closed + 本地 resolved（account_zendesk_internal_comment close_local_ticket 路径）→ queue_hermes_summary_for_case（HERMES_CASE_WORKFLOW_MODE=real 才建任务）；reopen 在事务内把 pending/running 任务 invalidated；pending 期间 revision 前进 → 完成时 stale_case_lineage 失败不标成功。worker process_account_automation_once 增排 drain。(5) 消费桥（验收未通过阻断项修复）：Review 完成事务内原子入队 support_weknora_promotions（build_weknora_promotions_from_review_report，source_type=hermes_knowledge_review、source_id=<review_id>:<candidate_id>、source_version=报告 content_hash 内容寻址，lineage 全量：ticket/investigation/Summary+Review session 与 run/Slack thread）；skill 决策显式分流为仅人工复核记录（candidate_type 枚举扩至 skill，仅 no_change/human_review，仓储门禁拒绝 skill 写意图，适配器零读写护栏 skill_change_requires_human_review，原始 decision 保留于 payload）；schema 合并为 v16（与 #1336 的候选级幂等 v15 合并：v16-weknora-skill-candidate-key，约束交换+候选级唯一索引并存）；worker 顺序调整为先知识排水后 promotion 排水。",
+  "next_action": "消费桥已实现并合并 #1336（v16）：待 PG 集成通过后 finalize 合入，重启本地官方栈验证，再重部署当前 main 到 Preproduction（--bootstrap-account-schema，v16），随后 WeKnora 真实探针与端到端写入验证（仍缺 endpoint/凭证/知识库 ID/共享 memory identity）。",
+  "acceptance_criteria": [
+    "Summary 与 Review 使用不同 session（Summary=原 case session，Review=knowledge-review 派生新 session）。",
+    "Review 无 WeKnora 写权限与客户业务工具权限（toolset 仅 skills；WeKnora 检索由 SupportPortal 只读代做）。",
+    "重复关闭事件（solved→closed、重复 solved）不创建重复任务（UNIQUE(engineer_case_id,episode) 只复用）。",
+    "reopen 使未完成任务失效（事务内 invalidated），新 episode 生成新任务。",
+    "缺少证据只能 human_review（decision 合同 + weknora_available=false 语义）。",
+    "Review 正确区分 knowledge/memory/skill（枚举合同；skill 候选只允许 no_change/human_review——skill 手册规定不自动演进）。",
+    "相似内容能输出 no_change/merge/supplement/replace/new（decision-target 一致性强制）。",
+    "输出可追溯 case/ticket/Summary session/Review session/Slack 线程（lineage 字段+bundle）。",
+    "Summary/Review 失败、超时、版本冲突不被标记成功（failed+error_code；stale_case_lineage）。",
+    "WeKnora 未配置/检索失败 fail-closed（weknora_available=false→human_review），不伪造成功。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Targeted unit + contract tests",
+      "details": "2026-09-30：test_hermes_knowledge_workflow（11 例：触发幂等/非 real 不建/本地 resolved/双 session 与只读 toolset/weknora 可用与 fail-closed/run 失败不建 review/输出合同违规/覆盖不匹配/revision 冲突 stale/reopen 失效+新 episode）+ test_hermes_case_contracts（bundle 验证器扩展 summary/review 前缀，含 bad-hash/restricted/duplicate-candidate/target 违规负例）+ 回归 test_hermes_zendesk_agent(_tools)/test_agent_config 129 passed + test_account_zendesk_internal_comment_service 11 passed（带 DSN）+ test_hermes_case_workflow 20 passed。"
+    },
+    {
+      "type": "test",
+      "label": "PostgreSQL integration",
+      "details": "2026-09-30：test_hermes_case_workflow_postgres 7 passed（新 DDL 不破坏既有 schema 初始化）；test_hermes_knowledge_workflow_postgres（episode 幂等唯一约束/claim 互斥+完成同事务建 review/review 完成/reopen invalidated 拒绝 claim）真实隔离 schema 通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Prompt release for new catalog keys",
+      "details": "2026-09-30：service 层（跳过 initialize）prepare_release(build_ref=3dd735b6)+activate——pr-c47f99044ae0（41 prompts，含 hermes-case-summary-manual v1 与 hermes-knowledge-review-manual v1，新增 key 由 sync 播种，既有 key 内容未变无需 schedule）。首次管线尝试（ecs-pipeline-r20260930-3dd735b，codebuild 阶段 17.6s failed）：Prompt Release pr-017c557db049 catalog mismatch missing 两个新 key——发布前必须先准备包含新 key 的 release。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction release r20260930-39144ab attempt",
+      "details": "2026-09-30：release_commit=39144abb（含 PR#1328 代码与 #1329 rev-012），prompt release pr-c47f99044ae0（41 prompts 含两个新 manual）。checkpoint：codebuild passed(160s)、preproduction_preflight passed(154s)、schema bootstrap one-off task exit 0（33s，supportportal_preproduction schema）、prompt-sync 41 matched/7 remapped；route_worker_rollout/api_rollout/heartbeat 重试后 passed；collector failed(109s)——aws signin 端点不可达（操作者 AWS 会话过期），回滚读回失败→rollback_incomplete。发布未激活；DB 侧变更（v13 表+prompt）已生效不回滚。"
+    },
+    {
+      "type": "test",
+      "label": "Local official stack live verification",
+      "details": "2026-09-30：restart_single_host_stack --mode local_lightweight --db remote 于 main dd32c03b85b8，/health ok，app_build.ref=dd32c03b85b8=root main，inspect build_provenance_status=matched、无辅助栈；prompt_runtime(code-78882e9a3f24) prompt_count=41——运行中构建包含两个新知识治理 manual。本地远端库为 check 模式不 bootstrap 新表（管线本地 disabled 休眠，行为中性）；DDL 已由 PG 集成测试与 preprod bootstrap 实证。"
+    },
+    {
+      "type": "test",
+      "label": "Consumption bridge Review->Promotion->Adapter e2e",
+      "details": "2026-10-01：test_hermes_knowledge_workflow 新增全链路用例——三候选（knowledge-supplement/memory-new/skill-human_review）review 完成后同事务入队三条 promotion（逐候选 source、全 lineage 断言），worker 循环消费：knowledge_update(base_version=3)与 memory_create 回读 accepted、skill 零客户端调用终态 human_review；重复排水零重复、公开入队口幂等；skill 写意图在 normalize 门禁被拒（ValueError）；适配器 skill 护栏测试更新为 human_review 契约。57 单测通过（含 weknora client/adapter/workflow/worker 全套回归）。"
+    }
+  ],
+  "history": [
+    {
+      "at": "2026-09-30",
+      "event": "created",
+      "summary": "用户批准 Hermes Summary/Review 计划（实施目标 low thinking）并下令实施；Summary/Review 复用现有 Hermes，WeKnora 只读代检索+适配层落地。"
+    },
+    {
+      "at": "2026-09-30",
+      "event": "followup",
+      "summary": "PR#1328 合入 main；Preprod 首次发布尝试因旧 Prompt Release 缺新 catalog key 在 codebuild 门禁失败，已按流程准备并激活 pr-c47f99044ae0，docs-only 提交推进 release commit 后重跑。"
+    },
+    {
+      "at": "2026-09-30",
+      "event": "followup",
+      "summary": "r20260930-39144ab 发布：DB 侧（schema v13 + prompt）全部完成；collector 因 AWS 会话过期失败且回滚受阻（rollback_incomplete），服务收敛与激活待用户重新认证后 resume；feature list 条目暂移未完成。"
+    },
+    {
+      "at": "2026-10-01",
+      "event": "followup",
+      "summary": "验收未通过（消费桥断裂）：实现 review 完成→weknora promotion 原子入队桥（含 skill 人工复核分流、全 lineage、schema v15、worker 顺序），端到端单测与 PG 集成补齐。"
+    }
+  ],
+  "legacy_ids": [],
+  "legacy_refs": [],
+  "source_refs": [
+    "backend/services/hermes_knowledge_workflow.py",
+    "backend/services/hermes_weknora.py",
+    "backend/services/hermes_case_workflow.py",
+    "backend/repositories/hermes_case_repository.py",
+    "backend/services/automation_hermes_agent.py",
+    "backend/services/prompts/hermes_support_agent.py",
+    "backend/skills/knowledge-review/SKILL.md",
+    "backend/services/automation_account_reply_sync.py",
+    "backend/services/account_zendesk_internal_comment.py",
+    "backend/worker.py"
+  ]
 }

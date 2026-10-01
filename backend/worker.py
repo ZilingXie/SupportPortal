@@ -153,12 +153,20 @@ from backend.services.hermes_case_workflow import (
     freeze_turn_request_for_delivery,
     hermes_workflow_mode,
 )
+from backend.services.hermes_knowledge_workflow import (
+    drain_hermes_knowledge_tasks,
+    knowledge_workflow_active,
+)
+from backend.services.hermes_agent_runtime import HermesAgentClient
+from backend.services.hermes_weknora import HermesWeKnoraClient
 from backend.services.hermes_runtime import (
     HermesRuntimeDeliveryError,
     hermes_runtime_configured,
     post_hermes_promotion,
     post_hermes_turn,
 )
+from backend.services.weknora_client import WeKnoraClient, weknora_promotion_enabled
+from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
 from backend.services.app_build import get_app_build_info
 from backend.services.asset_storage import build_asset_s3_key, sanitize_asset_filename
 from backend.services.engineer_cases import (
@@ -2726,6 +2734,74 @@ def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
     return processed
 
 
+def _drain_weknora_promotions(*, limit: int = 20) -> int:
+    if not weknora_promotion_enabled():
+        return 0
+    adapter = WeKnoraPromotionAdapter(WeKnoraClient())
+    processed = 0
+    for promotion in ticket_repository.list_weknora_promotions():
+        now = datetime.now(timezone.utc)
+        status = str(promotion.get("status") or "")
+        if processed >= limit or status not in {"queued", "active"}:
+            continue
+        if status == "active" and str(promotion.get("lease_expires_at") or "") > now.isoformat():
+            continue
+        owner_token = f"weknora-promotion-worker:{os.getpid()}"
+        claimed = ticket_repository.claim_weknora_promotion(
+            str(promotion.get("promotion_id") or ""), owner_token=owner_token,
+            claimed_at=now.isoformat(),
+            lease_expires_at=(now + timedelta(seconds=120)).isoformat(),
+        )
+        if not claimed:
+            continue
+        try:
+            outcome = adapter.execute(claimed)
+        except Exception:  # noqa: BLE001 - never lose the lease without a terminal state
+            LOGGER.exception(
+                "weknora_promotion_adapter_crashed promotion_id=%s", claimed.get("promotion_id")
+            )
+            ticket_repository.complete_weknora_promotion(
+                claimed["promotion_id"], owner_token=owner_token,
+                status="failed", failure_code="adapter_crashed",
+                failure_detail="adapter raised an unexpected exception",
+                completed_at=now_iso(),
+            )
+            processed += 1
+            continue
+        ticket_repository.complete_weknora_promotion(
+            claimed["promotion_id"], owner_token=owner_token,
+            status=outcome.status,
+            weknora_object_id=outcome.weknora_object_id,
+            weknora_version=outcome.weknora_version,
+            receipt=outcome.receipt,
+            failure_code=outcome.failure_code,
+            failure_detail=outcome.failure_detail,
+            completed_at=now_iso(),
+        )
+        processed += 1
+    return processed
+
+
+def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
+    if not knowledge_workflow_active():
+        return 0
+    try:
+        return drain_hermes_knowledge_tasks(
+            ticket_repository,
+            client=HERMES_KNOWLEDGE_AGENT_CLIENT,
+            weknora_client=HermesWeKnoraClient(),
+            limit=limit,
+        )
+    except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure
+        LOGGER.warning("hermes_knowledge_tasks_drain_failed", exc_info=True)
+        return 0
+
+
+# Stateless urllib client shared by knowledge drains (settings read once at
+# import; the run bodies pin model/effort from task rows, not live config).
+HERMES_KNOWLEDGE_AGENT_CLIENT = HermesAgentClient()
+
+
 def _reconcile_production_zendesk_delivery(
     *,
     account_case_id: str,
@@ -3332,6 +3408,11 @@ def process_account_automation_once() -> None:
     if _drain_real_hermes_turns(limit=20):
         _drain_engineer_slack_events(limit=20)
     _drain_real_hermes_promotions(limit=20)
+    # Knowledge drain first: a completed review enqueues WeKnora promotions in
+    # its completion transaction, so the promotion drain picks them up in the
+    # same poller cycle.
+    _drain_hermes_knowledge_tasks(limit=5)
+    _drain_weknora_promotions(limit=20)
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
