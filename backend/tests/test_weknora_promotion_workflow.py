@@ -137,9 +137,56 @@ def test_default_close_promotes_sanitized_knowledge_as_new_knowledge_task() -> N
         source_id="123-1:1",
         source_version=task["source_version"],
         candidate_type="knowledge",
+        content_hash=task["content_hash"],
     )
     normalized_tasks = repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:05:00Z")
     assert [row["promotion_id"] for row in normalized_tasks] == [expected_id]
+
+
+def test_multiple_same_type_candidates_from_one_close_are_all_kept() -> None:
+    """Review-acceptance defect 1: the idempotency key is per candidate.
+
+    Two different knowledge candidates from the same case episode must both
+    survive enqueue; a replayed close event must not add duplicates.
+    """
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    review_payload = {
+        "weknora_candidates": [
+            {
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "new",
+                "title": "First finding",
+                "content": "knowledge body one",
+            },
+            {
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "new",
+                "title": "Second finding",
+                "content": "knowledge body two",
+            },
+        ]
+    }
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding, review_payload=review_payload
+    )
+    assert len(tasks) == 2
+    inserted = repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:05:00Z")
+    assert len(inserted) == 2
+    rows = repository.list_weknora_promotions()
+    assert len(rows) == 2
+    assert len({row["promotion_id"] for row in rows}) == 2
+    assert {row["candidate_payload"]["content"] for row in rows} == {
+        "knowledge body one",
+        "knowledge body two",
+    }
+    # Replaying the same close event changes nothing.
+    replayed = repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:06:00Z")
+    assert replayed == []
+    assert len(repository.list_weknora_promotions()) == 2
 
 
 def test_review_candidates_are_mapped_and_invalid_entries_preserved() -> None:

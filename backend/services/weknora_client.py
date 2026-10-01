@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import socket
 import urllib.error
 import urllib.parse
@@ -19,6 +20,8 @@ import urllib.request
 from typing import Any
 
 LOGGER = logging.getLogger(__name__)
+
+_PATH_PLACEHOLDER = re.compile(r"\{([a-zA-Z0-9_]+)\}")
 
 WEKNORA_OPERATIONS = (
     "health",
@@ -185,6 +188,27 @@ class WeKnoraClient:
             headers[self._auth_header_name] = f"{scheme} {self._api_token}".strip()
         return headers
 
+    def _render_path(self, path: str, json_body: dict[str, Any] | None) -> str:
+        """Substitute ``{placeholder}`` tokens in a pinned contract path.
+
+        REST APIs address objects through the URL (``/knowledge/{object_id}``);
+        placeholders resolve from the request body values, URL-quoted.  A
+        placeholder without a body value fails closed instead of being sent
+        literally.
+        """
+        rendered = str(path)
+        for token in set(_PATH_PLACEHOLDER.findall(rendered)):
+            if json_body is None or str(token) not in json_body:
+                raise WeKnoraError(
+                    f"WeKnora path placeholder {{{token}}} has no request value",
+                    failure_kind="not_configured",
+                )
+            rendered = rendered.replace(
+                "{" + str(token) + "}",
+                urllib.parse.quote(str(json_body[str(token)]), safe=""),
+            )
+        return rendered
+
     def _request(
         self,
         operation: str,
@@ -209,7 +233,7 @@ class WeKnoraClient:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
         request = urllib.request.Request(
-            url=self._build_url(str(entry.get("path")), query=query),
+            url=self._build_url(self._render_path(str(entry.get("path")), json_body), query=query),
             data=body,
             headers=headers,
             method=method,
@@ -384,10 +408,20 @@ class WeKnoraClient:
 
     # -- receipts -----------------------------------------------------------
 
+    def _extract_object_id(self, payload: dict[str, Any]) -> str:
+        """Configured key first, then the common aliases (``object_id``, ``id``).
+
+        The official memory API answers with ``id``; normalizing here lets one
+        contract drive both shapes without guessing in the adapter.
+        """
+        for path in (self._field("object_id_key", "object_id"), "object_id", "id"):
+            value = str(_extract(payload, path) or "").strip()
+            if value:
+                return value
+        return ""
+
     def _normalize_write_receipt(self, payload: dict[str, Any], *, operation: str) -> dict[str, Any]:
-        object_id = str(
-            _extract(payload, self._field("object_id_key", "object_id")) or ""
-        ).strip()
+        object_id = self._extract_object_id(payload)
         version = str(_extract(payload, self._field("version_key", "version")) or "").strip()
         if not object_id:
             raise WeKnoraError(
@@ -408,7 +442,7 @@ class WeKnoraClient:
                 payload=payload,
             )
         return {
-            "object_id": str(_extract(payload, self._field("object_id_key", "object_id")) or object_id),
+            "object_id": self._extract_object_id(payload) or object_id,
             "version": version or None,
             "title": str(title or ""),
             "content": str(content),

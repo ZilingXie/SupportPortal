@@ -734,8 +734,10 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     updated_at TIMESTAMPTZ NOT NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_support_weknora_promotions_source_unique
-    ON support_weknora_promotions (source_type, source_id, source_version, candidate_type);
+DROP INDEX IF EXISTS idx_support_weknora_promotions_source_unique;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_weknora_promotions_candidate_unique
+    ON support_weknora_promotions (source_type, source_id, source_version, candidate_type, content_hash);
 
 CREATE INDEX IF NOT EXISTS idx_support_weknora_promotions_claim
     ON support_weknora_promotions (status, created_at, promotion_id);
