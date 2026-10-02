@@ -43,7 +43,8 @@ _INTAKE_PAYLOAD = {
     "comment_snapshot": {
         "source_updated_at": "2026-10-03T00:00:00+00:00",
         "snapshot_complete": True,
-        "comments": [{"id": "9901", "body": "notice body"}],
+        "comments": [{"id": "9901", "public": True, "body": "notice body",
+                      "created_at": "2026-10-03T00:00:00+00:00"}],
         "trigger_comment_id": "9901",
     },
 }
@@ -157,7 +158,7 @@ def _happy_queue(engine: DupFakeEngine) -> None:
     reply intent(3) → public delivery(4) → relay request(5) → dispatched(6)
     → baseline case(7)/requests(8)/job ids(9)/turn ids(10) → intake(11) →
     turn(12) → draft probe(13) → rag check(14) → draft re-check(15) →
-    delivery(16) → state case(17) → requests after(18). The case-mirror
+    delivery(16) → final drafts re-check(17) → final RAG re-check(18) → state case(19) → requests after(20). The case-mirror
     zendesk_ticket_status stays None throughout: a still-open ticket has no
     backfilled mirror value, and the verdict comes from the Zendesk
     readback instead.
@@ -220,6 +221,11 @@ def _happy_queue(engine: DupFakeEngine) -> None:
             "zendesk_comment_id": "54170000000002",
             "immutable_content": _ACK_BODY,
         }]),
+        # Final post-delivery re-check: live drafts then RAG counter-evidence.
+        ("FROM automation_hermes_case_drafts", [
+            {"draft_id": "draft-ack", "status": "queued"}
+        ]),
+        ("FROM support_account_reply_jobs", []),
         # Post-turn state checks (mirror still NULL; readback says open).
         ("WHERE account_case_id", [{"automation_status": "automation",
                                     "internal_email_send_status": "not_applicable",
@@ -290,6 +296,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertFalse(report["replay"]["exercised"])
         step_names = [s["step"] for s in report["steps"]]
         self.assertIn("exactly one acknowledgment draft for the notice turn", step_names)
+        self.assertIn("final re-check: exactly one live acknowledgment output", step_names)
         self.assertIn(
             "delivered ack content acknowledges the notice without cross-ticket claims",
             step_names,
@@ -363,6 +370,89 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
                                                    "execution_id": "exec-notice"},
                       workdir=self._workdir())
         self.assertIn("zero new side effects", str(ctx.exception))
+
+    def test_second_draft_queued_during_delivery_fails_final_recheck(self) -> None:
+        """Acceptance r4: the exactly-one check before the delivery wait can
+        be beaten by timing — the final post-delivery re-check must catch a
+        second draft that reached queued meanwhile."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[17] = ("FROM automation_hermes_case_drafts", [
+            {"draft_id": "draft-ack", "status": "queued"},
+            {"draft_id": "draft-ack-2", "status": "queued"},
+        ])
+        engine.db_queue = engine.db_queue[:18]
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("final re-check: exactly one live acknowledgment output failed", str(ctx.exception))
+        self.assertIn("draft-ack-2", str(ctx.exception))
+        self.assertFalse(engine.all_passed())
+        failed = [s.step for s in engine.steps if s.status == "FAIL"]
+        self.assertIn("final re-check: exactly one live acknowledgment output", failed)
+
+    def test_second_draft_still_preparing_fails_final_recheck(self) -> None:
+        """A second draft still preparing will keep producing deliveries —
+        never a green report."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[17] = ("FROM automation_hermes_case_drafts", [
+            {"draft_id": "draft-ack", "status": "queued"},
+            {"draft_id": "draft-ack-2", "status": "preparing"},
+        ])
+        engine.db_queue = engine.db_queue[:18]
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("final re-check: exactly one live acknowledgment output failed", str(ctx.exception))
+
+    def test_replay_adapter_refuses_url_smuggling_variants(self) -> None:
+        """Acceptance r4: query/fragment suffixes must not smuggle a
+        Production path past the base check — zero sends in every case."""
+        sent: list = []
+
+        def fake_urlopen(request, timeout=None):  # pragma: no cover
+            sent.append(request)
+            raise AssertionError("urlopen must never run for a refused base")
+
+        bad_bases = [
+            "https://api.test/automation/production/v1/intake?next=/automation/preproduction",
+            "https://api.test/automation/production/v1/intake#/automation/preproduction",
+            "https://supportcenter.stellarix.space/automation/production",
+            "http://api.test/automation/preproduction",
+            "https://api.test/automation/preproduction/extra",
+        ]
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            for base in bad_bases:
+                with self.assertRaises(AutomationTestScenarioError):
+                    pp.make_intake_replay_post(base, "tok")
+        self.assertEqual(sent, [])
+
+    def test_replay_adapter_accepts_and_normalizes_trailing_slash(self) -> None:
+        captured: dict = {}
+
+        class FakeResponse:
+            def __init__(self, body):
+                self._body = body
+
+            def read(self):
+                return self._body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            captured["url"] = request.full_url
+            return FakeResponse(b"{}")
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            post = pp.make_intake_replay_post(
+                "https://api.test/automation/preproduction/", "tok"
+            )
+            post(event_id="evt-1", payload={})
+        self.assertEqual(captured["url"],
+                         "https://api.test/automation/preproduction/v1/intake")
 
     def test_replay_adapter_refuses_non_preproduction_base(self) -> None:
         """Acceptance r3 #1: a Production base must yield zero sends."""
@@ -525,7 +615,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
     def test_lost_ownership_fails_the_scenario(self) -> None:
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[17] = (
+        engine.db_queue[19] = (
             "WHERE account_case_id",
             [{"automation_status": "human_review_required",
               "internal_email_send_status": "sent",
@@ -543,7 +633,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         engine = DupFakeEngine()
         _happy_queue(engine)
         engine.main_ticket_status = "solved"
-        engine.db_queue[17] = (
+        engine.db_queue[19] = (
             "WHERE account_case_id",
             [{"automation_status": "automation",
               "internal_email_send_status": "not_applicable",
@@ -561,7 +651,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         second = _dispatched_request()
         second["request_id"] = "enr-AC-14000-v2"
         second["request_version"] = 2
-        engine.db_queue[18] = (
+        engine.db_queue[20] = (
             "FROM support_enablement_relay_requests",
             [_dispatched_request(), second],
         )
@@ -572,7 +662,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
     def test_cancelled_request_fails_the_scenario(self) -> None:
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[18] = (
+        engine.db_queue[20] = (
             "FROM support_enablement_relay_requests",
             [_dispatched_request(status="cancelled")],
         )
@@ -622,6 +712,17 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
             self._run(engine, duplicate_of="", workdir=self._workdir())
         self.assertIn("requires --duplicate-of-ticket", str(ctx.exception))
         self.assertEqual(engine.sent_emails, [])
+
+    def test_intake_fixture_passes_real_contract_validation(self) -> None:
+        """The replayed payload must be a shape the server actually accepts."""
+        from backend.services.automation_ecs_contracts import AutomationIntakeEvent
+
+        event = AutomationIntakeEvent.model_validate(_INTAKE_PAYLOAD)
+        self.assertEqual(event.event_id, "evt-notice")
+        self.assertEqual(
+            event.comment_snapshot.trigger_comment_id,
+            _INTAKE_PAYLOAD["comment_snapshot"]["trigger_comment_id"],
+        )
 
     def test_notice_body_matches_incident_text_verbatim(self) -> None:
         """Acceptance r3: the fixture is the incident text as quoted in the
@@ -706,6 +807,22 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
                 "Thanks for the note about the duplicate. We will keep handling this "
                 "ticket and speed up the review."
             ),
+        )
+        # An UNRELATED negation must not mask a close claim (acceptance r4):
+        # "not" scopes over asking for details, not over closing.
+        self.assertIn(
+            "cross-ticket action",
+            pp._dup_ack_content_check(
+                "Thanks for confirming the duplicate. We have closed the duplicate "
+                "and will not ask for more details. We will continue with this ticket."
+            ),
+        )
+        # Directly negated actions stay legal.
+        self.assertIsNone(
+            pp._dup_ack_content_check(
+                "Thanks for the note about the other ticket. We have not closed "
+                "anything; we will continue with this ticket."
+            )
         )
 
     def test_zendesk_transport_required(self) -> None:

@@ -923,8 +923,10 @@ def _dup_ack_content_check(content: str) -> str | None:
     Positive meaning must appear as an AFFIRMATIVE sub-clause: acknowledge
     the duplicate notice AND confirm continuing with this ticket — a negated
     promise ("we will not continue") is not a confirmation. Cross-ticket
-    action claims are forbidden per sub-clause, with a negation excusing
-    only the actions in its own clause.
+    action claims are checked per ACTION: a claim is excused only when a
+    negation DIRECTLY precedes that specific action, so an unrelated negation
+    elsewhere in the clause ("closed the duplicate and will not ask for more
+    details") never masks the claim.
     """
     text = str(content or "").strip()
     if not text:
@@ -938,8 +940,12 @@ def _dup_ack_content_check(content: str) -> str | None:
     for clause in clauses:
         if not clause or "?" in clause:
             continue
-        if PP_EN_DUP_FORBIDDEN_CLAIM_RE.search(clause) and not PP_EN_DUP_NEGATION_RE.search(clause):
-            return f"ack claims a cross-ticket action: {clause[:80]!r}"
+        for claim in PP_EN_DUP_FORBIDDEN_CLAIM_RE.finditer(clause):
+            window = clause[max(0, claim.start() - 32):claim.start()]
+            if PP_EN_DUP_NEGATION_RE.search(window):
+                continue  # this specific action is directly negated
+            snippet = clause[max(0, claim.start() - 20):claim.end() + 20].strip()
+            return f"ack claims a cross-ticket action: {snippet!r}"
     return None
 
 
@@ -947,14 +953,34 @@ def _assert_preproduction_intake_base(api_base: str) -> str:
     """The intake re-delivery POST is a write entrypoint: its target must be
     the Preproduction API base. An inherited SUPPORTPORTAL_RELAY_API_BASE
     pointing anywhere else (e.g. .../automation/production) must be refused
-    with zero sends."""
-    normalized = str(api_base or "").rstrip("/")
-    if not normalized.endswith("/automation/preproduction"):
+    with zero sends.
+
+    The check is structural, not a string suffix: the URL is parsed and must
+    be https, carry no query or fragment, and have EXACTLY the
+    /automation/preproduction path — a production path smuggling
+    `?next=/automation/preproduction` or `#/automation/preproduction` is
+    refused like any other non-Preproduction target."""
+    from urllib.parse import urlsplit
+
+    raw = str(api_base or "").strip()
+    parts = urlsplit(raw)
+    if parts.scheme != "https" or not parts.netloc:
         raise AutomationTestScenarioError(
-            "intake re-delivery target must be the Preproduction API base "
-            f"(.../automation/preproduction); refusing {normalized or '<empty>'!r}"
+            "intake re-delivery target must be an https Preproduction API base; "
+            f"refusing {raw or '<empty>'!r}"
         )
-    return normalized
+    if parts.query or parts.fragment:
+        raise AutomationTestScenarioError(
+            "intake re-delivery target must not carry a query or fragment; "
+            f"refusing {raw!r}"
+        )
+    path = parts.path.rstrip("/")
+    if path != "/automation/preproduction":
+        raise AutomationTestScenarioError(
+            "intake re-delivery target must be the Preproduction API base path "
+            f"/automation/preproduction; refusing {raw!r}"
+        )
+    return f"https://{parts.netloc}{path}"
 
 
 def _wait_notice_intake(engine: Any, ctx: ScenarioContext, comment_id: str) -> dict:
@@ -1131,6 +1157,51 @@ def _wait_notice_ack_delivery(engine: Any, ctx: ScenarioContext, ack: dict) -> d
         probe,
         engine.turn_timeout_min * 60,
     )
+
+
+def _final_ack_recheck(
+    engine: Any, ctx: ScenarioContext, turn: dict, ack_draft_id: str, baseline_job_ids: set
+) -> None:
+    """Post-delivery re-assertion of the turn's output contract.
+
+    The exactly-one check before the delivery wait can be beaten by timing:
+    a second draft still ``preparing`` at that moment may reach ``queued``
+    while the first is being delivered. After the delivery completes, the
+    LIVE output set of the turn (every draft not superseded/stale) must
+    still be exactly the delivered ack — any extra live draft, queued or
+    still preparing, means a second customer reply is coming, and the run
+    must not report green. The RAG-fallback counter-evidence is re-checked
+    on the same final pass."""
+    turn_id = str(turn.get("turn_id") or "")
+    drafts = engine.db_query(
+        "SELECT draft_id, status FROM automation_hermes_case_drafts "
+        "WHERE turn_id = %s AND status NOT IN ('superseded','stale') "
+        "ORDER BY created_at DESC",
+        (turn_id,),
+    )
+    live_ids = [str(d.get("draft_id") or "") for d in drafts]
+    live_ok = live_ids == [ack_draft_id]
+    engine.record(
+        ctx, "final re-check: exactly one live acknowledgment output", live_ok,
+        f"live_drafts={live_ids}",
+    )
+    if not live_ok:
+        raise AssertionError(
+            "the notice turn has more than one live acknowledgment output "
+            f"(delivered={ack_draft_id}, live={live_ids}); a second customer "
+            "reply is still coming"
+        )
+    rag_jobs = _fresh_rag_fallback_jobs(engine, ctx, baseline_job_ids)
+    if rag_jobs:
+        engine.record(
+            ctx,
+            "ack reply published without RAG fallback",
+            False,
+            f"rag_fallback job={rag_jobs[0].get('job_id')}",
+        )
+        raise AssertionError(
+            f"notice was answered by a RAG fallback reply: job={rag_jobs[0].get('job_id')}"
+        )
 
 
 def _since_iso(ctx: ScenarioContext) -> str:
@@ -1392,6 +1463,10 @@ def run_pp_en_duplicate_notice(
     )
     if content_failure:
         raise AssertionError(content_failure)
+    # Final post-delivery re-check: a second draft that was still preparing
+    # during the exactly-one check may have reached queued by now — the
+    # turn's LIVE output set must still be exactly the delivered ack.
+    _final_ack_recheck(engine, ctx, turn, ack_draft_id, baseline_job_ids)
 
     # State assertions: main ticket continues, request stays valid.
     state = _notice_case_state(engine, ctx)
