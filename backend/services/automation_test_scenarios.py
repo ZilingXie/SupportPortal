@@ -800,7 +800,7 @@ class ScenarioEngine:
             body = response.read()
         return _json.loads(body) if body else {}
 
-    def zendesk_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
+    def zendesk_customer_turn(self, ctx: ScenarioContext, body: str) -> dict:
         ctx.turn_started_at = now_utc()
         ctx.stamp_turn_baseline()
         ticket = self._zendesk_request(f"/tickets/{ctx.zendesk_ticket_id}.json")
@@ -809,7 +809,7 @@ class ScenarioEngine:
             raise AutomationTestScenarioError(
                 f"ticket {ctx.zendesk_ticket_id} has no requester_id"
             )
-        self._zendesk_request(
+        response = self._zendesk_request(
             f"/tickets/{ctx.zendesk_ticket_id}.json",
             method="PUT",
             payload={
@@ -822,16 +822,53 @@ class ScenarioEngine:
                 }
             },
         )
+        comment_id = self._extract_created_comment_id(response)
         self.emit(
             "customer_turn_sent",
-            {"transport": "zendesk_api", "zendesk_ticket_id": ctx.zendesk_ticket_id},
+            {
+                "transport": "zendesk_api",
+                "zendesk_ticket_id": ctx.zendesk_ticket_id,
+                "comment_id": comment_id,
+            },
         )
-        self.info(f"customer turn posted via Zendesk API as requester {requester_id}")
+        self.info(
+            f"customer turn posted via Zendesk API as requester {requester_id} "
+            f"(comment_id={comment_id})"
+        )
+        return {
+            "transport": "zendesk_api",
+            "requester_id": requester_id,
+            "comment_id": comment_id,
+        }
 
-    def next_customer_turn(self, ctx: ScenarioContext, body: str) -> None:
+    @staticmethod
+    def _extract_created_comment_id(response: dict) -> str:
+        """Best-effort comment-id extraction from a Zendesk update response.
+
+        Returns "" when the id cannot be located; scenario-side binding must
+        treat an empty id as unverifiable rather than guessing.
+        """
+        if not isinstance(response, dict):
+            return ""
+        candidates = []
+        audit = response.get("audit")
+        if isinstance(audit, dict):
+            for event in audit.get("events") or []:
+                if isinstance(event, dict) and str(event.get("type") or "") == "Comment":
+                    candidates.append(str(event.get("id") or ""))
+        comment = (response.get("ticket") or {}).get("comment") if isinstance(response.get("ticket"), dict) else None
+        if isinstance(comment, dict):
+            candidates.append(str(comment.get("id") or ""))
+        if isinstance(response.get("comment"), dict):
+            candidates.append(str(response.get("comment").get("id") or ""))
+        for candidate in candidates:
+            if candidate:
+                return candidate
+        return ""
+
+    def next_customer_turn(self, ctx: ScenarioContext, body: str) -> dict | None:
         if self.customer_turn_transport == "zendesk_api":
-            self.zendesk_customer_turn(ctx, body)
-            return
+            return self.zendesk_customer_turn(ctx, body)
         ctx.turn_started_at = now_utc()
         ctx.stamp_turn_baseline()
         since_date = (ctx.turn_started_at - timedelta(days=1)).strftime("%d-%b-%Y")
