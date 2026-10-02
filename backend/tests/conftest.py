@@ -46,6 +46,30 @@ _CONSUMER_MODULE_NAMES = (
 
 
 @pytest.fixture(autouse=True)
+def _isolate_prompt_runtime_snapshot():
+    """Reset the process-global prompt runtime snapshot around every test.
+
+    ``backend.automation_ecs_api`` lazily initializes the prompt runtime from
+    the environment on first repository use; with ``PROMPT_RELEASE_ID`` set
+    by test settings that snapshot is a RELEASE snapshot lacking keys that
+    later-collected test modules (knowledge-governance suites) resolve.
+    Without this reset those tests fail with ``prompt_unresolved`` purely
+    because of collection ORDER (reproducible: overlay alone passes,
+    ecs_api-then-overlay fails 6). The snapshot is pinned to the CODE
+    catalog (None would disable resolution; a leftover release snapshot
+    starves the knowledge manuals) and restored afterwards.
+    """
+    from backend.services import prompt_runtime
+
+    previous = prompt_runtime._SNAPSHOT
+    prompt_runtime._SNAPSHOT = prompt_runtime._code_snapshot()
+    try:
+        yield
+    finally:
+        prompt_runtime._SNAPSHOT = previous
+
+
+@pytest.fixture(autouse=True)
 def _stub_account_failure_alerts(monkeypatch: pytest.MonkeyPatch) -> None:
     """Stop Account failure alert emails from leaving the test process."""
 
