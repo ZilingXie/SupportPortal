@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-02T07:29:41Z",
-  "source_base_commit": "d2eb0acd8448fe75b9effdd512e63f3573f1bfe7",
-  "registry_digest": "a2d0aaeca0b9cfb0bcfe2aa8829866a8d618f518cd3b659d918d9e9d7d3fb774",
+  "generated_at": "2026-10-02T09:13:47Z",
+  "source_base_commit": "99aa78bb7aa434b593714752b642204bbf028e4b",
+  "registry_digest": "2c90fc430dc07d78a513b5b7b57a960e23e515bea1ab9531e60256c163816db7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1339,6 +1339,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13804 run: manual-mode environment confirmed (attribution correction)",
           "command": "aws ecs describe-task-definition --task-definition supportportal-preproduction-worker:85 --query 'taskDefinition.containerDefinitions[0].environment[?name==`ENABLEMENT_WORKFLOW_MODE`]' # -> ENABLEMENT_WORKFLOW_MODE=manual（AUTOMATION_CASE_ENGINE 缺失=legacy）",
           "details": "2026-10-01 只读回读：live worker td:85 ENABLEMENT_WORKFLOW_MODE=manual。13804（10-01 授权轮，前四步 PASS 至确认评论 54120515203092 投递）无 relay request 的原因=运行环境为 manual 模式：manual 分支走人工 review，不自动派发（worker.py:4604、automation_account_intake.py:693/:1102）。先前「p2-182 Hermes runtime 归因」撤回——r20261001-3856643 部署 checkpoint 实为 legacy+manual+Hermes disabled，是并行线程部署丢失 archer flag（与 hermes-agent-enabled 丢失同类）。恢复动作=按 p2-163 前置以 archer 重新发布。"
+        },
+        {
+          "type": "deployment",
+          "label": "PP-EN-QUICK FINAL full-green run (13/13 PASS, already_satisfied leg)",
+          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-FINAL.json  # exit 0",
+          "details": "2026-10-02 Preproduction（r20261002-99aa78b hermes+archer）：13/13 PASS。绑定=enr-AC-13832-v1/v1/ticket 13832/task_da41bfd68e844138aa673d28d3938661；execute=already_satisfied write_attempted=False（precheck+独立回读 enabled/load10/region2）；Relay 回传=zac-agent msg_7bb81b9fcc1b4933a46d9d3783bc1e0e（ECS applied/completed）；完成回复 published(close=true)+评论 54160743136916 delivered(target solved)；独立 DB readback：case solved/relay completed/result already_satisfied applied。"
         },
         {
           "type": "test",
@@ -13803,7 +13809,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "owner": "zac",
       "summary": "按 2026-09-16 定稿设计替换 enablement auto（archer 模式）执行链路：ECS 在客户提交确认公开送达后按申请派发 AgentRelay Task（服务身份经 recovery 拉取收结果、作为 completion owner 关闭 Task），Mac 工作日 10:00 汇总预检（归属/状态/dry-run）、两次人工审批后经 pilot CLI 执行开通（load=10、独立回读为准、已有 50 不降配）并回传；auto 失败统一进现有 automation 失败链（internal note+人工接管+通知邮件），不自动转 manual 不发 manual 开通邮件。彻底删除 ECS 侧 Archer 直连实现（executor/DirectArcherClient/vendored skill/凭据门禁/探针）。manual 模式与切换入口保留为故障缓解开关。关联 p2-149（人工流程基线）/p2-152（模式开关）。",
-      "next_action": "PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）——本字段为唯一有效结论，历史错误内容（msg_096ec720… 误标为回传、n8n case_status_sync 归因、9/10 步数、网关回归归因）均已撤回，以本条与带 [已撤回/被取代] 标注的 evidence 条目为准。已实证链路：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表+投递等待逐轮全绑定重核验）→归属/dry-run 预检→测试自动批准（digest 绑定）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一 FAIL 步（本地 case 镜像 zendesk_ticket_status 未更新）已修复并部署 r20260930-414ed4e：根因=close 事务（record_account_zendesk_internal_comment_result）无该字段写入者且 ECS 无状态同步路由（非 n8n）；修复=close 事务补写 solved（PG+InMemory 对等）。投递等待已为逐轮重核验+严格 fencing（对齐真实 skill _safe_int：拒布尔/非整数浮点/非数字；request_version 畸形=结构化拒绝不吞异常）。剩余：①13782 为 already_satisfied 分支——真实新增 Archer 写入与人工审批门禁仍未由受控运行覆盖（a06094d1 需先手动清理其旧 UAP 配置）；②最终全绿运行待规划线程放行。",
+      "next_action": "PP-EN-QUICK 最终全绿轮 PASS（2026-10-02，工单 13832/enr-AC-13832-v1/task_da41bfd68e844138aa673d28d3938661，13/13 步 exit 0，preprod=r20261002-99aa78b hermes+archer）：建单→enablement 路由→确认回复投递→relay request gated→dispatched→收件绑定核验（四元组+readback+同 AppID 表+投递等待逐轮重核验）→测试自动批准（digest 绑定）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent msg_7bb81b9f…，ECS applied/completed）→完成回复 enablement_archer_enabled published(close=true)+评论 54160743136916 delivered(target solved)→独立 DB/Zendesk readback solved。证据 artifact=.deployments/pp-en-quick-FINAL.json。剩余：真实新增 Archer 写入与人工审批门禁仍未由受控运行覆盖（a06094d1 需先清理旧 UAP 配置）；其余四剧本（Full/Fraud/Susp/Invoice）另排。PP-EN-QUICK 授权轮全链实证（2026-09-30，工单 13782/enr-AC-13782-v1/task_00a519ca0e3b4b5ead6d59acb0ccb5c7）——本字段为唯一有效结论，历史错误内容（msg_096ec720… 误标为回传、n8n case_status_sync 归因、9/10 步数、网关回归归因）均已撤回，以本条与带 [已撤回/被取代] 标注的 evidence 条目为准。已实证链路：收件绑定核验（当前 Message 四元组+服务端 readback+同 AppID 表+投递等待逐轮全绑定重核验）→归属/dry-run 预检→测试自动批准（digest 绑定）→独立回读 enabled/load10/region2→already_satisfied 零新写入→结果回传 Relay（zac-agent 发出 msg_880ac02f651449ae…）→ECS 应用（result_received）→完成回复 enablement_archer_enabled published+close→Zendesk 评论 54078158201236 delivered(target solved)→独立 Zendesk readback status=solved@03:55:12。唯一 FAIL 步（本地 case 镜像 zendesk_ticket_status 未更新）已修复并部署 r20260930-414ed4e：根因=close 事务（record_account_zendesk_internal_comment_result）无该字段写入者且 ECS 无状态同步路由（非 n8n）；修复=close 事务补写 solved（PG+InMemory 对等）。投递等待已为逐轮重核验+严格 fencing（对齐真实 skill _safe_int：拒布尔/非整数浮点/非数字；request_version 畸形=结构化拒绝不吞异常）。剩余：①13782 为 already_satisfied 分支——真实新增 Archer 写入与人工审批门禁仍未由受控运行覆盖（a06094d1 需先手动清理其旧 UAP 配置）；②最终全绿运行待规划线程放行。",
       "acceptance_criteria": [
         "manual 独立保留且 24h 合同不变；auto 失败不启动 manual 邮件流程。",
         "ECS 零 Archer 写入、不持有个人 Archer 凭据；Pilot 只在 Mac 运行；Mac 登录态不作 ECS 健康检查。",
@@ -13968,6 +13974,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "13804 run: manual-mode environment confirmed (attribution correction)",
           "command": "aws ecs describe-task-definition --task-definition supportportal-preproduction-worker:85 --query 'taskDefinition.containerDefinitions[0].environment[?name==`ENABLEMENT_WORKFLOW_MODE`]' # -> ENABLEMENT_WORKFLOW_MODE=manual（AUTOMATION_CASE_ENGINE 缺失=legacy）",
           "details": "2026-10-01 只读回读：live worker td:85 ENABLEMENT_WORKFLOW_MODE=manual。13804（10-01 授权轮，前四步 PASS 至确认评论 54120515203092 投递）无 relay request 的原因=运行环境为 manual 模式：manual 分支走人工 review，不自动派发（worker.py:4604、automation_account_intake.py:693/:1102）。先前「p2-182 Hermes runtime 归因」撤回——r20261001-3856643 部署 checkpoint 实为 legacy+manual+Hermes disabled，是并行线程部署丢失 archer flag（与 hermes-agent-enabled 丢失同类）。恢复动作=按 p2-163 前置以 archer 重新发布。"
+        },
+        {
+          "type": "deployment",
+          "label": "PP-EN-QUICK FINAL full-green run (13/13 PASS, already_satisfied leg)",
+          "command": ".venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK --yes --report-file .deployments/pp-en-quick-FINAL.json  # exit 0",
+          "details": "2026-10-02 Preproduction（r20261002-99aa78b hermes+archer）：13/13 PASS。绑定=enr-AC-13832-v1/v1/ticket 13832/task_da41bfd68e844138aa673d28d3938661；execute=already_satisfied write_attempted=False（precheck+独立回读 enabled/load10/region2）；Relay 回传=zac-agent msg_7bb81b9fcc1b4933a46d9d3783bc1e0e（ECS applied/completed）；完成回复 published(close=true)+评论 54160743136916 delivered(target solved)；独立 DB readback：case solved/relay completed/result already_satisfied applied。"
         }
       ],
       "source_refs": [
