@@ -42,7 +42,7 @@
     {
       "type": "test",
       "label": "WeKnora fork 全量 Go 套件",
-      "command": "cd /tmp/WeKnora && go test ./internal/...（分支 codex/supportportal-write-contract @ 22e6fed）",
+      "command": "cd /tmp/WeKnora && go test ./internal/...（分支 supportportal-write-contract @ 22e6fed）",
       "result": "111 packages ok, 0 FAIL；新增 post-commit 队列回滚丢弃/提交发布测试、governance lineage 持久化替换回读测试、ProcessManualUpdate not-found 改为重试错误"
     },
     {

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-02T18:44:32Z",
-  "source_base_commit": "3bf93e0895696e567073f357c9a10a88028b458c",
-  "registry_digest": "6079a3394997e91dc420e50e542c3a21f7a312f9b7f560f229435c5831c40b2f",
+  "generated_at": "2026-10-02T18:45:14Z",
+  "source_base_commit": "4510ed5767c020f6080bef5d3714a89ff3226c23",
+  "registry_digest": "c2a2ba046f0b4703bc271090adb10ae5b4a4e3abd76f8318667ba4a3bd49a6d8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4875,7 +4875,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "WeKnora fork 全量 Go 套件",
-          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 codex/supportportal-write-contract @ 22e6fed）",
+          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 supportportal-write-contract @ 22e6fed）",
           "result": "111 packages ok, 0 FAIL；新增 post-commit 队列回滚丢弃/提交发布测试、governance lineage 持久化替换回读测试、ProcessManualUpdate not-found 改为重试错误"
         },
         {
@@ -15582,7 +15582,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "WeKnora fork 全量 Go 套件",
-          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 codex/supportportal-write-contract @ 22e6fed）",
+          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 supportportal-write-contract @ 22e6fed）",
           "result": "111 packages ok, 0 FAIL；新增 post-commit 队列回滚丢弃/提交发布测试、governance lineage 持久化替换回读测试、ProcessManualUpdate not-found 改为重试错误"
         },
         {
