@@ -230,7 +230,12 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
             if row is not None and str(row.get("status") or "") == "running" and (
                 not owner_token or str(row.get("owner_token") or "") == owner_token
             ):
-                row.update(status="failed", error=str(error)[:500], updated_at=datetime.now(timezone).isoformat())
+                # datetime.now(timezone) would raise TypeError and strand the
+                # task in 'running' (review round 2, P2 regression).
+                row.update(
+                    status="failed", error=str(error)[:500],
+                    updated_at=datetime.now(timezone.utc).isoformat(),
+                )
 
 
 def json_dumps_sorted(payload: dict[str, Any]) -> str:

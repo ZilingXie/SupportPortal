@@ -224,7 +224,16 @@ def run_standalone_summary_task(
         workspace_key=f"supportportal_knowledge_standalone_{task['source_id']}".lower()[:128],
         toolsets=STANDALONE_SUMMARY_TOOLSETS,
     )
-    packet = _extract_run_json(outcome.get("output"))
+    # Same output content contract as the case-bound Summary (review round 2,
+    # R2-9): a malformed payload fails the task instead of entering the
+    # pipeline as-is.
+    from backend.services.hermes_knowledge_workflow import normalize_summary_output
+
+    packet = {
+        **normalize_summary_output(_extract_run_json(outcome.get("output"))),
+        "schema_version": "v1",
+        "summary_id": str(task["summary_task_id"]),
+    }
     return repository.complete_standalone_summary_task(
         str(task["summary_task_id"]),
         packet=packet,
@@ -267,6 +276,16 @@ def run_standalone_review_task(
     summary = repository.get_standalone_summary_task(str(task["summary_task_id"]))
     if not isinstance(summary, dict) or not isinstance(summary.get("packet"), dict):
         raise StandaloneKnowledgeError("summary_packet_missing", "review without a summary packet")
+    # Server-side lineage validation (review round 2, R2-9): the review may
+    # only consume the summary generation queued for THIS source version.
+    if str(summary.get("status") or "") != "completed":
+        raise StandaloneKnowledgeError("summary_not_completed", "review on an unfinished summary")
+    for lineage_field in ("source_type", "source_id", "source_version"):
+        if str(summary.get(lineage_field) or "") != str(task.get(lineage_field) or ""):
+            raise StandaloneKnowledgeError(
+                "standalone_lineage_mismatch",
+                f"{lineage_field} diverged between the summary row and the review task",
+            )
     packet = dict(summary["packet"])
     candidates = packet.get("candidates") or []
     knowledge_client = weknora_client
@@ -304,8 +323,11 @@ def run_standalone_review_task(
     )
     report = _extract_run_json(outcome.get("output"))
     decisions = report.get("decisions")
-    if not isinstance(decisions, list) or not decisions:
-        raise StandaloneKnowledgeError("review_coverage_invalid", "report has no decisions")
+    # Structure is mandatory; an EMPTY decision list is legal only when the
+    # summary itself had zero candidates (empty-vs-empty, review round 2
+    # R2-9) — the coverage check below rejects empty-vs-nonempty.
+    if not isinstance(decisions, list):
+        raise StandaloneKnowledgeError("review_coverage_invalid", "report decisions must be a list")
     # Candidate coverage: every summary candidate decided exactly once, no
     # invented candidates (same contract as the case-bound review).
     expected_ids = {

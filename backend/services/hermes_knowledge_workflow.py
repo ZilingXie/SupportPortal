@@ -78,6 +78,32 @@ SUMMARY_CONTENT_FIELDS = (
     "evidence_references", "candidates",
 )
 
+
+def normalize_summary_output(parsed: Any) -> dict[str, Any]:
+    """Apply the Summary output content contract to a parsed run payload.
+
+    Shared by the case-bound and standalone Summary paths (review round 2,
+    R2-9): every narrative field passes the documented scalar-or-string-list
+    boundary and ``candidates`` is a list — a malformed payload fails the task
+    visibly instead of silently entering the pipeline.
+    """
+    if not isinstance(parsed, dict):
+        raise KnowledgeWorkflowError("output_contract_invalid", "summary output is not a JSON object")
+    content: dict[str, Any] = {}
+    for field in SUMMARY_CONTENT_FIELDS:
+        value = parsed.get(field)
+        if field in _SUMMARY_TEXT_FIELDS:
+            content[field] = _normalize_summary_text(value, field=field)
+        elif field == "candidates":
+            if not isinstance(value, list):
+                raise KnowledgeWorkflowError(
+                    "output_contract_invalid", "candidates must be a list"
+                )
+            content[field] = value
+        else:
+            content[field] = value
+    return content
+
 _JSON_BLOCK_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 
@@ -595,14 +621,7 @@ def run_hermes_summary_task(
                 f"summary run ended with {status.get('status')}",
             )
         parsed = _extract_run_json(status.get("output"))
-        content = {
-            field: (
-                _normalize_summary_text(parsed.get(field), field=field)
-                if field in _SUMMARY_TEXT_FIELDS
-                else parsed.get(field)
-            )
-            for field in SUMMARY_CONTENT_FIELDS
-        }
+        content = normalize_summary_output(parsed)
         packet_payload = {
             **content,
             "schema_version": "v1",

@@ -226,6 +226,84 @@ class StandaloneWorkflowTests(unittest.TestCase):
             standalone_summary_task_id_for("article", "doc-9", ARTICLE_INTAKE["source_updated_at"]),
         )
 
+    def test_run_failure_is_recorded_not_stranded(self) -> None:
+        """Review round 2 R2-10: a failing run must land in status=failed —
+        the old datetime.now(timezone) TypeError stranded the row running."""
+        task = queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+
+        class _Boom:
+            def start_run(self, **kwargs):
+                raise RuntimeError("gateway down")
+
+        result = drain_standalone_knowledge_tasks(
+            self.repository, client=_Boom(),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 0, "failed": 1})
+        stored = self.repository.get_standalone_summary_task(task["summary_task_id"])
+        self.assertEqual(stored["status"], "failed")
+        self.assertIn("gateway down", stored["error"])
+
+    def test_zero_candidates_allow_zero_decisions(self) -> None:
+        """Review round 2 R2-9: an empty summary candidate set with an empty
+        decision list is a legal (terminal) review — not a coverage failure."""
+        queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+        empty_summary = {
+            "problem_description": "nothing durable", "timeline": "",
+            "investigation_process": "", "confirmed_facts": "",
+            "root_cause_and_solution": "", "verification_results": "",
+            "limitations_and_unconfirmed": "", "evidence_references": [],
+            "candidates": [],
+        }
+        result = drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(empty_summary, {"decisions": []}),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        self.assertEqual(self.repository.list_weknora_promotions(), [])
+
+    def test_review_rejects_diverged_summary_lineage(self) -> None:
+        """Review round 2 R2-9: the review may only run against the summary
+        generation queued for its own source version."""
+        task = queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+        # Advance the same source to a NEWER accepted version (a second
+        # generation exists), then hand the review a task row whose
+        # source_version belongs to the old generation while the stored
+        # summary row was queued for it — mutate the stored summary row's
+        # lineage to simulate divergence.
+        stored = self.repository._standalone_summary_tasks[task["summary_task_id"]]
+        stored["source_version"] = "2026-10-01T00:00:00+00:00"
+
+        drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        review_rows = list(self.repository._standalone_review_tasks.values())
+        self.assertEqual(len(review_rows), 1)
+        review_rows[0]["source_version"] = "2099-01-01T00:00:00+00:00"
+        self.repository._standalone_review_tasks[review_rows[0]["review_task_id"]].update(
+            status="pending", owner_token=None, claimed_at=None, lease_expires_at=None,
+        )
+        result = drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 0, "failed": 1})
+        failed_row = self.repository.get_standalone_review_task(
+            review_rows[0]["review_task_id"]
+        )
+        self.assertEqual(failed_row["status"], "failed")
+        self.assertIn("diverged", failed_row["error"])
+
 
 if __name__ == "__main__":
     unittest.main()
