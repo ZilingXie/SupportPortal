@@ -106,6 +106,30 @@ def test_summary_task_is_idempotent_per_episode_on_postgres(
     assert len(repository.list_hermes_summary_tasks()) == 1
 
 
+def test_n8n_source_trigger_is_allowed_by_postgres_constraint(
+    repository: PostgresTicketRepository,
+) -> None:
+    task_id = summary_task_id_for("123-1", 1)
+    task = repository.ensure_hermes_summary_task({
+        "summary_task_id": task_id,
+        "engineer_case_id": "123-1",
+        "client_ticket_id": "123",
+        "investigation_id": "INV-123-1",
+        "episode": 1,
+        "ledger_revision": 0,
+        "conversation_version": 0,
+        "hermes_session_id": "hermes-session:123-1",
+        "trigger": "n8n_source",
+        "idempotency_key": f"hmknow:{task_id}",
+        "prompt_version": "hermes-case-summary-manual",
+        "agent_model": None,
+        "reasoning_effort": "medium",
+        "created_at": "2026-10-02T00:00:00Z",
+    })
+
+    assert task["trigger"] == "n8n_source"
+
+
 def test_summary_claim_complete_creates_review_and_review_completes(
     repository: PostgresTicketRepository,
 ) -> None:

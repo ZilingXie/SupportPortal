@@ -264,6 +264,20 @@ def test_first_terminal_transition_creates_one_task_and_repeats_reuse_it(monkeyp
     assert len(repository.list_hermes_summary_tasks()) == 1
 
 
+def test_n8n_source_trigger_queues_summary_task(monkeypatch) -> None:
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    task = queue_hermes_summary_for_case(
+        repository, engineer_case_id="123-1", trigger="n8n_source",
+    )
+
+    assert task is not None
+    assert task["trigger"] == "n8n_source"
+    assert task["summary_task_id"] == summary_task_id_for("123-1", 1)
+
+
 def test_summary_task_is_not_created_outside_real_mode(monkeypatch) -> None:
     monkeypatch.delenv("HERMES_CASE_WORKFLOW_MODE", raising=False)
     repository = _repository()

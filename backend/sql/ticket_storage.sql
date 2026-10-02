@@ -751,7 +751,7 @@ CREATE TABLE IF NOT EXISTS support_hermes_summary_tasks (
     ledger_revision INTEGER NOT NULL,
     conversation_version INTEGER NOT NULL,
     hermes_session_id TEXT NOT NULL,
-    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved', 'local_resolved', 'closed')),
+    trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved', 'local_resolved', 'closed', 'n8n_source')),
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
     idempotency_key TEXT NOT NULL,
     run_id TEXT,
@@ -771,6 +771,12 @@ CREATE TABLE IF NOT EXISTS support_hermes_summary_tasks (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_support_hermes_summary_tasks_episode
     ON support_hermes_summary_tasks (engineer_case_id, episode);
+
+ALTER TABLE support_hermes_summary_tasks
+    DROP CONSTRAINT IF EXISTS support_hermes_summary_tasks_trigger_kind_check;
+ALTER TABLE support_hermes_summary_tasks
+    ADD CONSTRAINT support_hermes_summary_tasks_trigger_kind_check
+    CHECK (trigger_kind IN ('solved', 'local_resolved', 'closed', 'n8n_source'));
 
 CREATE TABLE IF NOT EXISTS support_hermes_review_tasks (
     review_task_id TEXT PRIMARY KEY,
