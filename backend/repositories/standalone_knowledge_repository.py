@@ -21,6 +21,11 @@ STANDALONE_REVIEW_STATUSES = ("pending", "running", "completed", "failed", "inva
 STANDALONE_LEASE_SECONDS = 900
 
 
+class StandaloneTaskConflict(RuntimeError):
+    """The task is not running under the calling owner (stale/expired worker)."""
+
+
+
 class StandaloneKnowledgeRepositoryMixin:
     """Stubs shared by the Protocol; implementations live in the twins below."""
 
@@ -29,15 +34,21 @@ class StandaloneKnowledgeRepositoryMixin:
     def list_standalone_summary_tasks(self) -> list[dict[str, Any]]: ...
     def claim_standalone_summary_tasks(self, *, limit: int, now_value: str) -> list[dict[str, Any]]: ...
     def complete_standalone_summary_task(
-        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any]
+        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any],
+        owner_token: str = "",
     ) -> dict[str, Any]: ...
-    def fail_standalone_summary_task(self, summary_task_id: str, *, error: str) -> None: ...
+    def fail_standalone_summary_task(
+        self, summary_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None: ...
     def get_standalone_review_task(self, review_task_id: str) -> dict[str, Any] | None: ...
     def claim_standalone_review_tasks(self, *, limit: int, now_value: str) -> list[dict[str, Any]]: ...
     def complete_standalone_review_task(
-        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]]
+        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]],
+        owner_token: str = "",
     ) -> dict[str, Any]: ...
-    def fail_standalone_review_task(self, review_task_id: str, *, error: str) -> None: ...
+    def fail_standalone_review_task(
+        self, review_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None: ...
 
 
 def _lease_expiry(now_value: str) -> str:
@@ -108,7 +119,8 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
         return claimed
 
     def complete_standalone_summary_task(
-        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any]
+        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any],
+        owner_token: str = "",
     ) -> dict[str, Any]:
         import hashlib
 
@@ -116,6 +128,10 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
             row = self._standalone_summary_tasks.get(str(summary_task_id))
             if row is None:
                 raise KeyError(summary_task_id)
+            if str(row.get("status") or "") != "running" or (
+                owner_token and str(row.get("owner_token") or "") != owner_token
+            ):
+                raise StandaloneTaskConflict(summary_task_id)
             packet_text = json_dumps_sorted(packet)
             row.update(
                 status="completed",
@@ -135,10 +151,14 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
             self._standalone_review_tasks[review["review_task_id"]] = review
             return _summary_row(copy.deepcopy(row))
 
-    def fail_standalone_summary_task(self, summary_task_id: str, *, error: str) -> None:
+    def fail_standalone_summary_task(
+        self, summary_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None:
         with self._standalone_lock:
             row = self._standalone_summary_tasks.get(str(summary_task_id))
-            if row is not None:
+            if row is not None and str(row.get("status") or "") == "running" and (
+                not owner_token or str(row.get("owner_token") or "") == owner_token
+            ):
                 row.update(status="failed", error=str(error)[:500], updated_at=datetime.now(timezone.utc).isoformat())
 
     def get_standalone_review_task(self, review_task_id: str) -> dict[str, Any] | None:
@@ -172,7 +192,8 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
         return claimed
 
     def complete_standalone_review_task(
-        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]]
+        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]],
+        owner_token: str = "",
     ) -> dict[str, Any]:
         import hashlib
 
@@ -180,6 +201,10 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
             row = self._standalone_review_tasks.get(str(review_task_id))
             if row is None:
                 raise KeyError(review_task_id)
+            if str(row.get("status") or "") != "running" or (
+                owner_token and str(row.get("owner_token") or "") != owner_token
+            ):
+                raise StandaloneTaskConflict(review_task_id)
             report_text = json_dumps_sorted(report)
             row.update(
                 status="completed",
@@ -197,11 +222,15 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
             )
         return copy.deepcopy(row)
 
-    def fail_standalone_review_task(self, review_task_id: str, *, error: str) -> None:
+    def fail_standalone_review_task(
+        self, review_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None:
         with self._standalone_lock:
             row = self._standalone_review_tasks.get(str(review_task_id))
-            if row is not None:
-                row.update(status="failed", error=str(error)[:500], updated_at=datetime.now(timezone.utc).isoformat())
+            if row is not None and str(row.get("status") or "") == "running" and (
+                not owner_token or str(row.get("owner_token") or "") == owner_token
+            ):
+                row.update(status="failed", error=str(error)[:500], updated_at=datetime.now(timezone).isoformat())
 
 
 def json_dumps_sorted(payload: dict[str, Any]) -> str:
@@ -350,7 +379,8 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
         )
 
     def complete_standalone_summary_task(
-        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any]
+        self, summary_task_id: str, *, packet: dict[str, Any], run_id: str, review_task: dict[str, Any],
+        owner_token: str = "",
     ) -> dict[str, Any]:
         import hashlib
 
@@ -360,14 +390,15 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 cur.execute(sql.SQL("""
                     UPDATE {} SET status='completed', run_id=%s, packet=%s, packet_hash=%s,
                         error=NULL, updated_at=NOW() WHERE summary_task_id=%s
+                        AND status='running' AND (%s = '' OR owner_token = %s)
                     RETURNING {}
                 """).format(
                     self._table("support_knowledge_source_summaries"),
                     sql.SQL(",").join(map(sql.Identifier, self._STANDALONE_SUMMARY_FIELDS)),
-                ), (run_id, json.dumps(packet), packet_hash, summary_task_id))
+                ), (run_id, json.dumps(packet), packet_hash, summary_task_id, owner_token, owner_token))
                 row = cur.fetchone()
                 if row is None:
-                    raise KeyError(summary_task_id)
+                    raise StandaloneTaskConflict(summary_task_id)
                 cur.execute(sql.SQL("""
                     INSERT INTO {} (review_task_id, summary_task_id, source_type, source_id,
                         source_version, review_session_id, status, idempotency_key,
@@ -384,12 +415,15 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 return dict(zip(self._STANDALONE_SUMMARY_FIELDS, row))
         return self._run_with_connection_retry("complete_standalone_summary_task", operation)
 
-    def fail_standalone_summary_task(self, summary_task_id: str, *, error: str) -> None:
+    def fail_standalone_summary_task(
+        self, summary_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None:
         def operation(conn):
             with conn.cursor() as cur:
                 cur.execute(sql.SQL(
-                    "UPDATE {} SET status='failed', error=%s, updated_at=NOW() WHERE summary_task_id=%s"
-                ).format(self._table("support_knowledge_source_summaries")), (str(error)[:500], summary_task_id))
+                    "UPDATE {} SET status='failed', error=%s, updated_at=NOW() "
+                    "WHERE summary_task_id=%s AND status='running' AND (%s = '' OR owner_token = %s)"
+                ).format(self._table("support_knowledge_source_summaries")), (str(error)[:500], summary_task_id, owner_token, owner_token))
         self._run_with_connection_retry("fail_standalone_summary_task", operation)
 
     def get_standalone_review_task(self, review_task_id: str) -> dict[str, Any] | None:
@@ -404,7 +438,8 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
         return self._run_with_connection_retry("get_standalone_review_task", operation)
 
     def complete_standalone_review_task(
-        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]]
+        self, review_task_id: str, *, report: dict[str, Any], run_id: str, promotions: list[dict[str, Any]],
+        owner_token: str = "",
     ) -> dict[str, Any]:
         import hashlib
 
@@ -414,14 +449,15 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 cur.execute(sql.SQL("""
                     UPDATE {} SET status='completed', run_id=%s, report=%s, report_hash=%s,
                         error=NULL, updated_at=NOW() WHERE review_task_id=%s
+                        AND status='running' AND (%s = '' OR owner_token = %s)
                     RETURNING {}
                 """).format(
                     self._table("support_knowledge_source_reviews"),
                     sql.SQL(",").join(map(sql.Identifier, self._STANDALONE_REVIEW_FIELDS)),
-                ), (run_id, json.dumps(report), report_hash, review_task_id))
+                ), (run_id, json.dumps(report), report_hash, review_task_id, owner_token, owner_token))
                 row = cur.fetchone()
                 if row is None:
-                    raise KeyError(review_task_id)
+                    raise StandaloneTaskConflict(review_task_id)
                 result = dict(zip(self._STANDALONE_REVIEW_FIELDS, row))
                 # Atomic consumption bridge: promotion enqueue shares the
                 # review completion transaction.
@@ -430,12 +466,15 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 return result
         return self._run_with_connection_retry("complete_standalone_review_task", operation)
 
-    def fail_standalone_review_task(self, review_task_id: str, *, error: str) -> None:
+    def fail_standalone_review_task(
+        self, review_task_id: str, *, error: str, owner_token: str = ""
+    ) -> None:
         def operation(conn):
             with conn.cursor() as cur:
                 cur.execute(sql.SQL(
-                    "UPDATE {} SET status='failed', error=%s, updated_at=NOW() WHERE review_task_id=%s"
-                ).format(self._table("support_knowledge_source_reviews")), (str(error)[:500], review_task_id))
+                    "UPDATE {} SET status='failed', error=%s, updated_at=NOW() "
+                    "WHERE review_task_id=%s AND status='running' AND (%s = '' OR owner_token = %s)"
+                ).format(self._table("support_knowledge_source_reviews")), (str(error)[:500], review_task_id, owner_token, owner_token))
         self._run_with_connection_retry("fail_standalone_review_task", operation)
 
 

@@ -448,13 +448,41 @@ class MemoryPaginationTests(unittest.TestCase):
         self.assertEqual(captured.get("limit"), 50)
         self.assertEqual(captured.get("offset"), 100)
 
-    def test_memory_list_all_defends_against_ignored_offset(self) -> None:
+
+    def test_short_page_below_declared_total_raises_incomplete(self) -> None:
+        """P1-11: a declared total of 201 with only 50 readable items is an
+        unavailable surface, never a complete listing."""
         client = self._paging_client()
 
         def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
-            # Server ignores offset: same first page forever.
-            return {"data": [{"id": "m1"}, {"id": "m2"}]}
+            return {"data": [{"id": f"m{i}"} for i in range(50)], "total": 201}
 
         with patch.object(client, "_request", side_effect=fake_request):
-            items = client.memory_list_all()
-        self.assertEqual(len(items), 2)
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all()
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")
+
+    def test_hard_cap_reached_with_more_data_raises_incomplete(self) -> None:
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"data": [{"id": f"m{i}"} for i in range(200)]}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all(hard_cap=300)
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")
+
+    def test_memory_list_all_defends_against_ignored_offset(self) -> None:
+        """A server that ignores the offset is an incomplete listing (never
+        silently truncated)."""
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            # Full pages of the SAME items: the server ignored the offset.
+            return {"data": [{"id": f"m{i % 50}"} for i in range(200)]}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all()
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")

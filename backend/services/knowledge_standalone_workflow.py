@@ -38,6 +38,11 @@ STANDALONE_RUN_TIMEOUT_SECONDS = 900.0
 STANDALONE_POLL_INTERVAL_SECONDS = 2.0
 STANDALONE_BUNDLE_MAX_CHARS = 200_000
 STANDALONE_LEASE_SECONDS = 900.0
+# Restricted surfaces matching the case-bound roles (review P1-10): the
+# Summary gets read-only case context; the Review gets the skill library
+# only. No memory, publication, or case-write toolsets ever load here.
+STANDALONE_SUMMARY_TOOLSETS = ["common"]
+STANDALONE_REVIEW_TOOLSETS = ["skills"]
 
 CORE_PROMPT_KEY = "hermes-support-agent-system"
 CORE_PROMPT_FALLBACK_TEXT = (
@@ -196,6 +201,7 @@ def run_standalone_summary_task(
     client: HermesAgentClient,
     intake: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    owner_token = str(task.get("owner_token") or "")
     """Execute one standalone Summary; persist the packet + review task.
 
     ``intake`` overrides the stored row (tests and the drain loop may pass
@@ -216,12 +222,14 @@ def run_standalone_summary_task(
         input_text=rendered,
         idempotency_key=f"{task['idempotency_key']}:run",
         workspace_key=f"supportportal_knowledge_standalone_{task['source_id']}".lower()[:128],
+        toolsets=STANDALONE_SUMMARY_TOOLSETS,
     )
     packet = _extract_run_json(outcome.get("output"))
     return repository.complete_standalone_summary_task(
         str(task["summary_task_id"]),
         packet=packet,
         run_id=str(outcome.get("run_id") or ""),
+        owner_token=owner_token,
         review_task={
             "review_task_id": f"{task['summary_task_id']}:review",
             "summary_task_id": str(task["summary_task_id"]),
@@ -247,6 +255,7 @@ def run_standalone_review_task(
     weknora_client: Any = None,
     memory_client: Any = None,
 ) -> dict[str, Any]:
+    owner_token = str(task.get("owner_token") or "")
     """Execute one standalone Review; feed the standard promotion bridge."""
     from backend.services.hermes_knowledge_workflow import (
         _collect_weknora_evidence,
@@ -291,11 +300,27 @@ def run_standalone_review_task(
         input_text=json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True, default=str),
         idempotency_key=f"{task['idempotency_key']}:run",
         workspace_key=f"supportportal_knowledge_standalone_review_{task['source_id']}".lower()[:128],
+        toolsets=STANDALONE_REVIEW_TOOLSETS,
     )
     report = _extract_run_json(outcome.get("output"))
     decisions = report.get("decisions")
     if not isinstance(decisions, list) or not decisions:
         raise StandaloneKnowledgeError("review_coverage_invalid", "report has no decisions")
+    # Candidate coverage: every summary candidate decided exactly once, no
+    # invented candidates (same contract as the case-bound review).
+    expected_ids = {
+        str(item.get("candidate_id") or "")
+        for item in candidates if isinstance(item, dict)
+    }
+    seen_ids: list[str] = []
+    for decision in decisions:
+        if isinstance(decision, dict):
+            seen_ids.append(str(decision.get("candidate_id") or ""))
+    if sorted(seen_ids) != sorted(expected_ids):
+        raise StandaloneKnowledgeError(
+            "review_coverage_invalid",
+            f"decisions {sorted(seen_ids)} do not cover candidates {sorted(expected_ids)} exactly once",
+        )
     adjusted, _downgraded = _downgrade_decisions_without_evidence(
         decisions, knowledge_available=knowledge_ok, memory_available=memory_ok
     )
@@ -323,6 +348,7 @@ def run_standalone_review_task(
         report=report,
         run_id=str(outcome.get("run_id") or ""),
         promotions=promotions,
+        owner_token=owner_token,
     )
 
 
@@ -363,7 +389,8 @@ def drain_standalone_knowledge_tasks(
             )
             try:
                 repository.fail_standalone_summary_task(
-                    str(task["summary_task_id"]), error=str(exc)[:500]
+                    str(task["summary_task_id"]), error=str(exc)[:500],
+                    owner_token=str(task.get("owner_token") or ""),
                 )
             except Exception:
                 pass
@@ -381,7 +408,8 @@ def drain_standalone_knowledge_tasks(
             )
             try:
                 repository.fail_standalone_review_task(
-                    str(task["review_task_id"]), error=str(exc)[:500]
+                    str(task["review_task_id"]), error=str(exc)[:500],
+                    owner_token=str(task.get("owner_token") or ""),
                 )
             except Exception:
                 pass

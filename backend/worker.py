@@ -2801,6 +2801,33 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
         return 0
 
 
+def _drain_standalone_knowledge_tasks(*, limit: int = 5) -> int:
+    """Formal consumer for case-less source Summaries/Reviews (review P1-5).
+
+    Runs in the same poller pass right after the case-bound knowledge
+    drain: CSD/article sources accepted by the ingestion API are consumed
+    by the normal worker instead of relying on tests calling the drain."""
+    from backend.services.knowledge_standalone_workflow import (
+        drain_standalone_knowledge_tasks,
+        standalone_workflow_active,
+    )
+
+    if not standalone_workflow_active():
+        return 0
+    try:
+        outcome = drain_standalone_knowledge_tasks(
+            ticket_repository,
+            client=HERMES_KNOWLEDGE_AGENT_CLIENT,
+            weknora_client=HermesWeKnoraClient(),
+            memory_client=WeKnoraClient(),
+            limit=limit,
+        )
+        return int(outcome.get("executed") or 0)
+    except Exception:  # noqa: BLE001 - the poller must survive a drain failure
+        LOGGER.warning("standalone_knowledge_tasks_drain_failed", exc_info=True)
+        return 0
+
+
 # Stateless urllib client shared by knowledge drains (settings read once at
 # import; the run bodies pin model/effort from task rows, not live config).
 HERMES_KNOWLEDGE_AGENT_CLIENT = HermesAgentClient()
@@ -3416,6 +3443,7 @@ def process_account_automation_once() -> None:
     # its completion transaction, so the promotion drain picks them up in the
     # same poller cycle.
     _drain_hermes_knowledge_tasks(limit=5)
+    _drain_standalone_knowledge_tasks(limit=5)
     _drain_weknora_promotions(limit=20)
 
 
