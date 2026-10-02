@@ -459,6 +459,23 @@ def _require_current_lineage(repository: Any, task: dict[str, Any]) -> dict[str,
             "stale_case_lineage",
             "case revision advanced while the knowledge task was pending",
         )
+    # Frozen-input generation check (review round 2, R2-7): the task's
+    # fingerprint covers the linked source versions too, so a source that
+    # advanced between queueing and execution (or mid-run before the final
+    # re-check) must fail visibly instead of silently summarizing newer
+    # material under an older generation's identity. The queue side mints the
+    # new generation; this row fails and stays inspectable.
+    expected_fingerprint = str(task.get("input_fingerprint") or "").strip()
+    if expected_fingerprint:
+        current_fingerprint = summary_input_fingerprint(
+            binding,
+            source_versions=_linked_source_versions(repository, str(task["engineer_case_id"])),
+        )
+        if current_fingerprint != expected_fingerprint:
+            raise KnowledgeWorkflowError(
+                "source_input_diverged",
+                "linked knowledge sources advanced beyond the task's frozen input fingerprint",
+            )
     return binding
 
 
