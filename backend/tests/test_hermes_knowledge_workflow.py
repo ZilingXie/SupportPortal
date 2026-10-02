@@ -278,6 +278,69 @@ def test_n8n_source_trigger_queues_summary_task(monkeypatch) -> None:
     assert task["summary_task_id"] == summary_task_id_for("123-1", 1)
 
 
+def test_n8n_source_summary_normalizes_string_lists(monkeypatch) -> None:
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queue_hermes_summary_for_case(
+        repository, engineer_case_id="123-1", trigger="n8n_source",
+    )
+
+    payload = {
+        "problem_description": ["Customer cannot join channels."],
+        "timeline": ["Opened", "Investigated", "Solved"],
+        "investigation_process": ["Checked routing", "Checked join logs"],
+        "confirmed_facts": ["The failure is reproducible.", "The fix is verified."],
+        "root_cause_and_solution": "Misconfigured region; corrected.",
+        "verification_results": ["Customer confirmed join works."],
+        "limitations_and_unconfirmed": "Long-term stability is unconfirmed.",
+        "evidence_references": ["output-1"],
+        "candidates": [],
+    }
+    client = FakeHermesAgentClient(
+        summary_output="```json\n" + json.dumps(payload) + "\n```",
+        review_output=_review_output([]),
+    )
+    drain_hermes_knowledge_tasks(
+        repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+    )
+
+    summary_task = repository.list_hermes_summary_tasks()[0]
+    assert summary_task["status"] == "completed"
+    packet = summary_task["packet"]
+    assert packet["trigger"] == "n8n_source"
+    assert packet["timeline"] == "Opened\nInvestigated\nSolved"
+    assert packet["confirmed_facts"] == "The failure is reproducible.\nThe fix is verified."
+    assert packet["investigation_process"] == "Checked routing\nChecked join logs"
+    assert repository.list_hermes_review_tasks()[0]["status"] == "completed"
+
+
+def test_summary_rejects_non_string_narrative_values(monkeypatch) -> None:
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queue_hermes_summary_for_case(
+        repository, engineer_case_id="123-1", trigger="n8n_source",
+    )
+
+    payload = json.loads(
+        _summary_output().split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+    )
+    payload["timeline"] = {"step": "opened"}
+    client = FakeHermesAgentClient(
+        summary_output=json.dumps(payload),
+        review_output=_review_output([]),
+    )
+    drain_hermes_knowledge_tasks(
+        repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+    )
+
+    summary_task = repository.list_hermes_summary_tasks()[0]
+    assert summary_task["status"] == "failed"
+    assert summary_task["error_code"] == "output_contract_invalid"
+    assert repository.list_hermes_review_tasks() == []
+
+
 def test_summary_task_is_not_created_outside_real_mode(monkeypatch) -> None:
     monkeypatch.delenv("HERMES_CASE_WORKFLOW_MODE", raising=False)
     repository = _repository()

@@ -304,19 +304,45 @@ class HermesSummaryCandidate(_StrictModel):
     evidence_references: tuple[str, ...] = ()
 
 
+_SUMMARY_TEXT_FIELDS = (
+    "problem_description",
+    "timeline",
+    "investigation_process",
+    "confirmed_facts",
+    "root_cause_and_solution",
+    "verification_results",
+    "limitations_and_unconfirmed",
+)
+
+
+def _normalize_summary_text(value: Any, *, field: str) -> str:
+    """Normalize Hermes' scalar-or-string-list narrative values.
+
+    Hermes real runs occasionally return concise narrative sections as arrays
+    of strings even though the persisted Summary packet is intentionally
+    scalar.  Accept only that documented boundary variation; all other types
+    remain contract errors so malformed model output cannot be silently stored.
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, tuple)):
+        if any(not isinstance(item, str) for item in value):
+            raise ValueError(f"{field} must be a string or an array of strings")
+        return "\n".join(value)
+    raise ValueError(f"{field} must be a string or an array of strings")
+
+
 def _summary_packet_content(payload: dict[str, Any]) -> dict[str, Any]:
     candidates = [
         HermesSummaryCandidate.model_validate(item).model_dump(mode="json")
         for item in (payload.get("candidates") or [])
     ]
     return {
-        "problem_description": str(payload.get("problem_description") or ""),
-        "timeline": str(payload.get("timeline") or ""),
-        "investigation_process": str(payload.get("investigation_process") or ""),
-        "confirmed_facts": str(payload.get("confirmed_facts") or ""),
-        "root_cause_and_solution": str(payload.get("root_cause_and_solution") or ""),
-        "verification_results": str(payload.get("verification_results") or ""),
-        "limitations_and_unconfirmed": str(payload.get("limitations_and_unconfirmed") or ""),
+        field: _normalize_summary_text(payload.get(field), field=field)
+        for field in _SUMMARY_TEXT_FIELDS
+    } | {
         "evidence_references": list(payload.get("evidence_references") or []),
         "candidates": candidates,
     }
@@ -345,7 +371,7 @@ class HermesSummaryPacket(_StrictModel):
     ledger_revision: int = Field(ge=0)
     conversation_version: int = Field(ge=0)
     hermes_session_id: str = Field(min_length=1)
-    trigger: Literal["solved", "local_resolved", "closed"]
+    trigger: Literal["solved", "local_resolved", "closed", "n8n_source"]
     problem_description: str = Field(min_length=1)
     timeline: str = ""
     investigation_process: str = Field(min_length=1)

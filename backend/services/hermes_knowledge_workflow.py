@@ -50,6 +50,8 @@ from backend.services.hermes_case_workflow import (
     HermesReviewReport,
     HermesSummaryPacket,
     WeKnoraPromotionCandidate,
+    _SUMMARY_TEXT_FIELDS,
+    _normalize_summary_text,
     hermes_workflow_mode,
     review_report_content_hash,
     summary_packet_content_hash,
@@ -486,7 +488,14 @@ def run_hermes_summary_task(
                 f"summary run ended with {status.get('status')}",
             )
         parsed = _extract_run_json(status.get("output"))
-        content = {field: parsed.get(field) for field in SUMMARY_CONTENT_FIELDS}
+        content = {
+            field: (
+                _normalize_summary_text(parsed.get(field), field=field)
+                if field in _SUMMARY_TEXT_FIELDS
+                else parsed.get(field)
+            )
+            for field in SUMMARY_CONTENT_FIELDS
+        }
         packet_payload = {
             **content,
             "schema_version": "v1",
