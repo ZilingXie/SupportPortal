@@ -68,6 +68,10 @@ from backend.repositories.knowledge_source_repository import (
     InMemoryKnowledgeSourceRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
 )
+from backend.repositories.standalone_knowledge_repository import (
+    InMemoryStandaloneKnowledgeRepositoryMixin,
+    PostgresStandaloneKnowledgeRepositoryMixin,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -3118,6 +3122,7 @@ class InMemoryTicketRepository(
     InMemoryEnablementRelayRepositoryMixin,
     InMemoryWeKnoraPromotionRepositoryMixin,
     InMemoryKnowledgeSourceRepositoryMixin,
+    InMemoryStandaloneKnowledgeRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -4257,6 +4262,7 @@ class InMemoryTicketRepository(
         self._initialize_hermes_state()
         self._initialize_enablement_relay_state()
         self._initialize_knowledge_source_state()
+        self._initialize_standalone_knowledge_state()
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -8287,6 +8293,7 @@ class PostgresTicketRepository(
     PostgresEnablementRelayRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
+    PostgresStandaloneKnowledgeRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -12719,6 +12726,7 @@ class PostgresTicketRepository(
                 self._initialize_enablement_relay_schema(cur)
                 self._initialize_weknora_schema(cur)
                 self._initialize_knowledge_source_schema(cur)
+                self._initialize_standalone_knowledge_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:

@@ -117,18 +117,17 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         "created_at": now_value,
         "updated_at": now_value,
     }
-    missing = [
-        field
-        for field in (
-            "engineer_case_id",
-            "client_ticket_id",
-            "source_type",
-            "source_id",
-            "source_version",
-            "content_hash",
+    required_lineage = (
+        # Standalone (case-less) sources carry no engineer case; the source
+        # identity is the lineage.
+        ("source_type", "source_id", "source_version", "content_hash")
+        if normalized["source_type"] == "knowledge_source_review"
+        else (
+            "engineer_case_id", "client_ticket_id",
+            "source_type", "source_id", "source_version", "content_hash",
         )
-        if not normalized[field]
-    ]
+    )
+    missing = [field for field in required_lineage if not normalized[field]]
     if normalized["candidate_type"] not in {"knowledge", "memory", "skill"}:
         missing.append("candidate_type")
     elif normalized["candidate_type"] == "skill" and normalized["decision"] not in {

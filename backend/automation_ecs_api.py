@@ -483,6 +483,37 @@ def create_app(    *,
         summary_task_id = str(receipt.get("summary_task_id") or "").strip() or None
         engineer_case_id = str(receipt.get("engineer_case_id") or "").strip() or None
 
+        # Case-less sources (CSD issues, article snapshots) enter the SAME
+        # governance pipeline through the standalone Summary path: a fresh
+        # Summary session per accepted source version (governance plan WP1).
+        if snapshot.source_type in {"csd_issue", "article"} and intake_id:
+            try:
+                from backend.services.knowledge_standalone_workflow import (
+                    queue_standalone_summary_for_source,
+                )
+
+                record = await asyncio.to_thread(
+                    repository.get_knowledge_source,
+                    str(receipt.get("task_id") or intake_id),
+                )
+                if isinstance(record, dict):
+                    queued_standalone = await asyncio.to_thread(
+                        queue_standalone_summary_for_source,
+                        repository,
+                        intake=record,
+                        now_value=now,
+                    )
+                    if isinstance(queued_standalone, dict):
+                        summary_task_id = (
+                            str(queued_standalone.get("summary_task_id") or "").strip()
+                            or summary_task_id
+                        )
+            except Exception as exc:  # noqa: BLE001 - receipt must expose acceptance
+                raise HTTPException(
+                    status_code=503,
+                    detail="source accepted but the standalone Hermes Summary could not be queued",
+                ) from exc
+
         # A duplicate is still allowed to repair a missing case/task link from
         # an earlier accepted request; the repository-level task id remains
         # idempotent, so this never creates a second Summary task.
