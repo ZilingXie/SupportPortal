@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-01T17:57:33Z",
-  "source_base_commit": "d01bb0a25a057adc6a59531c8ee9ce7c7c64b361",
-  "registry_digest": "8ef3b80d4eaa5bd32733a626038c7c38d482bb45efd7fcad79378fa4a820e6e9",
+  "generated_at": "2026-10-02T06:30:51Z",
+  "source_base_commit": "35d9de6058f6ac7ae42e6032f89d6fa003300442",
+  "registry_digest": "870f9ce7e554cfc6f8859f5192b814ee82d01b077b8e2a280a67ec7a8253bcaa",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3925,6 +3925,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Round-5 integration tests",
           "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
+        },
+        {
+          "type": "test",
+          "label": "Round 12 mainline-superseded state verification",
+          "details": "2026-10-01（分支=810a4f0c+conftest 隔离单提交）：双序单测 56/21 与组合 295 passed；n8n 快照校验过；五套 PG 门控回归（hermes_case/knowledge_workflow/weknora_promotion/knowledge_governance_fixes/knowledge_source_repository）一次性库全绿，完整日志 /tmp/p2-181_r12_pg_regression.log。"
+        },
+        {
+          "type": "test",
+          "label": "Round 14 v18-baseline verification",
+          "details": "2026-10-02（分支=78fb52b9+conftest 隔离+档案，rebase 无冲突）：五套件 PG 门控 19/19 零 error（一次性库，v18 DDL 迁移生效，含 n8n_source Summary 回归）；受影响面单测 279 passed；双序 56/21；n8n 快照 15/1/51。"
         },
         {
           "type": "test",
@@ -15179,6 +15189,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Round-5 integration tests",
           "details": "2026-10-01：合并态（61728e4e+修复）治理批 125 passed——含主线新增 test_weknora_probe_capabilities 原样通过、27a9c422 官方请求形状/conditional-update/全定向 base_version、61728e4e memory kind/importance 契约用例原样通过；定向 21 passed；广域回归 209 passed；一次性 PostgreSQL 14 集成 25 passed（RUN_POSTGRES_INTEGRATION=1）；test_worker 14 失败与干净 main 相同（存量）。"
+        },
+        {
+          "type": "test",
+          "label": "Round 12 mainline-superseded state verification",
+          "details": "2026-10-01（分支=810a4f0c+conftest 隔离单提交）：双序单测 56/21 与组合 295 passed；n8n 快照校验过；五套 PG 门控回归（hermes_case/knowledge_workflow/weknora_promotion/knowledge_governance_fixes/knowledge_source_repository）一次性库全绿，完整日志 /tmp/p2-181_r12_pg_regression.log。"
+        },
+        {
+          "type": "test",
+          "label": "Round 14 v18-baseline verification",
+          "details": "2026-10-02（分支=78fb52b9+conftest 隔离+档案，rebase 无冲突）：五套件 PG 门控 19/19 零 error（一次性库，v18 DDL 迁移生效，含 n8n_source Summary 回归）；受影响面单测 279 passed；双序 56/21；n8n 快照 15/1/51。"
         }
       ],
       "history": [
@@ -15221,6 +15241,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-01",
           "event": "followup",
           "summary": "SupportPortal 治理层计划第七轮验收通过（对象 1c8ea8c7），释放 finalize→PR。rebase 到 main(01666d65) 时与主线 p2-182 round-4 验收/Preproduction 部署记录语义合并（r20261001-3856643 不含本叠加，随下一次常规发布携带）。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "review_failed",
+          "summary": "十一轮结论=证据不足（复验环境无法访问 worktree）。执行命令清单时发现主线前进到 810a4f0c：#1365/#1366/#1367 合入了同范围完整实现（knowledge_source_repository、/v1/knowledge/sources 端点、官方 API 对齐、Summary 任务挂钩），与本分支七提交构成同名表异构冲突（support_knowledge_source_intakes 两套形状、同一 v17 版本串），不可合并共存；且主线已闭环我拆分的消费器边界。"
+        },
+        {
+          "at": "2026-10-01",
+          "event": "followup",
+          "summary": "十二轮终态：按『主线唯一真理』收束——分支重建为 810a4f0c，弃用全部被超越实现（intake 仓储/端点/v17 迁移/hermes_weknora 重写/证据与守卫层，其并发与版本语义由主线 advisory-lock+epoch 实现承接；r5-r8 七提交留 Git 历史备查）。唯一保留增量=conftest prompt runtime 隔离（主线树复现：overlay 单独 21 绿、ecs_api 先跑 6 败；修复后双序 56/21 绿）。主线套件组合 295 passed、n8n 快照 15/1/51、overview/feature 校验过；五套 PG 门控（含主线 test_knowledge_source_repository）一次性库重跑见 evidence。"
+        },
+        {
+          "at": "2026-10-02",
+          "event": "followup",
+          "summary": "十四轮：主线 78fb52b9 允许 n8n knowledge source 触发 Summary（trigger_kind 新增 n8n_source，schema v17→v18 + 迁移 2026_10_02_hermes_summary_n8n_trigger.sql + PG 回归）。分支 rebase 至 78fb52b9（唯一增量仍为 conftest prompt 隔离 + 档案），部署口径更新为 **schema v18**（--bootstrap-account-schema，ticket schema 2026-single-ai-managed-v18）。受影响面重跑：knowledge workflow（含主线新增 n8n_source 用例）、repository configuration（v18 契约）、五套件 PG 门控含新增 Summary 挂钩回归，全绿后提交新 SHA。 实测：组合单测 279 passed（含主线新增 n8n_source Summary 用例）、双序 56/21、n8n 快照 15/1/51、overview（d3e44ab0…）/feature 过；五套件 PG 门控在 v18 基线一次性库 **19/19 passed 零 error**（28m28s，日志 /tmp/p2-181_r14_pg_regression.log，含 test_hermes_knowledge_workflow_postgres 新增的 n8n_source Summary 挂钩回归）。"
         }
       ],
       "legacy_ids": [],
