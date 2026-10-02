@@ -83,6 +83,7 @@ from backend.services.account_reply_jobs import (
     is_account_reply_persona_publishing_status,
 )
 from backend.services.account_processing_profiles import is_live_account_processing_profile
+from backend.services.automation_context import build_automation_context, persona_context
 from backend.services.automation_persona import (
     AUTOMATION_PERSONA_PROMPT_VERSION,
     AutomationPersonaError,
@@ -370,6 +371,189 @@ def _account_reply_needs_persona_render(payload: dict[str, Any]) -> bool:
         or str(payload.get("persona_prompt_version") or "").strip()
         != AUTOMATION_PERSONA_PROMPT_VERSION
     )
+
+
+def _enablement_conversation_cutoff(created_before: str | None) -> datetime | None:
+    if not created_before:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(created_before).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _enablement_reply_conversation_context(
+    account_case: dict[str, Any] | None,
+    canonical_ticket: dict[str, Any] | None,
+    *,
+    created_before: str | None = None,
+) -> dict[str, Any] | None:
+    """Sanitized public conversation for enablement internal-resolution replies.
+
+    Prefers the case-level snapshot (refreshed on every public customer
+    message and already redacted, role-labeled, and filtered of private
+    notes, internal emails, and drafts); legacy cases without one are
+    rebuilt from the canonical ticket. The snapshot contains only the
+    customer's public conversation, so it is the language evidence for a
+    completion reply whose trigger (internal email or relay result) carries
+    no customer text. ``created_before`` freezes the snapshot to the messages
+    that existed when an old pending job was created, so a backfill never
+    adopts later customer messages.
+    """
+    case = account_case if isinstance(account_case, dict) else {}
+    ticket = canonical_ticket if isinstance(canonical_ticket, dict) else {}
+    snapshot = None
+    automation_context = case.get("automation_context")
+    if isinstance(automation_context, dict):
+        candidate = automation_context.get("reply_conversation_context")
+        if (
+            isinstance(candidate, dict)
+            and candidate.get("version") == "automation-context-v1"
+        ):
+            snapshot = candidate
+    if snapshot is not None:
+        conversation = [
+            dict(message)
+            for message in (snapshot.get("conversation") or [])
+            if isinstance(message, dict)
+        ]
+        current_message_id = str(snapshot.get("current_message_id") or "")
+    else:
+        messages = [
+            message
+            for message in (ticket.get("messages") or [])
+            if isinstance(message, dict)
+        ]
+        if not messages:
+            return None
+        collected = (
+            case.get("collected_fields")
+            if isinstance(case.get("collected_fields"), dict)
+            else {}
+        )
+        forbidden_values = [
+            str(value).strip()
+            for key, value in collected.items()
+            if key in {"app_id", "customer_email"} and str(value).strip()
+        ]
+        try:
+            context = build_automation_context(
+                ticket,
+                {"client_ticket_id": ticket.get("ticket_id")},
+            )
+        except Exception:
+            return None
+        sanitized = persona_context(context, forbidden_values)
+        conversation = [
+            dict(message)
+            for message in (sanitized.get("conversation") or [])
+            if isinstance(message, dict)
+        ]
+        current_message_id = str(sanitized.get("current_message_id") or "")
+    cutoff = _enablement_conversation_cutoff(created_before)
+    if cutoff is not None:
+        kept: list[dict[str, Any]] = []
+        for message in conversation:
+            raw_created_at = str(message.get("created_at") or "").strip()
+            try:
+                stamped = (
+                    datetime.fromisoformat(raw_created_at.replace("Z", "+00:00"))
+                    if raw_created_at
+                    else None
+                )
+            except ValueError:
+                stamped = None
+            if stamped is not None:
+                if stamped.tzinfo is None:
+                    stamped = stamped.replace(tzinfo=timezone.utc)
+                if stamped > cutoff:
+                    continue
+            kept.append(message)
+        conversation = kept
+        if current_message_id and not any(
+            str(message.get("message_id") or "") == current_message_id
+            for message in conversation
+        ):
+            current_message_id = next(
+                (
+                    str(message.get("message_id") or "")
+                    for message in reversed(conversation)
+                    if str(message.get("role") or "") == "customer"
+                ),
+                "",
+            )
+    if not conversation:
+        return None
+    return {
+        "version": "automation-context-v1",
+        "current_message_id": current_message_id,
+        "conversation": conversation,
+    }
+
+
+def _enablement_reply_facts_with_conversation_context(
+    reply_facts: dict[str, Any],
+    account_case: dict[str, Any] | None,
+    canonical_ticket: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach the public conversation snapshot to internal-resolution facts.
+
+    Internal triggers (completion email, relay success) carry no customer
+    text of their own; without the snapshot the Persona saw only an English
+    internal result and defaulted the reply language to English (13837).
+    """
+    if str(reply_facts.get("behavior") or "").strip().lower() != "enablement":
+        return reply_facts
+    if isinstance(reply_facts.get("conversation_context"), dict) and reply_facts[
+        "conversation_context"
+    ].get("version") == "automation-context-v1":
+        return reply_facts
+    context = _enablement_reply_conversation_context(account_case, canonical_ticket)
+    if context is None:
+        return reply_facts
+    updated = dict(reply_facts)
+    updated["conversation_context"] = context
+    return updated
+
+
+def _ensure_enablement_conversation_context(
+    payload: dict[str, Any],
+    job: dict[str, Any],
+    ticket: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Backfill the conversation snapshot for old unpublished Enablement jobs.
+
+    Jobs created before the internal-resolution entries attached the
+    snapshot have no language evidence; the backfill rebuilds it frozen at
+    the job's creation time, so retries reuse one snapshot and never adopt
+    customer messages that arrived after the job existed.
+    """
+    facts = payload.get("reply_facts") if isinstance(payload.get("reply_facts"), dict) else {}
+    if not facts or str(facts.get("behavior") or "").strip().lower() != "enablement":
+        return payload
+    if (
+        isinstance(facts.get("conversation_context"), dict)
+        and facts["conversation_context"].get("version") == "automation-context-v1"
+    ):
+        return payload
+    ticket_id = str(job.get("ticket_id") or "").strip()
+    account_case = (
+        ticket_repository.get_account_case_by_ticket_id(ticket_id) if ticket_id else None
+    )
+    context = _enablement_reply_conversation_context(
+        account_case,
+        ticket,
+        created_before=str(job.get("created_at") or "").strip() or None,
+    )
+    if context is None:
+        return payload
+    updated_facts = dict(facts)
+    updated_facts["conversation_context"] = context
+    payload["reply_facts"] = updated_facts
+    return payload
 
 
 def _normalize_account_reply_job_payload(payload: dict[str, Any]) -> tuple[dict[str, Any], str | None, bool]:
@@ -911,6 +1095,7 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(job, ticket, exc)
             return
+        payload = _ensure_enablement_conversation_context(payload, job, ticket)
         payload = _with_enablement_completion_acknowledgement(payload, ticket)
     if isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"):
         if payload.get("reply_pipeline") not in {
@@ -1185,6 +1370,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         except AutomationPersonaError as exc:
             _move_invalid_account_reply_to_human_review(current_job, ticket, exc)
             return
+        payload = _ensure_enablement_conversation_context(payload, current_job, ticket)
         payload = _with_enablement_completion_acknowledgement(payload, ticket)
 
     if (
@@ -4873,6 +5059,9 @@ def _apply_enablement_relay_success(
         ),
     )
     reply_facts["completion_acknowledgement"] = "patience"
+    reply_facts = _enablement_reply_facts_with_conversation_context(
+        reply_facts, account_case, canonical_ticket
+    )
     try:
         normalized_facts, _intent, _close = normalize_account_reply_contract(
             reply_facts,
@@ -5599,6 +5788,10 @@ def _queue_enablement_completion_reply_job(
     reply_facts["completion_acknowledgement"] = (
         _enablement_completion_acknowledgement(canonical_ticket)
     )
+    if handler == "enablement":
+        reply_facts = _enablement_reply_facts_with_conversation_context(
+            reply_facts, account_case, canonical_ticket
+        )
     delay_seconds = account_reply_delay_seconds_for_profile(
         str(account_case.get("processing_profile") or "staging")
     )
@@ -5791,6 +5984,12 @@ def _queue_internal_followup_reply_job(
         resolution_status=None,
         customer_name=_account_greeting_customer_name(account_case, client_ticket_id),
     )
+    if handler == "enablement":
+        reply_facts = _enablement_reply_facts_with_conversation_context(
+            reply_facts,
+            account_case,
+            ticket_repository.get_ticket(client_ticket_id),
+        )
     delay_seconds = account_reply_delay_seconds_for_profile(
         str(account_case.get("processing_profile") or "staging")
     )

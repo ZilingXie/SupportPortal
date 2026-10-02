@@ -17,11 +17,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
-from backend.repositories.enablement_relay_repository import (
-    build_enablement_relay_request_id,
-)
+from backend.repositories.enablement_relay_repository import build_enablement_relay_request_id
 from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services.agentrelay_client import AgentRelayConfig, AgentRelayError
+from backend.services.automation_context import build_automation_context, persona_context
 
 
 def _load_worker_module():
@@ -498,6 +497,65 @@ class RelayInboxTests(unittest.TestCase):
         self.assertEqual(
             case["automation_context"]["enablement_auto_workflow"]["state"], "completed"
         )
+
+    def test_success_result_completion_job_carries_conversation_context(self):
+        # 13837 regression: a relay-success completion must carry the public
+        # customer conversation as language evidence instead of defaulting
+        # the reply language to the English internal result.
+        ticket = self.repository.get_ticket("9001")
+        ticket["messages"] = [
+            {
+                "role": "customer",
+                "content": "Hola, por favor activen Media Relay en mi proyecto.",
+                "created_at": "2026-09-15T10:00:00+00:00",
+                "message_id": "es-1",
+                "id": "es-1",
+            },
+            {
+                "role": "customer",
+                "content": "Mi App ID es 0123456789abcdef0123456789abcdef, gracias.",
+                "created_at": "2026-09-15T11:00:00+00:00",
+                "message_id": "es-2",
+                "id": "es-2",
+            },
+        ]
+        self.repository.save_ticket(ticket)
+        case = self.repository.get_account_case("AC-RELAY-1")
+        case["automation_context"] = {
+            "reply_conversation_context": persona_context(
+                build_automation_context(
+                    ticket, {"client_ticket_id": "9001"}
+                ),
+                ["0123456789abcdef0123456789abcdef"],
+            )
+        }
+        self.repository.save_account_case(case)
+        client, _payload = self._client_with_result()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(len(jobs), 1)
+        context = jobs[0]["payload"]["reply_facts"]["conversation_context"]
+        self.assertEqual(context["version"], "automation-context-v1")
+        roles = [message["role"] for message in context["conversation"]]
+        self.assertEqual(roles, ["customer", "customer"])
+        contents = "\n".join(
+            message["content"] for message in context["conversation"]
+        )
+        self.assertIn("Hola, por favor activen Media Relay", contents)
+        self.assertNotIn("0123456789abcdef0123456789abcdef", contents)
+        # The English internal relay detail never becomes language evidence.
+        self.assertNotIn("read-back confirmed", contents)
+        self.assertIsNone(jobs[0]["payload"]["reply_facts"].get("customer_language"))
 
     def test_closed_ticket_result_is_evidence_only(self):
         """PR-D: a result arriving after the ticket closed is recorded as

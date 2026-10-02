@@ -37,7 +37,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v31"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v32"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -282,6 +282,13 @@ def build_automation_reply_facts(
     visible_source_facts = [str(item).strip() for item in (source_facts or []) if str(item).strip()]
     if behavior_value.lower() == "enablement" and reply_intent_value == "submission_confirmation":
         visible_source_facts = []
+    customer_language_value = str(customer_language or "").strip()
+    if not customer_language_value and behavior_value.lower() != "enablement":
+        # Enablement derives its reply language from the public conversation
+        # instead: a silent English default produced English completion
+        # replies for non-English customers (13837). Other behaviors keep
+        # their established default.
+        customer_language_value = "en"
     return {
         "behavior": behavior_value,
         "reply_intent": reply_intent_value,
@@ -290,7 +297,7 @@ def build_automation_reply_facts(
         "performed_actions": [str(item).strip() for item in (performed_actions or []) if str(item).strip()],
         "next_step": str(next_step or "").strip() or None,
         "resolution_status": str(resolution_status or "").strip() or None,
-        "customer_language": str(customer_language or "").strip() or "en",
+        "customer_language": customer_language_value or None,
         "source_facts": visible_source_facts,
         "customer_first_name": customer_first_name(customer_name),
         "_forbidden_values": forbidden_values,
@@ -548,6 +555,32 @@ def _assert_enablement_appid_not_found_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
 
 
+def _conversation_customer_messages(facts: dict[str, Any]) -> list[dict[str, Any]]:
+    context = facts.get("conversation_context")
+    if not isinstance(context, dict) or context.get("version") != "automation-context-v1":
+        return []
+    return [
+        message
+        for message in (context.get("conversation") or [])
+        if isinstance(message, dict)
+        and str(message.get("role") or "").strip().lower() == "customer"
+        and str(message.get("content") or "").strip()
+    ]
+
+
+def _assert_enablement_customer_language_evidence(facts: dict[str, Any]) -> None:
+    """Fail closed when an Enablement reply has no public language evidence.
+
+    ``customer_language`` is a hint only: it was silently defaulted to English
+    for years, so a stored ``en`` never proves the customer chose English.
+    The reply language must come from the public customer conversation; when
+    no customer message is available, generation stops here and the existing
+    human-review handoff takes over instead of guessing English.
+    """
+    if not _conversation_customer_messages(facts):
+        raise AutomationPersonaError("automation_persona_missing_customer_language")
+
+
 def _generation_diagnostic(reply: str, facts: dict[str, Any], attempt: int) -> dict[str, Any]:
     """Observe layout without judging field semantics or changing publication."""
     missing = facts.get("missing_information")
@@ -736,6 +769,8 @@ def render_automation_reply(
         else AUTOMATION_PERSONA_PROMPT_VERSION
     )
     behavior = str(facts.get("behavior") or "").strip().lower()
+    if behavior == "enablement":
+        _assert_enablement_customer_language_evidence(facts)
     if account_scope and intent == "request_missing_information":
         current_intent_policy = missing_information_policy
     elif account_scope and intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION:
@@ -851,7 +886,18 @@ def render_automation_reply(
             "identifier, internal detail, or technical fact from that context. Do not mention Slack, the engineer, "
             "AI investigation, or any internal tooling. "
         )
-    reply_policy = f"{shared_account_policy}{current_intent_policy}"
+    enablement_language_policy = (
+        "Language policy for Enablement replies: choose the reply language only from the customer's public "
+        "conversation in conversation_context, never from the internal resolution, source_facts, "
+        "known_information, or the language of these instructions. If the customer explicitly asked for a "
+        "specific language, follow their most recent such request. Otherwise reply in the language of the most "
+        "recent customer message whose language is identifiable; a message containing only an App ID, email, "
+        "link, number, or a short simple confirmation is not a language switch - continue in the language of "
+        "the earlier customer messages. customer_language is only a hint: an automatic English default is not "
+        "evidence the customer chose English, and when it conflicts with the conversation, follow the "
+        "conversation. "
+    ) if behavior == "enablement" else ""
+    reply_policy = f"{shared_account_policy}{enablement_language_policy}{current_intent_policy}"
     system_prompt = (
         f"Prompt version: {prompt_version}.\n"
         "You are the customer-facing Automation Persona. Write the final customer reply from the "

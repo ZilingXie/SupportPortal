@@ -152,7 +152,7 @@ def test_fixed_provider_sample(index, sample, record_property):
             rendered = render_automation_reply(reply_facts=facts,
                 persona_assignment={"content": {"instruction": "Be warm, concise and precise."}}, account_scope=True)
             assert rendered.content.startswith("Hi Taylor,")
-            assert rendered.prompt_version == "automation-persona-v31"
+            assert rendered.prompt_version == "automation-persona-v32"
     finally:
         record_property("sample", index)
         record_property("models", json.dumps(models))

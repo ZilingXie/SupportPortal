@@ -1,5 +1,32 @@
 # Prompt Change Log
 
+## 2026-10-03 - automation-persona-v32：Enablement 回复语言连续性（p2-184）
+
+- Area: `render_automation_reply` 代码级系统 Prompt（automation-persona-v32）与
+  Enablement 事实构造。13837 根因：内部触发的完成通知缺少公开会话输入，
+  `customer_language` 被静默默认为 `en`，Persona 只见英文内部结果而输出英文正文。
+- 行为：(1) `build_automation_reply_facts` 对 behavior=enablement 不再默认
+  `customer_language=en`（其他类别保持原默认）；(2) 新增 Enablement 语言优先级
+  Prompt——语言依据仅来自 conversation_context 公开会话：客户明确语言要求最优先，
+  其次为最近可判语言的客户消息，纯 App ID/邮箱/链接/数字/简单确认不算切换语言，
+  `customer_language` 仅是提示且与会话冲突时以会话为准，内部结果/source_facts 的
+  语言不代表客户语言；(3) 新增确定性 fail-closed 门
+  `automation_persona_missing_customer_language`：enablement 渲染前必须有至少一条
+  非空客户公开消息，否则停止生成并走现有人工交接（含旧 job 里无来源 `en` 的
+  情形）；(4) 版本 v31→v32 使未发布旧 job 经 `_account_reply_needs_persona_render`
+  版本围栏按新合同重新生成，已发布 job 复用原消息。无 Reviewer 架构不变；固定
+  问候语/签名/尾注的全面本地化不在本次范围。
+- 输入构造（同 PR）：worker.py 三个内部触达入口（内部邮件完成、AgentRelay 成功、
+  内部跟进，仅 enablement）挂载脱敏公开会话快照 `reply_facts.conversation_context`；
+  prepare/publish 两路径为旧未发布 enablement job 按 `job.created_at` 冻结时点回填
+  快照。
+- 部署提示：仅代码级 Prompt（随镜像发布），无 Prompt catalog 变更；按计划仅发布
+  Preproduction，Production 不变。
+- 验证：确定性测试新增 13 项（worker/relay/failure/persona）+ 存量回归全绿
+  （test_worker 14 个预存失败与基线一致，与本变更无关）；真实模型评测
+  `backend/tests/test_enablement_reply_language_eval.py`（gpt-6-astra，门控
+  `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成、语言与合同校验全过。
+
 ## 2026-10-01 - Governance remediation round 5: skill boundary + Summary input contract on the kind/importance mainline (p2-181)
 
 - Area: Hermes knowledge-governance Summary/Review runs, integrated on

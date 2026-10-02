@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-02T09:56:44Z",
-  "source_base_commit": "f5cbdd273f2f24ce84ccd31a3b3b609b82a7b5c9",
-  "registry_digest": "fc43ff3f9d4455d4676bf120f7044ad751c68248c9aaea905c65b01094ea728d",
+  "generated_at": "2026-10-02T17:51:24Z",
+  "source_base_commit": "bcfe47b215f8d8c288f477cc1ff5e695af069802",
+  "registry_digest": "90d8b881d75fac142958112a96e6d3f95b44f5c2b529045bec2538a61d448f6e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1426,6 +1426,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "确定性测试（新增 13 项 + 存量回归）",
+          "command": "python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
+          "result": "全部通过：persona 79 passed/75 subtests；relay 33 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed。test_worker.py 143 passed + 新增 8 项语言连续性测试全过；14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，双跑 diff 为空）。"
+        },
+        {
+          "type": "test",
+          "label": "真实模型评测（gpt-6-astra，automation-persona-v32，七场景全首轮生成）",
+          "command": "ENABLEMENT_REPLY_LANGUAGE_EVAL=1 python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py（经系统代理 127.0.0.1:1082）",
+          "result": "7 passed in 23.32s。pt完成通知/西语Relay成功/葡语纯App ID末条/显式切换英语/纯英语/中文/西语内部跟进全部命中预期语言，generation_attempts=1，safety 全过，完成类正文含「已开通+关单」语义、跟进类正文要求重发 32 位 App ID 且未错误结案。检测器首轮曾因 'verifi' 误匹配英语 'verified' 报一次假失败，修正检测词后全绿（保留该过程于交接报告）。"
+        },
+        {
+          "type": "document",
+          "label": "旧 job 冻结时点与幂等",
+          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
+          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
+        },
+        {
+          "type": "document",
+          "label": "环境范围",
+          "command": "git diff main..codex/enablement-reply-language --stat",
+          "result": "代码+测试+文档改动仅进入任务分支；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1531,7 +1555,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 40,
+      "task_count": 41,
       "done_count": 20,
       "blocked_count": 0
     },
@@ -15506,6 +15530,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "legacy_refs": [],
       "history": []
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-184",
+      "title": "客户回复语言连续性修复：Enablement 完成通知按客户公开会话语言生成（仅 Preproduction）",
+      "status": "review",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-03",
+      "updated_at": "2026-10-03",
+      "summary": "计划名：客户回复语言连续性修复（实施计划，需要验收）。修复 13837 根因：内部邮件与 AgentRelay 触发的 Enablement 完成通知构造 reply job 时绕过 create_account_reply_job，reply_facts 缺少 conversation_context，加上 build_automation_reply_facts 把 customer_language 静默默认为 en，Persona 只看到英文内部结果而生成英文正文。变更：(1) worker.py 三个内部触达入口（_queue_enablement_completion_reply_job、_apply_enablement_relay_success、_queue_internal_followup_reply_job，仅 handler=enablement）统一挂载脱敏公开会话快照 reply_facts.conversation_context，优先读 case 级 automation_context.reply_conversation_context，无快照时经 build_automation_context+persona_context 从 canonical ticket 重建（保留角色/顺序/消息 ID，排除私有备注、内部邮件、草稿，App ID/邮箱/凭证脱敏）；(2) automation_persona.py build_automation_reply_facts 对 behavior=enablement 不再默认 en（其他类别不变）；render_automation_reply 增加 enablement 语言优先级 Prompt（纯 App ID/邮箱/数字/简单确认不算切换语言、customer_language 与会话冲突时会话优先、内部结果语言不代表客户语言）；增加确定性 fail-closed 门 automation_persona_missing_customer_language（enablement 无任何客户公开消息即停，走现有人工交接）；AUTOMATION_PERSONA_PROMPT_VERSION v31→v32 使未发布旧 job 经版本围栏按新合同重渲染；(3) prepare 与 publish 两条生成路径均回填旧未发布 enablement job 的快照，冻结时点=job.created_at（不采纳其后新客户消息），重试复用已持久化快照；已发布/已有交付消息的 job 复用原消息不重复发送。基线 main@bcfe47b2。目标环境限定 Preproduction；Production 运行版本、Prompt active release 与真实客户工单不变，13837 仅作脱敏回归样本不重放不补发。",
+      "next_action": "等待计划名「客户回复语言连续性修复」的独立验收（planner 线程）。验收通过后：finalize 合码 → 官方本地栈重启验证 → 构建/发布 Preproduction 并核对镜像、健康状态与生效 Prompt → Preproduction 部署环境补做不投递客户消息的真实模型检查 → 提交发布报告并停止（不晋级 Production）。",
+      "acceptance_criteria": [
+        "内部邮件完成、AgentRelay 成功、内部跟进三个入口创建的 enablement reply job 均携带 conversation_context（角色/顺序/消息 ID 保留；私有备注/内部邮件/草稿排除；App ID/邮箱脱敏）；quota 等其他 handler 行为不变。",
+        "enablement facts 不再默认 customer_language=en；旧 job 中无来源的 en 按旧默认值对待，语言依据为客户公开会话。",
+        "客户明确语言要求 > 最近可判语言客户消息（纯 App ID/邮箱/链接/数字/简单确认延续更早语言）；内部结果语言不影响回复语言；完全无客户公开语言依据时零公开发送并进入现有人工交接。",
+        "旧未发布 job 按 job.created_at 冻结时点补齐快照并经 v32 围栏重新生成；已发布 job 复用原消息，重试/重复消费最多一条客户消息，幂等与结案顺序不变。",
+        "确定性测试（worker/relay/failure/persona/context-provider）与真实模型评测（pt/es/en/zh/纯 App ID/显式切换/英文内部结果七场景，全部首轮生成）通过；正文与业务事实同时正确。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "确定性测试（新增 13 项 + 存量回归）",
+          "command": "python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
+          "result": "全部通过：persona 79 passed/75 subtests；relay 33 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed。test_worker.py 143 passed + 新增 8 项语言连续性测试全过；14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，双跑 diff 为空）。"
+        },
+        {
+          "type": "test",
+          "label": "真实模型评测（gpt-6-astra，automation-persona-v32，七场景全首轮生成）",
+          "command": "ENABLEMENT_REPLY_LANGUAGE_EVAL=1 python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py（经系统代理 127.0.0.1:1082）",
+          "result": "7 passed in 23.32s。pt完成通知/西语Relay成功/葡语纯App ID末条/显式切换英语/纯英语/中文/西语内部跟进全部命中预期语言，generation_attempts=1，safety 全过，完成类正文含「已开通+关单」语义、跟进类正文要求重发 32 位 App ID 且未错误结案。检测器首轮曾因 'verifi' 误匹配英语 'verified' 报一次假失败，修正检测词后全绿（保留该过程于交接报告）。"
+        },
+        {
+          "type": "document",
+          "label": "旧 job 冻结时点与幂等",
+          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
+          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
+        },
+        {
+          "type": "document",
+          "label": "环境范围",
+          "command": "git diff main..codex/enablement-reply-language --stat",
+          "result": "代码+测试+文档改动仅进入任务分支；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
+        }
+      ]
     },
     {
       "schema_version": 2,
