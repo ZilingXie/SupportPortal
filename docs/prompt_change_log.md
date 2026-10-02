@@ -4977,3 +4977,10 @@ For each new entry, record:
 - 根因：`sync_prompt_catalog` 只为新 key 播种 v1，既有 key 的代码内容变更需显式 `create_draft`+`schedule` 后才会进入下一次 release。
 - 处置：对全部代码内容漂移 key（route-manual v6、reply-contract v3、persona-manual v5 等共 11 个）draft+schedule，prepare 出 pr-8126b7cd21ab 并 validate 通过，随 docs-only 推进的新 release commit 重新部署 Preproduction。
 - 文档：ECS Runbook 新增「Prompt 内容变更必须显式 schedule」小节（含 checkpoint 按 commit+prompt id 绑定、CLI initialize 对生产库的 DDL 风险两条注意事项）。
+
+## 2026-10-03 - Hermes-WeKnora 治理验收修复第二轮：调查阶段直写知识路径移除（p2-184 R2-11）
+
+- Investigation Manual v2 文案变更：删除调查阶段调用 `memory_tencentdb_write_knowledge` 直写共享知识的指引（work 阶段与 ask 阶段两处），替换为「调查阶段不写知识；持久结论在工单关闭后经治理管线（Summary → 独立 Review → 受控写入）入库，调查进度输出是唯一交接面」。
+- 动机（验收第二轮未闭合项）：旧写入路径与「所有入库经过 Review」的治理架构冲突——调查会话可绕过 Review 直写知识库。
+- 发布注意：既有 prompt key（hermes-investigation-manual）内容变更须在部署前显式 create_draft + schedule 进 Prompt Release（2026-09-29 教训），否则发布回落旧文案。
+- Verification: 代码级 grep 全库无 `memory_tencentdb_write_knowledge` 残留指引；工具注册面未变（工具本身仍存在，仅 prompt 不再引导调查阶段使用）；prompt 运行时测试套件全过。

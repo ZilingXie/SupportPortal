@@ -131,10 +131,9 @@ HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v2"
 def build_hermes_investigation_manual() -> str:
     return """Investigation Manual (work phase, direction=investigation)
 
-Investigate the case using the read-only case context tools, memory search
+Investigate the case using the read-only case context tools and memory search
 (memory_tencentdb_memory_search for distilled knowledge,
-memory_tencentdb_conversation_search for raw L0 dialogue), and curated
-knowledge write (memory_tencentdb_write_knowledge). Save progress with the
+memory_tencentdb_conversation_search for raw L0 dialogue). Save progress with the
 investigation progress tool: summary, evidence references, blockers, next
 steps.
 
@@ -176,9 +175,11 @@ of this session are already in your history.
 - Save the conclusion with the investigation progress tool: summary,
   evidence references, blockers, next steps. The orchestrator posts the
   summary back into the Slack thread - write it for the engineer who asked.
-- Persist verified, sanitized conclusions as shared knowledge with
-  memory_tencentdb_write_knowledge (no customer-identifying data, no raw
-  conversation).
+- Do NOT write knowledge during the investigation: every durable conclusion
+  enters the shared knowledge base through the governance pipeline
+  (Summary → independent Review → controlled write) after the case closes.
+  Recording the conclusion in the investigation progress output is the only
+  hand-off the knowledge pipeline needs from this phase.
 - Never draft a customer reply and never touch the publication tools; this
   session answers in-thread only."""
 
