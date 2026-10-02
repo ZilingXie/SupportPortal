@@ -1000,7 +1000,7 @@ class PostgresHermesCaseRepositoryMixin:
                 episode INTEGER NOT NULL CHECK (episode >= 1), client_ticket_id TEXT NOT NULL,
                 investigation_id TEXT NOT NULL, ledger_revision INTEGER NOT NULL,
                 conversation_version INTEGER NOT NULL, hermes_session_id TEXT NOT NULL,
-                trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved','local_resolved','closed')),
+                trigger_kind TEXT NOT NULL CHECK (trigger_kind IN ('solved','local_resolved','closed','n8n_source')),
                 status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','invalidated')),
                 idempotency_key TEXT NOT NULL, run_id TEXT,
                 prompt_version TEXT, agent_model TEXT, reasoning_effort TEXT,
@@ -1035,6 +1035,18 @@ class PostgresHermesCaseRepositoryMixin:
                 + sql.SQL(definition).format(*identifiers)
                 + sql.SQL(")"),
             )
+        summary_tasks_table = self._table("support_hermes_summary_tasks")
+        cur.execute(sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+            summary_tasks_table,
+            sql.Identifier("support_hermes_summary_tasks_trigger_kind_check"),
+        ))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+            "(trigger_kind IN ('solved','local_resolved','closed','n8n_source'))"
+        ).format(
+            summary_tasks_table,
+            sql.Identifier("support_hermes_summary_tasks_trigger_kind_check"),
+        ))
         cur.execute(sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at, request_id)").format(
             sql.Identifier("idx_support_hermes_turn_requests_claim"), self._table("support_hermes_turn_requests")))
         cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id) WHERE status='active'").format(

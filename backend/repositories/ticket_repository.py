@@ -1280,11 +1280,13 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
-# v16 combines the two v15-level changes (neither separately deployed): the
+# v18 adds the n8n knowledge-source trigger to the Hermes Summary task check.
+# v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v17-knowledge-source-intake"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v18-n8n-summary-trigger"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v17-knowledge-source-intake",
     "2026-single-ai-managed-v16-weknora-skill-candidate-key",
     "2026-single-ai-managed-v11-delivery-cancelled",
     "2026-single-ai-managed-v10-enablement-relay",
