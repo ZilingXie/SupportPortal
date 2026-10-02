@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-02T17:16:26Z",
-  "source_base_commit": "61df4fa9192b8e81883a638211e0e495a043c119",
-  "registry_digest": "91a7f6dbc59595b28a126ab57e9d7ad69fdc0c7e857f992b2be85c64730f78f0",
+  "generated_at": "2026-10-02T18:44:32Z",
+  "source_base_commit": "3bf93e0895696e567073f357c9a10a88028b458c",
+  "registry_digest": "6079a3394997e91dc420e50e542c3a21f7a312f9b7f560f229435c5831c40b2f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4856,33 +4856,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮全量定向（in-memory）",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_automation_ecs_api.py",
-          "result": "全部通过（修复轮新增恢复序/晚到回执/reopen 阻断/决策闭环/来源消费链/lineage DTO 回归）"
+          "label": "SupportPortal 修复轮二全量定向（12 套件）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_hermes_knowledge_workflow_postgres.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_hermes_case_workflow_postgres.py test_automation_ecs_api.py",
+          "result": "194 passed, 11 skipped（新增：决策 resolution 闭环/审批写受控完成/过期目标版本回停/执行时与运行中来源指纹 divergence/原生 Case 全链/Review 证据全文+正文版本/standalone 输出合同+lineage 校验+空对空+失败记录）"
         },
         {
           "type": "test",
-          "label": "隔离 PostgreSQL 证据（本地 PG14，独立库 hwkg_iso_1002）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=host=localhost port=5432 dbname=hwkg_iso_1002 .venv/bin/python -m pytest -q test_weknora_promotion_postgres.py test_hermes_knowledge_workflow_postgres.py test_hermes_case_workflow_postgres.py test_knowledge_governance_review_fixes.py",
-          "result": "38 passed（含 PG twin 决策闭环+晚到回执+reopen 阻断；standalone NULL lineage FK 修正）"
-        },
-        {
-          "type": "decision",
-          "label": "v18→v19 增量迁移路径（脚本验证）",
-          "command": "psycopg 脚本：bootstrap v19 → 版本回拨 v18 + 删除 human_* 列 → 重新 initialize",
-          "result": "版本推进回 v19；human_decision/human_decision_detail/human_decided_at 三列恢复；status CHECK 含 rejected；NULL lineage 与 rejected 状态插入实测通过"
+          "label": "隔离 PostgreSQL（本地 PG14 独立库）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=host=localhost port=5432 dbname=\u003cisolated> pytest -q 四个 PG 套件",
+          "result": "42 passed（含决策闭环 PG twin：approve 应用 resolution、行锁 SELECT FOR UPDATE、rejected 终态）"
         },
         {
           "type": "test",
-          "label": "WeKnora fork（Go）修复轮",
-          "command": "cd /tmp/WeKnora && go test ./internal/pkg/idempotency/ ./internal/application/repository/ ./internal/handler/（分支 codex/supportportal-write-contract @ eb9439e+8bfb764）",
-          "result": "全过；新增 TestWithTxJoinExecuteTransaction 证明对象+回执同事务回滚/提交；application/service 仅存环境性 TestSkillPythonVerifier 失败（无改动基线同败，venv 缺包）"
+          "label": "WeKnora fork PostgreSQL 契约测试（第二轮新增，WEKNORA_TEST_POSTGRES_DSN 门控）",
+          "command": "go test ./internal/pkg/idempotency/ -run TestPostgres -v（本地 PG14 独立库）",
+          "result": "3 passed：真实 promotion 键（176+ 字符）入库+回放；同键同请求并发仅 1 次业务写/1 个对象/双方同结果；同键异请求恰一个 409 且仅 1 对象。同时抓出并修复 char(64) 空白填充缺陷（改 varchar(64)）"
         },
         {
           "type": "test",
-          "label": "hermes-deploy weknora_tools 修复轮",
-          "command": ".venv/bin/python -m pytest build/weknora_tools/ -q（worktree codex/weknora-tools @ 568dde9）",
-          "result": "8 passed（新增 knowledge_id/status=active/异常结构显式错误断言）"
+          "label": "WeKnora fork 全量 Go 套件",
+          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 codex/supportportal-write-contract @ 22e6fed）",
+          "result": "111 packages ok, 0 FAIL；新增 post-commit 队列回滚丢弃/提交发布测试、governance lineage 持久化替换回读测试、ProcessManualUpdate not-found 改为重试错误"
+        },
+        {
+          "type": "test",
+          "label": "hermes-deploy weknora_tools",
+          "command": "pytest build/weknora_tools/ -q（worktree codex/weknora-tools @ 568dde9，本轮无增量）",
+          "result": "8 passed"
         }
       ],
       "source_refs": [
@@ -15545,7 +15545,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "修复轮实现完成未 finalize：12 项 P1 与合同缺口已修（决策闭环 API/恢复序/晚到回执/来源消费链/lineage DTO/WeKnora 同事务+作用域/插件合同），等待第二轮独立验收。验收通过后按已授权流程合并并部署 Preproduction（WeKnora fork 镜像构建与部署通道仍需实施部署前固定；n8n 草稿发布与 AgentMemory 退休终步另行授权）。",
+      "next_action": "第二轮修复完成未 finalize：8 项阻断 + 3 项未闭合全部处理（键长/并发窗口/索引时序/原生入口/审批 resolution/检索证据/代际冻结/lineage 持久化/standalone 合同/TypeError/旧写入 prompt），等待第三轮定向复验。验收通过后按已授权流程合并并部署 Preproduction（WeKnora fork 镜像通道、n8n 草稿发布、AgentMemory 退休另行授权；investigation-manual prompt 变更须部署前显式 draft+schedule）。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15563,33 +15563,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮全量定向（in-memory）",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_automation_ecs_api.py",
-          "result": "全部通过（修复轮新增恢复序/晚到回执/reopen 阻断/决策闭环/来源消费链/lineage DTO 回归）"
+          "label": "SupportPortal 修复轮二全量定向（12 套件）",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_hermes_knowledge_workflow_postgres.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_hermes_case_workflow_postgres.py test_automation_ecs_api.py",
+          "result": "194 passed, 11 skipped（新增：决策 resolution 闭环/审批写受控完成/过期目标版本回停/执行时与运行中来源指纹 divergence/原生 Case 全链/Review 证据全文+正文版本/standalone 输出合同+lineage 校验+空对空+失败记录）"
         },
         {
           "type": "test",
-          "label": "隔离 PostgreSQL 证据（本地 PG14，独立库 hwkg_iso_1002）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=host=localhost port=5432 dbname=hwkg_iso_1002 .venv/bin/python -m pytest -q test_weknora_promotion_postgres.py test_hermes_knowledge_workflow_postgres.py test_hermes_case_workflow_postgres.py test_knowledge_governance_review_fixes.py",
-          "result": "38 passed（含 PG twin 决策闭环+晚到回执+reopen 阻断；standalone NULL lineage FK 修正）"
-        },
-        {
-          "type": "decision",
-          "label": "v18→v19 增量迁移路径（脚本验证）",
-          "command": "psycopg 脚本：bootstrap v19 → 版本回拨 v18 + 删除 human_* 列 → 重新 initialize",
-          "result": "版本推进回 v19；human_decision/human_decision_detail/human_decided_at 三列恢复；status CHECK 含 rejected；NULL lineage 与 rejected 状态插入实测通过"
+          "label": "隔离 PostgreSQL（本地 PG14 独立库）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=host=localhost port=5432 dbname=\u003cisolated> pytest -q 四个 PG 套件",
+          "result": "42 passed（含决策闭环 PG twin：approve 应用 resolution、行锁 SELECT FOR UPDATE、rejected 终态）"
         },
         {
           "type": "test",
-          "label": "WeKnora fork（Go）修复轮",
-          "command": "cd /tmp/WeKnora && go test ./internal/pkg/idempotency/ ./internal/application/repository/ ./internal/handler/（分支 codex/supportportal-write-contract @ eb9439e+8bfb764）",
-          "result": "全过；新增 TestWithTxJoinExecuteTransaction 证明对象+回执同事务回滚/提交；application/service 仅存环境性 TestSkillPythonVerifier 失败（无改动基线同败，venv 缺包）"
+          "label": "WeKnora fork PostgreSQL 契约测试（第二轮新增，WEKNORA_TEST_POSTGRES_DSN 门控）",
+          "command": "go test ./internal/pkg/idempotency/ -run TestPostgres -v（本地 PG14 独立库）",
+          "result": "3 passed：真实 promotion 键（176+ 字符）入库+回放；同键同请求并发仅 1 次业务写/1 个对象/双方同结果；同键异请求恰一个 409 且仅 1 对象。同时抓出并修复 char(64) 空白填充缺陷（改 varchar(64)）"
         },
         {
           "type": "test",
-          "label": "hermes-deploy weknora_tools 修复轮",
-          "command": ".venv/bin/python -m pytest build/weknora_tools/ -q（worktree codex/weknora-tools @ 568dde9）",
-          "result": "8 passed（新增 knowledge_id/status=active/异常结构显式错误断言）"
+          "label": "WeKnora fork 全量 Go 套件",
+          "command": "cd /tmp/WeKnora && go test ./internal/...（分支 codex/supportportal-write-contract @ 22e6fed）",
+          "result": "111 packages ok, 0 FAIL；新增 post-commit 队列回滚丢弃/提交发布测试、governance lineage 持久化替换回读测试、ProcessManualUpdate not-found 改为重试错误"
+        },
+        {
+          "type": "test",
+          "label": "hermes-deploy weknora_tools",
+          "command": "pytest build/weknora_tools/ -q（worktree codex/weknora-tools @ 568dde9，本轮无增量）",
+          "result": "8 passed"
         }
       ],
       "source_refs": [
@@ -15603,7 +15603,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-03T00:00:00Z",
+      "updated_at": "2026-10-03T12:00:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
@@ -15617,6 +15617,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-10-03T00:00:00Z",
           "note": "验收修复轮（12 P1 + 合同缺口）：SP 三提交 4e773dba（P1-9）/61df4fa9（P1-4）+本轮（P1 决策闭环+lineage DTO+v19 增量修正）；WeKnora fork eb9439e+8bfb764（P1-1/2/3）；hermes-deploy 568dde9（P1-12）。隔离 PG 38 passed + v18→v19 增量路径实测。未实施：n8n 草稿发布、WeKnora fork 镜像部署、AgentMemory 退休终步。"
+        },
+        {
+          "at": "2026-10-03T12:00:00Z",
+          "note": "第二轮验收修复：SP 8 提交（1c6f4ba3..3bf93e08）；WeKnora 3 提交（6aa464d/25422e2/22e6fed，含 PG 契约测试与 char(64)→varchar(64) 修复）；hermes-deploy 无增量。Go PG 契约（键长/并发）与 SP PG 42 passed 为本轮新证据。"
         }
       ]
     },
