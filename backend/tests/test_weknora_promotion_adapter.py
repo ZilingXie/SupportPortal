@@ -287,10 +287,14 @@ def test_supplement_without_base_version_is_rejected() -> None:
     assert client.calls == []
 
 
-def test_supplement_with_confirmed_base_version_appends() -> None:
+def test_supplement_submits_the_complete_body_verbatim() -> None:
+    """Review round 1 P1-8: proposed_content is the COMPLETE post-operation
+    body; the adapter submits it verbatim — never prepends the stored body
+    (double concatenation when the review already integrated it)."""
     client = FakeWeKnoraStore(
         created_objects={"doc-7": {"title": "T", "content": "existing", "version": "5"}}
     )
+    full_body = "existing\n\nAdditional finding integrated by the review"
     outcome = WeKnoraPromotionAdapter(client).execute(
         _task(
             decision="supplement",
@@ -299,7 +303,7 @@ def test_supplement_with_confirmed_base_version_appends() -> None:
                 "candidate_type": "knowledge",
                 "decision": "supplement",
                 "title": "",
-                "content": "Additional finding",
+                "content": full_body,
                 "target_object_id": "doc-7",
                 "base_version": "5",
             },
@@ -308,7 +312,7 @@ def test_supplement_with_confirmed_base_version_appends() -> None:
     assert outcome.status == "accepted"
     update_kwargs = client.calls[1][1]
     assert update_kwargs["base_version"] == "5"
-    assert update_kwargs["content"] == "existing\n\nAdditional finding"
+    assert update_kwargs["content"] == full_body
 
 
 def test_targeted_update_without_conditional_update_support_goes_to_human_review() -> None:

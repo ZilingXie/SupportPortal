@@ -157,13 +157,11 @@ class WeKnoraPromotionAdapter:
                     failure_detail="target current version is not readable; refusing to overwrite",
                     weknora_object_id=target_object_id,
                 )
-            if decision == "supplement":
-                current_content = str(current.get("content") or "").strip()
-                resolved_content = (
-                    f"{current_content}\n\n{content}" if current_content else content
-                )
-            else:
-                resolved_content = content
+            # proposed_content is the COMPLETE post-operation body (review
+            # manual v2): the adapter submits it verbatim. Never prepend the
+            # stored body — that double-concatenates when the review already
+            # integrated the existing text (review round 1, P1-8).
+            resolved_content = content
             resolved_title = title or str(current.get("title") or "")
             resolved_base_version = current_version
         else:
@@ -179,7 +177,6 @@ class WeKnoraPromotionAdapter:
                 known_object_id=known_object_id,
                 known_version=str(task.get("weknora_version") or "").strip(),
                 expected_content=resolved_content,
-                supplement_content=content if decision == "supplement" else "",
                 target_object_id=target_object_id,
             )
             if reconciliation is not None:
@@ -288,7 +285,6 @@ class WeKnoraPromotionAdapter:
         known_object_id: str,
         known_version: str,
         expected_content: str,
-        supplement_content: str,
         target_object_id: str,
     ) -> WeKnoraPromotionOutcome | None:
         """A retried task that already recorded a WeKnora object must prove the
@@ -319,10 +315,9 @@ class WeKnoraPromotionAdapter:
             )
 
         read_content = str(read.get("content") or "").strip()
-        if decision == "supplement" and supplement_content:
-            content_matches = read_content.endswith(supplement_content)
-        else:
-            content_matches = read_content == expected_content
+        # Full-body comparison for every decision: proposed_content carries
+        # the complete post-operation body, so the readback must equal it.
+        content_matches = read_content == expected_content
         read_version = str(read.get("version") or "").strip()
         version_matches = not known_version or not read_version or known_version == read_version
         if content_matches and version_matches:

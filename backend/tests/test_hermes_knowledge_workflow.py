@@ -333,6 +333,80 @@ def test_newer_source_version_changes_fingerprint(monkeypatch) -> None:
     assert before != after
 
 
+def test_new_generation_gets_its_own_review(monkeypatch) -> None:
+    """Review round 1 P1-7: a second Summary generation must produce a NEW
+    review task, session, and idempotency key — never reuse the first
+    generation's review."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    import json as _json
+
+    summary_output = {
+        "problem_description": "p",
+        "timeline": ["t"],
+        "investigation_process": ["i"],
+        "confirmed_facts": ["f"],
+        "root_cause_and_solution": "rc",
+        "verification_results": ["v"],
+        "limitations_and_unconfirmed": ["lim"],
+        "evidence_references": ["e"],
+        "candidates": [
+            {"candidate_id": "c1", "statement": "s", "context": "c",
+             "evidence_references": ["e"]},
+        ],
+    }
+
+    class _SummaryOnlyClient:
+        class settings:
+            turn_timeout_seconds = 5.0
+            poll_interval_seconds = 0.0
+
+        def start_run(self, **kwargs):
+            return {"run_id": "r1", "status": "started"}
+
+        def get_run(self, run_id):
+            return {
+                "run_id": run_id,
+                "status": "completed",
+                "output": f"```json\n{_json.dumps(summary_output)}\n```",
+            }
+
+        def stop_run(self, run_id):
+            return {"run_id": run_id, "status": "stopping"}
+
+    from backend.services.hermes_knowledge_workflow import drain_hermes_knowledge_tasks
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+    # Generation 1 completes at its own lineage revision.
+    drain_hermes_knowledge_tasks(
+        repository, client=_SummaryOnlyClient(), limit=5, sleeper=lambda _s: None,
+    )
+    # Late-arriving material advances the ledger; closed earns generation 2.
+    stored = repository._hermes_case_bindings["123-1"]
+    stored["current_ledger_revision"] = int(stored["current_ledger_revision"]) + 1
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second is not None
+    assert second["summary_task_id"] != first["summary_task_id"]
+    drain_hermes_knowledge_tasks(
+        repository, client=_SummaryOnlyClient(), limit=5, sleeper=lambda _s: None,
+    )
+
+
+    reviews = repository.list_hermes_review_tasks()
+    assert len(reviews) == 2, [r["review_task_id"] for r in reviews]
+    review_ids = {r["review_task_id"] for r in reviews}
+    review_sessions = {r["review_session_id"] for r in reviews}
+    assert len(review_sessions) == 2
+    # Each review points at its OWN summary generation.
+    by_summary = {r["summary_task_id"] for r in reviews}
+    assert by_summary == {first["summary_task_id"], second["summary_task_id"]}
+    # The generation suffix is present on the second review id.
+    assert any(":g" in rid for rid in review_ids)
+
+
 def test_n8n_source_summary_normalizes_string_lists(monkeypatch) -> None:
     _enable_real_mode(monkeypatch)
     repository = _repository()

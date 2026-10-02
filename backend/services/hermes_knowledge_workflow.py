@@ -106,15 +106,36 @@ def summary_task_id_for(engineer_case_id: str, episode: int) -> str:
     return f"hermes-summary-task:{engineer_case_id}:{episode}"
 
 
-def review_task_id_for(engineer_case_id: str, episode: int) -> str:
-    return f"hermes-review-task:{engineer_case_id}:{episode}"
+def review_task_id_for(
+    engineer_case_id: str, episode: int, *, generation: str = ""
+) -> str:
+    # The generation suffix (from the summary task id) flows through so a
+    # NEW Summary generation earns a NEW independent Review — reviewing the
+    # same (case, episode) with different frozen input must never reuse the
+    # first generation's review task/session/idempotency key (review P1-7).
+    suffix = f":{generation}" if generation else ""
+    return f"hermes-review-task:{engineer_case_id}:{episode}{suffix}"
 
 
-def review_session_id_for(engineer_case_id: str, episode: int) -> str:
+def review_session_id_for(
+    engineer_case_id: str, episode: int, *, generation: str = ""
+) -> str:
+    suffix = f":{generation}" if generation else ""
     return (
         "hermes-session:"
-        + str(uuid5(NAMESPACE_URL, f"supportportal:knowledge-review:{engineer_case_id}:{episode}"))
+        + str(uuid5(
+            NAMESPACE_URL,
+            f"supportportal:knowledge-review:{engineer_case_id}:{episode}{suffix}",
+        ))
     )
+
+
+def _summary_generation(summary_task_id: str) -> str:
+    """The :g<hash> generation suffix of a summary task id ('' for the base)."""
+    parts = str(summary_task_id or "").rsplit(":", 1)
+    if len(parts) == 2 and parts[1].startswith("g") and len(parts[1]) > 1:
+        return parts[1]
+    return ""
 
 
 def _pinned_agent_model() -> str | None:
@@ -581,9 +602,10 @@ def run_hermes_summary_task(
         packet_payload["content_hash"] = summary_packet_content_hash(packet_payload)
         packet = HermesSummaryPacket.model_validate(packet_payload)
         _require_current_lineage(repository, task)
+        generation = _summary_generation(summary_task_id)
         review_payload = {
             "review_task_id": review_task_id_for(
-                str(task["engineer_case_id"]), int(task["episode"])
+                str(task["engineer_case_id"]), int(task["episode"]), generation=generation
             ),
             "summary_task_id": summary_task_id,
             "engineer_case_id": str(task["engineer_case_id"]),
@@ -593,10 +615,13 @@ def run_hermes_summary_task(
             "ledger_revision": int(task["ledger_revision"]),
             "conversation_version": int(task["conversation_version"]),
             "review_session_id": review_session_id_for(
-                str(task["engineer_case_id"]), int(task["episode"])
+                str(task["engineer_case_id"]), int(task["episode"]), generation=generation
             ),
             "idempotency_key": (
-                "hmknow:" + review_task_id_for(str(task["engineer_case_id"]), int(task["episode"]))
+                "hmknow:"
+                + review_task_id_for(
+                    str(task["engineer_case_id"]), int(task["episode"]), generation=generation
+                )
             ),
             "prompt_version": KNOWLEDGE_REVIEW_PROMPT_KEY,
             "skill_version": HERMES_KNOWLEDGE_REVIEW_SKILL_VERSION,

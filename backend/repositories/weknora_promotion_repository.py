@@ -274,8 +274,10 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 """
                 CREATE TABLE IF NOT EXISTS {} (
                     promotion_id TEXT PRIMARY KEY,
-                    engineer_case_id TEXT NOT NULL REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
-                    client_ticket_id TEXT NOT NULL,
+                    -- Standalone (case-less) sources use NULL lineage; see the
+                    -- v19 migration below for the FK/NOT NULL relaxation.
+                    engineer_case_id TEXT REFERENCES {}(engineer_case_id) ON DELETE CASCADE,
+                    client_ticket_id TEXT,
                     investigation_id TEXT,
                     summary_session_id TEXT, summary_run_id TEXT,
                     review_session_id TEXT, review_run_id TEXT,
@@ -325,6 +327,15 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 self._table(_WEKNORA_PROMOTION_TABLE),
             )
         )
+        # v19: relax NOT NULL on the case lineage for standalone
+        # (case-less) promotions (knowledge_source_review); existing v18
+        # databases need the column constraint dropped.
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ALTER COLUMN engineer_case_id DROP NOT NULL"
+        ).format(promotion_table))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ALTER COLUMN client_ticket_id DROP NOT NULL"
+        ).format(promotion_table))
         # v16: skill proposals enter the pipeline as human-review-only records;
         # swap the legacy (knowledge, memory) check on databases created before
         # the enum extension.
