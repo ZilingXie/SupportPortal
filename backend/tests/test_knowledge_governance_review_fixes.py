@@ -291,6 +291,8 @@ class TestSearchEvidenceContract:
                 ).search("join failures")
 
     def test_unavailable_surface_downgrades_writable_decisions(self) -> None:
+        from backend.services.hermes_weknora import WeKnoraUnavailable
+
         class _BrokenSearch:
             def configured(self) -> bool:
                 return True
