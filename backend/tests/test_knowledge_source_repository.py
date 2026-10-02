@@ -95,6 +95,99 @@ def test_source_intake_is_versioned_and_queues_summary(monkeypatch) -> None:
     assert len(repository.list_hermes_summary_tasks()) == 1
 
 
+def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> None:
+    """Review round 2, R2-4: a Zendesk ticket owned ONLY by a native Hermes
+    case (automation binding, no legacy engineer case) must enter the same
+    governance pipeline through the standalone Summary path — Summary →
+    Review → WeKnora promotion — instead of being accepted with no work."""
+    from backend.services.knowledge_standalone_workflow import (
+        drain_standalone_knowledge_tasks,
+    )
+    from backend.tests.test_knowledge_standalone_workflow import (
+        SUMMARY_OUTPUT,
+        _NoMemory,
+        _NoWeKnora,
+        _ScriptedHermes,
+    )
+
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    repository.save_ticket(
+        {
+            "ticket_id": "13801",
+            "subject": "Native case investigation",
+            "status": "solved",
+            "messages": [],
+            "created_at": "2026-10-02T00:00:00Z",
+            "updated_at": "2026-10-02T01:00:00Z",
+        }
+    )
+    # ONLY a native binding exists — no legacy engineer case is created.
+    store._hermes_bindings[("automation.production", "13801")] = {
+        "namespace": "automation.production",
+        "zendesk_ticket_id": "13801",
+        "hermes_session_id": "hermes-session:native-13801",
+        "session_kind": "case",
+        "status": "active",
+        "created_at": "2026-10-02T00:00:00Z",
+        "updated_at": "2026-10-02T00:00:00Z",
+    }
+
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        response = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13801", "2026-10-02T01:00:00Z"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["status"] == "accepted"
+    assert body["summary_task_id"], body
+    assert body["summary_task_id"].startswith("knowledge-source-summary:zendesk_ticket:13801:")
+    # The intake is linked to the standalone task with NULL case lineage.
+    intake = repository.get_knowledge_source(body["task_id"])
+    assert intake["summary_task_id"] == body["summary_task_id"]
+    assert intake["engineer_case_id"] is None
+
+    # The full pipeline runs: standalone Summary → Review → promotion.
+    drain_standalone_knowledge_tasks(
+        repository,
+        client=_ScriptedHermes(SUMMARY_OUTPUT, {
+            "decisions": [
+                {
+                    "candidate_id": "c1", "candidate_type": "knowledge",
+                    "decision": "human_review", "confidence": 0.4,
+                    "rationale": "evidence surfaces unavailable in this test",
+                    "proposed_content": "", "target_object": None,
+                    "target_version": None,
+                }
+            ]
+        }),
+        weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+    )
+    promotions = repository.list_weknora_promotions()
+    assert len(promotions) == 1
+    assert promotions[0]["source_type"] == "knowledge_source_review"
+    # Case-less lineage: empty in the in-memory twin (the PG twin stores
+    # NULL on the same enqueue path).
+    assert not promotions[0]["engineer_case_id"]
+
+
+def _snapshot_for(ticket_id: str, version: str) -> dict:
+    return {
+        "schema_version": "knowledge-source-v1",
+        "source_type": "zendesk_ticket",
+        "source_id": ticket_id,
+        "source_updated_at": version,
+        "payload": {"ticket": {"id": ticket_id}, "comments": []},
+        "references": {"zendesk_url": f"https://example.invalid/tickets/{ticket_id}"},
+    }
+
+
 def test_source_intake_requires_bearer_and_state_redacts_raw_payload() -> None:
     client, _store = _client()
     missing = client.post(

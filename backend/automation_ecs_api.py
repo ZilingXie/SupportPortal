@@ -565,6 +565,44 @@ def create_app(    *,
                             summary_task_id=summary_task_id,
                             now_value=now,
                         )
+                else:
+                    # Review round 2, R2-4: a Zendesk ticket owned by a NATIVE
+                    # Hermes case (automation binding, no legacy engineer
+                    # case) must not be silently accepted without a Summary —
+                    # it enters the SAME governance pipeline through the
+                    # standalone Summary path.
+                    binding = coordination_store.get_hermes_case_binding(snapshot.source_id)
+                    if (
+                        isinstance(binding, dict)
+                        and str(binding.get("session_kind") or "case") == "case"
+                    ):
+                        record = await asyncio.to_thread(
+                            repository.get_knowledge_source,
+                            str(receipt.get("task_id") or intake_id),
+                        )
+                        if isinstance(record, dict):
+                            from backend.services.knowledge_standalone_workflow import (
+                                queue_standalone_summary_for_source,
+                            )
+
+                            queued_standalone = await asyncio.to_thread(
+                                queue_standalone_summary_for_source,
+                                repository,
+                                intake=record,
+                                now_value=now,
+                            )
+                            if isinstance(queued_standalone, dict):
+                                summary_task_id = (
+                                    str(queued_standalone.get("summary_task_id") or "").strip()
+                                    or None
+                                )
+                                await asyncio.to_thread(
+                                    repository.link_knowledge_source_summary,
+                                    intake_id,
+                                    engineer_case_id=None,
+                                    summary_task_id=summary_task_id,
+                                    now_value=now,
+                                )
             except Exception as exc:  # noqa: BLE001 - receipt must expose source acceptance
                 # Keep the durable source receipt, but make the missing async
                 # linkage visible to the caller and logs for retry/repair.
