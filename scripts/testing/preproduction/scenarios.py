@@ -671,13 +671,53 @@ def reply_result_to_relay_task(
         token=identity["token"],
         headers=dict(identity_headers),
     )
+    # The POST's fencing message_id identifies the REQUEST message being
+    # replied to, not the newly-sent result message. Resolve the actual
+    # result message from a post-send readback: the reply must now be the
+    # task's current message, authored by this client and carrying the
+    # result payload. Fail closed when the readback cannot prove it.
+    reply_to_message_id = fencing["current_message_id"]
+    refreshed = _fetch_relay_task(task_id, identity=identity, get_json=get_json)
+    result_message_id = str(refreshed["fencing"]["current_message_id"] or "")
+    result_message: dict[str, Any] | None = None
+    for message in refreshed["task"].get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        if str(message.get("message_id") or message.get("messageId") or "") == result_message_id:
+            result_message = message
+            break
+    verified = (
+        result_message is not None
+        and result_message_id
+        and result_message_id != reply_to_message_id
+        and str(result_message.get("from_agent_id") or result_message.get("fromAgentId") or "")
+        == identity["agent_id"]
+        and any(
+            str(part.get("text") or "").lstrip().startswith("{")
+            and str(
+                json.loads(str(part.get("text") or "").lstrip()).get("schema_version") or ""
+            )
+            == RELAY_RESULT_SCHEMA
+            for part in result_message.get("parts") or []
+            if isinstance(part, dict)
+        )
+    )
+    if not verified:
+        raise AutomationTestScenarioError(
+            "result reply could not be verified by post-send readback "
+            f"(current={result_message_id!r}, replied-to={reply_to_message_id!r}); "
+            "refusing to report an unverified result message id"
+        )
     return {
         "replied": True,
         "task_id": task_id,
         "response": response,
+        "reply_to_message_id": reply_to_message_id,
+        "result_message_id": result_message_id,
         "detail": (
             f"task={task_id} actor={identity['agent_id']} "
-            f"message={fencing['current_message_id']} turn={fencing['turn_sequence']}"
+            f"result_message={result_message_id} reply_to={reply_to_message_id} "
+            f"turn={fencing['turn_sequence']}"
         ),
     }
 
@@ -818,7 +858,11 @@ def run_pp_en_quick(
         "precheck_recommendation": approval.get("precheck_recommendation"),
         "relay_outcome": outcome,
         "archer_write_attempted": write_attempted,
-        "reply": {"task_id": reply.get("task_id")},
+        "reply": {
+            "task_id": reply.get("task_id"),
+            "reply_to_message_id": reply.get("reply_to_message_id"),
+            "result_message_id": reply.get("result_message_id"),
+        },
         "steps": [step.as_dict() for step in engine.steps],
     }
 

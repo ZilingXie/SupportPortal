@@ -174,6 +174,37 @@ def _relay_task_response(
     return {**task, "messages": messages}
 
 
+def _advanced_task_response() -> dict:
+    """Task state AFTER the result reply: the new current message m-2 is
+    authored by zac-agent and carries enablement-relay-result-v1."""
+    result_payload = {
+        "schema_version": "enablement-relay-result-v1",
+        "request_id": "enr-AC-13900-v1",
+        "outcome": "enabled",
+        "write_attempted": True,
+    }
+    return {
+        "task": {
+            "task_id": "task-42",
+            "current_message_id": "m-2",
+            "turn_sequence": 4,
+            "task_version": 6,
+            "status": "open",
+            "to_agent_id": ECS_AGENT_ID,
+        },
+        "messages": [
+            _request_message("m-1"),
+            {
+                "message_id": "m-2",
+                "from_agent_id": "zac-agent",
+                "to_agent_id": ECS_AGENT_ID,
+                "delivery_status": "delivered",
+                "parts": [{"kind": "text", "text": json.dumps(result_payload)}],
+            },
+        ],
+    }
+
+
 def _happy_queue(engine: FakeEngine, *, outcome: str, write: bool) -> None:
     engine.db_queue = [
         ("FROM support_account_cases", [
@@ -260,7 +291,9 @@ class PpEnQuickTests(unittest.TestCase):
         def get(url, **kwargs):
             gets.append(url)
             assert url.endswith("/tasks/task-42")
-            return _relay_task_response()
+            # Before the POST: dispatched state. After the POST (post-send
+            # readback): the reply is the new current message m-2.
+            return _advanced_task_response() if len(posts) else _relay_task_response()
 
         report = pp.run_pp_en_quick(
             engine,
@@ -283,8 +316,8 @@ class PpEnQuickTests(unittest.TestCase):
         self.assertIn("/v1/enablement-relay/requests/enr-AC-13900-v1", fetch_calls[0]["url"])
         self.assertEqual(fetch_calls[0]["token"], "intake-token")
         self.assertEqual(
-            len(gets), 2,
-            "one fetch inside the unified binding probe (polls until delivered), one for the reply",
+            len(gets), 3,
+            "binding probe + reply fencing + post-send result readback",
         )
         # Result reply: real mutation contract — nested task envelope unwrapped,
         # current message id included, fencing from the fresh GET, and EXACTLY
@@ -308,6 +341,20 @@ class PpEnQuickTests(unittest.TestCase):
         )
         self.assertEqual(posts[0]["headers"]["X-AgentRelay-Agent-Id"], "zac-agent")
         self.assertEqual(posts[0]["token"], "client-token")
+        # The report must distinguish the request message being replied to
+        # from the newly-sent result message (round-10 acceptance).
+        self.assertEqual(report["reply"]["reply_to_message_id"], "m-1")
+        self.assertEqual(report["reply"]["result_message_id"], "m-2")
+        self.assertNotEqual(
+            report["reply"]["result_message_id"],
+            report["reply"]["reply_to_message_id"],
+        )
+        reply_step = next(
+            s for s in report["steps"]
+            if s["step"] == "result replied to relay task (enablement-relay-result-v1)"
+        )
+        self.assertIn("result_message=m-2", reply_step["detail"])
+        self.assertIn("reply_to=m-1", reply_step["detail"])
         step_names = [s["step"] for s in report["steps"]]
         self.assertIn("inbox binding verified (server readback + same-AppID table)", step_names)
         self.assertIn("result replied to relay task (enablement-relay-result-v1)", step_names)
@@ -371,7 +418,15 @@ class PpEnQuickTests(unittest.TestCase):
         fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
         state = {"polls": 0}
 
+        posted = {"n": 0}
+
+        def post(url, **kwargs):
+            posted["n"] += 1
+            return {"ok": True}
+
         def get(url, **kwargs):
+            if posted["n"]:
+                return _advanced_task_response()
             state["polls"] += 1
             # First poll: still pending (dispatch beat). Then delivered.
             return _relay_task_response(
@@ -386,7 +441,7 @@ class PpEnQuickTests(unittest.TestCase):
             relay_client_identity=_identity(),
             ecs_agent_id=ECS_AGENT_ID,
             fetch_json=fetch,
-            post_json=lambda *a, **k: {"ok": True},
+            post_json=post,
             get_json=get,
             workdir=self._workdir(),
         )
@@ -512,6 +567,41 @@ class PpEnQuickTests(unittest.TestCase):
             self.assertIn("missing fencing fields", str(ctx.exception))
             self.assertEqual(calls, [])
 
+    def test_unverified_result_readback_fails_closed(self) -> None:
+        """Round-10 regression: when the post-send readback shows the task
+        unchanged (current message still the request m-1, no new result
+        message from zac-agent), the reply must fail closed — never report
+        the request message id as the result message id."""
+        engine = FakeEngine()
+        _happy_queue(engine, outcome="enabled", write=True)
+        fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        calls: list = []
+        posted = {"n": 0}
+
+        def post(url, **kwargs):
+            posted["n"] += 1
+            return {"message_id": "m-9"}
+
+        def get(url, **kwargs):
+            # Readback after POST never advances: same dispatched state.
+            return _relay_task_response()
+
+        with self.assertRaises(AutomationTestScenarioError) as ctx:
+            pp.run_pp_en_quick(
+                engine,
+                skill_runner=_fake_runner("execute", "enabled", True, calls),
+                relay_base="https://preprod.example.test/automation/preproduction",
+                relay_token="intake-token",
+                relay_client_identity=_identity(),
+                ecs_agent_id=ECS_AGENT_ID,
+                fetch_json=fetch,
+                post_json=post,
+                get_json=get,
+                workdir=self._workdir(),
+            )
+        self.assertIn("could not be verified by post-send readback", str(ctx.exception))
+        self.assertIn("m-1", str(ctx.exception), "diagnostics name the stale request message")
+
     def test_transport_failure_keeps_waiting_then_proceeds(self) -> None:
         """Transport-level read failures stay transient: wait, then proceed."""
         engine = FakeEngine()
@@ -520,7 +610,15 @@ class PpEnQuickTests(unittest.TestCase):
         fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
         polls = {"n": 0}
 
+        posted = {"n": 0}
+
+        def post(url, **kwargs):
+            posted["n"] += 1
+            return {"ok": True}
+
         def get(url, **kwargs):
+            if posted["n"]:
+                return _advanced_task_response()
             polls["n"] += 1
             if polls["n"] == 1:
                 raise OSError("temporary network outage")
@@ -534,7 +632,7 @@ class PpEnQuickTests(unittest.TestCase):
             relay_client_identity=_identity(),
             ecs_agent_id=ECS_AGENT_ID,
             fetch_json=fetch,
-            post_json=lambda *a, **k: {"ok": True},
+            post_json=post,
             get_json=get,
             workdir=self._workdir(),
         )
@@ -778,6 +876,15 @@ class PpEnQuickTests(unittest.TestCase):
         _happy_queue(engine, outcome="already_satisfied", write=False)
         calls: list = []
         fetch, _ = _fake_fetch(dict(_SERVER_REQUEST))
+        posted = {"n": 0}
+
+        def post(url, **kwargs):
+            posted["n"] += 1
+            return {"ok": True}
+
+        def get(url, **kwargs):
+            return _advanced_task_response() if posted["n"] else _relay_task_response()
+
         report = pp.run_pp_en_quick(
             engine,
             skill_runner=_fake_runner("already_satisfied", "already_satisfied", False, calls),
@@ -786,8 +893,8 @@ class PpEnQuickTests(unittest.TestCase):
             relay_client_identity=_identity(),
             ecs_agent_id=ECS_AGENT_ID,
             fetch_json=fetch,
-            post_json=lambda *a, **k: {"ok": True},
-            get_json=lambda *a, **k: _relay_task_response(),
+            post_json=post,
+            get_json=get,
             workdir=self._workdir(),
         )
         self.assertTrue(engine.all_passed())
