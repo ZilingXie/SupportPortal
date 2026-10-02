@@ -1,10 +1,10 @@
 """PP-EN-DUP scenario tests (scripted engine, all boundaries mocked).
 
-Acceptance fix-round (r2): every wait is bound through the real identity
-chain (comment → intake execution → turn event → draft → delivery), the
-replay leg demands an explicit idempotent receipt for the SAME execution
-with unchanged side-effect identity sets, and the referenced ticket is
-verified as test-scope before anything is sent.
+Acceptance fix-rounds: r2 bound every wait through the real identity chain
+(comment → intake execution → turn event → draft → delivery); r3 adds the
+environment-fenced replay entrypoint, exactly-one/completed-turn/delivered-
+content acceptance, Zendesk-readback main-ticket state, explicit SMTP
+preflight with whole-report redaction, and the verbatim incident fixture.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ _ACK_BODY = (
 )
 
 _INTAKE_PAYLOAD = {
-    "schema_version": "automation-intake-v2",
+    "schema_version": "automation-intake-v1",
     "event_id": "evt-notice",
     "event_type": "comment.created",
     "occurred_at": "2026-10-03T00:00:00+00:00",
@@ -76,6 +76,7 @@ class DupFakeEngine(ScenarioEngine):
             {"status": "open", "priority": "normal"},
             {"status": "open", "priority": "normal"},
         ]
+        self.main_ticket_status = "open"
         self.me_fails = False
 
     def db_query(self, sql, params):
@@ -117,7 +118,13 @@ class DupFakeEngine(ScenarioEngine):
             }
         if f"/tickets/{DUP_TICKET}.json" in path:
             return {"ticket": dict(self.referenced_ticket_responses.pop(0))}
-        return {"ticket": {"requester_id": 31446696404244}}
+        # The main ticket GET serves both the requester lookup (turn post) and
+        # the open/closed readback (state assertion).
+        return {"ticket": {
+            "requester_id": 31446696404244,
+            "status": self.main_ticket_status,
+            "priority": "normal",
+        }}
 
 
 def _dispatched_request(status: str = "dispatched") -> dict:
@@ -134,13 +141,26 @@ def _dispatched_request(status: str = "dispatched") -> dict:
     }
 
 
+def _queued_draft(content: str = _ACK_BODY, draft_id: str = "draft-ack") -> dict:
+    return {
+        "draft_id": draft_id,
+        "status": "queued",
+        "content": content,
+        "delivery_message_id": draft_id,
+    }
+
+
 def _happy_queue(engine: DupFakeEngine) -> None:
     """Full scripted happy path through the duplicate-notice turn.
 
     Query order: reference ownership(0) → find_case(1) → case field(2) →
     reply intent(3) → public delivery(4) → relay request(5) → dispatched(6)
     → baseline case(7)/requests(8)/job ids(9)/turn ids(10) → intake(11) →
-    turn(12) → draft(13) → delivery(14) → state case(15) → requests after(16).
+    turn(12) → draft probe(13) → rag check(14) → draft re-check(15) →
+    delivery(16) → state case(17) → requests after(18). The case-mirror
+    zendesk_ticket_status stays None throughout: a still-open ticket has no
+    backfilled mirror value, and the verdict comes from the Zendesk
+    readback instead.
     """
     engine.db_queue = [
         ("WHERE zendesk_ticket_id", [
@@ -168,11 +188,11 @@ def _happy_queue(engine: DupFakeEngine) -> None:
         }]),
         ("FROM support_enablement_relay_requests", [_dispatched_request()]),
         ("FROM support_enablement_relay_requests", [_dispatched_request()]),
-        # Turn baseline snapshots.
+        # Turn baseline snapshots (mirror status NULL — see docstring).
         ("WHERE account_case_id", [{"automation_status": "automation",
                                     "internal_email_send_status": "not_applicable",
                                     "internal_email_send_reason": "enablement_auto_review",
-                                    "zendesk_ticket_status": "open"}]),
+                                    "zendesk_ticket_status": None}]),
         ("FROM support_enablement_relay_requests", [_dispatched_request()]),
         ("FROM support_account_reply_jobs", [{"job_id": "job-confirm"}]),
         ("FROM automation_hermes_agent_turns", [{"turn_id": "turn-base"}]),
@@ -183,29 +203,28 @@ def _happy_queue(engine: DupFakeEngine) -> None:
             "payload": _INTAKE_PAYLOAD,
             "received_at": "2026-10-03T00:01:00+00:00",
         }]),
-        # Turn bound to the intake execution.
+        # Turn bound to the intake execution (completed, automation).
         ("FROM automation_hermes_agent_turns", [
             {"turn_id": "turn-notice", "direction": "automation", "status": "completed",
              "error_code": None}
         ]),
-        # Ack draft bound to the turn, queued for delivery.
-        ("FROM automation_hermes_case_drafts", [{
-            "draft_id": "draft-ack",
-            "status": "queued",
-            "content": _ACK_BODY,
-            "delivery_message_id": "draft-ack",
-        }]),
+        # Draft probe → ready.
+        ("FROM automation_hermes_case_drafts", [_queued_draft()]),
+        # RAG counter-example check after the wait: none.
+        ("FROM support_account_reply_jobs", []),
+        # Exactly-one draft re-check.
+        ("FROM automation_hermes_case_drafts", [_queued_draft()]),
         # Delivery bound to the draft via message_id.
         ("FROM support_account_zendesk_comment_deliveries", [{
             "status": "delivered",
             "zendesk_comment_id": "54170000000002",
             "immutable_content": _ACK_BODY,
         }]),
-        # Post-turn state checks.
+        # Post-turn state checks (mirror still NULL; readback says open).
         ("WHERE account_case_id", [{"automation_status": "automation",
                                     "internal_email_send_status": "not_applicable",
                                     "internal_email_send_reason": "enablement_auto_review",
-                                    "zendesk_ticket_status": "open"}]),
+                                    "zendesk_ticket_status": None}]),
         ("FROM support_enablement_relay_requests", [_dispatched_request()]),
     ]
 
@@ -255,10 +274,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertEqual(len(engine.sent_emails), 1)
         self.assertEqual(len(engine.requester_comments), 1)
         body = engine.requester_comments[0]["body"]
-        self.assertIn("submitted with higher priority", body)
-        self.assertIn("merge or close it", body)
-        self.assertIn(f"#{DUP_TICKET}", body)
-        self.assertNotIn("Please continue with this ticket", body)
+        self.assertEqual(body, pp.duplicate_notice_body(DUP_TICKET))
         # Binding-chain ids all present in the report.
         self.assertEqual(report["notice_comment_id"], "9901")
         self.assertEqual(report["notice_intake_event_id"], "evt-notice")
@@ -268,11 +284,19 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertEqual(report["ack_delivery_comment_id"], "54170000000002")
         self.assertEqual(report["relay_request_id"], "enr-AC-14000-v1")
         self.assertEqual(report["relay_request_version"], 1)
+        self.assertEqual(report["main_ticket_zendesk_status"]["status"], "open")
         # Without the replay adapter the report must NOT claim completeness.
         self.assertFalse(report["complete"])
         self.assertFalse(report["replay"]["exercised"])
         step_names = [s["step"] for s in report["steps"]]
-        self.assertIn("main ticket keeps automation ownership", step_names)
+        self.assertIn("exactly one acknowledgment draft for the notice turn", step_names)
+        self.assertIn(
+            "delivered ack content acknowledges the notice without cross-ticket claims",
+            step_names,
+        )
+        self.assertIn(
+            "main ticket not solved or closed by the notice (Zendesk readback)", step_names
+        )
         self.assertIn("original relay request still active and unchanged", step_names)
         self.assertIn("referenced ticket untouched (status and priority unchanged)", step_names)
 
@@ -297,7 +321,6 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         report = self._run(engine, replay=replay, workdir=self._workdir())
 
         self.assertTrue(engine.all_passed(), [s.as_dict() for s in engine.steps])
-        # The re-delivered payload is byte-identical (the stored intake payload).
         self.assertEqual(replay_calls, [
             {"event_id": "evt-notice", "payload": _INTAKE_PAYLOAD}
         ])
@@ -308,7 +331,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("duplicate intake re-delivery is idempotent (same execution)", step_names)
         self.assertIn("re-delivery produced zero new side effects", step_names)
 
-    # -- replay counter-examples (acceptance #3) ---------------------------
+    # -- replay counter-examples -------------------------------------------
 
     def test_replay_without_explicit_idempotent_flag_fails(self) -> None:
         engine = DupFakeEngine()
@@ -341,7 +364,23 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
                       workdir=self._workdir())
         self.assertIn("zero new side effects", str(ctx.exception))
 
-    # -- binding-chain counter-examples (acceptance #2) ---------------------
+    def test_replay_adapter_refuses_non_preproduction_base(self) -> None:
+        """Acceptance r3 #1: a Production base must yield zero sends."""
+        sent: list = []
+
+        def fake_urlopen(request, timeout=None):  # pragma: no cover - must not run
+            sent.append(request)
+            raise AssertionError("urlopen must never run for a refused base")
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            with self.assertRaises(AutomationTestScenarioError) as ctx:
+                pp.make_intake_replay_post(
+                    "https://supportcenter.stellarix.space/automation/production", "tok"
+                )
+        self.assertIn("Preproduction API base", str(ctx.exception))
+        self.assertEqual(sent, [])
+
+    # -- binding-chain counter-examples ------------------------------------
 
     def test_human_escalation_fails_the_scenario(self) -> None:
         """13819-style outcome: the notice escalates to human review → FAIL."""
@@ -360,7 +399,6 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("notice handled without human escalation", failed)
 
     def test_failed_turn_fails_the_scenario(self) -> None:
-        """A failed automation turn is not a valid ack (acceptance #2)."""
         engine = DupFakeEngine()
         _happy_queue(engine)
         engine.db_queue[12] = (
@@ -371,9 +409,23 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         with self.assertRaises(AssertionError) as ctx:
             self._run(engine, workdir=self._workdir())
         self.assertIn("status=failed", str(ctx.exception))
-        self.assertFalse(engine.all_passed())
         failed = [s.step for s in engine.steps if s.status == "FAIL"]
-        self.assertIn("notice turn completed without failure", failed)
+        self.assertIn("notice turn completed successfully", failed)
+
+    def test_human_review_status_turn_fails_the_scenario(self) -> None:
+        """Acceptance r3: direction=automation but status=human_review is not
+        a completed turn — no full pass."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[12] = (
+            "FROM automation_hermes_agent_turns",
+            [{"turn_id": "turn-notice", "direction": "automation", "status": "human_review",
+              "error_code": None}],
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("status=human_review", str(ctx.exception))
+        self.assertFalse(engine.all_passed())
 
     def test_turn_from_another_comment_cannot_bind(self) -> None:
         """The intake wait is keyed on the POSTED comment id: a turn for any
@@ -385,6 +437,23 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
             self._run(engine, workdir=self._workdir())
         self.assertIn("bound to the posted comment", str(ctx.exception))
 
+    def test_two_queued_drafts_fail_the_scenario(self) -> None:
+        """Acceptance r3: a first-match draft return must not hide a second
+        reply — exactly one acknowledgment is required."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[13] = ("FROM automation_hermes_case_drafts",
+                               [_queued_draft(), _queued_draft(draft_id="draft-ack-2")])
+        engine.db_queue[15] = ("FROM automation_hermes_case_drafts",
+                               [_queued_draft(), _queued_draft(draft_id="draft-ack-2")])
+        engine.db_queue = engine.db_queue[:16]
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("exactly one acknowledgment draft for the notice turn failed", str(ctx.exception))
+        self.assertFalse(engine.all_passed())
+        failed = [s.step for s in engine.steps if s.status == "FAIL"]
+        self.assertIn("exactly one acknowledgment draft for the notice turn", failed)
+
     def test_rag_fallback_ack_fails_the_scenario(self) -> None:
         engine = DupFakeEngine()
         _happy_queue(engine)
@@ -392,63 +461,98 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
             "draft_id": "draft-ack", "status": "awaiting_approval",
             "content": "", "delivery_message_id": None,
         }])
-        engine.db_queue[14] = (
-            "FROM support_account_reply_jobs",
-            [{"job_id": "job-rag", "status": "published",
-              "reply_intent": "rag_fallback_answer"}],
-        )
+        rag_row = ("FROM support_account_reply_jobs",
+                   [{"job_id": "job-rag", "status": "published",
+                     "reply_intent": "rag_fallback_answer"}])
+        engine.db_queue[14] = rag_row  # during the wait
+        engine.db_queue[15] = rag_row  # post-wait re-check
         engine.db_queue = engine.db_queue[:16]
         with self.assertRaises(AssertionError) as ctx:
             self._run(engine, workdir=self._workdir())
         self.assertIn("rag_fallback", str(ctx.exception))
         self.assertFalse(engine.all_passed())
 
-    def test_prior_delivery_cannot_satisfy_ack_delivery(self) -> None:
-        """Acceptance #2 counter-example: only the earlier confirmation
-        comment was delivered; the draft-bound delivery wait must time out
-        instead of accepting the old delivery row."""
+    def test_delivered_content_claiming_cross_ticket_actions_fails(self) -> None:
+        """Acceptance r3: the acceptance check runs on the DELIVERED text —
+        a compliant draft whose delivery claims merge+close must FAIL."""
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[14] = (
+        engine.db_queue[16] = (
+            "FROM support_account_zendesk_comment_deliveries",
+            [{
+                "status": "delivered",
+                "zendesk_comment_id": "54170000000002",
+                "immutable_content": (
+                    "Thanks for the note about the other ticket. We have merged the "
+                    "duplicate and closed it. We will continue with this ticket."
+                ),
+            }],
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("cross-ticket action", str(ctx.exception))
+        self.assertFalse(engine.all_passed())
+
+    def test_empty_delivered_content_fails(self) -> None:
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[16] = (
+            "FROM support_account_zendesk_comment_deliveries",
+            [{"status": "delivered", "zendesk_comment_id": "54170000000002",
+              "immutable_content": ""}],
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("empty", str(ctx.exception))
+
+    def test_prior_delivery_cannot_satisfy_ack_delivery(self) -> None:
+        """Only the earlier confirmation comment was delivered; the
+        draft-bound delivery wait must time out instead of accepting it."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[16] = (
             "FROM support_account_zendesk_comment_deliveries",
             [{"status": "queued", "zendesk_comment_id": "",
               "immutable_content": None}],
         )
-        engine.db_queue = engine.db_queue[:15]
+        engine.db_queue = engine.db_queue[:17]
         with self.assertRaises(TimeoutError) as ctx:
             self._run(engine, workdir=self._workdir())
         self.assertIn("bound to the draft", str(ctx.exception))
 
-    # -- state counter-examples (acceptance #4) -----------------------------
+    # -- state counter-examples ---------------------------------------------
 
     def test_lost_ownership_fails_the_scenario(self) -> None:
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[15] = (
+        engine.db_queue[17] = (
             "WHERE account_case_id",
             [{"automation_status": "human_review_required",
               "internal_email_send_status": "sent",
               "internal_email_send_reason": "reply_rag_fallback_escalation",
-              "zendesk_ticket_status": "open"}],
+              "zendesk_ticket_status": None}],
         )
         with self.assertRaises(AssertionError) as ctx:
             self._run(engine, workdir=self._workdir())
         self.assertIn("automation_status", str(ctx.exception))
         self.assertFalse(engine.all_passed())
 
-    def test_main_ticket_solved_fails_the_scenario(self) -> None:
+    def test_main_ticket_solved_in_zendesk_fails_even_with_open_mirror(self) -> None:
+        """Acceptance r3: the verdict is the Zendesk readback; a stale open
+        mirror must not mask a solved ticket."""
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[15] = (
+        engine.main_ticket_status = "solved"
+        engine.db_queue[17] = (
             "WHERE account_case_id",
             [{"automation_status": "automation",
               "internal_email_send_status": "not_applicable",
               "internal_email_send_reason": "enablement_auto_review",
-              "zendesk_ticket_status": "solved"}],
+              "zendesk_ticket_status": "open"}],
         )
         with self.assertRaises(AssertionError) as ctx:
             self._run(engine, workdir=self._workdir())
-        self.assertIn("solved", str(ctx.exception))
+        self.assertIn("zendesk_readback='solved'", str(ctx.exception))
         self.assertFalse(engine.all_passed())
 
     def test_new_request_created_fails_the_scenario(self) -> None:
@@ -457,7 +561,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         second = _dispatched_request()
         second["request_id"] = "enr-AC-14000-v2"
         second["request_version"] = 2
-        engine.db_queue[16] = (
+        engine.db_queue[18] = (
             "FROM support_enablement_relay_requests",
             [_dispatched_request(), second],
         )
@@ -466,10 +570,9 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("enr-AC-14000-v2", str(ctx.exception))
 
     def test_cancelled_request_fails_the_scenario(self) -> None:
-        """Acceptance #4 counter-example: same id/version but cancelled."""
         engine = DupFakeEngine()
         _happy_queue(engine)
-        engine.db_queue[16] = (
+        engine.db_queue[18] = (
             "FROM support_enablement_relay_requests",
             [_dispatched_request(status="cancelled")],
         )
@@ -479,8 +582,6 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertFalse(engine.all_passed())
 
     def test_referenced_ticket_changed_fails_the_scenario(self) -> None:
-        """Acceptance #4: the OTHER ticket must be untouched (status and
-        priority compared before/after the turn)."""
         engine = DupFakeEngine()
         _happy_queue(engine)
         engine.referenced_ticket_responses[1] = {"status": "solved", "priority": "urgent"}
@@ -490,7 +591,7 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("solved", str(ctx.exception))
         self.assertFalse(engine.all_passed())
 
-    # -- input and content checks (acceptance #5/#6) ------------------------
+    # -- input and content checks -------------------------------------------
 
     def test_non_test_scope_reference_refused_before_sending(self) -> None:
         engine = DupFakeEngine()
@@ -522,14 +623,21 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("requires --duplicate-of-ticket", str(ctx.exception))
         self.assertEqual(engine.sent_emails, [])
 
-    def test_notice_body_preserves_original_phrasing(self) -> None:
-        body = pp.duplicate_notice_body("99999")
-        self.assertIn("submitted with higher priority", body)
-        self.assertIn("merge or close it", body)
-        self.assertIn("#99999", body)
-        # Nothing added that hints at the expected handling.
-        self.assertNotIn("continue", body.casefold())
-        self.assertNotIn("please", body.casefold())
+    def test_notice_body_matches_incident_text_verbatim(self) -> None:
+        """Acceptance r3: the fixture is the incident text as quoted in the
+        planning thread, with only the ticket id substituted (both in the
+        #id and the link target)."""
+        incident = (
+            "Thank you, May. Please note that [#13820]"
+            "(https://agoraio.zendesk.com/agent/tickets/13820) "
+            "is a duplicate of this request (submitted with higher priority). "
+            "Feel free to merge or close it."
+        )
+        self.assertEqual(pp.duplicate_notice_body("13820"), incident)
+        self.assertEqual(
+            pp.duplicate_notice_body("99999"),
+            incident.replace("#13820", "#99999").replace("/13820)", "/99999)"),
+        )
 
     def test_dup_ack_content_check(self) -> None:
         ok = ("Thanks for letting us know about the other ticket. "
@@ -537,31 +645,45 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIsNone(pp._dup_ack_content_check(ok))
         self.assertIsNone(
             pp._dup_ack_content_check(
-                "Noted about the duplicate — we have not merged anything yet; "
+                "Noted about the duplicate. We have not merged anything yet; "
                 "we will continue with this ticket."
             )
         )
         # Empty content fails.
         self.assertIn("empty", pp._dup_ack_content_check(""))
         self.assertIn("empty", pp._dup_ack_content_check("   "))
-        # Positive meaning required: notice acknowledgment…
+        # Positive meaning required, AFFIRMATIVELY…
         self.assertIn(
             "acknowledge", pp._dup_ack_content_check(
                 "We will keep handling your request here."
             )
         )
-        # …and continuing with this ticket.
         self.assertIn(
             "continuing", pp._dup_ack_content_check(
                 "Thanks for the note about the other ticket."
             )
         )
-        # A negation only excuses its OWN sub-clause (acceptance #6).
+        # …a negated promise is not a confirmation (acceptance r3).
+        self.assertIn(
+            "affirmatively confirm",
+            pp._dup_ack_content_check(
+                "Thanks for the note about the other ticket. "
+                "We will not continue with this ticket."
+            ),
+        )
+        # A negation only excuses its OWN sub-clause — comma'd and bare `but`.
         self.assertIn(
             "cross-ticket action",
             pp._dup_ack_content_check(
                 "We have not merged the tickets, but we have closed the duplicate; "
                 "we will continue with this ticket."
+            ),
+        )
+        self.assertIn(
+            "cross-ticket action",
+            pp._dup_ack_content_check(
+                "Thanks for the note about the duplicate. We have not merged the "
+                "duplicate but we have closed it. We will continue with this ticket."
             ),
         )
         self.assertIn(
@@ -601,8 +723,9 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
 
 
 class DupCliTests(unittest.TestCase):
-    """CLI wiring: required ticket reference, per-scenario preflight order,
-    real Zendesk credential verification, and the replay adapter."""
+    """CLI wiring: required ticket reference, per-scenario preflight order
+    (SMTP explicit, Zendesk verified, intake base fenced), whole-report
+    redaction, and the replay adapter."""
 
     def test_cli_requires_duplicate_of_ticket(self) -> None:
         from scripts.testing.preproduction import __main__ as cli
@@ -618,14 +741,33 @@ class DupCliTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertTrue(any("requires --duplicate-of-ticket" in line for line in printed))
 
-    def test_run_check_pp_en_dup_verifies_zendesk_and_intake(self) -> None:
-        from scripts.testing.preproduction import __main__ as cli
-
+    def _check_engine_cls(self):
         class CheckEngine(DupFakeEngine):
+            smtp_calls: list = []
+
             def __init__(self):
                 super().__init__()
                 self.db_queue = []
 
+            def connectivity_check(self):
+                # Mimic the real zendesk-mode output that embeds the full
+                # authenticated email — the report must redact it.
+                return {
+                    "db": "ok (support_account_cases rows=42)",
+                    "zendesk_api": "ok (authenticated as synthetic-sender@163.com)",
+                }
+
+            def smtp_connectivity_check(self):
+                CheckEngine.smtp_calls.append(1)
+                return {"smtp": "ok"}
+
+        return CheckEngine
+
+    def test_run_check_pp_en_dup_verifies_smtp_zendesk_and_intake(self) -> None:
+        from scripts.testing.preproduction import __main__ as cli
+
+        CheckEngine = self._check_engine_cls()
+        CheckEngine.smtp_calls = []
         printed: list[str] = []
 
         with patch.object(cli, "load_env_into_process"), patch.object(
@@ -637,22 +779,84 @@ class DupCliTests(unittest.TestCase):
         ), patch.object(
             cli, "_ensure_zendesk_api_env", return_value="zendesk-auth"
         ) as zdk, patch.object(
-            cli, "_ensure_relay_env", return_value=("https://api.test/automation/preproduction", "tok")
+            cli, "_ensure_relay_env",
+            return_value=("https://api.test/automation/preproduction", "tok"),
         ) as intake, patch("builtins.print", side_effect=printed.append):
             code = cli.run_check("PP-EN-DUP")
 
         self.assertEqual(code, 0)
         zdk.assert_called_once()
         intake.assert_called_once()
+        # SMTP is checked EXPLICITLY even though the turn channel is Zendesk.
+        self.assertTrue(CheckEngine.smtp_calls, "smtp_connectivity_check must run")
         report = "\n".join(printed)
         self.assertIn("PP-EN-DUP", report)
         self.assertIn('"zendesk_api_verified": true', report)
         self.assertIn('"intake_api_configured": true', report)
+        self.assertIn('"smtp": "ok"', report)
+        # Whole-report redaction: the authenticated identity never prints.
+        self.assertNotIn("synthetic-sender@163.com", report)
         self.assertNotIn("pilot_bin_exists", report)
         self.assertNotIn("relay_client_identity", report)
 
+    def test_run_check_fails_when_smtp_channel_unavailable(self) -> None:
+        from scripts.testing.preproduction import __main__ as cli
+
+        class NoSmtpEngine(DupFakeEngine):
+            def __init__(self):
+                super().__init__()
+                self.db_queue = []
+
+            def connectivity_check(self):
+                return {"db": "ok"}
+
+            def smtp_connectivity_check(self):
+                raise OSError("SMTP 模拟不可用")
+
+        printed: list[str] = []
+        with patch.object(cli, "load_env_into_process"), patch.object(
+            cli, "_ensure_preprod_db_env"
+        ), patch.object(
+            cli, "_readback_preprod_release", return_value={"ok": True}
+        ), patch.object(
+            ScenarioEngine, "from_env", staticmethod(lambda *a, **k: NoSmtpEngine())
+        ), patch.object(
+            cli, "_ensure_zendesk_api_env", return_value="zendesk-auth"
+        ), patch.object(
+            cli, "_ensure_relay_env",
+            return_value=("https://api.test/automation/preproduction", "tok"),
+        ), patch("builtins.print", side_effect=printed.append):
+            code = cli.run_check("PP-EN-DUP")
+
+        self.assertEqual(code, 1)
+        self.assertIn('"smtp": "error', "\n".join(printed))
+
+    def test_run_check_refuses_production_intake_base(self) -> None:
+        from scripts.testing.preproduction import __main__ as cli
+
+        CheckEngine = self._check_engine_cls()
+        CheckEngine.smtp_calls = []
+        printed: list[str] = []
+        with patch.object(cli, "load_env_into_process"), patch.object(
+            cli, "_ensure_preprod_db_env"
+        ), patch.object(
+            cli, "_readback_preprod_release", return_value={"ok": True}
+        ), patch.object(
+            ScenarioEngine, "from_env", staticmethod(lambda *a, **k: CheckEngine())
+        ), patch.object(
+            cli, "_ensure_zendesk_api_env", return_value="zendesk-auth"
+        ), patch.object(
+            cli, "_ensure_relay_env",
+            return_value=("https://supportcenter.stellarix.space/automation/production", "tok"),
+        ), patch("builtins.print", side_effect=printed.append):
+            code = cli.run_check("PP-EN-DUP")
+
+        self.assertEqual(code, 1)
+        report = "\n".join(printed)
+        self.assertIn('"intake_api_configured": false', report)
+        self.assertIn("Preproduction API base", report)
+
     def test_run_check_rejects_nonempty_but_invalid_zendesk_auth(self) -> None:
-        """A configured-but-wrong credential must fail the DUP preflight."""
         from scripts.testing.preproduction import __main__ as cli
 
         class BrokenAuthEngine(DupFakeEngine):
@@ -660,6 +864,12 @@ class DupCliTests(unittest.TestCase):
                 super().__init__()
                 self.me_fails = True
                 self.db_queue = []
+
+            def connectivity_check(self):
+                return {"db": "ok"}
+
+            def smtp_connectivity_check(self):
+                return {"smtp": "ok"}
 
         printed: list[str] = []
         with patch.object(cli, "load_env_into_process"), patch.object(
@@ -671,7 +881,8 @@ class DupCliTests(unittest.TestCase):
         ), patch.object(
             cli, "_ensure_zendesk_api_env", return_value="nonempty-but-wrong"
         ), patch.object(
-            cli, "_ensure_relay_env", return_value=("https://api.test/automation/preproduction", "tok")
+            cli, "_ensure_relay_env",
+            return_value=("https://api.test/automation/preproduction", "tok"),
         ), patch("builtins.print", side_effect=printed.append):
             code = cli.run_check("PP-EN-DUP")
 
