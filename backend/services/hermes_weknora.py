@@ -27,6 +27,7 @@ from typing import Any
 LOGGER = logging.getLogger("supportportal.hermes_weknora")
 
 WEKNORA_SEARCH_PATH = "/api/v1/knowledge-bases/{knowledge_base_id}/hybrid-search"
+WEKNORA_READ_PATH = "/api/v1/knowledge/{object_id}"
 WEKNORA_SEARCH_TOP_K = 3
 WEKNORA_REQUEST_TIMEOUT_SECONDS = 15.0
 
@@ -89,23 +90,76 @@ class HermesWeKnoraClient:
             payload = json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise WeKnoraUnavailable("weknora search returned a non-JSON body") from exc
-        results = payload.get("data") if isinstance(payload, dict) else None
-        if results is None:
-            return []
-        if not isinstance(results, list):
+        # Review round 2, R2-6: a response without a data list (for example
+        # {"success": false, ...}) is an ERROR, never an empty match — an
+        # error silently read as "nothing similar" would let a writable new
+        # decision through without evidence.
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), list):
             raise WeKnoraUnavailable("weknora search response missing data list")
+        results = payload["data"]
         normalized_results: list[dict[str, Any]] = []
         for item in results:
             if not isinstance(item, dict):
                 continue
             normalized_results.append({
                 "object_id": str(item.get("knowledge_id") or item.get("id") or ""),
-                "version": str(item.get("content_revision") or ""),
+                # Chunk revisions are NOT the object's content version (the
+                # fork does not even serialize the field); the authoritative
+                # body and content version come from read().
                 "title": str(item.get("knowledge_title") or item.get("title") or ""),
                 "snippet": str(item.get("content") or item.get("matched_content") or ""),
                 "score": item.get("score"),
             })
         return normalized_results
+
+    def read(self, object_id: str) -> dict[str, Any]:
+        """Read one knowledge object's full body and content version.
+
+        The manual metadata carries the authoritative content revision
+        (monotonic per edit) and, for governance-written entries, the
+        SupportPortal lineage (review round 2, R2-6). Raises
+        WeKnoraUnavailable on any failure — the review then fails closed.
+        """
+        normalized_id = str(object_id or "").strip()
+        if not normalized_id:
+            raise WeKnoraUnavailable("empty weknora object id")
+        if not self.configured():
+            raise WeKnoraUnavailable("weknora client not configured")
+        request = urllib.request.Request(
+            self.base_url + WEKNORA_READ_PATH.format(
+                object_id=urllib.parse.quote(normalized_id, safe="")
+            ),
+            method="GET",
+            headers={
+                "Accept": "application/json",
+                "User-Agent": "supportportal-weknora/1",
+                "X-API-Key": self.api_token,
+            },
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise WeKnoraUnavailable(f"weknora object {normalized_id} vanished") from exc
+            raise WeKnoraUnavailable(f"weknora read transport failed: {exc}") from exc
+        except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            raise WeKnoraUnavailable(f"weknora read transport failed: {exc}") from exc
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise WeKnoraUnavailable("weknora read returned a non-JSON body") from exc
+        if not isinstance(payload, dict) or not isinstance(payload.get("data"), dict):
+            raise WeKnoraUnavailable("weknora read response missing data object")
+        data = payload["data"]
+        metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        return {
+            "object_id": normalized_id,
+            "title": str(data.get("title") or ""),
+            "content": str(metadata.get("content") or ""),
+            "content_version": str(metadata.get("version") or ""),
+            "lineage": metadata.get("lineage") if isinstance(metadata.get("lineage"), dict) else {},
+        }
 
 
 def build_weknora_submissions(

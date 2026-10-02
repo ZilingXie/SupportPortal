@@ -740,12 +740,29 @@ def _collect_weknora_evidence(
         for candidate in candidates:
             knowledge_results[str(candidate.get("candidate_id") or "")] = []
     else:
+        read_full = getattr(weknora_client, "read", None)
         for candidate in candidates:
             candidate_id = str(candidate.get("candidate_id") or "")
             try:
-                knowledge_results[candidate_id] = weknora_client.search(
-                    str(candidate.get("statement") or "")
-                )
+                hits = weknora_client.search(str(candidate.get("statement") or ""))
+                # Review round 2, R2-6: a snippet alone cannot ground a
+                # supplement/merge/replace decision — every hit carries the
+                # target's FULL body and its content version (the manual
+                # metadata revision, not a chunk revision). A read failure
+                # marks the surface unavailable so writable decisions fail
+                # closed to human review.
+                if callable(read_full):
+                    enriched: list[dict[str, Any]] = []
+                    for hit in hits:
+                        entry = dict(hit)
+                        full = read_full(str(hit.get("object_id") or ""))
+                        entry["full_content"] = str(full.get("content") or "")
+                        entry["content_version"] = str(full.get("content_version") or "")
+                        entry["target_lineage"] = full.get("lineage") or {}
+                        enriched.append(entry)
+                    knowledge_results[candidate_id] = enriched
+                else:
+                    knowledge_results[candidate_id] = list(hits)
             except WeKnoraUnavailable as exc:
                 LOGGER.warning(
                     "weknora_search_unavailable candidate_id=%s error=%s", candidate_id, exc
