@@ -114,6 +114,26 @@ class WeKnoraPromotionAdapter:
             )
 
         target_object_id = str(candidate.get("target_object_id") or "").strip()
+
+        # Recovery precedes validation (review round 1, P1-9): a retried task
+        # that already recorded a WeKnora object must reconcile against that
+        # recorded write BEFORE the base_version check — its own earlier
+        # execution legitimately advanced the target past the review's
+        # base_version, and comparing first would misreport the completed
+        # write as target_version_conflict.
+        known_object_id = str(task.get("weknora_object_id") or "").strip()
+        if known_object_id:
+            reconciliation = self._reconcile_known_object(
+                candidate_type=candidate_type,
+                decision=decision,
+                known_object_id=known_object_id,
+                known_version=str(task.get("weknora_version") or "").strip(),
+                expected_content=content,
+                target_object_id=target_object_id,
+            )
+            if reconciliation is not None:
+                return reconciliation
+
         if decision in TARGETED_DECISIONS:
             if not target_object_id:
                 return WeKnoraPromotionOutcome(
@@ -151,12 +171,6 @@ class WeKnoraPromotionAdapter:
                     weknora_object_id=target_object_id,
                     weknora_version=current_version or None,
                 )
-            if not current_version:
-                return WeKnoraPromotionOutcome(
-                    status="human_review", failure_code="target_version_unknown",
-                    failure_detail="target current version is not readable; refusing to overwrite",
-                    weknora_object_id=target_object_id,
-                )
             # proposed_content is the COMPLETE post-operation body (review
             # manual v2): the adapter submits it verbatim. Never prepend the
             # stored body — that double-concatenates when the review already
@@ -168,19 +182,6 @@ class WeKnoraPromotionAdapter:
             resolved_content = content
             resolved_title = title
             resolved_base_version = ""
-
-        known_object_id = str(task.get("weknora_object_id") or "").strip()
-        if known_object_id:
-            reconciliation = self._reconcile_known_object(
-                candidate_type=candidate_type,
-                decision=decision,
-                known_object_id=known_object_id,
-                known_version=str(task.get("weknora_version") or "").strip(),
-                expected_content=resolved_content,
-                target_object_id=target_object_id,
-            )
-            if reconciliation is not None:
-                return reconciliation
 
         return self._write_and_readback(
             candidate_type=candidate_type,

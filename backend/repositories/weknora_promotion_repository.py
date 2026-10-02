@@ -221,8 +221,24 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             raise ValueError("invalid WeKnora promotion completion status")
         with self._assignment_lock:
             row = self._weknora_promotion_state().get(str(promotion_id))
-            if row is None or row["status"] != "active" or row.get("owner_token") != owner_token:
+            if row is None or row.get("owner_token") != owner_token:
                 raise RuntimeError("stale WeKnora promotion delivery")
+            if row["status"] != "active":
+                # Late receipt (review round 1, P1-9): the adapter already
+                # produced its external effect when reopen invalidated the
+                # row. Record the evidence but keep the invalidated status —
+                # the reopen decision is never resurrected by a late write.
+                if row["status"] not in {"invalidated", "superseded"}:
+                    raise RuntimeError("stale WeKnora promotion delivery")
+                row.update(
+                    weknora_object_id=weknora_object_id,
+                    weknora_version=weknora_version,
+                    operation_receipt=copy.deepcopy(receipt),
+                    failure_code=failure_code,
+                    failure_detail=failure_detail,
+                    updated_at=completed_at,
+                )
+                return {**copy.deepcopy(row), "late_receipt_recorded": True}
             row.update(
                 status=status,
                 weknora_object_id=weknora_object_id,
@@ -241,7 +257,12 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
         with self._assignment_lock:
             invalidated = 0
             for row in self._weknora_promotion_state().values():
-                if row["engineer_case_id"] == str(engineer_case_id) and row["status"] in {"queued", "active"}:
+                # Same widened set as reopen (review round 1, P1-9): parked
+                # terminal-pending states must not stay requeueable after the
+                # case-level invalidation decision.
+                if row["engineer_case_id"] == str(engineer_case_id) and row["status"] in {
+                    "queued", "active", "human_review", "failed", "outcome_unknown",
+                }:
                     row.update(status="invalidated", lease_expires_at=None, updated_at=invalidated_at)
                     invalidated += 1
             return invalidated
@@ -508,7 +529,46 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     ),
                 )
                 if cur.fetchone() is None:
-                    raise RuntimeError("stale WeKnora promotion delivery")
+                    # Late receipt (review round 1, P1-9): the adapter's
+                    # external effect already happened when reopen moved the
+                    # row out of 'active'. Persist the evidence, keep the
+                    # invalidated status, and report the marker — the reopen
+                    # decision is never resurrected by a late write.
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {} SET weknora_object_id=%s, weknora_version=%s,
+                            operation_receipt=%s, failure_code=%s, failure_detail=%s,
+                            updated_at=%s
+                            WHERE promotion_id=%s AND owner_token=%s
+                            AND status IN ('invalidated','superseded')
+                            RETURNING status
+                            """
+                        ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                        (
+                            weknora_object_id,
+                            weknora_version,
+                            Json(receipt) if receipt is not None else None,
+                            failure_code,
+                            failure_detail,
+                            completed_at,
+                            promotion_id,
+                            owner_token,
+                        ),
+                    )
+                    record = cur.fetchone()
+                    if record is None:
+                        raise RuntimeError("stale WeKnora promotion delivery")
+                    return {
+                        "promotion_id": promotion_id,
+                        "status": str(record[0]),
+                        "weknora_object_id": weknora_object_id,
+                        "weknora_version": weknora_version,
+                        "operation_receipt": receipt,
+                        "failure_code": failure_code,
+                        "failure_detail": failure_detail,
+                        "late_receipt_recorded": True,
+                    }
                 return {
                     "promotion_id": promotion_id,
                     "status": status,
@@ -530,7 +590,8 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     sql.SQL(
                         """
                         UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s
-                        WHERE engineer_case_id=%s AND status IN ('queued','active')
+                        WHERE engineer_case_id=%s
+                        AND status IN ('queued','active','human_review','failed','outcome_unknown')
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
                     (invalidated_at, engineer_case_id),

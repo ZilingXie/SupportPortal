@@ -619,8 +619,16 @@ class InMemoryHermesCaseRepositoryMixin:
             for promotion in self._hermes_promotions.values():
                 if promotion["engineer_case_id"] == case_id and promotion["status"] != "invalidated":
                     promotion.update(status="invalidated", updated_at=request["created_at"])
+            # Reopen invalidates every non-terminal promotion for the case:
+            # queued/active (never started) AND the parked terminal-pending
+            # states (human_review/failed/outcome_unknown) whose business
+            # effect belongs to the superseded episode — they must not be
+            # requeueable after the case reopened (review P1-9). Accepted
+            # rows keep their evidence.
             for weknora in self._weknora_promotion_state().values():
-                if weknora["engineer_case_id"] == case_id and weknora["status"] in {"queued", "active"}:
+                if weknora["engineer_case_id"] == case_id and weknora["status"] in {
+                    "queued", "active", "human_review", "failed", "outcome_unknown",
+                }:
                     weknora.update(status="invalidated", lease_expires_at=None,
                                    updated_at=request["created_at"])
             for summary_task in self._hermes_summary_tasks.values():
@@ -1665,7 +1673,7 @@ class PostgresHermesCaseRepositoryMixin:
                 cur.execute(sql.SQL("UPDATE {} SET status='superseded', updated_at=%s WHERE engineer_case_id=%s AND status='frozen'").format(self._table("support_hermes_summary_snapshots")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_close_reviews")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status <> 'invalidated'").format(self._table("support_hermes_case_promotions")), (request["created_at"], request["engineer_case_id"]))
-                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active')").format(self._table("support_weknora_promotions")), (request["created_at"], request["engineer_case_id"]))
+                cur.execute(sql.SQL("UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s WHERE engineer_case_id=%s AND status IN ('queued','active','human_review','failed','outcome_unknown')").format(self._table("support_weknora_promotions")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status IN ('pending','running')").format(self._table("support_hermes_summary_tasks")), (request["created_at"], request["engineer_case_id"]))
                 cur.execute(sql.SQL("UPDATE {} SET status='invalidated', updated_at=%s WHERE engineer_case_id=%s AND status IN ('pending','running')").format(self._table("support_hermes_review_tasks")), (request["created_at"], request["engineer_case_id"]))
                 self._insert_hermes_turn(cur, request)

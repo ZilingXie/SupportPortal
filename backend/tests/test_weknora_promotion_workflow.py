@@ -267,6 +267,74 @@ def test_reopen_invalidates_unexecuted_weknora_promotions() -> None:
     assert rows[0]["status"] == "invalidated"
 
 
+def test_reopen_invalidates_parked_promotions_and_blocks_requeue() -> None:
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    reopen_hermes_case(
+        repository, engineer_case_id="123-1", input_text="reopened", now_value="2026-09-05T08:06:30Z"
+    )
+    rows = repository.list_weknora_promotions()
+    assert rows[0]["status"] == "invalidated"
+    # Parked promotions of the superseded episode are not requeueable
+    # (review round 1, P1-9).
+    assert repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:07:00Z", reason="ops retry"
+    ) is None
+
+
+def test_late_receipt_after_reopen_records_evidence_without_resurrecting() -> None:
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # The adapter's external write lands; before the worker completes, the
+    # case reopens and invalidates the claimed row (review round 1, P1-9).
+    reopen_hermes_case(
+        repository, engineer_case_id="123-1", input_text="reopened", now_value="2026-09-05T08:05:30Z"
+    )
+    result = repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="accepted",
+        weknora_object_id="doc-9", weknora_version="101",
+        receipt={"ok": True}, completed_at="2026-09-05T08:06:00Z",
+    )
+    assert result["late_receipt_recorded"] is True
+    row = repository.list_weknora_promotions()[0]
+    # The reopen decision is never resurrected by a late write.
+    assert row["status"] == "invalidated"
+    assert row["weknora_object_id"] == "doc-9"
+    assert row["weknora_version"] == "101"
+    assert row["operation_receipt"] == {"ok": True}
+    # A different owner still cannot attach evidence to the row.
+    with pytest.raises(RuntimeError, match="stale"):
+        repository.complete_weknora_promotion(
+            promotion_id, owner_token="someone-else", status="accepted",
+            completed_at="2026-09-05T08:06:30Z",
+        )
+
+
 def test_task_state_machine_claim_complete_requeue() -> None:
     repository = _repository()
     _driven_to_close(repository)

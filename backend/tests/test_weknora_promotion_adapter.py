@@ -389,6 +389,43 @@ def test_replace_version_conflict_never_overwrites() -> None:
     assert client.calls == [("knowledge_read", {"object_id": "doc-7"})]
 
 
+# -- review round 1, P1-9: recovery precedes base_version validation --------
+
+
+def test_completed_targeted_task_reconciles_before_base_version_check() -> None:
+    # First execution updated doc-7 from v5 to v6 and recorded that result;
+    # the retry still carries the review's original base_version=5. Checking
+    # the base version before reconciling would misreport the completed
+    # write as target_version_conflict (the reviewer's exact repro shape).
+    client = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "New body", "version": "6"}}
+    )
+    outcome = WeKnoraPromotionAdapter(client).execute(
+        _task(
+            decision="replace",
+            payload={
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "replace",
+                "title": "T",
+                "content": "New body",
+                "target_object_id": "doc-7",
+                "base_version": "5",
+            },
+            weknora_object_id="doc-7",
+            weknora_version="6",
+        )
+    )
+    assert outcome.status == "accepted"
+    assert outcome.receipt == {
+        "operation": "reconciled_existing",
+        "object_id": "doc-7",
+        "version": "6",
+    }
+    # Reconciliation proved the earlier write landed: no second update.
+    assert [name for name, _ in client.calls] == ["knowledge_read"]
+
+
 # -- review-acceptance defect 2: readback must prove the write --------------
 
 
