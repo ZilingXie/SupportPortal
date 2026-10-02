@@ -28,6 +28,26 @@ from backend.services.weknora_client import WeKnoraClient, WeKnoraError
 WRITE_DECISIONS = frozenset({"new", "supplement", "replace", "merge"})
 TARGETED_DECISIONS = frozenset({"supplement", "replace", "merge"})
 
+# The pinned lineage DTO (review round 1 contract gap): the exact task fields
+# that travel as WeKnora write metadata, so a stored object traces back to the
+# case, ticket, summary/review runs, and Slack thread that produced it. The
+# client's pinned body template decides whether the destination API actually
+# receives them; adding a field here is a contract change.
+WEKNORA_LINEAGE_METADATA_FIELDS = (
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "summary_session_id",
+    "summary_run_id",
+    "review_session_id",
+    "review_run_id",
+    "slack_channel_id",
+    "slack_thread_ts",
+    "source_type",
+    "source_id",
+    "source_version",
+)
+
 
 @dataclass(frozen=True)
 class WeKnoraPromotionOutcome:
@@ -203,23 +223,9 @@ class WeKnoraPromotionAdapter:
         stored object traces back to the case, ticket, summary/review runs,
         and Slack thread that produced it. The client's pinned body template
         decides whether the destination API actually receives it."""
-        keys = (
-            "engineer_case_id",
-            "client_ticket_id",
-            "investigation_id",
-            "summary_session_id",
-            "summary_run_id",
-            "review_session_id",
-            "review_run_id",
-            "slack_channel_id",
-            "slack_thread_ts",
-            "source_type",
-            "source_id",
-            "source_version",
-        )
         metadata = {
             key: str(task.get(key) or "").strip()
-            for key in keys
+            for key in WEKNORA_LINEAGE_METADATA_FIELDS
             if str(task.get(key) or "").strip()
         }
         metadata["promotion_id"] = str(task.get("promotion_id") or "")

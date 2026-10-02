@@ -426,6 +426,41 @@ def test_completed_targeted_task_reconciles_before_base_version_check() -> None:
     assert [name for name, _ in client.calls] == ["knowledge_read"]
 
 
+# -- review round 1: the lineage DTO is a pinned contract -------------------
+
+
+def test_lineage_metadata_dto_is_pinned() -> None:
+    from backend.services.weknora_promotion_adapter import (
+        WEKNORA_LINEAGE_METADATA_FIELDS,
+    )
+
+    adapter = WeKnoraPromotionAdapter(FakeWeKnoraStore())
+    case_bound = adapter._lineage_metadata({
+        "promotion_id": "weknora:hermes_case_promotion:123-1:1:knowledge:0f0e0d",
+        "engineer_case_id": "123-1", "client_ticket_id": "123",
+        "investigation_id": "INV-1", "summary_session_id": "s", "summary_run_id": "sr",
+        "review_session_id": "r", "review_run_id": "rr",
+        "slack_channel_id": "C1", "slack_thread_ts": "123.456",
+        "source_type": "hermes_case_promotion", "source_id": "123-1:1", "source_version": "1",
+        "candidate_type": "knowledge", "decision": "new",
+    })
+    assert set(case_bound) == set(WEKNORA_LINEAGE_METADATA_FIELDS) | {
+        "promotion_id", "candidate_type", "decision",
+    }
+
+    standalone = adapter._lineage_metadata({
+        "promotion_id": "weknora:knowledge_source_review:src:v2:memory:0f0e0d",
+        "engineer_case_id": None, "client_ticket_id": None,
+        "source_type": "knowledge_source_review", "source_id": "src", "source_version": "v2",
+        "candidate_type": "memory", "decision": "new",
+    })
+    # Standalone lineage: absent case fields are omitted, never empty strings.
+    assert "engineer_case_id" not in standalone
+    assert "client_ticket_id" not in standalone
+    assert standalone["source_type"] == "knowledge_source_review"
+    assert standalone["candidate_type"] == "memory"
+
+
 # -- review-acceptance defect 2: readback must prove the write --------------
 
 

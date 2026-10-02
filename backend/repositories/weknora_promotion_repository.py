@@ -54,6 +54,9 @@ WEKNORA_PROMOTION_FIELDS = (
     "operation_receipt",
     "failure_code",
     "failure_detail",
+    "human_decision",
+    "human_decision_detail",
+    "human_decided_at",
     "created_at",
     "updated_at",
 )
@@ -114,6 +117,9 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         "operation_receipt": None,
         "failure_code": None,
         "failure_detail": None,
+        "human_decision": None,
+        "human_decision_detail": None,
+        "human_decided_at": None,
         "created_at": now_value,
         "updated_at": now_value,
     }
@@ -284,6 +290,44 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             )
             return copy.deepcopy(row)
 
+    def decide_weknora_promotion(
+        self,
+        promotion_id: str,
+        *,
+        decision: str,
+        decided_by: str,
+        note: str = "",
+        decided_at: str,
+    ) -> dict[str, Any] | None:
+        """Close the human-review loop (governance plan WP3, review round 1).
+
+        ``approve`` re-queues the parked promotion — the write then re-enters
+        the full external contract (idempotency key, version protection),
+        never a bypass. ``reject`` parks it terminally. Only rows actually
+        sitting in ``human_review`` are decidable; any other state returns
+        None so a stale decision cannot resurrect finished work.
+        """
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        detail = str(decided_by or "").strip()
+        if str(note or "").strip():
+            detail = f"{detail}: {str(note).strip()}" if detail else str(note).strip()
+        with self._assignment_lock:
+            row = self._weknora_promotion_state().get(str(promotion_id))
+            if row is None or row["status"] != "human_review":
+                return None
+            row.update(
+                status="queued" if decision == "approve" else "rejected",
+                owner_token=None,
+                claimed_at=None,
+                lease_expires_at=None,
+                human_decision="approved" if decision == "approve" else "rejected",
+                human_decision_detail=detail or None,
+                human_decided_at=decided_at,
+                updated_at=decided_at,
+            )
+            return copy.deepcopy(row)
+
 
 _WEKNORA_PROMOTION_TABLE = "support_weknora_promotions"
 
@@ -311,12 +355,13 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     )),
                     candidate_payload JSONB NOT NULL,
                     status TEXT NOT NULL CHECK (status IN (
-                        'queued','active','accepted','failed','outcome_unknown','human_review','invalidated'
+                        'queued','active','accepted','failed','outcome_unknown','human_review','invalidated','rejected'
                     )),
                     owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
                     attempt_count INTEGER NOT NULL DEFAULT 0,
                     weknora_object_id TEXT, weknora_version TEXT, operation_receipt JSONB,
                     failure_code TEXT, failure_detail TEXT,
+                    human_decision TEXT, human_decision_detail TEXT, human_decided_at TIMESTAMPTZ,
                     created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
@@ -348,6 +393,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 self._table(_WEKNORA_PROMOTION_TABLE),
             )
         )
+        promotion_table = self._table(_WEKNORA_PROMOTION_TABLE)
         # v19: relax NOT NULL on the case lineage for standalone
         # (case-less) promotions (knowledge_source_review); existing v18
         # databases need the column constraint dropped.
@@ -357,10 +403,32 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         cur.execute(sql.SQL(
             "ALTER TABLE {} ALTER COLUMN client_ticket_id DROP NOT NULL"
         ).format(promotion_table))
+        # v19: human-review decision closure (governance plan WP3, review
+        # round 1) — the 'rejected' terminal status plus the decision
+        # evidence columns. Existing v18 databases need both the CHECK
+        # re-issue and the new columns.
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decision TEXT").format(promotion_table))
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decision_detail TEXT").format(promotion_table))
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decided_at TIMESTAMPTZ").format(promotion_table))
+        cur.execute(
+            sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                promotion_table,
+                sql.Identifier("support_weknora_promotions_status_check"),
+            )
+        )
+        cur.execute(
+            sql.SQL(
+                "ALTER TABLE {} ADD CONSTRAINT {} CHECK (status IN ("
+                "'queued','active','accepted','failed','outcome_unknown','human_review',"
+                "'invalidated','rejected'))"
+            ).format(
+                promotion_table,
+                sql.Identifier("support_weknora_promotions_status_check"),
+            )
+        )
         # v16: skill proposals enter the pipeline as human-review-only records;
         # swap the legacy (knowledge, memory) check on databases created before
         # the enum extension.
-        promotion_table = self._table(_WEKNORA_PROMOTION_TABLE)
         cur.execute(
             sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
                 promotion_table,
@@ -398,8 +466,10 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
                 (
                     normalized["promotion_id"],
-                    normalized["engineer_case_id"],
-                    normalized["client_ticket_id"],
+                    # Standalone (case-less) promotions store NULL lineage in
+                    # PG — the FK would reject the empty string.
+                    normalized["engineer_case_id"] or None,
+                    normalized["client_ticket_id"] or None,
                     normalized["investigation_id"],
                     normalized["summary_session_id"],
                     normalized["summary_run_id"],
@@ -620,6 +690,52 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 return None if record is None else {"promotion_id": promotion_id, "status": "queued"}
 
         return self._run_with_connection_retry("requeue_weknora_promotion", operation)
+
+    def decide_weknora_promotion(
+        self,
+        promotion_id: str,
+        *,
+        decision: str,
+        decided_by: str,
+        note: str = "",
+        decided_at: str,
+    ) -> dict[str, Any] | None:
+        """PG twin of the human-review decision closure; see the in-memory
+        method for the contract (approve re-queues under the full external
+        write contract, reject is terminal, only human_review is decidable)."""
+        if decision not in {"approve", "reject"}:
+            raise ValueError("decision must be approve or reject")
+        detail = str(decided_by or "").strip()
+        if str(note or "").strip():
+            detail = f"{detail}: {str(note).strip()}" if detail else str(note).strip()
+        next_status = "queued" if decision == "approve" else "rejected"
+
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
+                        lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
+                        human_decided_at=%s, updated_at=%s
+                        WHERE promotion_id=%s AND status='human_review'
+                        RETURNING promotion_id
+                        """
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (
+                        next_status,
+                        "approved" if decision == "approve" else "rejected",
+                        detail or None,
+                        decided_at,
+                        decided_at,
+                        promotion_id,
+                    ),
+                )
+                if cur.fetchone() is None:
+                    return None
+                return {"promotion_id": promotion_id, "status": next_status}
+
+        return self._run_with_connection_retry("decide_weknora_promotion", operation)
 
 
 def _json_value(value: Any) -> Any:

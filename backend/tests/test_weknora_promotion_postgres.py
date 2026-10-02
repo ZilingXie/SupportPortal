@@ -257,3 +257,82 @@ def test_reopen_invalidates_queued_promotion_in_transaction(repository: Postgres
         )
         is None
     )
+
+
+def test_human_decision_and_late_receipt_postgres_twins(
+    repository: PostgresTicketRepository,
+) -> None:
+    """Review round 1, P1-9 + WP3 decision loop on the PG twin: reopen
+    invalidates the parked human_review row and blocks requeue; a late
+    receipt records its evidence without resurrecting the row; the decision
+    closure works over the real status CHECK (including 'rejected')."""
+    _drive_to_close_with_weknora(repository)
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:06:00Z",
+        lease_expires_at="2026-09-05T08:08:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:07:00Z",
+    )
+    reopen_hermes_case(
+        repository, engineer_case_id="123-1", input_text="reopened", now_value="2026-09-05T08:07:30Z"
+    )
+    row = repository.list_weknora_promotions()[0]
+    assert row["status"] == "invalidated"
+    assert repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:08:00Z", reason="ops retry"
+    ) is None
+    late = repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="accepted",
+        weknora_object_id="doc-9", weknora_version="101",
+        receipt={"ok": True}, completed_at="2026-09-05T08:08:30Z",
+    )
+    assert late["late_receipt_recorded"] is True
+    row = repository.list_weknora_promotions()[0]
+    assert row["status"] == "invalidated"
+    assert row["weknora_object_id"] == "doc-9"
+    # An invalidated row is not decidable.
+    assert repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops", decided_at="2026-09-05T08:09:00Z"
+    ) is None
+
+    # A standalone (case-less) promotion exercises the same PG decision path
+    # without re-driving a second case episode.
+    repository.enqueue_weknora_promotions(
+        [{
+            "source_type": "knowledge_source_review",
+            "source_id": "knowledge-source:src-x",
+            "source_version": "v1",
+            "content_hash": "hx",
+            "candidate_type": "knowledge",
+            "decision": "replace",
+            "candidate_payload": {
+                "schema_version": "v1", "candidate_id": "c1",
+                "candidate_type": "knowledge", "decision": "replace",
+                "title": "T", "content": "Full body",
+                "target_object_id": "doc-7", "base_version": "5",
+            },
+        }],
+        now_value="2026-09-05T08:12:00Z",
+    )
+    fresh_id = repository.list_weknora_promotions()[-1]["promotion_id"]
+    repository.claim_weknora_promotion(
+        fresh_id, owner_token="w2", claimed_at="2026-09-05T08:13:00Z",
+        lease_expires_at="2026-09-05T08:15:00Z",
+    )
+    repository.complete_weknora_promotion(
+        fresh_id, owner_token="w2", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:14:00Z",
+    )
+    rejected = repository.decide_weknora_promotion(
+        fresh_id, decision="reject", decided_by="ops:ziling", decided_at="2026-09-05T08:15:00Z",
+    )
+    assert rejected["status"] == "rejected"
+    row = repository.list_weknora_promotions()[-1]
+    assert row["human_decision"] == "rejected"
+    assert repository.claim_weknora_promotion(
+        fresh_id, owner_token="w3", claimed_at="2026-09-05T08:15:30Z",
+        lease_expires_at="2026-09-05T08:17:30Z",
+    ) is None

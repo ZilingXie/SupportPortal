@@ -601,7 +601,7 @@ def create_app(    *,
         is redacted to its digest fields; full lineage and failure reasons are
         preserved so a human can decide and the `requeue` flow can act.
         """
-        allowed = {"human_review", "queued", "active", "accepted", "failed", "outcome_unknown", "invalidated"}
+        allowed = {"human_review", "queued", "active", "accepted", "failed", "outcome_unknown", "invalidated", "rejected"}
         normalized = str(status or "human_review").strip() or "human_review"
         if normalized not in allowed:
             raise HTTPException(status_code=422, detail=f"status must be one of {sorted(allowed)}")
@@ -630,12 +630,57 @@ def create_app(    *,
                     "weknora_object_id": row.get("weknora_object_id"),
                     "weknora_version": row.get("weknora_version"),
                     "operation_receipt": row.get("operation_receipt"),
+                    "human_decision": row.get("human_decision"),
+                    "human_decision_detail": row.get("human_decision_detail"),
+                    "human_decided_at": row.get("human_decided_at"),
                     "created_at": row.get("created_at"),
                     "updated_at": row.get("updated_at"),
                 }
             )
         return JSONResponse(
             content={"status": normalized, "count": len(projections), "items": projections},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(f"{base}/v1/knowledge/promotions/{{promotion_id}}/decision", status_code=200)
+    async def knowledge_promotion_decision(promotion_id: str, decision: dict[str, Any]) -> JSONResponse:
+        """Close the human-review loop (governance plan WP3, review round 1).
+
+        ``approve`` re-queues the parked promotion — the write re-enters the
+        full external contract (idempotency key, version protection), never a
+        bypass. ``reject`` parks it terminally. Only rows actually in
+        ``human_review`` are decidable.
+        """
+        resolved = str(decision.get("decision") or "").strip()
+        operator = str(decision.get("operator") or "").strip()
+        note = str(decision.get("note") or "").strip()
+        if resolved not in {"approve", "reject"}:
+            raise HTTPException(status_code=422, detail="decision must be approve or reject")
+        if not operator:
+            raise HTTPException(status_code=422, detail="operator is required")
+        repository = _engineer_ticket_repository()
+        try:
+            resolved_row = await asyncio.to_thread(
+                repository.decide_weknora_promotion,
+                str(promotion_id),
+                decision=resolved,
+                decided_by=operator,
+                note=note,
+                decided_at=datetime.now(timezone.utc).isoformat(),
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if resolved_row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="promotion is not awaiting a human decision",
+            )
+        return JSONResponse(
+            content={
+                "promotion_id": promotion_id,
+                "decision": resolved,
+                "status": resolved_row.get("status"),
+            },
             headers={"Cache-Control": "no-store"},
         )
 

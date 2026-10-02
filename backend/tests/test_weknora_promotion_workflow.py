@@ -335,6 +335,77 @@ def test_late_receipt_after_reopen_records_evidence_without_resurrecting() -> No
         )
 
 
+def test_human_decision_approve_requeues_and_reject_is_terminal() -> None:
+    """Review round 1 contract gap: the human-review queue needs an exit.
+    Approve re-queues under the full write contract; reject is terminal and
+    not claimable, requeueable, or decidable again."""
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    approved = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        note="verified against the live object", decided_at="2026-09-05T08:08:00Z",
+    )
+    assert approved["status"] == "queued"
+    assert approved["human_decision"] == "approved"
+    assert approved["human_decision_detail"] == "ops:ziling: verified against the live object"
+    assert approved["human_decided_at"] == "2026-09-05T08:08:00Z"
+    # The approved row re-enters the worker contract.
+    reclaimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:08:30Z",
+        lease_expires_at="2026-09-05T08:10:30Z",
+    )
+    assert reclaimed is not None and reclaimed["status"] == "active"
+    # A queued/active row is not decidable.
+    assert repository.decide_weknora_promotion(
+        promotion_id, decision="reject", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:09:00Z",
+    ) is None
+
+    # The write parks again; this time the human rejects terminally.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:10:00Z",
+    )
+    rejected = repository.decide_weknora_promotion(
+        promotion_id, decision="reject", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:11:00Z",
+    )
+    assert rejected["status"] == "rejected"
+    assert rejected["human_decision"] == "rejected"
+    assert repository.claim_weknora_promotion(
+        promotion_id, owner_token="w3", claimed_at="2026-09-05T08:11:30Z",
+        lease_expires_at="2026-09-05T08:13:30Z",
+    ) is None
+    assert repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:12:00Z", reason="ops retry"
+    ) is None
+    assert repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:12:30Z",
+    ) is None
+
+    with pytest.raises(ValueError, match="approve or reject"):
+        repository.decide_weknora_promotion(
+            promotion_id, decision="maybe", decided_by="ops:ziling",
+            decided_at="2026-09-05T08:13:00Z",
+        )
+
+
 def test_task_state_machine_claim_complete_requeue() -> None:
     repository = _repository()
     _driven_to_close(repository)

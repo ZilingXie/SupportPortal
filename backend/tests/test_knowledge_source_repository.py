@@ -121,6 +121,83 @@ def test_source_intake_requires_bearer_and_state_redacts_raw_payload() -> None:
     assert state.json()["status"] == "accepted"
 
 
+def test_human_review_decision_endpoint_closes_the_loop() -> None:
+    """Review round 1 contract gap: human-review promotions need a decision
+    surface. Approve re-queues; reject is terminal; only human_review rows
+    are decidable; validation failures are explicit."""
+    from backend.repositories.weknora_promotion_repository import weknora_promotion_id
+
+    client, _store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    promotion_id = weknora_promotion_id(
+        source_type="knowledge_source_review",
+        source_id="knowledge-source:src-1",
+        source_version="v2",
+        candidate_type="knowledge",
+        content_hash="0f0e0d",
+    )
+    repository.enqueue_weknora_promotions(
+        [{
+            "promotion_id": promotion_id,
+            "engineer_case_id": None,
+            "client_ticket_id": None,
+            "source_type": "knowledge_source_review",
+            "source_id": "knowledge-source:src-1",
+            "source_version": "v2",
+            "content_hash": "0f0e0d",
+            "candidate_type": "knowledge",
+            "decision": "replace",
+            "candidate_payload": {
+                "schema_version": "v1", "candidate_id": "cand-1",
+                "candidate_type": "knowledge", "decision": "replace",
+                "title": "T", "content": "Full body",
+                "target_object_id": "doc-7", "base_version": "5",
+            },
+        }],
+        now_value="2026-10-02T00:00:00Z",
+    )
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-10-02T00:01:00Z",
+        lease_expires_at="2026-10-02T00:03:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-10-02T00:02:00Z",
+    )
+    headers = {"Authorization": "Bearer secret"}
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        invalid = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "maybe", "operator": "ops"}, headers=headers,
+        )
+        no_operator = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": " "}, headers=headers,
+        )
+        approved = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": "ops:ziling", "note": "verified"},
+            headers=headers,
+        )
+        redecide = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "reject", "operator": "ops:ziling"}, headers=headers,
+        )
+    assert invalid.status_code == 422
+    assert no_operator.status_code == 422
+    assert approved.status_code == 200
+    assert approved.json() == {
+        "promotion_id": promotion_id, "decision": "approve", "status": "queued",
+    }
+    # Not in human_review anymore: a second decision is a 409, not a mutation.
+    assert redecide.status_code == 409
+    row = repository.list_weknora_promotions()[0]
+    assert row["status"] == "queued"
+    assert row["human_decision"] == "approved"
+    assert row["human_decision_detail"] == "ops:ziling: verified"
+
+
 class ArticleSourceTypeTests(unittest.TestCase):
     """WP1: article snapshots are a first-class source type."""
 
