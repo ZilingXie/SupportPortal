@@ -135,17 +135,32 @@ def _readback_preprod_release() -> dict:
         return {"ok": False, "error": str(exc)[:200]}
 
 
-def run_check() -> int:
+def run_check(selected_scenario: str | None = None) -> int:
     load_env_into_process()
     _ensure_preprod_db_env()
     from backend.services.automation_test_scenarios import ScenarioEngine
+    from scripts.testing.preproduction import scenarios as pp
 
+    # Per-scenario requirements: a scenario that never touches the relay
+    # client or the pilot must not have --check gate on them (and vice
+    # versa). Without a selection, check the union (global health).
+    if selected_scenario:
+        requires = pp.PP_SCENARIOS[selected_scenario].get("requires") or {}
+    else:
+        union: dict[str, bool] = {}
+        for meta in pp.PP_SCENARIOS.values():
+            for key, value in (meta.get("requires") or {}).items():
+                union[key] = union.get(key, False) or bool(value)
+        requires = union
     report: dict = {
+        "scenario": selected_scenario or "(all)",
+        "requires": requires,
         "preprod_release": _readback_preprod_release(),
-        "skill_script_exists": _default_skill().exists(),
-        "pilot_bin": _pilot_bin(),
-        "pilot_bin_exists": bool(_which(_pilot_bin())),
     }
+    if requires.get("pilot"):
+        report["skill_script_exists"] = _default_skill().exists()
+        report["pilot_bin"] = _pilot_bin()
+        report["pilot_bin_exists"] = bool(_which(_pilot_bin()))
     try:
         engine = ScenarioEngine.from_env()
         report["connectivity"] = engine.connectivity_check()
@@ -157,37 +172,45 @@ def run_check() -> int:
         report["sender"] = redact_email(engine.sender)
     except Exception as exc:  # noqa: BLE001
         report["engine_error"] = str(exc)[:300]
-    try:
-        base, token = _ensure_relay_env()
-        report["relay_base_configured"] = bool(base and token)
-    except SystemExit as exc:
-        report["relay_base_configured"] = False
-        report["relay_env_error"] = str(exc)
-    try:
-        from scripts.testing.preproduction.scenarios import load_relay_client_identity
+    if requires.get("relay"):
+        try:
+            base, token = _ensure_relay_env()
+            report["relay_base_configured"] = bool(base and token)
+        except SystemExit as exc:
+            report["relay_base_configured"] = False
+            report["relay_env_error"] = str(exc)
+        try:
+            from scripts.testing.preproduction.scenarios import load_relay_client_identity
 
-        identity = load_relay_client_identity()
-        report["relay_client_identity"] = {
-            "base_url": identity["base_url"],
-            "agent_id": identity["agent_id"],
-            "username": identity["username"],
-            # The token itself is never printed.
-            "token_configured": bool(identity["token"]),
-        }
-    except Exception as exc:  # noqa: BLE001
-        report["relay_client_identity"] = {"error": str(exc)[:200]}
+            identity = load_relay_client_identity()
+            report["relay_client_identity"] = {
+                "base_url": identity["base_url"],
+                "agent_id": identity["agent_id"],
+                "username": identity["username"],
+                # The token itself is never printed.
+                "token_configured": bool(identity["token"]),
+            }
+        except Exception as exc:  # noqa: BLE001
+            report["relay_client_identity"] = {"error": str(exc)[:200]}
+    if requires.get("zendesk_api"):
+        try:
+            report["zendesk_api_auth_configured"] = bool(_ensure_zendesk_api_env())
+        except SystemExit as exc:
+            report["zendesk_api_auth_configured"] = False
+            report["zendesk_api_env_error"] = str(exc)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    ok = (
-        report["preprod_release"].get("ok")
-        and report["skill_script_exists"]
-        and report["pilot_bin_exists"]
-        and "connectivity" in report
-        and report.get("processing_profile") == "preproduction"
+    ok = bool(report["preprod_release"].get("ok")) and "connectivity" in report and (
+        report.get("processing_profile") == "preproduction"
         and report.get("db_schema") == "supportportal_preproduction"
-        and report.get("relay_base_configured") is True
-        and isinstance(report.get("relay_client_identity"), dict)
-        and report["relay_client_identity"].get("token_configured") is True
     )
+    if requires.get("pilot"):
+        ok = ok and report.get("skill_script_exists") and report.get("pilot_bin_exists")
+    if requires.get("relay"):
+        ok = ok and report.get("relay_base_configured") is True
+        ok = ok and isinstance(report.get("relay_client_identity"), dict)
+        ok = ok and report["relay_client_identity"].get("token_configured") is True
+    if requires.get("zendesk_api"):
+        ok = ok and report.get("zendesk_api_auth_configured") is True
     return 0 if ok else 1
 
 
@@ -239,6 +262,18 @@ def _build_listener(log_fn, *, app_id: str, email: str):
     return listener
 
 
+def _ensure_zendesk_api_env() -> str:
+    """Zendesk basic auth for the requester-comment turn channel (PP-EN-DUP).
+
+    Prefers an explicit AUTOMATION_TEST_ZENDESK_AUTH; falls back to the
+    Preproduction SSM parameter. Never printed."""
+    auth = os.environ.get("AUTOMATION_TEST_ZENDESK_AUTH") or ""
+    if not auth:
+        auth = _ssm_value("/supportportal/preproduction/zendesk-basic-auth")
+        os.environ["AUTOMATION_TEST_ZENDESK_AUTH"] = auth
+    return auth
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=sorted(_scenario_ids()))
@@ -247,6 +282,10 @@ def main() -> int:
     parser.add_argument("--relay-timeout-min", type=int, default=None)
     parser.add_argument("--report-file", default=None, help="write the redacted JSON run report here")
     parser.add_argument("--pilot-bin", default=None)
+    parser.add_argument(
+        "--duplicate-of-ticket", default=None,
+        help="PP-EN-DUP only: the OTHER test ticket id the notice references",
+    )
     args = parser.parse_args()
 
     load_env_into_process()
@@ -254,9 +293,17 @@ def main() -> int:
     from backend.services.automation_test_scenarios import ScenarioEngine
 
     if args.check or not args.scenario:
-        return run_check()
+        return run_check(args.scenario)
 
-    relay_base, relay_token = _ensure_relay_env()
+    from scripts.testing.preproduction import scenarios as pp
+
+    requires = pp.PP_SCENARIOS[args.scenario].get("requires") or {}
+    relay_base = relay_token = ""
+    if requires.get("relay"):
+        relay_base, relay_token = _ensure_relay_env()
+    if requires.get("zendesk_api"):
+        _ensure_zendesk_api_env()
+        os.environ["AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT"] = "zendesk_api"
     engine = ScenarioEngine.from_env()
     if args.relay_timeout_min:
         engine.relay_timeout_min = args.relay_timeout_min
@@ -265,8 +312,12 @@ def main() -> int:
 
     print(
         "This will send a REAL email from "
-        f"{pp.redact_email(engine.sender)}, create a REAL Preproduction Zendesk ticket and run the REAL "
-        "pilot enablement leg (test auto-approval; p2-163 gates stay active)."
+        f"{pp.redact_email(engine.sender)} and create a REAL Preproduction Zendesk ticket"
+        + (
+            " and run the REAL pilot enablement leg (test auto-approval; p2-163 gates stay active)."
+            if requires.get("pilot")
+            else "; the follow-up turn posts REAL requester comments on that ticket."
+        )
     )
     if not args.yes:
         if input("Continue? [yes/N] ").strip().lower() != "yes":
@@ -279,14 +330,21 @@ def main() -> int:
     runner = pp.PP_SCENARIOS[args.scenario]["run"]
     exit_code = 0
     try:
-        report = runner(
-            engine,
-            skill_script=_default_skill(),
-            pilot_bin=args.pilot_bin or _pilot_bin(),
-            relay_base=relay_base,
-            relay_token=relay_token,
-            ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
-        )
+        if args.scenario == "PP-EN-DUP":
+            report = runner(
+                engine,
+                duplicate_of_ticket_id=args.duplicate_of_ticket or "13820",
+                replay_post_json=None,  # live replay wiring lands with the authorized run window
+            )
+        else:
+            report = runner(
+                engine,
+                skill_script=_default_skill(),
+                pilot_bin=args.pilot_bin or _pilot_bin(),
+                relay_base=relay_base,
+                relay_token=relay_token,
+                ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
+            )
         report["redacted"] = {
             "app_id": pp.redact_app_id(pp.PP_APP_ID),
             "sender": pp.redact_email(engine.sender),

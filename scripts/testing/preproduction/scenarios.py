@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -873,6 +874,378 @@ def tempfile_mkdtemp() -> str:
     return tempfile.mkdtemp(prefix="pp-en-quick-")
 
 
+PP_EN_DUP_FALLBACK_INTENTS = {"rag_fallback_answer"}
+PP_EN_DUP_FORBIDDEN_CLAIM_RE = re.compile(
+    r"(?i)\b(?:merged?|closed?|closing|accelerat\w*|speed\w* up|priorit\w* (?:up|higher))\b"
+)
+PP_EN_DUP_NEGATION_RE = re.compile(r"(?i)\b(?:not|never|won't|cannot|can't|did not|haven'?t|no longer)\b")
+
+
+def duplicate_notice_body(duplicate_of_ticket_id: str) -> str:
+    """Preserve the original customer phrasing from the 13819 incident,
+    including `submitted with higher priority` and `merge or close it`;
+    only the referenced ticket id is substituted with a test-scope id."""
+    return (
+        "Thanks for the update.\n\n"
+        f"Just to let you know: ticket {duplicate_of_ticket_id} was submitted with "
+        "higher priority - it is a duplicate of this request, so feel free to merge "
+        "or close it.\n\n"
+        "Please continue with this ticket."
+    )
+
+
+def _dup_ack_content_check(content: str) -> str | None:
+    """Acceptance check: the ack must not claim merge/close/acceleration."""
+    for clause in re.split(r"(?<=[.!?])\s+|[;\n]+", str(content or "").casefold()):
+        clause = clause.strip()
+        if not clause or "?" in clause:
+            continue
+        if PP_EN_DUP_NEGATION_RE.search(clause):
+            continue
+        if PP_EN_DUP_FORBIDDEN_CLAIM_RE.search(clause):
+            return f"ack claims a cross-ticket action: {clause[:80]!r}"
+    return None
+
+
+def _wait_notice_turn(engine: Any, ctx: ScenarioContext, baseline_turn_ids: set) -> dict:
+    """Wait for a NEW hermes turn for this ticket (baseline-filtered) and
+    reject the human-review direction with an explicit FAIL step."""
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT turn_id, direction, status FROM automation_hermes_agent_turns "
+            "WHERE zendesk_ticket_id = %s AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (ctx.zendesk_ticket_id, _since_iso(ctx)),
+        )
+        row = rows[0] if rows else None
+        if row and str(row.get("turn_id") or "") not in baseline_turn_ids:
+            if str(row.get("status") or "") in {"completed", "failed", "human_review"}:
+                return row
+        return None
+
+    row = engine.wait_for(
+        "duplicate-notice turn (new, baseline-filtered)",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+    if str(row.get("direction") or "") == "human":
+        engine.record(
+            ctx,
+            "notice handled without human escalation",
+            False,
+            f"direction=human (turn={row.get('turn_id')})",
+        )
+        raise AssertionError(
+            "duplicate notice escalated to human review direction; "
+            f"turn={row.get('turn_id')}"
+        )
+    return row
+
+
+def _wait_notice_ack(engine: Any, ctx: ScenarioContext, baseline_job_ids: set) -> dict:
+    """Wait for the turn's customer-visible ack: exactly one NEW published
+    reply job (baseline-filtered) whose intent is not the RAG fallback.
+
+    The reply text lives on the published ticket message (not the job row),
+    mirroring the engine's ``wait_published_reply_content`` join, so the
+    content acceptance check below is bound to the actually delivered text.
+    """
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT jobs.job_id, jobs.status, jobs.payload->>'reply_intent' AS reply_intent, "
+            "messages.content "
+            "FROM support_account_reply_jobs jobs "
+            "JOIN support_ticket_messages messages ON messages.ticket_id = jobs.ticket_id "
+            "AND messages.meta->>'account_reply_job_id' = jobs.job_id "
+            "WHERE jobs.ticket_id = %s AND jobs.created_at >= %s "
+            "ORDER BY jobs.created_at DESC, messages.created_at DESC, messages.id DESC LIMIT 2",
+            (ctx.client_ticket_id, _since_iso(ctx)),
+        )
+        fresh: list[dict] = []
+        seen_job_ids: set[str] = set()
+        for row in rows:
+            job_id = str(row.get("job_id") or "")
+            if not job_id or job_id in seen_job_ids or job_id in baseline_job_ids:
+                continue
+            seen_job_ids.add(job_id)
+            if str(row.get("status") or "") in {"published", "failed", "manual_attention", "cancelled"}:
+                fresh.append(row)
+        if len(fresh) == 1:
+            return fresh[0]
+        if len(fresh) > 1:
+            return {"__multiple__": [str(r.get("job_id")) for r in fresh]}
+        return None
+
+    row = engine.wait_for(
+        "duplicate-notice acknowledgment reply (new, exactly one)",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+    if "__multiple__" in row:
+        engine.record(ctx, "exactly one ack reply", False, f"jobs={row['__multiple__']}")
+        raise AssertionError(f"multiple new ack replies observed: {row['__multiple__']}")
+    intent = str(row.get("reply_intent") or "")
+    ok = row.get("status") == "published" and intent not in PP_EN_DUP_FALLBACK_INTENTS
+    engine.record(
+        ctx, "ack reply published without RAG fallback", ok,
+        f"intent={intent} status={row.get('status')}",
+    )
+    if not ok:
+        raise AssertionError(
+            f"unexpected ack reply: intent={intent} status={row.get('status')}"
+        )
+    return row
+
+
+def _wait_notice_ack_delivery(engine: Any, ctx: ScenarioContext) -> dict:
+    """Wait for the ack's public Zendesk delivery IN THIS TURN's window —
+    the earlier confirmation-comment delivery must not satisfy this wait."""
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT status, zendesk_comment_id, created_at "
+            "FROM support_account_zendesk_comment_deliveries "
+            "WHERE account_case_id = %s AND is_public = true AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (ctx.account_case_id, _since_iso(ctx)),
+        )
+        row = rows[0] if rows else None
+        if row and str(row.get("status") or "") == "delivered":
+            return row
+        return None
+
+    row = engine.wait_for(
+        "ack comment delivered to Zendesk (this turn)", probe, engine.turn_timeout_min * 60
+    )
+    return row
+
+
+def _since_iso(ctx: ScenarioContext) -> str:
+    from datetime import timedelta
+
+    return (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+
+def _notice_case_state(engine: Any, ctx: ScenarioContext) -> dict:
+    rows = engine.db_query(
+        "SELECT automation_status, internal_email_send_status, "
+        "internal_email_send_reason FROM support_account_cases "
+        "WHERE account_case_id = %s",
+        (ctx.account_case_id,),
+    )
+    return rows[0] if rows else {}
+
+
+def _notice_requests(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT request_id, status, request_version FROM support_enablement_relay_requests "
+        "WHERE ticket_id = %s ORDER BY created_at",
+        (ctx.client_ticket_id,),
+    )
+
+
+def _notice_reply_job_ids(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT job_id FROM support_account_reply_jobs WHERE ticket_id = %s",
+        (ctx.client_ticket_id,),
+    )
+
+
+def _notice_turn_ids(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT turn_id FROM automation_hermes_agent_turns WHERE zendesk_ticket_id = %s",
+        (ctx.zendesk_ticket_id,),
+    )
+
+
+def _notice_stored_intake_event(engine: Any, ctx: ScenarioContext) -> dict:
+    rows = engine.db_query(
+        "SELECT event_id, payload FROM automation_intake_events "
+        "WHERE namespace = %s ORDER BY created_at DESC LIMIT 1",
+        (ctx.zendesk_ticket_id,),
+    )
+    return rows[0] if rows else {}
+
+
+def run_pp_en_duplicate_notice(
+    engine: Any,
+    *,
+    duplicate_of_ticket_id: str = "13820",
+    replay_post_json: Callable[..., dict] | None = None,
+    workdir: Path | None = None,
+) -> dict:
+    """PP-EN-DUP: duplicate-ticket notice follow-up (option-1 contract).
+
+    Success: the notice is acknowledged (exactly one new published, non-RAG
+    ack reply, delivered), the main ticket keeps automation ownership and its
+    original relay request unchanged, zero new requests / RAG calls /
+    cross-ticket operations, and a byte-identical re-delivery of the stored
+    intake event is an idempotent replay with zero new side effects.
+    """
+    workdir = Path(workdir or tempfile.mkdtemp(prefix="pp-en-dup-"))
+    ctx = ScenarioContext("PP-EN-DUP")
+    if str(getattr(engine, "customer_turn_transport", "") or "") != "zendesk_api":
+        raise AutomationTestScenarioError(
+            "PP-EN-DUP requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api"
+        )
+
+    engine.start_ticket(
+        ctx,
+        "Enable media relay for our project",
+        "Hello Agora team,\n\n"
+        "Please enable Media Relay from your end for our project.\n\n"
+        f"App ID: {PP_APP_ID}\n\n"
+        "We are building a live event platform and need Media Relay to bridge presenters "
+        "between two channels. Thank you.",
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+    engine.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+    engine.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+    engine.wait_enablement_relay_request(ctx, "relay request created after confirmation")
+    wait_enablement_relay_dispatched(
+        engine=engine, ctx=ctx, step="relay request dispatched to the local client"
+    )
+
+    # Turn baseline: everything that existed BEFORE the notice turn; every
+    # notice-side wait must observe NEW entities only.
+    baseline_case = _notice_case_state(engine, ctx)
+    baseline_requests = _notice_requests(engine, ctx)
+    baseline_job_ids = {
+        str(row.get("job_id") or "") for row in _notice_reply_job_ids(engine, ctx)
+    }
+    baseline_turn_ids = {
+        str(row.get("turn_id") or "") for row in _notice_turn_ids(engine, ctx)
+    }
+    if len(baseline_requests) != 1:
+        raise AutomationTestScenarioError(
+            f"expected exactly one relay request before the notice, got {len(baseline_requests)}"
+        )
+    baseline_request = baseline_requests[0]
+    engine.record(
+        ctx, "turn baseline recorded", True,
+        f"request={baseline_request.get('request_id')}/v{baseline_request.get('request_version')} "
+        f"jobs={len(baseline_job_ids)} turns={len(baseline_turn_ids)}",
+    )
+
+    turn_info = engine.next_customer_turn(ctx, duplicate_notice_body(duplicate_of_ticket_id))
+    comment_id = str((turn_info or {}).get("comment_id") or "")
+    if not comment_id:
+        raise AutomationTestScenarioError(
+            "duplicate-notice comment id unavailable; turn binding cannot be verified"
+        )
+    engine.record(
+        ctx, "duplicate notice posted as requester comment", True,
+        f"comment_id={comment_id} references ticket {duplicate_of_ticket_id}",
+    )
+
+    turn = _wait_notice_turn(engine, ctx, baseline_turn_ids)
+    ack = _wait_notice_ack(engine, ctx, baseline_job_ids)
+    content_failure = _dup_ack_content_check(str(ack.get("content") or ""))
+    engine.record(
+        ctx, "ack content free of cross-ticket claims",
+        content_failure is None,
+        content_failure or "content check passed",
+    )
+    if content_failure:
+        raise AssertionError(content_failure)
+    ack_delivery = _wait_notice_ack_delivery(engine, ctx)
+
+    # State & side-effect assertions (main ticket continues, request intact).
+    state = _notice_case_state(engine, ctx)
+    ownership_ok = str(state.get("automation_status") or "") == "automation"
+    engine.record(
+        ctx, "main ticket keeps automation ownership", ownership_ok,
+        f"automation_status={state.get('automation_status')!r}",
+    )
+    if not ownership_ok:
+        raise AssertionError(
+            f"duplicate notice lost automation ownership: {state.get('automation_status')!r}"
+        )
+    requests_after = _notice_requests(engine, ctx)
+    request_ok = (
+        len(requests_after) == 1
+        and str(requests_after[0].get("request_id") or "") == str(baseline_request.get("request_id"))
+        and int(requests_after[0].get("request_version") or 0)
+        == int(baseline_request.get("request_version") or 0)
+    )
+    engine.record(
+        ctx, "original relay request unchanged, no new request", request_ok,
+        f"requests={[(r.get('request_id'), r.get('request_version')) for r in requests_after]}",
+    )
+    if not request_ok:
+        raise AssertionError(
+            "relay request set changed during the duplicate notice turn: "
+            f"{[(r.get('request_id'), r.get('request_version')) for r in requests_after]}"
+        )
+
+    # Idempotent re-delivery of the stored intake event (same event_id and
+    # payload, per the ECS intake dedup contract).
+    stored = _notice_stored_intake_event(engine, ctx)
+    replay_report: dict[str, Any] = {"exercised": False}
+    if replay_post_json is not None:
+        event_id = str(stored.get("event_id") or "")
+        if not event_id:
+            raise AutomationTestScenarioError(
+                "stored intake event not found; duplicate re-delivery cannot be exercised"
+            )
+        replay_response = replay_post_json(
+            event_id=event_id, payload=stored.get("payload")
+        )
+        replay_ok = bool(replay_response.get("idempotent_replay")) or str(
+            replay_response.get("status") or ""
+        ) in {"accepted", "idempotent"}
+        engine.record(
+            ctx, "duplicate intake re-delivery is idempotent", replay_ok,
+            f"event_id={event_id} response_keys={sorted(replay_response)}",
+        )
+        if not replay_ok:
+            raise AssertionError(
+                f"duplicate intake re-delivery was not idempotent: {replay_response}"
+            )
+        post_jobs = _notice_reply_job_ids(engine, ctx)
+        post_requests = _notice_requests(engine, ctx)
+        post_executions = engine.db_query(
+            "SELECT execution_id FROM automation_executions WHERE zendesk_ticket_id = %s "
+            "AND created_at >= %s",
+            (ctx.zendesk_ticket_id, _since_iso(ctx)),
+        )
+        zero_effect = (
+            len(post_jobs) == len(baseline_job_ids) + 1
+            and len(post_requests) == 1
+            and len(post_executions) <= 1
+        )
+        engine.record(
+            ctx, "re-delivery produced zero new side effects", zero_effect,
+            f"jobs={len(post_jobs)} requests={len(post_requests)} "
+            f"executions={len(post_executions)}",
+        )
+        if not zero_effect:
+            raise AssertionError("duplicate re-delivery produced new side effects")
+        replay_report = {
+            "exercised": True,
+            "event_id": event_id,
+            "response": replay_response,
+        }
+
+    return {
+        "scenario": ctx.scenario_id,
+        "zendesk_ticket_id": ctx.zendesk_ticket_id,
+        "account_case_id": ctx.account_case_id,
+        "notice_comment_id": comment_id,
+        "notice_turn_id": str(turn.get("turn_id") or ""),
+        "ack_reply_job_id": str(ack.get("job_id") or ""),
+        "ack_delivery_comment_id": str(ack_delivery.get("zendesk_comment_id") or ""),
+        "relay_request_id": str(baseline_request.get("request_id") or ""),
+        "relay_request_version": int(baseline_request.get("request_version") or 0),
+        "duplicate_of_ticket_id": duplicate_of_ticket_id,
+        "replay": replay_report,
+        "steps": [step.as_dict() for step in engine.steps],
+    }
+
+
 PP_SCENARIOS: dict[str, dict[str, Any]] = {
     "PP-EN-QUICK": {
         "label": "Media Relay quick enablement (preproduction)",
@@ -882,5 +1255,17 @@ PP_SCENARIOS: dict[str, dict[str, Any]] = {
             "→ completion reply → solved"
         ),
         "run": run_pp_en_quick,
+        "requires": {"relay": True, "pilot": True, "zendesk_api": False},
+    },
+    "PP-EN-DUP": {
+        "label": "Duplicate-ticket notice follow-up (preproduction)",
+        "description": (
+            "valid enablement main ticket → customer explains a duplicate ticket "
+            "(higher priority / merge or close it) → exactly one non-RAG ack reply "
+            "delivered, automation ownership and relay request unchanged, zero new "
+            "requests, and byte-identical intake re-delivery stays idempotent"
+        ),
+        "run": run_pp_en_duplicate_notice,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": True},
     },
 }

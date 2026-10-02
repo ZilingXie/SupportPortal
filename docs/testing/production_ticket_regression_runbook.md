@@ -260,3 +260,35 @@
 - **运行**：`--scenario PP-EN-QUICK --yes --report-file <path>`（整份报告**递归脱敏**后才
   打印/落盘：steps 明细、aborted 文本里的 App ID/邮箱一律掩码）。
 - **与 p2-163 的关系**：技术闭环证据并入 p2-163 受控验收；人工审批门禁由本次测试覆盖情况单独标注。
+
+### PP-EN-DUP：重复工单说明回归（13819 类消息，选项一合同）
+
+- **合同**：先走完 Quick 的**前半段**（有效 App ID 建单 → 确认回复公开投递 →
+  relay request created→dispatched），随后以**requester 评论**发出重复单说明
+  （正文保留 13819 原始措辞 "submitted with higher priority … merge or close it"，
+  仅替换被引用工单号，默认 13820）。成功标准：**恰好一条**新的非 RAG ack 回复
+  公开投递；ack 正文不得声称跨工单操作（合并/关单/加速/提权——分句判定，
+  带否定的分句放行）；主单 `automation_status` 保持 `automation`；原 relay
+  request 的 id/version 不变且**零新增** request。绑定链必须闭合：
+  `notice comment_id → 新 hermes turn（基线过滤+终态，direction≠human）→
+  ack reply-job（正文取 support_ticket_messages join，非 job 行）→ 本回合时间窗内
+  的公开投递`；回合基线前的旧回复/旧投递一律不满足等待。
+- **幂等重放腿**（复审核正一）：注入 `replay_post_json` 时，重放**首次实际接收的
+  同一份 intake payload**（同 event_id、同 payload；ECS intake 按
+  namespace+event_id 去重，同 id 异 payload 409），断言 idempotent +
+  零新增 jobs/requests/executions。CLI 的 live 注入暂未接线，留待授权实跑窗口。
+- **前置**：与 Quick 相同的 SMTP 建单（163）与 CLI 强制的 preprod DB；外加
+  Zendesk basic auth（`AUTOMATION_TEST_ZENDESK_AUTH` 或 SSM
+  `/supportportal/preproduction/zendesk-basic-auth`，**永不打印**）。
+  **不需要** pilot / relay 客户端（`requires` 分场景：`--check` 对 DUP 不 gate
+  这两项）；客户回合 transport 由 CLI 强制 `zendesk_api`。
+- **预检**：`--scenario PP-EN-DUP --check`（该场景前置面：preprod release/DB/
+  SMTP/Zendesk 凭证）。
+- **运行**：`--scenario PP-EN-DUP --yes --report-file <path>`
+  （可选 `--duplicate-of-ticket <id>` 指定说明里引用的另一测试单号）。
+  报告含 `notice_comment_id / notice_turn_id / ack_reply_job_id /
+  ack_delivery_comment_id / relay_request_id / replay` 全链 ID（递归脱敏后落盘）。
+- **FAIL 即发现**：13819 类消息的现状（升级人审 / RAG fallback / ownership
+  丢失 / 多条回复 / 声称跨工单操作 / 新增 request）按现状如实报 FAIL 并作为
+  产品发现上报；不改通过标准、不顺手扩展合并/关单能力。
+- **清理**：同 §6；Zendesk 测试单的最终清理归用户。
