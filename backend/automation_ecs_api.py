@@ -644,21 +644,48 @@ def create_app(    *,
 
     @app.post(f"{base}/v1/knowledge/promotions/{{promotion_id}}/decision", status_code=200)
     async def knowledge_promotion_decision(promotion_id: str, decision: dict[str, Any]) -> JSONResponse:
-        """Close the human-review loop (governance plan WP3, review round 1).
+        """Close the human-review loop (governance plan WP3, review round 2).
 
-        ``approve`` re-queues the parked promotion — the write re-enters the
-        full external contract (idempotency key, version protection), never a
-        bypass. ``reject`` parks it terminally. Only rows actually in
-        ``human_review`` are decidable.
+        ``approve`` requires the human-determined write action
+        (``resolution.action`` + the complete post-operation ``content``); the
+        promotion re-queues and the write re-enters the full external contract
+        (idempotency key, version protection), never a bypass. ``reject``
+        parks it terminally. ``expected_content_hash`` guards against
+        approving a candidate that a newer generation has already superseded.
+        Only rows actually in ``human_review`` are decidable.
         """
         resolved = str(decision.get("decision") or "").strip()
         operator = str(decision.get("operator") or "").strip()
         note = str(decision.get("note") or "").strip()
+        resolution = decision.get("resolution")
+        expected_hash = str(decision.get("expected_content_hash") or "").strip()
         if resolved not in {"approve", "reject"}:
             raise HTTPException(status_code=422, detail="decision must be approve or reject")
         if not operator:
             raise HTTPException(status_code=422, detail="operator is required")
+        if resolved == "approve" and not isinstance(resolution, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="approve requires a resolution object with the human-determined action",
+            )
         repository = _engineer_ticket_repository()
+        rows = await asyncio.to_thread(repository.list_weknora_promotions)
+        current = next(
+            (row for row in rows or [] if isinstance(row, dict)
+             and str(row.get("promotion_id") or "") == str(promotion_id)),
+            None,
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        if str(current.get("status") or "") != "human_review":
+            raise HTTPException(
+                status_code=409, detail="promotion is not awaiting a human decision",
+            )
+        if expected_hash and str(current.get("content_hash") or "") != expected_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="candidate content is stale: a newer generation supersedes it",
+            )
         try:
             resolved_row = await asyncio.to_thread(
                 repository.decide_weknora_promotion,
@@ -667,6 +694,7 @@ def create_app(    *,
                 decided_by=operator,
                 note=note,
                 decided_at=datetime.now(timezone.utc).isoformat(),
+                resolution=resolution if resolved == "approve" else None,
             )
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -680,6 +708,7 @@ def create_app(    *,
                 "promotion_id": promotion_id,
                 "decision": resolved,
                 "status": resolved_row.get("status"),
+                "candidate_decision": resolved_row.get("decision"),
             },
             headers={"Cache-Control": "no-store"},
         )

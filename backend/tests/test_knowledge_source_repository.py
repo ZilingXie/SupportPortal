@@ -166,6 +166,13 @@ def test_human_review_decision_endpoint_closes_the_loop() -> None:
         failure_code="target_version_conflict", completed_at="2026-10-02T00:02:00Z",
     )
     headers = {"Authorization": "Bearer secret"}
+    resolution = {
+        "action": "replace",
+        "content": "Human-approved complete body.",
+        "title": "T",
+        "target_object_id": "doc-7",
+        "base_version": "5",
+    }
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
         invalid = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
@@ -175,9 +182,20 @@ def test_human_review_decision_endpoint_closes_the_loop() -> None:
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
             json={"decision": "approve", "operator": " "}, headers=headers,
         )
+        approve_without_resolution = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": "ops"}, headers=headers,
+        )
+        stale_hash = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": "ops", "resolution": resolution,
+                  "expected_content_hash": "not-the-queued-candidate"},
+            headers=headers,
+        )
         approved = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops:ziling", "note": "verified"},
+            json={"decision": "approve", "operator": "ops:ziling", "note": "verified",
+                  "resolution": resolution, "expected_content_hash": "0f0e0d"},
             headers=headers,
         )
         redecide = client.post(
@@ -186,14 +204,20 @@ def test_human_review_decision_endpoint_closes_the_loop() -> None:
         )
     assert invalid.status_code == 422
     assert no_operator.status_code == 422
+    assert approve_without_resolution.status_code == 422
+    assert stale_hash.status_code == 409
     assert approved.status_code == 200
     assert approved.json() == {
         "promotion_id": promotion_id, "decision": "approve", "status": "queued",
+        "candidate_decision": "replace",
     }
     # Not in human_review anymore: a second decision is a 409, not a mutation.
     assert redecide.status_code == 409
     row = repository.list_weknora_promotions()[0]
     assert row["status"] == "queued"
+    assert row["decision"] == "replace"
+    assert row["candidate_payload"]["content"] == "Human-approved complete body."
+    assert row["candidate_payload"]["base_version"] == "5"
     assert row["human_decision"] == "approved"
     assert row["human_decision_detail"] == "ops:ziling: verified"
 

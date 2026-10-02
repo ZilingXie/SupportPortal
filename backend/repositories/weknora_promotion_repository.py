@@ -161,6 +161,39 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
     return normalized
 
 
+def _normalize_human_resolution(
+    resolution: dict[str, Any] | None, payload: dict[str, Any]
+) -> dict[str, Any]:
+    """Apply a human-approved write action to the parked candidate payload.
+
+    The parked ``decision="human_review"`` row would immediately park again
+    on re-execution (review round 2, R2-5); an approval therefore carries the
+    human-determined action. The content is the COMPLETE post-operation body;
+    the adapter's own contract validation still applies on execution.
+    """
+    if not isinstance(resolution, dict):
+        raise ValueError("approve requires a resolution object")
+    action = str(resolution.get("action") or "").strip()
+    if action not in {"new", "supplement", "replace", "merge"}:
+        raise ValueError("resolution.action must be one of new/supplement/replace/merge")
+    content = str(resolution.get("content") or "").strip()
+    if not content:
+        raise ValueError("resolution.content is required (the complete post-operation body)")
+    updated = dict(payload)
+    updated["decision"] = action
+    updated["content"] = content
+    for field in ("title", "target_object_id", "base_version", "kind", "merged_content"):
+        value = str(resolution.get(field) or "").strip()
+        if value:
+            updated[field] = value
+    if resolution.get("importance") is not None:
+        try:
+            updated["importance"] = int(resolution["importance"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("resolution.importance must be an integer") from exc
+    return updated
+
+
 class InMemoryWeKnoraPromotionRepositoryMixin:
     def _weknora_promotion_state(self) -> dict[str, dict[str, Any]]:
         if not hasattr(self, "_weknora_promotions"):
@@ -298,14 +331,17 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
         decided_by: str,
         note: str = "",
         decided_at: str,
+        resolution: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """Close the human-review loop (governance plan WP3, review round 1).
 
-        ``approve`` re-queues the parked promotion — the write then re-enters
-        the full external contract (idempotency key, version protection),
-        never a bypass. ``reject`` parks it terminally. Only rows actually
-        sitting in ``human_review`` are decidable; any other state returns
-        None so a stale decision cannot resurrect finished work.
+        ``approve`` applies the human-determined write action (review round 2,
+        R2-5: a bare re-queue would park again on decision="human_review") and
+        re-queues the promotion — the write then re-enters the full external
+        contract (idempotency key, version protection), never a bypass.
+        ``reject`` parks it terminally. Only rows actually sitting in
+        ``human_review`` are decidable; any other state returns None so a
+        stale decision cannot resurrect finished work.
         """
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
@@ -316,6 +352,13 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             row = self._weknora_promotion_state().get(str(promotion_id))
             if row is None or row["status"] != "human_review":
                 return None
+            next_payload = row["candidate_payload"]
+            next_decision = row["decision"]
+            if decision == "approve":
+                next_payload = _normalize_human_resolution(resolution, row["candidate_payload"])
+                next_decision = next_payload["decision"]
+                row["candidate_payload"] = copy.deepcopy(next_payload)
+                row["decision"] = next_decision
             row.update(
                 status="queued" if decision == "approve" else "rejected",
                 owner_token=None,
@@ -699,10 +742,12 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         decided_by: str,
         note: str = "",
         decided_at: str,
+        resolution: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
         """PG twin of the human-review decision closure; see the in-memory
-        method for the contract (approve re-queues under the full external
-        write contract, reject is terminal, only human_review is decidable)."""
+        method for the contract (approve applies the human-determined write
+        action and re-queues under the full external write contract, reject is
+        terminal, only human_review is decidable)."""
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
         detail = str(decided_by or "").strip()
@@ -714,10 +759,26 @@ class PostgresWeKnoraPromotionRepositoryMixin:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
+                        "SELECT candidate_payload, decision FROM {} WHERE promotion_id=%s "
+                        "AND status='human_review' FOR UPDATE"
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (promotion_id,),
+                )
+                record = cur.fetchone()
+                if record is None:
+                    return None
+                stored_payload = _json_value(record[0]) or {}
+                next_decision = str(record[1] or "")
+                next_payload = stored_payload
+                if decision == "approve":
+                    next_payload = _normalize_human_resolution(resolution, stored_payload)
+                    next_decision = next_payload["decision"]
+                cur.execute(
+                    sql.SQL(
                         """
                         UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
                         lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
-                        human_decided_at=%s, updated_at=%s
+                        human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s
                         WHERE promotion_id=%s AND status='human_review'
                         RETURNING promotion_id
                         """
@@ -728,12 +789,18 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         detail or None,
                         decided_at,
                         decided_at,
+                        next_decision,
+                        Json(next_payload),
                         promotion_id,
                     ),
                 )
                 if cur.fetchone() is None:
                     return None
-                return {"promotion_id": promotion_id, "status": next_status}
+                return {
+                    "promotion_id": promotion_id,
+                    "status": next_status,
+                    "decision": next_decision,
+                }
 
         return self._run_with_connection_retry("decide_weknora_promotion", operation)
 
