@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.request
@@ -30,6 +31,16 @@ ENV_PATH = Path(os.environ.get("SUPPORTPORTAL_ENV_FILE") or REPO_ROOT / ".env")
 PREPROD_RELEASE_URL = (
     "https://supportcenter.stellarix.space/automation/preproduction/health/release"
 )
+
+# Preflight reports may embed identities the known-value redaction cannot
+# foresee (e.g. "authenticated as <email>"): any email-shaped token in the
+# printed JSON is masked regardless of whose it is.
+_ANY_EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def _print_redacted_json(report: dict) -> None:
+    text = json.dumps(report, ensure_ascii=False, indent=2)
+    print(_ANY_EMAIL_RE.sub("<redacted-email>", text))
 
 
 def log(message: str) -> None:
@@ -170,10 +181,17 @@ def run_check(selected_scenario: str | None = None) -> int:
     if requires.get("relay") or requires.get("intake"):
         try:
             intake_base, intake_token = _ensure_relay_env()
+            # The intake endpoint is a write entrypoint (DUP re-delivery):
+            # an inherited base pointing anywhere but Preproduction is a
+            # hard preflight failure, never a warning.
+            pp._assert_preproduction_intake_base(intake_base)
             report["intake_api_configured"] = bool(intake_base and intake_token)
         except SystemExit as exc:
             report["intake_api_configured"] = False
             report["intake_api_error"] = str(exc)
+        except Exception as exc:  # noqa: BLE001
+            report["intake_api_configured"] = False
+            report["intake_api_error"] = str(exc)[:300]
     if requires.get("pilot"):
         report["skill_script_exists"] = _default_skill().exists()
         report["pilot_bin"] = _pilot_bin()
@@ -189,6 +207,14 @@ def run_check(selected_scenario: str | None = None) -> int:
 
         report["sender"] = redact_email(engine.sender)
         report["customer_turn_transport"] = engine.customer_turn_transport
+        if requires.get("zendesk_api"):
+            # connectivity_check skips SMTP when the customer-turn channel is
+            # the Zendesk API, but ticket creation still rides on the 163
+            # mailbox — check both channels explicitly.
+            try:
+                report["connectivity"].update(engine.smtp_connectivity_check())
+            except Exception as exc:  # noqa: BLE001
+                report["connectivity"]["smtp"] = f"error: {str(exc)[:120]}"
     except Exception as exc:  # noqa: BLE001
         report["engine_error"] = str(exc)[:300]
     if requires.get("relay"):
@@ -209,10 +235,14 @@ def run_check(selected_scenario: str | None = None) -> int:
         # A non-empty credential string proves nothing: verify the channel
         # the requester-comment turns actually ride on (GET /users/me.json).
         report["zendesk_api_verified"] = bool(engine is not None and _verify_zendesk_auth(engine))
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    # The connectivity details embed the authenticated identity (full email);
+    # redact the WHOLE report before it reaches stdout.
+    report = pp.redact_report(report, app_id=pp.PP_APP_ID, email=(engine.sender if engine else ""))
+    _print_redacted_json(report)
     ok = bool(report["preprod_release"].get("ok")) and "connectivity" in report and (
         report.get("processing_profile") == "preproduction"
         and report.get("db_schema") == "supportportal_preproduction"
+        and report["connectivity"].get("smtp") == "ok"
     )
     if requires.get("pilot"):
         ok = ok and report.get("skill_script_exists") and report.get("pilot_bin_exists")
