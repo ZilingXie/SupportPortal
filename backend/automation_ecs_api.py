@@ -536,6 +536,19 @@ def create_app(    *,
                 )
                 if candidates:
                     engineer_case_id = str(candidates[0]["engineer_case_id"])
+                    # Link the source BEFORE queueing (review round 1, P1-4):
+                    # the Summary fingerprint freezes the linked-source set, so
+                    # queue-then-link would freeze the first request WITHOUT
+                    # its own source and mint a new generation on every replay.
+                    # The receipt's task id is preserved so a failed replay
+                    # keeps the earlier linkage intact.
+                    await asyncio.to_thread(
+                        repository.link_knowledge_source_summary,
+                        intake_id,
+                        engineer_case_id=engineer_case_id,
+                        summary_task_id=summary_task_id,
+                        now_value=now,
+                    )
                     queued = await asyncio.to_thread(
                         queue_hermes_summary_for_case,
                         repository,

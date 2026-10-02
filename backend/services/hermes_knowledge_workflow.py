@@ -350,8 +350,26 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
     current_output_id = str(binding.get("current_output_id") or "")
     current_output = repository.get_hermes_output(current_output_id) if current_output_id else None
     slack_thread = _case_slack_thread(repository, case_id)
+    # Linked source material is part of the Summary's frozen input (review
+    # round 1, P1-4): the same latest-version set that feeds the input
+    # fingerprint is delivered verbatim to the agent. A read failure here
+    # fails the Summary visibly rather than summarizing without material.
+    knowledge_sources = repository.list_knowledge_sources_for_case(case_id)
+    source_projection = [
+        {
+            "intake_id": str(row.get("intake_id") or ""),
+            "source_type": str(row.get("source_type") or ""),
+            "source_id": str(row.get("source_id") or ""),
+            "source_updated_at": str(row.get("source_updated_at") or ""),
+            "task_id": str(row.get("task_id") or ""),
+            "payload": row.get("payload") or {},
+            "references": row.get("references") or {},
+        }
+        for row in knowledge_sources
+        if isinstance(row, dict)
+    ]
     return {
-        "schema": "hermes-case-close-bundle-v1",
+        "schema": "hermes-case-close-bundle-v2",
         "lineage": {
             "engineer_case_id": case_id,
             "client_ticket_id": str(task["client_ticket_id"]),
@@ -382,6 +400,7 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
             "messages": engineer_case.get("messages") or [],
         },
         "slack_thread": slack_thread,
+        "knowledge_sources": source_projection,
         "current_investigation_output": current_output,
         "authority_events": repository.list_hermes_authority_events(case_id),
     }

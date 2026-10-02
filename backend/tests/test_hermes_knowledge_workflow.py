@@ -19,6 +19,7 @@ from backend.services.hermes_case_workflow import (
     start_hermes_case,
 )
 from backend.services.hermes_knowledge_workflow import (
+    build_case_close_bundle,
     drain_hermes_knowledge_tasks,
     knowledge_workflow_active,
     queue_hermes_summary_for_case,
@@ -331,6 +332,55 @@ def test_newer_source_version_changes_fingerprint(monkeypatch) -> None:
     after = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v2")])
     assert before == same
     assert before != after
+
+
+def test_linked_source_versions_reach_fingerprint_and_bundle(monkeypatch) -> None:
+    """Review round 1 P1-4: the repository-level consumption chain. A newer
+    accepted linked source version (1) changes the queue-time fingerprint and
+    mints a new Summary generation, and (2) the close bundle delivers the
+    LATEST accepted source payload verbatim — superseded versions are not
+    re-delivered."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    def _accept(source_updated_at: str, body: str) -> dict:
+        return repository.accept_knowledge_source(
+            {
+                "source_type": "zendesk_ticket",
+                "source_id": "123",
+                "source_updated_at": source_updated_at,
+                "payload": {"body": body},
+                "references": {},
+            },
+            now_value=source_updated_at,
+        )
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+
+    intake_v1 = _accept("2026-09-05T08:01:00Z", "v1 body")
+    assert intake_v1["receipt_status"] == "accepted"
+    repository.link_knowledge_source_summary(
+        intake_v1["intake_id"], engineer_case_id="123-1",
+        summary_task_id=first["summary_task_id"], now_value="2026-09-05T08:01:30Z",
+    )
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second["summary_task_id"] != first["summary_task_id"]
+    assert second["input_fingerprint"] != first["input_fingerprint"]
+
+    intake_v2 = _accept("2026-09-05T08:05:00Z", "v2 body")
+    repository.link_knowledge_source_summary(
+        intake_v2["intake_id"], engineer_case_id="123-1",
+        summary_task_id=second["summary_task_id"], now_value="2026-09-05T08:05:30Z",
+    )
+    third = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert third["summary_task_id"] != second["summary_task_id"]
+
+    bundle = build_case_close_bundle(repository, third)
+    assert bundle["schema"] == "hermes-case-close-bundle-v2"
+    assert [row["intake_id"] for row in bundle["knowledge_sources"]] == [intake_v2["intake_id"]]
+    assert bundle["knowledge_sources"][0]["payload"] == {"body": "v2 body"}
 
 
 def test_new_generation_gets_its_own_review(monkeypatch) -> None:
