@@ -146,7 +146,8 @@
       "enum": [
         "solved",
         "local_resolved",
-        "closed"
+        "closed",
+        "n8n_source"
       ],
       "title": "Trigger",
       "type": "string"

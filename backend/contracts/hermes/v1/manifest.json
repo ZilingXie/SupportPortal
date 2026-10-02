@@ -1,6 +1,6 @@
 {
   "bundle": "HermesCaseContracts.v1",
-  "bundle_hash": "5b22c8d858e394aed81a821a40ee5b1efd2ce14d2c11ed6464d679828e2a2e32",
+  "bundle_hash": "20c5c5f9c1794e205e5a4c253b2d0e1437f0016101471b63041bdb117cc6fcb3",
   "files": {
     "fixtures/invalid/output-model-route-field.json": "9176922b7cfda4eb4cac960fc0f4aba24c2614c2d6169c70a41330efecf622c9",
     "fixtures/invalid/output-result-with-action.json": "6aaa3dbb047dd52b6713a36c21ff995e0b524fdba6b3ae72a700b0f89944b232",
@@ -25,7 +25,7 @@
     "schemas/CaseKnowledgePromotion.v1.schema.json": "d448d4c98054c50173b278bbf6f3b9888a48db44f47caa8d3688f3dfc8505864",
     "schemas/HermesInvestigationOutput.v1.schema.json": "1e18e7308f322ec2f04c357d194867e6750d547dd214e3b8dabc49b4e710e30f",
     "schemas/HermesReviewReport.v1.schema.json": "6328de7323fd7ba177213bb7bfd5efdcbdff4d2465313e991961ad966233bfa3",
-    "schemas/HermesSummaryPacket.v1.schema.json": "feb03affc8bed3a3dc15e5b97550c6d58add7aaab19dd937feeb78d09c04d0c1",
+    "schemas/HermesSummaryPacket.v1.schema.json": "365c96bfdd8c424ebaa6e7529de27a67d98770c822318c770310df245406d138",
     "schemas/HermesTurnRequest.v1.schema.json": "b3ee6c162ba7f5b75657a9107f7da0cfd8279e548ed196593c7934fec9462c86"
   }
 }
