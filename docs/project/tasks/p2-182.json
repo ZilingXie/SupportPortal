@@ -8,9 +8,9 @@
   "module_id": "rag-knowledge",
   "function_id": "weknora-knowledge-promotion",
   "created_at": "2026-09-30",
-  "updated_at": "2026-10-01",
+  "updated_at": "2026-10-02",
   "summary": "WeKnora 适配层计划的写侧实现（与并发 p2-181 的 Summary/Review 双角色互补，p2-181 的 build_weknora_submissions 明确留给本写侧消费）：(1) WeKnoraClient 独立 HTTP 客户端，API 版本/认证头/字段名/幂等键字段全部由 WEKNORA_API_CONTRACT_JSON 探针契约固定（fail-closed，不按文档猜路径），错误分类 not_configured/auth/not_found/conflict/timeout/transport/http/invalid_response+可重试判定；probe() 只读发现报告。(2) support_weknora_promotions 任务表（schema v14，与 p2-181 的 v13 合并 bump）：lineage 全字段+状态机 queued/active/accepted/failed/outcome_unknown/human_review/invalidated+租约；(source_type,source_id,source_version,candidate_type) 唯一约束，确定性 promotion_id，重复事件单对象。(3) Adapter：no_change 仅记录/new 创建/supplement 读当前版本后补充/replace·merge 基于版本更新/human_review 不外写；版本冲突不覆盖转人工；401/403 不重试 failed；写超时 outcome_unknown 同幂等键可重试；写成功回读失败 outcome_unknown 记录 object id 禁止盲写；memory 无固定共享 Hermes 身份不写全局记忆。(4) worker _drain_weknora_promotions：领取→Adapter→终态，租约 120s，异常兜底 failed，outcome_unknown 不自动重领，requeue_weknora_promotion 人工复位。(5) Hermes 集成：WeKnoraPromotionCandidate v1 契约+build_weknora_promotion_tasks（结构非法候选保留为 synthetic human_review 不丢失）；close 事务内原子入队，WEKNORA_PROMOTION_ENABLED=1 且契约固定才启用；knowledge_workflow_active()（p2-181 真实 Review 管线）激活时默认候选路径自动让位，避免双生产者。reopen 同事务失效 queued/active。 【修复轮 2026-10-01，响应未通过验收】(1) 幂等键升级为候选级：promotion_id 与唯一索引加入 content_hash（schema v15，v14 旧索引显式替换），同一 close 的多个同类型候选各自成行、事件重放仍幂等。(2) 回读必须证明写入：核对对象一致、内容一致、版本一致，任何不一致按 readback_failed 记 outcome_unknown 而非 accepted。(3) requeue 恢复先对已记录 weknora_object_id 回读核对：一致→reconciled_existing accepted（零外部调用）；对象不存在→按原幂等键写一次；内容/版本分叉→human_review；核对读失败→outcome_unknown，绝不二次盲建。(4) 版本保护闭合：replace/merge 缺 base_version=候选不完整拒绝写入；supplement 携带的 base_version 参与比对。(5) Client 适配官方 API 形态：契约 path 支持 {placeholder} 动态对象路径（URL 编码、缺值 fail-closed）；object id 归一在配置键后回退 object_id→id（官方记忆 API 返回 id）。(6) 探针新增 opt-in 写能力验证（WEKNORA_PROBE_WRITE_CAPABILITIES=1，一次性探针库）：create→回读内容一致→同幂等键重建同对象→条件更新→过期 base_version 须被拒；health 通过不再被当作写入能力证据。 【修复轮 2 2026-10-01，响应第二轮验收未通过】(1) supplement 与 replace/merge 一致强制 Review base_version（缺失=invalid_candidate），不再把未确认的当前版本当作 Review 基准；比对改严格相等，不一致或不可读均 human_review。(2) Client 请求字段映射：契约操作支持 body 模板（值为 $语义字段引用 或字面量，模板存在时只发已定义字段、被引用字段缺失/空值 fail-closed）与 query_params 模板（GET 无 body）；官方 memory 形态（POST /api/v1/memory/items 的 kind/content/importance）用模板精确发出，不再泄漏 user_id/幂等键/metadata；memory_query→memory_list（官方列表语义）；memory 语义字段新增 kind/importance 并入候选契约。(3) conditional_update 能力声明：update 操作须显式 conditional_update=true（探针证据），缺省视为不支持——定向更新无证据时转 human_review，不执行不可验证的覆盖。",
-  "next_action": "Preproduction 已完成 r20261001-d01bb0a 发布与公开回读，但该 release 的 runner 漏传 --hermes-agent-enabled，受控 ticket.created 验证在 Hermes turn 阶段以 hermes_agent_not_configured 终止，尚未形成 Summary/Review E2E。下一步用当前 main 重建 immutable release 并显式启用 Hermes agent，然后重跑受控 Preproduction case。WeKnora 只读 contract probe 与 memory create/list/delete 已通过；知识写能力 probe 发现服务端未提供幂等去重且接受 stale base_version，因此 conditional_update 保持未声明、定向更新继续 fail-closed，promotion 写入的完整验收仍需服务端能力或明确人工复核路径。",
+  "next_action": "PR#1370（main d2eb0acd）已修复 Hermes real Summary 对 n8n_source 及字符串数组叙述字段的契约边界；首次新 release preflight 因 real 模式要求 --bootstrap-account-schema 在 ECS 更新前 fail-closed。下一步以新的 docs-only main SHA 重建 immutable Preproduction release，显式启用 --bootstrap-account-schema、--hermes-agent-enabled、--hermes-case-workflow-mode real，再重放新的合成 n8n source episode 并回读 Summary/Review/Promotion/WeKnora。",
   "acceptance_criteria": [
     "Client 未配置契约时所有操作 fail-closed（not_configured），不产生外部调用",
     "Adapter 决策矩阵按计划状态规则落位（401/403 不重试、写后回读失败 outcome_unknown、回读须证明对象/内容/版本一致）",
@@ -85,6 +85,16 @@
       "type": "test",
       "label": "WeKnora Preproduction contract/write probe（2026-10-01）",
       "details": "AWS SSM 注入 endpoint、X-API-Key 契约、知识库 ID 与 shared memory identity；SSL_CERT_FILE=/etc/ssl/cert.pem 下 health=ok、knowledge search 可用，默认发现路径均 404。知识写 probe：create/readback/普通 update 成功；同幂等 key 产生不同 object，且 stale base_version 被服务端接受并落地，因此 idempotent_recreate 与 stale_base_version_rejected 均 failed，不能声明 conditional_update=true。memory 官方 POST {kind,content,importance}、GET list 和 DELETE 清理成功。两个 knowledge probe object 与 memory probe object 已清理，按 probe 内容再次 search 为空。"
+    },
+    {
+      "type": "test",
+      "label": "n8n Summary output contract 修复（PR#1370）",
+      "details": "main d2eb0acd：HermesSummaryPacket 允许 n8n_source；Summary 边界将字符串数组规范化为持久化字符串，其他类型继续 fail-closed；Hermes/契约/配置定向回归 150 passed。"
+    },
+    {
+      "type": "deployment",
+      "label": "新 release preflight 门禁留档",
+      "details": "r20261002-d2eb0ac 已完成 CodeBuild，但 Preproduction ECS 尚未更新；Hermes real 模式因未带 --bootstrap-account-schema 被部署合同在 preflight fail-closed，未产生业务副作用。"
     }
   ],
   "history": [
@@ -102,6 +112,11 @@
       "at": "2026-10-01",
       "event": "followup",
       "summary": "继续执行 p2-182：n8n 两条知识来源 workflow 的已验收 draft 已通过 MCP 发布并完成 active 回读；首次从 main@f17da3e 部署治理 overlay 时，worker CloudWatch 暴露既有 Postgres list_engineer_slack_events 漏 return 的 TypeError，正式管线自动回滚到 r20261001-3856643。当前 worktree 已补最小 return 修复，准备新 commit 重建发布；WeKnora 实链仍等待 AWS 中不存在的 endpoint/凭证/知识库 ID/shared identity。"
+    },
+    {
+      "at": "2026-10-02",
+      "event": "followup",
+      "summary": "PR#1370 修复 n8n_source Summary 输出契约并通过 150 项定向回归。首次新 release 的 CodeBuild 成功，ECS preflight 正确要求 Hermes real 必须显式 bootstrap；保留失败 checkpoint，改用新 main SHA 重建带 bootstrap 的 Preproduction release。"
     }
   ],
   "legacy_ids": [],
