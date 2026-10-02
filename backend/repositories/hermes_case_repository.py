@@ -722,6 +722,14 @@ class InMemoryHermesCaseRepositoryMixin:
 
     def ensure_hermes_summary_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         with self._assignment_lock:
+            fingerprint = str(payload.get("input_fingerprint") or "")
+            for row in self._hermes_summary_tasks.values():
+                if (
+                    str(row.get("engineer_case_id") or "") == str(payload["engineer_case_id"])
+                    and int(row.get("episode") or 0) == int(payload["episode"])
+                    and str(row.get("input_fingerprint") or "") == fingerprint
+                ):
+                    return copy.deepcopy(row)
             existing = self._hermes_summary_tasks.get(str(payload["summary_task_id"]))
             if existing is not None:
                 return copy.deepcopy(existing)
@@ -734,6 +742,22 @@ class InMemoryHermesCaseRepositoryMixin:
             }
             self._hermes_summary_tasks[row["summary_task_id"]] = row
             return copy.deepcopy(row)
+
+    def latest_hermes_summary_task_for_case_episode(
+        self, engineer_case_id: str, episode: int
+    ) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            matches = [
+                row for row in self._hermes_summary_tasks.values()
+                if str(row.get("engineer_case_id") or "") == str(engineer_case_id)
+                and int(row.get("episode") or 0) == int(episode)
+            ]
+            if not matches:
+                return None
+            matches.sort(
+                key=lambda row: (str(row.get("created_at") or ""), str(row.get("summary_task_id") or ""))
+            )
+            return copy.deepcopy(matches[-1])
 
     def get_hermes_summary_task(self, summary_task_id: str) -> dict[str, Any] | None:
         with self._assignment_lock:
@@ -1051,7 +1075,16 @@ class PostgresHermesCaseRepositoryMixin:
             sql.Identifier("idx_support_hermes_turn_requests_claim"), self._table("support_hermes_turn_requests")))
         cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id) WHERE status='active'").format(
             sql.Identifier("idx_support_hermes_turn_requests_one_active"), self._table("support_hermes_turn_requests")))
-        cur.execute(sql.SQL("CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, episode)").format(
+        # Generation-aware summary dedup: the same (case, episode) may carry
+        # multiple frozen-input generations; identical fingerprints still
+        # collapse to one task via ensure_hermes_summary_task.
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS input_fingerprint TEXT").format(
+            self._table("support_hermes_summary_tasks")))
+        cur.execute(sql.SQL("DROP INDEX IF EXISTS {}").format(
+            sql.Identifier("idx_support_hermes_summary_tasks_episode")))
+        cur.execute(sql.SQL(
+            "CREATE UNIQUE INDEX IF NOT EXISTS {} ON {} (engineer_case_id, episode, input_fingerprint)"
+        ).format(
             sql.Identifier("idx_support_hermes_summary_tasks_episode"),
             self._table("support_hermes_summary_tasks")))
         turn_table = self._table("support_hermes_turn_requests")
@@ -1730,7 +1763,7 @@ class PostgresHermesCaseRepositoryMixin:
         "summary_task_id", "engineer_case_id", "episode", "client_ticket_id",
         "investigation_id", "ledger_revision", "conversation_version",
         "hermes_session_id", "trigger_kind", "status", "idempotency_key", "run_id",
-        "prompt_version", "agent_model", "reasoning_effort",
+        "prompt_version", "agent_model", "reasoning_effort", "input_fingerprint",
         "packet", "packet_hash", "error_code", "error_message",
         "owner_token", "claimed_at", "lease_expires_at", "created_at", "updated_at",
     )
@@ -1753,28 +1786,62 @@ class PostgresHermesCaseRepositoryMixin:
 
     def ensure_hermes_summary_task(self, payload: dict[str, Any]) -> dict[str, Any]:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            fingerprint = str(payload.get("input_fingerprint") or "")
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(sql.SQL("""
                     INSERT INTO {} (summary_task_id, engineer_case_id, episode, client_ticket_id,
                         investigation_id, ledger_revision, conversation_version, hermes_session_id,
                         trigger_kind, status, idempotency_key, prompt_version, agent_model,
-                        reasoning_effort, created_at, updated_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s)
-                    ON CONFLICT (engineer_case_id, episode) DO NOTHING
+                        reasoning_effort, input_fingerprint, created_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s)
+                    ON CONFLICT (engineer_case_id, episode, input_fingerprint) DO NOTHING
                 """).format(self._table("support_hermes_summary_tasks")), (
                     payload["summary_task_id"], payload["engineer_case_id"],
                     payload["episode"], payload["client_ticket_id"], payload["investigation_id"],
                     payload["ledger_revision"], payload["conversation_version"],
                     payload["hermes_session_id"], payload["trigger"], payload["idempotency_key"],
                     payload.get("prompt_version"), payload.get("agent_model"),
-                    payload.get("reasoning_effort"), payload["created_at"], payload["created_at"],
+                    payload.get("reasoning_effort"), fingerprint,
+                    payload["created_at"], payload["created_at"],
                 ))
-                cur.execute(sql.SQL("SELECT {} FROM {} WHERE engineer_case_id=%s AND episode=%s").format(
+                cur.execute(sql.SQL(
+                    "SELECT {} FROM {} WHERE engineer_case_id=%s AND episode=%s "
+                    "AND input_fingerprint=%s"
+                ).format(
                     sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
                     self._table("support_hermes_summary_tasks"),
-                ), (payload["engineer_case_id"], payload["episode"]))
-                return self._summary_task_row(cur.fetchone()) or {}
+                ), (payload["engineer_case_id"], payload["episode"], fingerprint))
+                row = cur.fetchone()
+                if row is None:
+                    # Legacy row written before the fingerprint column existed
+                    # (empty fingerprint): the canonical (case, episode) task.
+                    cur.execute(sql.SQL(
+                        "SELECT {} FROM {} WHERE engineer_case_id=%s AND episode=%s "
+                        "ORDER BY created_at, summary_task_id LIMIT 1"
+                    ).format(
+                        sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                        self._table("support_hermes_summary_tasks"),
+                    ), (payload["engineer_case_id"], payload["episode"]))
+                    row = cur.fetchone()
+                return self._summary_task_row(row) or {}
         return self._run_with_connection_retry("ensure_hermes_summary_task", operation)
+
+    def latest_hermes_summary_task_for_case_episode(
+        self, engineer_case_id: str, episode: int
+    ) -> dict[str, Any] | None:
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL(
+                    "SELECT {} FROM {} WHERE engineer_case_id=%s AND episode=%s "
+                    "ORDER BY created_at DESC, summary_task_id DESC LIMIT 1"
+                ).format(
+                    sql.SQL(",").join(map(sql.Identifier, self._SUMMARY_TASK_FIELDS)),
+                    self._table("support_hermes_summary_tasks"),
+                ), (str(engineer_case_id), int(episode)))
+                return self._summary_task_row(cur.fetchone())
+        return self._run_with_connection_retry(
+            "latest_hermes_summary_task_for_case_episode", operation
+        )
 
     def get_hermes_summary_task(self, summary_task_id: str) -> dict[str, Any] | None:
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:

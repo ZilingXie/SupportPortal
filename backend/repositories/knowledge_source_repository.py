@@ -19,7 +19,7 @@ from psycopg import sql
 from psycopg.types.json import Json
 
 
-SOURCE_TYPES = frozenset({"zendesk_ticket", "csd_issue"})
+SOURCE_TYPES = frozenset({"zendesk_ticket", "csd_issue", "article"})
 
 
 def normalize_source_timestamp(value: Any) -> tuple[str, float]:
@@ -140,7 +140,7 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 """
                 CREATE TABLE IF NOT EXISTS {} (
                     intake_id TEXT PRIMARY KEY,
-                    source_type TEXT NOT NULL CHECK (source_type IN ('zendesk_ticket','csd_issue')),
+                    source_type TEXT NOT NULL CHECK (source_type IN ('zendesk_ticket','csd_issue','article')),
                     source_id TEXT NOT NULL,
                     source_updated_at TEXT NOT NULL,
                     source_updated_at_epoch DOUBLE PRECISION NOT NULL,
@@ -169,6 +169,20 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 "(source_type, source_id, source_updated_at_epoch DESC)"
             ).format(sql.Identifier("idx_knowledge_source_latest"), table)
         )
+        # Schema evolution: widen the source_type enum for article snapshots.
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}"
+        ).format(
+            table,
+            sql.Identifier("support_knowledge_source_intakes_source_type_check"),
+        ))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+            "(source_type IN ('zendesk_ticket','csd_issue','article'))"
+        ).format(
+            table,
+            sql.Identifier("support_knowledge_source_intakes_source_type_check"),
+        ))
 
     @staticmethod
     def _row_to_source(row: tuple[Any, ...] | None) -> dict[str, Any] | None:

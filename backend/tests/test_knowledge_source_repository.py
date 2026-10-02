@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 from unittest.mock import patch
 
 from backend.repositories.ticket_repository import InMemoryTicketRepository
@@ -117,3 +119,41 @@ def test_source_intake_requires_bearer_and_state_redacts_raw_payload() -> None:
     assert state.status_code == 200
     assert "payload" not in state.json()
     assert state.json()["status"] == "accepted"
+
+
+class ArticleSourceTypeTests(unittest.TestCase):
+    """WP1: article snapshots are a first-class source type."""
+
+    def test_article_source_accepted_and_versioned(self) -> None:
+        repository = InMemoryTicketRepository()
+        payload = {
+            "schema_version": "knowledge-source-v1",
+            "source_type": "article",
+            "source_id": "doc-123",
+            "source_updated_at": "2026-10-02T00:00:00+00:00",
+            "payload": {"title": "RTC guide", "body": "raw snapshot"},
+            "references": {"url": "https://docs.example.test/guide"},
+        }
+        receipt = repository.accept_knowledge_source(payload, now_value="2026-10-02T00:00:01+00:00")
+        self.assertEqual(receipt["receipt_status"], "accepted")
+        self.assertTrue(receipt["task_id"])
+        # Same version again -> already_exists
+        again = repository.accept_knowledge_source(payload, now_value="2026-10-02T00:01:00+00:00")
+        self.assertEqual(again["receipt_status"], "already_exists")
+        # Newer version -> accepted
+        payload["source_updated_at"] = "2026-10-02T02:00:00+00:00"
+        newer = repository.accept_knowledge_source(payload, now_value="2026-10-02T02:00:01+00:00")
+        self.assertEqual(newer["receipt_status"], "accepted")
+
+    def test_unknown_source_type_rejected(self) -> None:
+        repository = InMemoryTicketRepository()
+        payload = {
+            "schema_version": "knowledge-source-v1",
+            "source_type": "random_forum",
+            "source_id": "x",
+            "source_updated_at": "2026-10-02T00:00:00+00:00",
+            "payload": {},
+        }
+        with self.assertRaises(ValueError):
+            repository.accept_knowledge_source(payload, now_value="2026-10-02T00:00:01+00:00")
+

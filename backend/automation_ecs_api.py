@@ -76,7 +76,7 @@ class KnowledgeSourceSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: str = Field(pattern=r"^knowledge-source-v1$")
-    source_type: str = Field(pattern=r"^(zendesk_ticket|csd_issue)$")
+    source_type: str = Field(pattern=r"^(zendesk_ticket|csd_issue|article)$")
     source_id: str = Field(min_length=1, max_length=256)
     source_updated_at: str = Field(min_length=1, max_length=128)
     payload: dict[str, Any]

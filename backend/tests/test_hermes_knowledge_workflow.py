@@ -278,6 +278,61 @@ def test_n8n_source_trigger_queues_summary_task(monkeypatch) -> None:
     assert task["summary_task_id"] == summary_task_id_for("123-1", 1)
 
 
+def test_duplicate_trigger_with_unchanged_input_reuses_task(monkeypatch) -> None:
+    """solved -> closed with unchanged content reuses the Summary task."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+
+    assert first is not None and second is not None
+    assert first["summary_task_id"] == second["summary_task_id"]
+    assert first["input_fingerprint"] == second["input_fingerprint"]
+    assert len(repository.list_hermes_summary_tasks()) == 1
+
+
+def test_updated_input_creates_new_summary_generation(monkeypatch) -> None:
+    """Late-arriving substantive material earns a NEW Summary version while
+    the earlier generation keeps its own record (never overwritten)."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+
+    # Advance the case lineage in the STORE (the binding getter returns a
+    # copy): a ledger revision bump is substantive new frozen input.
+    stored = repository._hermes_case_bindings["123-1"]
+    stored["current_ledger_revision"] = int(stored["current_ledger_revision"]) + 1
+
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second is not None
+    assert second["summary_task_id"] != first["summary_task_id"]
+    assert ":g" in second["summary_task_id"]
+    assert second["input_fingerprint"] != first["input_fingerprint"]
+    # Replay of the NEW generation with unchanged input reuses it.
+    third = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert third["summary_task_id"] == second["summary_task_id"]
+    assert len(repository.list_hermes_summary_tasks()) == 2
+
+
+def test_newer_source_version_changes_fingerprint(monkeypatch) -> None:
+    """A newer accepted source version is substantive new material."""
+    from backend.services.hermes_knowledge_workflow import summary_input_fingerprint
+
+    binding = {
+        "episode": 1, "current_ledger_revision": 3, "conversation_version": 5,
+    }
+    before = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v1")])
+    same = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v1")])
+    after = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v2")])
+    assert before == same
+    assert before != after
+
+
 def test_n8n_source_summary_normalizes_string_lists(monkeypatch) -> None:
     _enable_real_mode(monkeypatch)
     repository = _repository()

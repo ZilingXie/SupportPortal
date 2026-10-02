@@ -126,14 +126,66 @@ def _pinned_agent_model() -> str | None:
 # --------------------------------------------------------------------- triggers
 
 
+def summary_input_fingerprint(
+    binding: dict[str, Any], *, source_versions: list[tuple[str, str, str]] | None = None
+) -> str:
+    """Deterministic fingerprint of the Summary's frozen input generation.
+
+    Covers the case lineage the Summary would consume (episode, ledger
+    revision, conversation version) plus every accepted knowledge-source
+    version linked to the case: a duplicate notification or an unchanged
+    ``solved -> closed`` transition reproduces the same fingerprint (task
+    reuse), while late-arriving or updated substantive material changes it
+    and earns a new Summary generation.
+    """
+    import hashlib
+
+    parts = [
+        f"episode={int(binding.get('episode') or 0)}",
+        f"ledger={int(binding.get('current_ledger_revision') or 0)}",
+        f"conversation={int(binding.get('conversation_version') or 0)}",
+    ]
+    for source_type, source_id, source_version in sorted(source_versions or []):
+        parts.append(f"src={source_type}:{source_id}:{source_version}")
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _linked_source_versions(repository: Any, engineer_case_id: str) -> list[tuple[str, str, str]]:
+    """Accepted knowledge-source versions linked to this case (best effort).
+
+    A repository without the linkage surface simply contributes no source
+    parts; lineage revisions still fingerprint the case-side input.
+    """
+    linker = getattr(repository, "list_knowledge_sources_for_case", None)
+    if not callable(linker):
+        return []
+    try:
+        rows = linker(engineer_case_id) or []
+    except Exception:  # noqa: BLE001 - fingerprint input is best-effort additive
+        return []
+    versions: list[tuple[str, str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        versions.append((
+            str(row.get("source_type") or ""),
+            str(row.get("source_id") or ""),
+            str(row.get("source_updated_at") or row.get("source_updated_at_epoch") or ""),
+        ))
+    return versions
+
+
 def queue_hermes_summary_for_case(
     repository: Any, *, engineer_case_id: str, trigger: str,
     now_value: str | None = None,
 ) -> dict[str, Any] | None:
     """Create-or-reuse the episode's Summary task; returns None when inactive.
 
-    Idempotency is per (engineer_case_id, episode): duplicate or out-of-order
-    terminal events reuse the original task row instead of creating new ones.
+    Idempotency is per (engineer_case_id, episode, input_fingerprint):
+    duplicate or out-of-order terminal events with unchanged input reuse the
+    original task row; updated substantive material (a newer accepted source
+    version, an advanced ledger) produces a new Summary generation with a
+    versioned task id while the earlier generation keeps its own record.
     """
     if hermes_workflow_mode() != "real":
         return None
@@ -142,8 +194,22 @@ def queue_hermes_summary_for_case(
         return None
     now = now_value or _now_iso()
     episode = int(binding["episode"])
+    fingerprint = summary_input_fingerprint(
+        binding, source_versions=_linked_source_versions(repository, engineer_case_id)
+    )
+    latest = repository.latest_hermes_summary_task_for_case_episode(engineer_case_id, episode)
+    if isinstance(latest, dict) and str(latest.get("input_fingerprint") or "") == fingerprint:
+        # Identical frozen input (duplicate notification or solved->closed
+        # with unchanged content): reuse the existing generation.
+        return latest
+    task_id = summary_task_id_for(engineer_case_id, episode)
+    if isinstance(latest, dict):
+        # Changed input after an earlier generation: version the new task so
+        # both generations stay traceable; ensure() still collapses replays
+        # of THIS fingerprint.
+        task_id = f"{task_id}:g{str(fingerprint)[:12]}"
     payload = {
-        "summary_task_id": summary_task_id_for(engineer_case_id, episode),
+        "summary_task_id": task_id,
         "engineer_case_id": engineer_case_id,
         "client_ticket_id": str(binding["client_ticket_id"]),
         "investigation_id": str(binding["investigation_id"]),
@@ -152,10 +218,11 @@ def queue_hermes_summary_for_case(
         "conversation_version": int(binding["conversation_version"]),
         "hermes_session_id": str(binding.get("hermes_session_id") or ""),
         "trigger": trigger,
-        "idempotency_key": f"hmknow:{summary_task_id_for(engineer_case_id, episode)}",
+        "idempotency_key": f"hmknow:{task_id}",
         "prompt_version": KNOWLEDGE_SUMMARY_PROMPT_KEY,
         "agent_model": _pinned_agent_model(),
         "reasoning_effort": KNOWLEDGE_SUMMARY_REASONING_EFFORT,
+        "input_fingerprint": fingerprint,
         "created_at": now,
     }
     return repository.ensure_hermes_summary_task(payload)
