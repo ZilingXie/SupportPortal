@@ -1,6 +1,6 @@
 ---
 name: knowledge-review
-description: Knowledge-governance review methodology for the Hermes knowledge-review session. Decides, for each case-summary candidate, whether it is knowledge, memory, or a skill change, and whether the right outcome is no_change, merge, supplement, replace, new, or human_review — grounding every decision in the server-provided WeKnora similarity results and never converting missing evidence into a confident write. Human-maintained; the pipeline never edits this skill automatically.
+description: Knowledge-governance review methodology for the Hermes knowledge-review session. Decides, for each case-summary candidate, whether it is knowledge, memory, or a skill change, and whether the right outcome is no_change, merge, supplement, replace, new, or human_review — grounding every decision in the server-provided WeKnora similarity results and never converting missing evidence into a confident write. Distinguishes a successful search with no match (new is allowed) from a failed search (human_review). proposed_content is always the complete post-operation body. Human-maintained; the pipeline never edits this skill automatically.
 ---
 
 # Knowledge Review (Hermes knowledge-governance Review role)
@@ -27,20 +27,41 @@ output. It never writes to WeKnora, the wiki, memory, or the case.
 1. Check the candidate's evidence in the summary: no traceable evidence →
    `human_review`.
 2. Find the candidate's nearest existing entries in the provided WeKnora
-   search results. No usable results for the candidate's type (including the
-   unavailability marker) → `human_review`.
+   search results. Distinguish the two empty outcomes:
+   - the search **succeeded** and returned no comparable entry for the
+     candidate's type → nothing similar; continue to step 3 and `new` is
+     allowed;
+   - the search **failed** or is marked unavailable for the candidate's
+     type, or a proposed target's full text cannot be read, or its current
+     version cannot be confirmed → `human_review`. A failed lookup is
+     never evidence of absence.
 3. Compare substance, not wording:
    - existing entry already states it → `no_change` with that target;
-   - existing entry is correct but incomplete → `supplement` with proposed
-     content limited to the addition;
-   - existing entry is partly wrong → `replace` with the corrected full
-     content and the conflict named in the rationale;
-   - overlapping but separately maintained → `merge` with an explicit merged
-     proposal;
-   - nothing similar → `new`.
+   - existing entry is correct but incomplete → `supplement`;
+   - existing entry is partly wrong → `replace` with the conflict named
+     in the rationale;
+   - overlapping but separately maintained → `merge`;
+   - nothing similar (successful search, no match) → `new`.
 4. Anything conflicting, stale-versioned, cross-type ambiguous, or outside
    the reviewer's evidence → `human_review`. Missing evidence is never a
    confident write.
+
+## Proposed content contract
+
+`proposed_content` ALWAYS carries the **complete post-operation body** —
+exactly what should be stored after the operation, never a delta:
+
+- `new`: the full new entry;
+- `supplement`: the existing entry's full text with the addition
+  integrated (the server submits this body verbatim; it does not append
+  to the stored text);
+- `merge`: the full merged body covering every source being combined,
+  preserving historical statements and multi-source traceability;
+- `replace`: the full corrected text.
+
+For memory candidates, `kind` must be one of the server-supported fixed
+enum values confirmed by the contract probe (never invent a kind), and
+`importance` an integer.
 
 ## Hard rules
 

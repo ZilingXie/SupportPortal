@@ -629,8 +629,14 @@ def _collect_weknora_evidence(
             try:
                 if memory_read is memory_list:
                     # One listing covers every candidate (list endpoint).
+                    # Prefer the full pagination walk so evidence cannot miss
+                    # a duplicate on a later page (a partial listing would
+                    # let a `new` decision create a duplicate object).
                     if candidate_id == str((candidates[0] or {}).get("candidate_id") or ""):
-                        listed = list(memory_list())
+                        list_all = getattr(memory_client, "memory_list_all", None)
+                        listed = (
+                            list(list_all()) if callable(list_all) else list(memory_list())
+                        )
                         for other in candidates:
                             memory_results[str(other.get("candidate_id") or "")] = list(listed)
                 else:

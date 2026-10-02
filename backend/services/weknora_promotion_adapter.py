@@ -235,12 +235,20 @@ class WeKnoraPromotionAdapter:
         return str(candidate.get("content") or "").strip()
 
     def _read_object(self, candidate_type: str, object_id: str) -> dict[str, Any]:
-        """Read one object; raises WeKnoraError (not_found when absent)."""
+        """Read one object; raises WeKnoraError (not_found when absent).
+
+        Memory uses the official list endpoint: the walk covers EVERY page so
+        an object on a later page is found (zero extra creates). A read
+        failure on any page propagates as its own failure kind — an
+        incomplete read is never treated as absence.
+        """
         if candidate_type == "knowledge":
             return self._client.knowledge_read(object_id=object_id)
-        # The official memory API is a list endpoint: fetch the items the
-        # identity owns and match by object id.
-        for item in self._client.memory_list():
+        list_all = getattr(self._client, "memory_list_all", None)
+        items = (
+            list_all() if callable(list_all) else list(self._client.memory_list())
+        )
+        for item in items:
             if _item_object_id(item) == object_id:
                 return {
                     "object_id": object_id,

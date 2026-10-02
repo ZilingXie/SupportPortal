@@ -548,6 +548,53 @@ def create_app(    *,
         record.pop("references", None)
         return JSONResponse(content=jsonable_encoder(record), headers={"Cache-Control": "no-store"})
 
+    @app.get(f"{base}/v1/knowledge/promotions")
+    async def knowledge_promotions(status: str | None = None) -> JSONResponse:
+        """Observable promotion queue (governance plan WP3).
+
+        Lists WeKnora promotion tasks — by default only the actionable
+        human_review population (the pending human queue). `candidate_payload`
+        is redacted to its digest fields; full lineage and failure reasons are
+        preserved so a human can decide and the `requeue` flow can act.
+        """
+        allowed = {"human_review", "queued", "active", "accepted", "failed", "outcome_unknown", "invalidated"}
+        normalized = str(status or "human_review").strip() or "human_review"
+        if normalized not in allowed:
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(allowed)}")
+        repository = _engineer_ticket_repository()
+        rows = await asyncio.to_thread(repository.list_weknora_promotions)
+        projections = []
+        for row in rows or []:
+            if not isinstance(row, dict) or str(row.get("status") or "") != normalized:
+                continue
+            candidate = row.get("candidate_payload") if isinstance(row.get("candidate_payload"), dict) else {}
+            projections.append(
+                {
+                    "promotion_id": row.get("promotion_id"),
+                    "status": row.get("status"),
+                    "failure_code": row.get("failure_code"),
+                    "failure_detail": row.get("failure_detail"),
+                    "decision": candidate.get("decision"),
+                    "candidate_type": candidate.get("candidate_type"),
+                    "candidate_id": candidate.get("candidate_id"),
+                    "statement": str(candidate.get("statement") or "")[:200],
+                    "source_type": row.get("source_type"),
+                    "source_id": row.get("source_id"),
+                    "source_version": row.get("source_version"),
+                    "engineer_case_id": row.get("engineer_case_id"),
+                    "client_ticket_id": row.get("client_ticket_id"),
+                    "weknora_object_id": row.get("weknora_object_id"),
+                    "weknora_version": row.get("weknora_version"),
+                    "operation_receipt": row.get("operation_receipt"),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                }
+            )
+        return JSONResponse(
+            content={"status": normalized, "count": len(projections), "items": projections},
+            headers={"Cache-Control": "no-store"},
+        )
+
     @app.get(f"{base}/v1/executions/{{execution_id}}")
     async def execution(execution_id: str) -> dict[str, Any]:
         value = coordination_store.get_execution(execution_id)
