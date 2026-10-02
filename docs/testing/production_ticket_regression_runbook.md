@@ -263,10 +263,11 @@
 
 ### PP-EN-DUP：重复工单说明回归（13819 类消息，选项一合同）
 
-> 2026-10-03 验收修复轮（r2+r3）：绑定链改为真实外键关联查询，replay 腿接线
+> 2026-10-03 验收修复轮（r2–r4）：绑定链改为真实外键关联查询，replay 腿接线
 > CLI 并成为完整通过的必要条件且环境围栏化，引用工单必填且先核实测试归属，
 > r3 收紧回复验收（恰一 draft/completed 回合/投递正文/肯定式语义）与预检
-> （显式 SMTP + 整份报告脱敏），并落定 13819 原文 fixture。
+> （显式 SMTP + 整份报告脱敏）并落定 13819 原文 fixture；r4 将环境围栏改为
+> URL 结构化校验、增加投递后终核与否定-动作绑定。
 
 - **合同**：先走完 Quick 的**前半段**（有效 App ID 建单 → 确认回复公开投递 →
   relay request created→dispatched），随后以**requester 评论**发出重复单说明。
@@ -281,12 +282,16 @@
   human_review 均 FAIL）→ automation_hermes_case_drafts（turn_id 绑定，
   **恰好一条** status=queued）→ support_account_zendesk_comment_deliveries
   （message_id=draft_id、is_public、delivered）`；时间窗与基线差集只作辅助
-  过滤；本回合窗口内出现 RAG fallback（新 legacy reply-job）即 FAIL。**正文
+  过滤；本回合窗口内出现 RAG fallback（新 legacy reply-job）即 FAIL；**投递
+  完成后终核**该 turn 的活跃输出集（全部非 superseded/stale draft）必须恰为
+  已投递那一条——第二条 draft 在投递等待期间由 preparing 变 queued（或仍
+  preparing）都不能判 PASS。**正文
   验收跑在实际投递正文（delivery 的 immutable_content）上**（投递管线可能
   翻译/改写草稿，draft 原文仅作报告证据）：须同时具备**肯定式**正向含义
   （确认重复单说明 + 继续当前工单；否定句不算确认，空正文 FAIL）且不声称
-  跨工单操作（合并/关单/加速/提权按**子句**判定，含无逗号 `but` 并列；否定
-  词只豁免同子句内的动作）。
+  跨工单操作（合并/关单/加速/提权按**子句**判定，含无逗号 `but` 并列；**否定
+  必须直接邻近对应动作**才豁免——"已关闭重复单且不再索取资料"这类无关否定
+  不掩盖关单声称）。
 - **状态完整性**：主单 `automation_status=automation`，且主单未关闭以 **Zendesk
   GET 回读**为准（镜像 `zendesk_ticket_status` 仅附加证据——close 事务才会回填
   该列，open 工单镜像可为空）；原 relay request 的 id/version 不变、status 仍在
