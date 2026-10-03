@@ -1182,34 +1182,40 @@ def _claimable(task: dict[str, Any], now_iso: str) -> bool:
     return False
 
 
-def native_ticket_state_superseded(
-    native_state_store: Any, ticket_id: str, frozen_version: str
-) -> bool:
-    """Review round 4, R4-3: True when a ticket state change (the n8n status
-    sync's ``ticket.updated`` executions) landed AFTER the frozen source
-    snapshot — the case reopened (or otherwise moved on), so candidates built
-    from that snapshot are stale regardless of whether a newer knowledge
-    snapshot has arrived yet. Unreadable state is treated as superseded
-    (fail-closed: the human can re-close and produce a fresh snapshot).
+# Only a CLOSED ticket state may mint or approve closing knowledge work.
+CLOSED_TICKET_STATES = frozenset({"solved", "closed"})
+
+
+def native_ticket_state_blocks_knowledge(
+    native_state_store: Any, ticket_id: str
+) -> tuple[bool, str]:
+    """Review round 5, R5-2: the AUTHORITATIVE ticket state is the case
+    mirror — every intake event the ECS actually receives (the n8n
+    ``[case]Sync Comments`` / ``[case]Intake`` flows) refreshes its ``ticket``
+    snapshot, so a reopen shows up here as soon as any post-reopen event
+    arrives. No event-type guessing and no receive-time comparison (a solved
+    event delivered seconds after the snapshot must NOT reject a legitimate
+    close): the CURRENT state decides, and the generation fingerprint decides
+    which snapshot the candidate came from.
+
+    Returns ``(blocked, reason)``: a non-closed live state blocks with
+    ``ticket_state_superseded``; an unreadable or missing mirror fails closed
+    with ``native_state_unavailable``.
     """
     try:
-        from datetime import datetime
-
-        frozen_at = datetime.fromisoformat(str(frozen_version).replace("Z", "+00:00"))
-        executions = native_state_store.list_case_executions(str(ticket_id)) or []
-        for execution in executions:
-            if not isinstance(execution, dict):
-                continue
-            if str(execution.get("event_type") or "") != "ticket.updated":
-                continue
-            changed_at = datetime.fromisoformat(
-                str(execution.get("created_at") or "").replace("Z", "+00:00")
-            )
-            if changed_at > frozen_at:
-                return True
-        return False
+        mirror = native_state_store.get_case_mirror(str(ticket_id))
     except Exception:  # noqa: BLE001 - unverifiable state fails closed
-        return True
+        return True, "native_state_unavailable"
+    if not isinstance(mirror, dict):
+        return True, "native_state_unavailable"
+    ticket = mirror.get("ticket")
+    ticket = ticket if isinstance(ticket, dict) else {}
+    status = str(ticket.get("status") or "").strip().lower()
+    if not status:
+        return True, "native_state_unavailable"
+    if status in CLOSED_TICKET_STATES:
+        return False, ""
+    return True, "ticket_state_superseded"
 
 
 def weknora_promotion_generation_current(
@@ -1259,13 +1265,14 @@ def weknora_promotion_generation_current(
             and native_state_store is not None
         ):
             # False = the caller could not build a state store at all — an
-            # unverifiable reopen state fails closed (no approval, no write).
+            # unverifiable ticket state fails closed (no approval, no write).
             if native_state_store is False:
                 return False, "native_state_unavailable"
-            if native_ticket_state_superseded(
-                native_state_store, str(summary_row.get("source_id") or ""), fingerprint
-            ):
-                return False, "ticket_state_superseded"
+            blocked, reason = native_ticket_state_blocks_knowledge(
+                native_state_store, str(summary_row.get("source_id") or "")
+            )
+            if blocked:
+                return False, reason
         return True, ""
     return True, ""
 

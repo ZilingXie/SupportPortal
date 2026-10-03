@@ -594,7 +594,14 @@ def create_app(    *,
                         ticket_state = str(
                             (ticket or {}).get("status") or ""
                         ).strip().lower() if isinstance(ticket, dict) else ""
-                        if ticket_state in {"open", "new", "pending"}:
+                        # Review round 5, R5-2: ONLY a closed state mints a
+                        # closing Summary — open/new/pending/hold and any
+                        # missing/unknown state are all refused.
+                        from backend.services.hermes_knowledge_workflow import (
+                            CLOSED_TICKET_STATES,
+                        )
+
+                        if ticket_state not in CLOSED_TICKET_STATES:
                             return JSONResponse(
                                 content={
                                     "status": receipt_status,

@@ -168,3 +168,41 @@ def test_drain_makes_zero_external_calls_for_superseded_generation() -> None:
     assert kwargs["status"] == "failed"
     assert kwargs["failure_code"] == "source_input_diverged"
     assert "zero external writes" in kwargs["failure_detail"]
+
+
+def test_drain_fails_closed_when_native_state_store_unavailable() -> None:
+    """Review round 5, R5-1: a state-store build failure must surface as a
+    visible failed promotion with ZERO external calls — the earlier
+    `False or None` conversion silently skipped the check and wrote."""
+    superseded = {
+        **TASK,
+        "promotion_id": "weknora:knowledge_source_review:src:c1:knowledge:h",
+        "source_type": "knowledge_source_review",
+        "input_fingerprint": "v1",
+    }
+    repository = _repository()
+    repository.list_weknora_promotions.return_value = [superseded]
+    repository.claim_weknora_promotion.return_value = {**superseded, "status": "active"}
+    repository.get_standalone_summary_task.return_value = {
+        "source_type": "zendesk_ticket", "source_id": "T1", "source_version": "v1",
+    }
+    repository.latest_knowledge_source_version.return_value = "v1"  # version unchanged
+    import backend.services.automation_ecs_store as store_module
+
+    def _broken_store(*args, **kwargs):
+        raise RuntimeError("automation store unavailable")
+
+    with patch.dict(os.environ, ENABLED_ENV, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ), patch.object(worker, "WeKnoraClient", FakeAdapterClient), patch.object(
+        store_module, "create_automation_ecs_store", _broken_store
+    ), patch.object(
+        worker.WeKnoraPromotionAdapter, "execute", side_effect=AssertionError(
+            "the adapter must not run when the state store is unavailable"
+        )
+    ):
+        assert worker._drain_weknora_promotions(limit=20) == 1
+    repository.complete_weknora_promotion.assert_called_once()
+    kwargs = repository.complete_weknora_promotion.call_args.kwargs
+    assert kwargs["status"] == "failed"
+    assert kwargs["failure_code"] == "native_state_unavailable"

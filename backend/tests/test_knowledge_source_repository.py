@@ -358,14 +358,63 @@ def test_open_ticket_snapshot_is_recorded_but_never_summarized(monkeypatch) -> N
     assert body["summary_skipped_reason"] == "ticket_not_closed"
     assert "summary_task_id" not in body
     assert repository.list_standalone_summary_tasks() == []
+    # Review round 5, R5-2: hold and MISSING statuses are refused too — only
+    # solved/closed mints a closing Summary.
+    for missing_or_hold in ({"status": "hold"}, {}):
+        snapshot = _snapshot_for("13802", "2026-10-02T07:00:00Z")
+        ticket = snapshot["payload"]["ticket"]
+        ticket.update(missing_or_hold)
+        with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+            refused = client.post(
+                "/automation/production/v1/knowledge/sources",
+                json=snapshot, headers={"Authorization": "Bearer secret"},
+            )
+        assert refused.status_code == 202
+        assert refused.json()["summary_skipped_reason"] == "ticket_not_closed"
+    assert repository.list_standalone_summary_tasks() == []
+
+
+def _intake_comment_event(ticket_id: str, status: str, event_id: str) -> dict:
+    """A real [case]Sync Comments delivery: a comment.created intake event
+    whose ticket snapshot carries the CURRENT Zendesk state — the actual
+    chain that updates the ECS case mirror on a reopen."""
+    return {
+        "schema_version": "automation-intake-v1",
+        "event_id": event_id,
+        "event_type": "comment.created",
+        "occurred_at": "2026-10-02T07:00:00Z",
+        "ticket": {
+            "id": ticket_id,
+            "status": status,
+            "subject": "Native case",
+            "description": "reopen chain",
+            "requester": {"email": "cx@example.com", "name": "Customer"},
+        },
+        "comment_snapshot": {
+            "source_updated_at": "2026-10-02T07:00:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "987654",
+            "comments": [
+                {
+                    "id": "987654",
+                    "public": True,
+                    "author": {"email": "cx@example.com", "name": "Customer"},
+                    "body": "The issue is back.",
+                    "created_at": "2026-10-02T07:00:00Z",
+                }
+            ],
+        },
+    }
 
 
 def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
-    """Review round 4, R4-3: a parked native candidate cannot be approved
-    once a ticket state change (the n8n status sync's ticket.updated
-    execution) landed after the frozen snapshot — even though no newer
-    knowledge snapshot exists. Re-closing and a fresh snapshot is the only
-    path back to a decidable candidate."""
+    """Review round 5, R5-2: the authoritative reopen signal is the ECS case
+    mirror, refreshed by the REAL intake chain ([case]Sync Comments ->
+    /v1/intake comment.created carrying the live ticket status). A parked
+    native candidate cannot be approved once the mirror shows a non-closed
+    state — no newer knowledge snapshot required. A LATE solved delivery
+    must NOT block (no receive-time guessing), and re-closing mints the new
+    generation through the newest snapshot."""
     monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
@@ -379,18 +428,35 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
         "slack_channel_id": None, "slack_thread_ts": None,
         "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
     }
-    # The knowledge snapshot (solved) is accepted first.
-    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
-        accepted = client.post(
-            "/automation/production/v1/knowledge/sources",
-            json=_snapshot_for("13803", frozen),
-            headers={"Authorization": "Bearer secret"},
-        )
-    assert accepted.status_code == 202
-    # The canonical (normalized) version string is the generation identity.
-    frozen = repository.get_knowledge_source(accepted.json()["task_id"])["source_updated_at"]
+    headers = {"Authorization": "Bearer secret"}
 
-    # A parked promotion from that generation.
+    def _snapshot_request(version: str):
+        return client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13803", version), headers=headers,
+        )
+
+    def _decide(promotion_id_value):
+        return client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id_value}/decision",
+            json={"decision": "approve", "operator": "ops",
+                  "resolution": {"action": "new", "content": "body", "title": "T"}},
+            headers=headers,
+        )
+
+    # 1. The closing snapshot (solved) is accepted; the mirror reflects the
+    #    same solved state through the real intake chain.
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        accepted = _snapshot_request(frozen)
+    assert accepted.status_code == 202
+    mirror_event = client.post(
+        "/automation/production/v1/intake",
+        json=_intake_comment_event("13803", "solved", "zendesk:ticket:13803:solved-comment"),
+        headers=headers,
+    )
+    assert mirror_event.status_code == 202
+    canonical_frozen = repository.get_knowledge_source(accepted.json()["task_id"])["source_updated_at"]
+
     summary_task_id = accepted.json()["summary_task_id"]
     repository.enqueue_weknora_promotions(
         [{
@@ -400,7 +466,7 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
             "content_hash": "ch",
             "candidate_type": "knowledge",
             "decision": "replace",
-            "input_fingerprint": frozen,
+            "input_fingerprint": canonical_frozen,
             "candidate_payload": {
                 "schema_version": "v1", "candidate_id": "c1",
                 "candidate_type": "knowledge", "decision": "replace",
@@ -419,28 +485,51 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
         failure_code="target_version_conflict", completed_at="2026-10-02T02:02:00Z",
     )
 
-    # The ticket REOPENS: the status sync records a ticket.updated execution
-    # AFTER the frozen snapshot (no new knowledge snapshot arrives).
-    store._executions["exec-reopen"] = {
-        "execution_id": "exec-reopen",
-        "namespace": "automation.production",
-        "zendesk_ticket_id": "13803",
-        "event_type": "ticket.updated",
-        "status": "completed",
-        "created_at": "2026-10-02T07:00:00Z",
-        "updated_at": "2026-10-02T07:00:00Z",
-    }
-
-    resolution = {"action": "new", "content": "stale body", "title": "T"}
+    # 2. A LATE solved delivery (seconds after the snapshot) must NOT block
+    #    the candidate — the state is closed, timing is irrelevant.
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
-        blocked = client.post(
-            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops", "resolution": resolution},
-            headers={"Authorization": "Bearer secret"},
+        late_solved = client.post(
+            "/automation/production/v1/intake",
+            json=_intake_comment_event("13803", "solved", "zendesk:ticket:13803:late-solved"),
+            headers=headers,
         )
+        assert late_solved.status_code == 202
+        still_decidable = _decide(promotion_id)
+    assert still_decidable.status_code == 200
+    # Restore the parked state for the reopen leg.
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-10-02T03:00:00Z",
+        lease_expires_at="2026-10-02T03:05:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-10-02T03:01:00Z",
+    )
+
+    # 3. The ticket REOPENS: the real chain delivers a comment.created with
+    #    the live OPEN status; the mirror flips. The parked candidate from
+    #    the closed generation can no longer be approved — even though no
+    #    newer knowledge snapshot exists.
+    reopened = client.post(
+        "/automation/production/v1/intake",
+        json=_intake_comment_event("13803", "open", "zendesk:ticket:13803:reopen-comment"),
+        headers=headers,
+    )
+    assert reopened.status_code == 202
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        blocked = _decide(promotion_id)
     assert blocked.status_code == 409
     assert "ticket_state_superseded" in blocked.json()["detail"]
     assert repository.list_weknora_promotions()[0]["status"] == "human_review"
+
+    # 4. Re-closing mints the NEW generation: the fresh solved snapshot is
+    #    accepted and queues a new Summary; the old candidate stays blocked.
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        reclosed = _snapshot_request("2026-10-02T09:00:00Z")
+        old_blocked_again = _decide(promotion_id)
+    assert reclosed.status_code == 202
+    assert reclosed.json()["summary_task_id"] != summary_task_id
+    assert old_blocked_again.status_code == 409
 
 
 def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> None:

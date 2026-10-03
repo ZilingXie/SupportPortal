@@ -2773,9 +2773,12 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
                 )
             except Exception:  # noqa: BLE001 - absence fails closed in the check
                 native_state_store = False
+        # Review round 5, R5-1: False MEANS "could not build the store" and
+        # must stay False — `(x or None)` would silently turn it into "do not
+        # check" and let the write proceed.
         generation_ok, generation_reason = weknora_promotion_generation_current(
             ticket_repository, claimed,
-            native_state_store=(native_state_store or None),
+            native_state_store=native_state_store,
         )
         if not generation_ok:
             ticket_repository.complete_weknora_promotion(
