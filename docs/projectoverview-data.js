@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-03T17:49:11Z",
-  "source_base_commit": "0510de2f0fdf6750c870740f2b115c4390a73e5f",
-  "registry_digest": "a8a478736982522b95037e8d46e45b5609b7dee36a9d36684f023eea4a0f1a75",
+  "generated_at": "2026-10-03T18:39:28Z",
+  "source_base_commit": "7f4fc1cc7fc9d17c41f9585f5c498df175a1e01b",
+  "registry_digest": "174cffe5a725ec2da4059868ed08c4c8ceb8c74bd1a01f2ffe23151cf3b3fff0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4856,21 +4856,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮五全量定向（12 套件）",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_hermes_knowledge_workflow_postgres.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_hermes_case_workflow_postgres.py test_automation_ecs_api.py",
-          "result": "206 passed, 11 skipped（新增：store 构建失败 fail-closed 零写入；真实 /v1/intake 链 reopen 拦审批 + 同 solved 延迟不拦 + 再关闭新代际；hold/缺失状态不建 Summary）"
+          "label": "SupportPortal 修复轮六全量定向（13 套件）",
+          "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
+          "result": "215 passed, 11 skipped（新增：迟到旧 solved 不回退 mirror 且旧候选持续拒；再关闭经 /v1/knowledge/sources 同步 mirror 后旧代际拒/新代际过）"
         },
         {
           "type": "test",
           "label": "隔离 PostgreSQL（本地 PG14 独立库）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... pytest -q 四套件；WEKNORA_TEST_POSTGRES_DSN 门控 Go（jsonb TaskID 回归/metadata-version guard/memory 链路）",
-          "result": "SP 42 passed；Go PG 全过（含 R5-3 JSONB 回读身份一致、R5-4 PG 方言 guard）"
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... 四套件；WEKNORA_TEST_POSTGRES_DSN 门控 Go 守卫",
+          "result": "SP 42 passed；Go PG 全过（R5-4 三列 guard + R6-1 整行 guard 两方言）"
         },
         {
           "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 98e1c0a）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ e4f9f3a）",
           "command": "go test ./internal/... -count=1",
-          "result": "111 packages ok 零 FAIL（新增：TaskID 内容分代+规范化、旧 payload no-op、恢复器最新优先、stale 处理器零覆盖交错回归、guard 双方言）"
+          "result": "111 packages ok 零 FAIL（新增：入口 guard 通过后交错——v2 正文/版本/完成状态不回退、旧运行零 chunk 清理写入）"
         }
       ],
       "source_refs": [
@@ -15533,7 +15533,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "第五轮修复完成未 finalize：R5-1～R5-4 全部处理（worker fail-closed 修正、case-mirror 权威 reopen 守卫+仅关闭态建 Summary、canonical TaskID 跨 JSONB 稳定、metadata-version 乐观锁处理状态写入），等待第六轮定向复验。验收通过后按已授权流程合并并部署 Preproduction（WeKnora fork 镜像通道、n8n 草稿发布、AgentMemory 退休另行授权；investigation-manual prompt 变更须部署前显式 draft+schedule）。",
+      "next_action": "第六轮修复完成未 finalize：R6-1～R6-3 全部处理（frozen-version ctx 贯穿 manual 运行全部写点、单调 mirror+reopen 事实+快照同步入口+代际感知守卫），等待第七轮定向复验。验收通过后按已授权流程合并并部署 Preproduction（WeKnora fork 镜像通道、n8n 发布协调、AgentMemory 退休另行授权；investigation-manual prompt 变更须部署前显式 draft+schedule）。交接口径更新：[kb]Build|Solved Cases 已由验收方确认发布（ab3563f8），不再是草稿。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15551,21 +15551,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮五全量定向（12 套件）",
-          "command": ".venv/bin/python -m pytest -q backend/tests/test_hermes_knowledge_workflow.py test_hermes_knowledge_workflow_postgres.py test_knowledge_governance_review_fixes.py test_knowledge_standalone_workflow.py test_knowledge_source_repository.py test_weknora_client.py test_weknora_promotion_adapter.py test_weknora_promotion_worker.py test_weknora_promotion_workflow.py test_hermes_case_workflow.py test_hermes_case_workflow_postgres.py test_automation_ecs_api.py",
-          "result": "206 passed, 11 skipped（新增：store 构建失败 fail-closed 零写入；真实 /v1/intake 链 reopen 拦审批 + 同 solved 延迟不拦 + 再关闭新代际；hold/缺失状态不建 Summary）"
+          "label": "SupportPortal 修复轮六全量定向（13 套件）",
+          "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
+          "result": "215 passed, 11 skipped（新增：迟到旧 solved 不回退 mirror 且旧候选持续拒；再关闭经 /v1/knowledge/sources 同步 mirror 后旧代际拒/新代际过）"
         },
         {
           "type": "test",
           "label": "隔离 PostgreSQL（本地 PG14 独立库）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... pytest -q 四套件；WEKNORA_TEST_POSTGRES_DSN 门控 Go（jsonb TaskID 回归/metadata-version guard/memory 链路）",
-          "result": "SP 42 passed；Go PG 全过（含 R5-3 JSONB 回读身份一致、R5-4 PG 方言 guard）"
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... 四套件；WEKNORA_TEST_POSTGRES_DSN 门控 Go 守卫",
+          "result": "SP 42 passed；Go PG 全过（R5-4 三列 guard + R6-1 整行 guard 两方言）"
         },
         {
           "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 98e1c0a）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ e4f9f3a）",
           "command": "go test ./internal/... -count=1",
-          "result": "111 packages ok 零 FAIL（新增：TaskID 内容分代+规范化、旧 payload no-op、恢复器最新优先、stale 处理器零覆盖交错回归、guard 双方言）"
+          "result": "111 packages ok 零 FAIL（新增：入口 guard 通过后交错——v2 正文/版本/完成状态不回退、旧运行零 chunk 清理写入）"
         }
       ],
       "source_refs": [
@@ -15579,7 +15579,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-04T02:00:00Z",
+      "updated_at": "2026-10-04T03:30:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
@@ -15609,6 +15609,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-10-04T02:00:00Z",
           "note": "第五轮验收修复：SP 2 提交（0510de2f+本轮登记）；WeKnora 1 提交（98e1c0a）。R5-2 依据验收方 n8n 实读结论改用 case mirror（真实 [case]Sync Comments → /v1/intake 链）。"
+        },
+        {
+          "at": "2026-10-04T03:30:00Z",
+          "note": "第六轮验收修复：SP 1 提交（7f4fc1cc）；WeKnora 1 提交（e4f9f3a）。schema 011（automation_cases ticket_updated_at/last_nonclosed_at）。"
         }
       ]
     },
