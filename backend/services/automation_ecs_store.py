@@ -113,6 +113,54 @@ def _synthetic_turn_event_payload(
     )
 
 
+# Ticket states that count as CLOSED for the knowledge pipeline.
+MIRROR_CLOSED_TICKET_STATES = frozenset({"solved", "closed"})
+
+
+def _mirror_ticket_updated_at(ticket: dict[str, Any]) -> str:
+    """Source version of a ticket snapshot (Zendesk-side updated_at)."""
+    value = ticket.get("updated_at")
+    return str(value) if value else ""
+
+
+def mirror_accepts_incoming_ticket(
+    current_ticket: dict[str, Any] | None, incoming: dict[str, Any]
+) -> bool:
+    """Review round 6, R6-2: the case mirror must be monotonic in the ticket
+    snapshot's source version — a LATE delivery of an older state must never
+    roll a newer one back. Snapshots without a timestamp are accepted as-is
+    (legacy behavior): the ordering information is absent.
+    """
+    current_ts = _mirror_ticket_updated_at(current_ticket or {})
+    incoming_ts = _mirror_ticket_updated_at(incoming)
+    if not current_ts or not incoming_ts:
+        return True
+    return incoming_ts >= current_ts
+
+
+def merge_mirror_state(
+    case_row: dict[str, Any], incoming_ticket: dict[str, Any], *, occurred_at: str | None = None,
+) -> dict[str, Any]:
+    """Apply one incoming ticket snapshot to a case-mirror row.
+
+    Returns the fields to update: the ticket itself only when monotonic, and
+    ``last_nonclosed_at`` whenever a NON-CLOSED state is seen (review round
+    6, R6-2: the reopen FACT outlives the current status — a later solved
+    snapshot never resurrects candidates frozen before the reopen).
+    """
+    updates: dict[str, Any] = {}
+    if mirror_accepts_incoming_ticket(case_row.get("ticket"), incoming_ticket):
+        updates["ticket"] = incoming_ticket
+        updates["ticket_updated_at"] = _mirror_ticket_updated_at(incoming_ticket) or None
+    status = str(incoming_ticket.get("status") or "").strip().lower()
+    if status and status not in MIRROR_CLOSED_TICKET_STATES:
+        marker = _mirror_ticket_updated_at(incoming_ticket) or str(occurred_at or "")
+        existing_marker = str(case_row.get("last_nonclosed_at") or "")
+        if marker and (not existing_marker or marker > existing_marker):
+            updates["last_nonclosed_at"] = marker
+    return updates
+
+
 class IntakeConflictError(RuntimeError):
     def __init__(self, execution_id: str) -> None:
         self.execution_id = execution_id
@@ -296,6 +344,23 @@ class AutomationEcsStore(Protocol):
                     self._table("automation_hermes_case_drafts"),
                     sql.Identifier(column),
                     sql.SQL(definition),
+                )
+            )
+
+    def _apply_schema_011_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 010→011 evolution: monotonic case-mirror state.
+
+        ``ticket_updated_at`` is the source version of the mirrored ticket
+        snapshot (late older deliveries cannot roll newer state back) and
+        ``last_nonclosed_at`` records the newest NON-CLOSED state seen — the
+        durable reopen fact for the knowledge governance guards (review
+        round 6, R6-2/R6-3).
+        """
+        for column in ("ticket_updated_at TIMESTAMPTZ", "last_nonclosed_at TIMESTAMPTZ"):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {}").format(
+                    self._table("automation_cases"),
+                    sql.SQL(column),
                 )
             )
 
@@ -556,12 +621,25 @@ class InMemoryAutomationEcsStore:
                     "case_revision": effective_revision,
                     "active_customer": copy.deepcopy(active_customer),
                     "latest_customer_event_id": event.event_id,
+                    "ticket_updated_at": None,
+                    "last_nonclosed_at": None,
                     "updated_at": now_value,
                     "created_at": now_value,
+                    **merge_mirror_state(
+                        {}, event.ticket.model_dump(mode="json"), occurred_at=event.occurred_at.isoformat()
+                    ),
                 }
             else:
                 effective_revision = int(existing_case.get("case_revision") or 1)
-                existing_case["ticket"] = event.ticket.model_dump(mode="json")
+                # Review round 6, R6-2: monotonic ticket mirror + the durable
+                # reopen fact (a late older snapshot cannot roll a newer
+                # state back, and a reopen keeps invalidating old candidates
+                # even after a later solved snapshot).
+                for key, value in merge_mirror_state(
+                    existing_case, event.ticket.model_dump(mode="json"),
+                    occurred_at=event.occurred_at.isoformat(),
+                ).items():
+                    existing_case[key] = value
                 existing_case["current_execution_id"] = execution_id
                 existing_case["updated_at"] = now_value
                 if comment_advances_case(event):
@@ -1449,6 +1527,22 @@ class InMemoryAutomationEcsStore:
         with self._lock:
             row = self._cases.get(zendesk_ticket_id)
             return copy.deepcopy(row) if row is not None else None
+
+    def sync_case_ticket_from_snapshot(
+        self, zendesk_ticket_id: str, ticket: dict[str, Any], *, occurred_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Review round 6, R6-3: the knowledge-source endpoint refreshes the
+        case mirror with the CLOSED snapshot it just accepted — the mirror is
+        the approval/write guard's state source, so a re-close must clear the
+        open state without waiting for any other delivery chain."""
+        with self._lock:
+            row = self._cases.get(str(zendesk_ticket_id))
+            if row is None:
+                return None
+            for key, value in merge_mirror_state(row, ticket, occurred_at=occurred_at).items():
+                row[key] = value
+            row["updated_at"] = _iso()
+            return copy.deepcopy(row)
 
     def list_case_comments(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
         with self._lock:
@@ -2642,6 +2736,7 @@ class PostgresAutomationEcsStore:
         self._apply_schema_008_migrations(cursor)
         self._apply_schema_009_migrations(cursor)
         self._apply_schema_010_migrations(cursor)
+        self._apply_schema_011_migrations(cursor)
         cursor.execute(
             sql.SQL("CREATE INDEX IF NOT EXISTS {} ON {} (namespace, kind, status, available_at)").format(
                 sql.Identifier("automation_jobs_claim_idx"), self._table("automation_jobs")
@@ -3009,7 +3104,7 @@ class PostgresAutomationEcsStore:
                     )
                 cursor.execute(
                     sql.SQL(
-                        "SELECT case_revision FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
                     ).format(self._table("automation_cases")),
                     (namespace, event.ticket.id),
                 )
@@ -3018,12 +3113,17 @@ class PostgresAutomationEcsStore:
                     # A new case starts at revision 1 with its creating event.
                     effective_revision = 1
                     active_customer = event_customer_identity(event)
+                    creation_merge = merge_mirror_state(
+                        {}, event.ticket.model_dump(mode="json"),
+                        occurred_at=event.occurred_at.isoformat(),
+                    )
                     cursor.execute(
                         sql.SQL(
                             """
                             INSERT INTO {} (namespace,zendesk_ticket_id,ticket,current_execution_id,
-                                case_revision,active_customer,latest_customer_event_id)
-                            VALUES (%s,%s,%s,%s,1,%s,%s)
+                                case_revision,active_customer,latest_customer_event_id,
+                                ticket_updated_at,last_nonclosed_at)
+                            VALUES (%s,%s,%s,%s,1,%s,%s,%s,%s)
                             """
                         ).format(self._table("automation_cases")),
                         (
@@ -3033,19 +3133,41 @@ class PostgresAutomationEcsStore:
                             execution_id,
                             Jsonb(active_customer) if active_customer is not None else None,
                             event.event_id,
+                            creation_merge.get("ticket_updated_at"),
+                            creation_merge.get("last_nonclosed_at"),
                         ),
                     )
                 else:
                     effective_revision = int(case_row["case_revision"])
+                    # Review round 6, R6-2: monotonic ticket mirror + the
+                    # durable reopen fact, mirrored one-to-one from the
+                    # in-memory twin's merge_mirror_state decisions.
+                    mirror_updates = merge_mirror_state(
+                        dict(case_row), event.ticket.model_dump(mode="json"),
+                        occurred_at=event.occurred_at.isoformat(),
+                    )
+                    ticket_value = (
+                        Jsonb(mirror_updates["ticket"]) if "ticket" in mirror_updates
+                        else case_row["ticket"]
+                    )
+                    ticket_updated_value = mirror_updates.get(
+                        "ticket_updated_at", case_row.get("ticket_updated_at")
+                    )
+                    last_nonclosed_value = mirror_updates.get(
+                        "last_nonclosed_at", case_row.get("last_nonclosed_at")
+                    )
                     cursor.execute(
                         sql.SQL(
                             """
-                            UPDATE {} SET ticket=%s, current_execution_id=%s, updated_at=NOW()
+                            UPDATE {} SET ticket=%s, ticket_updated_at=%s, last_nonclosed_at=%s,
+                            current_execution_id=%s, updated_at=NOW()
                             WHERE namespace=%s AND zendesk_ticket_id=%s
                             """
                         ).format(self._table("automation_cases")),
                         (
-                            Jsonb(event.ticket.model_dump(mode="json")),
+                            ticket_value,
+                            ticket_updated_value,
+                            last_nonclosed_value,
                             execution_id,
                             namespace,
                             event.ticket.id,
@@ -4506,6 +4628,40 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return dict(row) if row is not None else None
+
+    def sync_case_ticket_from_snapshot(
+        self, zendesk_ticket_id: str, ticket: dict[str, Any], *, occurred_at: str | None = None,
+    ) -> dict[str, Any] | None:
+        """PG twin of the snapshot-driven mirror refresh (review round 6, R6-3)."""
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                    ).format(self._table("automation_cases")),
+                    (self.settings.job_namespace, str(zendesk_ticket_id)),
+                )
+                row = cursor.fetchone()
+                if row is None:
+                    return None
+                case_row = dict(row)
+                updates = merge_mirror_state(case_row, ticket, occurred_at=occurred_at)
+                if not updates:
+                    return case_row
+                cursor.execute(
+                    sql.SQL(
+                        "UPDATE {} SET ticket=%s, ticket_updated_at=%s, last_nonclosed_at=%s, "
+                        "updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s"
+                    ).format(self._table("automation_cases")),
+                    (
+                        Jsonb(updates["ticket"]) if "ticket" in updates else case_row["ticket"],
+                        updates.get("ticket_updated_at", case_row.get("ticket_updated_at")),
+                        updates.get("last_nonclosed_at", case_row.get("last_nonclosed_at")),
+                        self.settings.job_namespace,
+                        str(zendesk_ticket_id),
+                    ),
+                )
+                return {**case_row, **updates}
 
     def list_case_comments(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
         with self._connect() as connection:

@@ -615,6 +615,33 @@ def create_app(    *,
                                 queue_standalone_summary_for_source,
                             )
 
+                            # Review round 6, R6-3: the accepted CLOSED snapshot
+                            # refreshes the case mirror — the mirror guards
+                            # approvals and writes, so a re-close must clear
+                            # the open state through THIS chain (no other
+                            # status delivery to ECS is guaranteed).
+                            if isinstance(ticket, dict) and ticket.get("status") is not None:
+                                try:
+                                    coordination_store.sync_case_ticket_from_snapshot(
+                                        snapshot.source_id,
+                                        {
+                                            key: value
+                                            for key, value in ticket.items()
+                                            if key != "comments"
+                                        },
+                                        occurred_at=str(
+                                            (record or {}).get("source_updated_at") or ""
+                                        ) or None,
+                                    )
+                                except Exception:  # noqa: BLE001 - mirror sync is best-effort
+                                    import logging
+
+                                    logging.getLogger(__name__).warning(
+                                        "native_case_mirror_sync_failed ticket=%s",
+                                        snapshot.source_id,
+                                        exc_info=True,
+                                    )
+
                             # Review round 4, R4-5: the investigation context
                             # must be COMPLETE — a conversation at the read cap
                             # cannot be frozen as full material, so the source

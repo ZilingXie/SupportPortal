@@ -327,7 +327,10 @@ def _snapshot_for(ticket_id: str, version: str, *, status: str = "solved") -> di
         "source_type": "zendesk_ticket",
         "source_id": ticket_id,
         "source_updated_at": version,
-        "payload": {"ticket": {"id": ticket_id, "status": status}, "comments": []},
+        "payload": {
+            "ticket": {"id": ticket_id, "status": status, "updated_at": version},
+            "comments": [],
+        },
         "references": {"zendesk_url": f"https://example.invalid/tickets/{ticket_id}"},
     }
 
@@ -374,7 +377,9 @@ def test_open_ticket_snapshot_is_recorded_but_never_summarized(monkeypatch) -> N
     assert repository.list_standalone_summary_tasks() == []
 
 
-def _intake_comment_event(ticket_id: str, status: str, event_id: str) -> dict:
+def _intake_comment_event(
+    ticket_id: str, status: str, event_id: str, *, ticket_updated_at: str = "2026-10-02T07:00:00Z"
+) -> dict:
     """A real [case]Sync Comments delivery: a comment.created intake event
     whose ticket snapshot carries the CURRENT Zendesk state — the actual
     chain that updates the ECS case mirror on a reopen."""
@@ -388,6 +393,7 @@ def _intake_comment_event(ticket_id: str, status: str, event_id: str) -> dict:
             "status": status,
             "subject": "Native case",
             "description": "reopen chain",
+            "updated_at": ticket_updated_at,
             "requester": {"email": "cx@example.com", "name": "Customer"},
         },
         "comment_snapshot": {
@@ -729,4 +735,98 @@ class ArticleSourceTypeTests(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             repository.accept_knowledge_source(payload, now_value="2026-10-02T00:00:01+00:00")
+
+def test_late_older_solved_delivery_never_rolls_mirror_back(monkeypatch) -> None:
+    """Review round 6, R6-2 interleave #1 (reviewer's table): solved v1 ->
+    open v3 -> LATE solved v2. The mirror must stay at open (monotonic in
+    the ticket source version) and keep refusing the old candidate."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    headers = {"Authorization": "Bearer secret"}
+    from backend.services.hermes_knowledge_workflow import (
+        native_ticket_state_blocks_knowledge,
+    )
+
+    def _deliver(status: str, event_id: str, ticket_updated_at: str):
+        response = client.post(
+            "/automation/production/v1/intake",
+            json=_intake_comment_event("13805", status, event_id, ticket_updated_at=ticket_updated_at),
+            headers=headers,
+        )
+        assert response.status_code == 202
+
+    _deliver("solved", "e1", "2026-10-02T01:00:00Z")
+    _deliver("open", "e3", "2026-10-02T05:00:00Z")
+    # A LATE delivery of the older solved state (timestamp before the open).
+    _deliver("solved", "e2", "2026-10-02T02:00:00Z")
+
+    mirror = store.get_case_mirror("13805")
+    assert str(mirror["ticket"]["status"]).lower() == "open"
+    # The old candidate (frozen at 01:00, before the reopen marker) stays blocked.
+    blocked, reason = native_ticket_state_blocks_knowledge(store, "13805", "2026-10-02T01:00:00Z")
+    assert (blocked, reason) == (True, "ticket_state_superseded")
+
+
+def test_reclosed_generation_can_be_approved_without_waiting(monkeypatch) -> None:
+    """Review round 6, R6-2/R6-3 interleave #2: reopen (open mirror), then
+    the ticket re-closes and the NEW solved snapshot arrives through the
+    knowledge-source endpoint. The snapshot refreshes the mirror (R6-3), the
+    OLD candidate stays blocked (reopen fact), and the NEW generation's
+    candidate passes the guard."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    headers = {"Authorization": "Bearer secret"}
+    from backend.services.hermes_knowledge_workflow import (
+        native_ticket_state_blocks_knowledge,
+    )
+
+    store._hermes_bindings[("automation.production", "13806")] = {
+        "namespace": "automation.production", "zendesk_ticket_id": "13806",
+        "hermes_session_id": "hs", "session_kind": "case", "status": "active",
+        "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+    }
+    # Generation 1 closes (snapshot + mirror).
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        first = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13806", "2026-10-02T01:00:00Z"), headers=headers,
+        )
+    assert first.status_code == 202
+    # The ticket reopens; the real comment chain flips the mirror open.
+    reopened = client.post(
+        "/automation/production/v1/intake",
+        json=_intake_comment_event("13806", "open", "r1", ticket_updated_at="2026-10-02T04:00:00Z"),
+        headers=headers,
+    )
+    assert reopened.status_code == 202
+    mirror = store.get_case_mirror("13806")
+    assert str(mirror["ticket"]["status"]).lower() == "open"
+
+    # Re-close: the NEW solved snapshot (timestamp AFTER the reopen) is
+    # accepted through the knowledge-source endpoint and refreshes the mirror.
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        second = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13806", "2026-10-02T08:00:00Z"), headers=headers,
+        )
+    assert second.status_code == 202
+    assert second.json()["summary_task_id"]
+    mirror = store.get_case_mirror("13806")
+    assert str(mirror["ticket"]["status"]).lower() == "solved"
+    assert str(mirror["last_nonclosed_at"]) == "2026-10-02T04:00:00Z"
+
+    # OLD candidate (frozen 01:00, before the reopen at 04:00): blocked.
+    blocked, reason = native_ticket_state_blocks_knowledge(store, "13806", "2026-10-02T01:00:00Z")
+    assert (blocked, reason) == (True, "ticket_state_superseded")
+    # NEW generation (frozen 08:00, after the reopen): passes.
+    blocked_new, reason_new = native_ticket_state_blocks_knowledge(store, "13806", "2026-10-02T08:00:00Z")
+    assert (blocked_new, reason_new) == (False, "")
 

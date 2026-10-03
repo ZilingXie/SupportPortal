@@ -1187,20 +1187,21 @@ CLOSED_TICKET_STATES = frozenset({"solved", "closed"})
 
 
 def native_ticket_state_blocks_knowledge(
-    native_state_store: Any, ticket_id: str
+    native_state_store: Any, ticket_id: str, frozen_version: str = ""
 ) -> tuple[bool, str]:
-    """Review round 5, R5-2: the AUTHORITATIVE ticket state is the case
-    mirror — every intake event the ECS actually receives (the n8n
-    ``[case]Sync Comments`` / ``[case]Intake`` flows) refreshes its ``ticket``
-    snapshot, so a reopen shows up here as soon as any post-reopen event
-    arrives. No event-type guessing and no receive-time comparison (a solved
-    event delivered seconds after the snapshot must NOT reject a legitimate
-    close): the CURRENT state decides, and the generation fingerprint decides
-    which snapshot the candidate came from.
+    """Review round 6, R6-2/R6-3: the AUTHORITATIVE state is the case mirror
+    with its durable reopen fact.
 
-    Returns ``(blocked, reason)``: a non-closed live state blocks with
-    ``ticket_state_superseded``; an unreadable or missing mirror fails closed
-    with ``native_state_unavailable``.
+    A candidate is blocked when:
+      - the mirror is unreadable (fail-closed), or
+      - the CURRENT live status is not closed, or
+      - a reopen happened AFTER the candidate froze (``last_nonclosed_at``),
+        even if a later solved snapshot arrived — the old closing generation
+        never becomes valid again; only a NEWER snapshot (a new generation)
+        carries its own, later freeze time.
+
+    ``frozen_version`` is the candidate's source snapshot timestamp; the
+    comparison is between Zendesk-side timestamps on both ends.
     """
     try:
         mirror = native_state_store.get_case_mirror(str(ticket_id))
@@ -1213,9 +1214,21 @@ def native_ticket_state_blocks_knowledge(
     status = str(ticket.get("status") or "").strip().lower()
     if not status:
         return True, "native_state_unavailable"
-    if status in CLOSED_TICKET_STATES:
-        return False, ""
-    return True, "ticket_state_superseded"
+    if status not in CLOSED_TICKET_STATES:
+        return True, "ticket_state_superseded"
+    if frozen_version:
+        try:
+            from datetime import datetime
+
+            frozen_at = datetime.fromisoformat(str(frozen_version).replace("Z", "+00:00"))
+            reopened_at = mirror.get("last_nonclosed_at")
+            if reopened_at:
+                reopened_at = datetime.fromisoformat(str(reopened_at).replace("Z", "+00:00"))
+                if reopened_at > frozen_at:
+                    return True, "ticket_state_superseded"
+        except Exception:  # noqa: BLE001 - unparseable times fail closed
+            return True, "native_state_unavailable"
+    return False, ""
 
 
 def weknora_promotion_generation_current(
@@ -1269,7 +1282,7 @@ def weknora_promotion_generation_current(
             if native_state_store is False:
                 return False, "native_state_unavailable"
             blocked, reason = native_ticket_state_blocks_knowledge(
-                native_state_store, str(summary_row.get("source_id") or "")
+                native_state_store, str(summary_row.get("source_id") or ""), fingerprint
             )
             if blocked:
                 return False, reason
