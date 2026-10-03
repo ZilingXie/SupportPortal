@@ -2158,6 +2158,18 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
                     ),
                 },
             ),
+            # A non-ASCII URL path must not bypass the URL exclusion
+            # (acceptance round 2: CJK inside the link used to pass).
+            (
+                "only_url_with_chinese_path",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "https://example.com/文档"
+                    ),
+                },
+            ),
             (
                 "only_bare_confirmation",
                 {
@@ -2189,6 +2201,43 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
                         persona_assignment={"content": {"instruction": "Warm"}},
                         account_scope=True,
                     )
+
+    def test_enablement_render_accepts_non_latin_prose(self) -> None:
+        """Acceptance round 2: the language-evidence gate must accept normal
+        prose in any script. The r2 Latin-only whitelist wrongly routed
+        Russian, Arabic, and Thai requests to human review with zero model
+        calls; the gate now keeps Unicode letters of any script after
+        stripping the no-language payload."""
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        for label, prose in (
+            ("russian", "Пожалуйста, включите Media Relay для моего проекта."),
+            ("arabic", "يرجى تفعيل ميديا ريلي في مشروعي."),
+            ("thai", "กรุณาเปิดใช้งาน Media Relay ในโปรเจกต์ของฉัน"),
+        ):
+            with self.subTest(label=label), patch(
+                "backend.services.automation_persona.resolve_model_profile",
+                return_value=profile,
+            ), patch(
+                "backend.services.automation_persona.invoke_responses_text",
+                return_value=SimpleNamespace(
+                    text=(
+                        "Thanks for your patience - Media Relay is already "
+                        "enabled on your project. I'm closing this case now."
+                    ),
+                    model_name="persona-model",
+                ),
+            ) as invoke:
+                result = render_automation_reply(
+                    reply_facts={
+                        "behavior": "enablement",
+                        "reply_intent": "enablement_completed_and_close",
+                        "conversation_context": enablement_language_context(prose),
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+            invoke.assert_called_once()
+            self.assertIn("Media Relay is already enabled", result.content)
 
     def test_enablement_render_accepts_prose_before_signalless_message(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")

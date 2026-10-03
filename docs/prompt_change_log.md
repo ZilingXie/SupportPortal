@@ -24,11 +24,14 @@
   `job.created_at` 冻结时点回填快照。
 - 部署提示：仅代码级 Prompt（随镜像发布），无 Prompt catalog 变更；按计划仅发布
   Preproduction，Production 不变。
-- 验证：确定性测试新增 18 项（worker/relay/failure/persona，含两入口过期 case 快照
-  回归与无语言信号门反例）+ 存量回归全绿（test_worker 14 个预存失败与基线一致，与本
-  变更无关）；真实模型评测 `backend/tests/test_enablement_reply_language_eval.py`
-  （gpt-6-astra，门控 `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成，语言与
-  业务语义（开通/结案/更正 App ID）断言全过，逐样本正文存于 p2-184 登记。
+- 验证：确定性测试新增 20 项（worker/relay/failure/persona，含两入口过期 case 快照
+  回归、无语言信号门反例与俄/阿拉伯/泰语等非拉丁正文正例）+ 存量回归全绿
+  （test_worker 14 个预存失败与基线一致，与本变更无关）；真实模型评测
+  `backend/tests/test_enablement_reply_language_eval.py`（gpt-6-astra，门控
+  `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成，语言与业务语义（开通/
+  结案/更正 App ID）断言全过，逐样本正文存于 p2-184 登记。r3 修订：语言证据门先剔除
+  占位符/URL（含非 ASCII 路径）/邮箱/长 hex/数字后以任意字系统 Unicode 字母判断，
+  不再使用拉丁字符白名单、不在清理前放行 CJK，避免误拦非拉丁正文或放行纯 URL。
 
 ## 2026-10-01 - Governance remediation round 5: skill boundary + Summary input contract on the kind/importance mainline (p2-181)
 

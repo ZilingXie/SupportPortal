@@ -575,25 +575,28 @@ _LANGUAGE_SIGNAL_ALLOWLIST = frozenset({"ok", "okay", "yes", "no", "done", "k"})
 def _customer_message_carries_language_signal(content: str) -> bool:
     """Whether a customer message contains identifiable language at all.
 
-    Strips the redaction placeholders, identifiers, links, numbers, and bare
-    confirmations first: a message that is only an App ID, an email, a URL,
-    or "ok" must never be counted as language evidence (acceptance round 1,
-    blocker 2). CJK characters count directly.
+    Strips the no-language-payload first - redaction placeholders, links
+    (including non-ASCII URL paths), emails, raw identifiers, numbers - and
+    only then looks for a word carrying a Unicode letter in any script, so a
+    message that is only an App ID, an email, or a URL never counts as
+    language evidence while normal Russian, Arabic, Thai, CJK, or Latin
+    prose always does (acceptance rounds 1-2). Bare confirmations carry
+    intent but no identifiable language. This gate only decides whether
+    usable prose exists; the reply language itself stays with the Persona.
     """
     text = str(content or "")
-    if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]", text):
-        return True
     text = re.sub(r"\[[^\]\n]{0,64}\]", " ", text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", " ", text)
     text = re.sub(r"\b[0-9a-fA-F]{16,}\b", " ", text)
-    text = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]+", " ", text)
     words = [
         word
         for word in text.split()
         if len(word) >= 2 and word.lower() not in _LANGUAGE_SIGNAL_ALLOWLIST
     ]
-    return bool(words)
+    return any(
+        any(character.isalpha() for character in word) for word in words
+    )
 
 
 def _assert_enablement_customer_language_evidence(facts: dict[str, Any]) -> None:
