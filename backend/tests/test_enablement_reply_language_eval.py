@@ -230,7 +230,10 @@ SEMANTIC_EXPECTATIONS = {
     },
     "es_internal_followup": {
         "app_id_correction": [r"app\s*id", r"correct"],
-        "resend_request": [r"enví|reenv|verifi|compart"],
+        # Accept accented and unaccented request stems: "envíame" carries the
+        # accent but "enviarme" does not (acceptance follow-up: the unaccented
+        # form produced a false assertion failure on a correct reply).
+        "resend_request": [r"enví|envia|reenv|verifi|compart"],
     },
 }
 
