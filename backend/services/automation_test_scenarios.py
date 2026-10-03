@@ -1717,6 +1717,17 @@ class ScenarioEngine:
 
     # -- connectivity --------------------------------------------------------
 
+    def smtp_connectivity_check(self) -> dict[str, str]:
+        """Verify the ticket-creation SMTP channel alone (no customer-visible
+        traffic). Needed explicitly when the selected customer-turn channel
+        is the Zendesk API, because ``connectivity_check`` then skips SMTP
+        even though ticket creation still rides on this mailbox."""
+        with smtplib.SMTP_SSL(
+            self.smtp_host, self.smtp_port, timeout=15, context=ssl.create_default_context()
+        ) as server:
+            server.login(self.sender, self.smtp_password)
+        return {"smtp": "ok"}
+
     def connectivity_check(self) -> dict[str, str]:
         """Verify DB plus the SELECTED customer-turn channel without sending
         any customer-visible traffic."""

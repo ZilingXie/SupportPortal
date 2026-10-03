@@ -263,56 +263,76 @@
 
 ### PP-EN-DUP：重复工单说明回归（13819 类消息，选项一合同）
 
-> 2026-10-03 验收修复轮（r2）重写本段：绑定链改为真实外键关联查询，replay 腿
-> 接线 CLI 并成为完整通过的必要条件，引用工单必填且先核实测试归属。
+> 2026-10-03 验收修复轮（r2–r4）：绑定链改为真实外键关联查询，replay 腿接线
+> CLI 并成为完整通过的必要条件且环境围栏化，引用工单必填且先核实测试归属，
+> r3 收紧回复验收（恰一 draft/completed 回合/投递正文/肯定式语义）与预检
+> （显式 SMTP + 整份报告脱敏）并落定 13819 原文 fixture；r4 将环境围栏改为
+> URL 结构化校验、增加投递后终核与否定-动作绑定。
 
 - **合同**：先走完 Quick 的**前半段**（有效 App ID 建单 → 确认回复公开投递 →
   relay request created→dispatched），随后以**requester 评论**发出重复单说明。
-  正文复刻 13819 事故措辞（`submitted with higher priority`、`merge or close it`
-  原样保留，引用工单以 `#<id>` 形式呈现，**不添加任何引导性语句**）；⚠️ 措辞
-  需在实跑前用 SSM Zendesk 凭据对照 13819 原始评论核对一次（本账号 SSO 过期
-  未完成核对，列为待验证项）。成功标准：ack 走 Hermes draft 路径且**绑定链全部
+  正文为 13819 事故原文 fixture（规划线程引用原文：
+  `Thank you, May. Please note that [#<id>](…/tickets/<id>) is a duplicate of this
+  request (submitted with higher priority). Feel free to merge or close it.`），
+  仅替换工单号与链接 ID、逐字断言；对生产原始评论的再次核对保留为实跑前的
+  额外验证，不替代 fixture。成功标准：ack 走 Hermes draft 路径且**绑定链全部
   为真实关联查询**——`notice comment_id → automation_intake_events
   (payload->comment_snapshot->trigger_comment_id) → execution_id/event_id →
-  automation_hermes_agent_turns（direction≠human 且 status≠failed）→
-  automation_hermes_case_drafts（turn_id 绑定，status=queued）→
-  support_account_zendesk_comment_deliveries（message_id=draft_id、is_public、
-  delivered）`；时间窗与基线差集只作辅助过滤。ack 正文须同时具备正向含义
-  （确认重复单说明 + 继续当前工单，空正文 FAIL）且不声称跨工单操作
-  （合并/关单/加速/提权按**子句**判定，否定词只豁免同子句内的动作）。RAG
-  fallback（本回合新 legacy reply-job）与人审升级、失败回合均 FAIL。
-- **状态完整性**：主单 `automation_status=automation` 且 `zendesk_ticket_status`
-  非 solved/closed；原 relay request 的 id/version 不变、status 仍在
+  automation_hermes_agent_turns（direction≠human 且 status=completed；failed 与
+  human_review 均 FAIL）→ automation_hermes_case_drafts（turn_id 绑定，
+  **恰好一条** status=queued）→ support_account_zendesk_comment_deliveries
+  （message_id=draft_id、is_public、delivered）`；时间窗与基线差集只作辅助
+  过滤；本回合窗口内出现 RAG fallback（新 legacy reply-job）即 FAIL；**投递
+  完成后终核**该 turn 的活跃输出集（全部非 superseded/stale draft）必须恰为
+  已投递那一条——第二条 draft 在投递等待期间由 preparing 变 queued（或仍
+  preparing）都不能判 PASS。**正文
+  验收跑在实际投递正文（delivery 的 immutable_content）上**（投递管线可能
+  翻译/改写草稿，draft 原文仅作报告证据）：须同时具备**肯定式**正向含义
+  （确认重复单说明 + 继续当前工单；否定句不算确认，空正文 FAIL）且不声称
+  跨工单操作（合并/关单/加速/提权按**子句**判定，含无逗号 `but` 并列；**否定
+  必须与动作同处一个动词短语段（以 and/or/but/逗号/分号为段界）且位于其
+  前**才豁免——"did not wait and closed"或"已关闭且不再索取资料"这类作用在
+  其他动词上的否定不掩盖关单声称；不以字符距离判断。
+- **状态完整性**：主单 `automation_status=automation`，且主单未关闭以 **Zendesk
+  GET 回读**为准（镜像 `zendesk_ticket_status` 仅附加证据——close 事务才会回填
+  该列，open 工单镜像可为空）；原 relay request 的 id/version 不变、status 仍在
   {gated, dispatch_pending, dispatching, dispatched} 有效集（cancelled 等终态即
   FAIL）且零新增；**被引用测试单**发评论前后 Zendesk status/priority 不变。
 - **引用工单必填+先核实**：`--duplicate-of-ticket <id>` **必填、无默认值**
   （13819 是生产事故单，绝不默认指向）；发任何内容之前先核实该工单在
   preprod `support_account_cases` 存在且 `processing_profile=preproduction`，
   核实失败即 fail-closed 终止（零发信零评论）。
-- **幂等重放腿（完整通过的必要条件）**：重放**首次实际接收的同一份 intake
-  payload**（同 event_id、同 payload；ECS intake 按 namespace+event_id 去重，
-  同 id 异 payload 409）到 `{preprod API}/automation/preproduction/v1/intake`
-  （Bearer intake token）。通过判据：响应**显式** `idempotent_replay=true` 且
-  `execution_id` 与原 execution 一致，且重放前后 jobs/requests/executions/
-  drafts/intake-events 五类**身份集合**逐一不变（集合比较，非计数）。
-  `--skip-replay` 显式跳过时报告标记 `complete=false` 且 CLI 以非零码退出——
-  必需腿未执行不允许报告完整通过。
+- **幂等重放腿（完整通过的必要条件，环境围栏）**：重放**首次实际接收的同一份
+  intake payload**（同 event_id、同 payload；ECS intake 按 namespace+event_id
+  去重，同 id 异 payload 409）到 `{preprod API}/automation/preproduction/v1/intake`
+  （Bearer intake token）。**适配器构造即校验 base 必须以
+  `/automation/preproduction` 结尾**——继承的 `SUPPORTPORTAL_RELAY_API_BASE`
+  指向 Production（或任何其他环境）时零发送拒绝（--check 同样判 FAIL）。
+  通过判据：响应**显式** `idempotent_replay=true` 且 `execution_id` 与原
+  execution 一致，且重放前后 jobs/requests/executions/drafts/intake-events
+  五类**身份集合**逐一不变（集合比较，非计数）。`--skip-replay` 显式跳过时
+  报告标记 `complete=false` 且 CLI 以非零码退出——必需腿未执行不允许报告
+  完整通过。
 - **前置**：与 Quick 相同的 SMTP 建单（163）与 CLI 强制的 preprod DB；外加
   Zendesk basic auth（`AUTOMATION_TEST_ZENDESK_AUTH` 或 SSM
   `/supportportal/preproduction/zendesk-basic-auth`，**永不打印**）与 intake API
   base/token（SSM automation-intake-shared-token）。**不需要** pilot / relay
   客户端身份（`requires` 分场景：DUP={zendesk_api, intake}）；客户回合 transport
   由 CLI 强制 `zendesk_api`。
-- **预检**：`--scenario PP-EN-DUP --check`——先准备场景配置再构造 engine：
-  连通性（SMTP 建单通道/DB）+ Zendesk 凭据**真实验证**（GET /users/me.json，
-  非空但无效即 FAIL）+ intake API 配置。
+- **预检**：`--scenario PP-EN-DUP --check`——先准备场景配置再构造 engine，然后
+  **显式分别**检查两条通道：SMTP 建单通道（connectivity_check 在 zendesk 模式
+  会跳过 SMTP，故单独调用 smtp_connectivity_check）与 Zendesk 凭据**真实验证**
+  （GET /users/me.json，非空但无效即 FAIL），外加 intake API 配置与环境围栏。
+  预检报告整份脱敏（已知值 + 任意邮箱模式掩码）后才打印。
 - **运行**：`--scenario PP-EN-DUP --duplicate-of-ticket <test-ticket-id> --yes
   --report-file <path>`（`--skip-replay` 仅调试用，报告 incomplete）。
   报告含 `notice_comment_id / notice_intake_event_id / notice_execution_id /
-  notice_turn_id / ack_draft_id / ack_delivery_comment_id / relay_request_id /
-  replay / complete` 全链 ID（递归脱敏后落盘）。
-- **FAIL 即发现**：13819 类消息的现状（升级人审 / 回合失败 / RAG fallback /
-  ownership 丢失 / 主单被关 / 声称跨工单操作 / request 被取消或新增 / 被引用单
-  被改动 / 重放非幂等）按现状如实报 FAIL 并作为产品发现上报；不改通过标准、
-  不顺手扩展合并/关单能力。
+  notice_turn_id / ack_draft_id / ack_delivery_comment_id /
+  main_ticket_zendesk_status / relay_request_id / replay / complete` 全链 ID
+  （递归脱敏后落盘）。
+- **FAIL 即发现**：13819 类消息的现状（升级人审 / 回合失败或 human_review /
+  RAG fallback / 多条回复 / ownership 丢失 / 主单被关（Zendesk 回读） / 声称
+  跨工单操作 / request 被取消或新增 / 被引用单被改动 / 重放非幂等或目标环境
+  不符）按现状如实报 FAIL 并作为产品发现上报；不改通过标准、不顺手扩展
+  合并/关单能力。
 - **清理**：同 §6；Zendesk 测试单的最终清理归用户。
