@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-03T14:55:21Z",
-  "source_base_commit": "854f1f16267f311bf99171ac02a97aa5336de89e",
-  "registry_digest": "6414c0b5d4dc2b96913874c4a70c55d0857fe0a65abcb42b0db11633d1973e13",
+  "generated_at": "2026-10-03T15:29:35Z",
+  "source_base_commit": "9038296e7f9bcc1882ae9ba88b2ece2b4932ab77",
+  "registry_digest": "00d25bcee27b56c31a1a0ccf25cd1e0062d3f89f4f231868aac70817a88eb5a9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1426,9 +1426,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "r3 确定性测试（新增 20 项 + 存量回归）",
+          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
-          "result": "r3 全绿：persona 81 passed/85 subtests（含俄/阿拉伯/泰语正例与含中文路径纯 URL 反例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。"
+          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
         },
         {
           "type": "test",
@@ -15548,8 +15548,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-03",
       "updated_at": "2026-10-03",
-      "summary": "计划名：客户回复语言连续性修复（实施计划，需要验收）。修复 13837 根因：内部邮件与 AgentRelay 触发的 Enablement 完成通知构造 reply job 时绕过 create_account_reply_job，reply_facts 缺少 conversation_context，加上 build_automation_reply_facts 把 customer_language 静默默认为 en，Persona 只看到英文内部结果而生成英文正文。r1 变更（bd6f384c）：(1) worker.py 三个内部触达入口（_queue_enablement_completion_reply_job、_apply_enablement_relay_success、_queue_internal_followup_reply_job，仅 handler=enablement）挂载脱敏公开会话快照 reply_facts.conversation_context；(2) automation_persona.py enablement 不再默认 en、语言优先级 Prompt、fail-closed 门 automation_persona_missing_customer_language、v31→v32 版本围栏；(3) prepare/publish 双路径旧 job 回填（冻结时点=job.created_at）。r2 修复（验收一轮三个阻塞项）：(a) 快照构造改为按完成 job 创建时点从 canonical ticket 的现行公开会话现建（build_automation_context+persona_context），case 级 automation_context.reply_conversation_context 仅在 ticket 不可读/无消息时回退——否则 case 快照可能落后于 reply-sync 刷新，漏掉客户最新语言要求；内部邮件与 Relay 两入口各补过期 case 快照回归测试。(b) 语言证据门升级 _customer_message_carries_language_signal：剔除脱敏占位符/URL/邮箱/≥16 位 hex/数字与裸确认词（ok/okay/yes/no/done/k）后须存在可辨语言内容，CJK 直接计信号；仅有无信号内容且无更早正文时停止生成转人工。(c) 评测文件补业务语义断言（enabled/close/correct-App-ID 正则组 + 跟进类禁 completion 措辞），任务登记提交逐样本完整正文与运行信息。基线 main@bcfe47b2。目标环境限定 Preproduction；Production 运行版本、Prompt active release 与真实客户工单不变，13837 仅作脱敏回归样本不重放不补发。 r3 修复（验收二轮 P1 阻塞）：语言证据门 r2 的拉丁字符白名单会整段删除俄语/阿拉伯语/泰语正常正文（误拦转人工、模型零调用），且 CJK 在剔除 URL 前提前放行使含中文路径的纯 URL 绕过排除——改为先剔除占位符/URL（含非 ASCII 路径）/邮箱/≥16 位 hex/数字，再以任意字系统 Unicode 字母（isalpha）判断剩余词，不做清理前放行；补测俄/阿拉伯/泰语正例（真实 render 入口、mock 模型、断言 invoke 恰一次）与含中文路径纯 URL 反例，保留葡语正文+末条纯 App ID 正例。快照新鲜度与模型评测证据两项已经二轮验收通过关闭。",
-      "next_action": "等待计划名「客户回复语言连续性修复」的 r3 复验（planner 线程；r1 三阻塞已修，r2 快照/评测两项已过，r3 仅剩语言证据门字符范围与清理顺序已修）。验收通过后：finalize 合码 → 官方本地栈重启验证 → 构建/发布 Preproduction 并核对镜像、健康状态与生效 Prompt → Preproduction 部署环境补做不投递客户消息的真实模型检查 → 提交发布报告并停止（不晋级 Production）。",
+      "summary": "计划名：客户回复语言连续性修复（实施计划，需要验收）。修复 13837 根因：内部邮件与 AgentRelay 触发的 Enablement 完成通知构造 reply job 时绕过 create_account_reply_job，reply_facts 缺少 conversation_context，加上 build_automation_reply_facts 把 customer_language 静默默认为 en，Persona 只看到英文内部结果而生成英文正文。r1 变更（bd6f384c）：(1) worker.py 三个内部触达入口（_queue_enablement_completion_reply_job、_apply_enablement_relay_success、_queue_internal_followup_reply_job，仅 handler=enablement）挂载脱敏公开会话快照 reply_facts.conversation_context；(2) automation_persona.py enablement 不再默认 en、语言优先级 Prompt、fail-closed 门 automation_persona_missing_customer_language、v31→v32 版本围栏；(3) prepare/publish 双路径旧 job 回填（冻结时点=job.created_at）。r2 修复（验收一轮三个阻塞项）：(a) 快照构造改为按完成 job 创建时点从 canonical ticket 的现行公开会话现建（build_automation_context+persona_context），case 级 automation_context.reply_conversation_context 仅在 ticket 不可读/无消息时回退——否则 case 快照可能落后于 reply-sync 刷新，漏掉客户最新语言要求；内部邮件与 Relay 两入口各补过期 case 快照回归测试。(b) 语言证据门升级 _customer_message_carries_language_signal：剔除脱敏占位符/URL/邮箱/≥16 位 hex/数字与裸确认词（ok/okay/yes/no/done/k）后须存在可辨语言内容，CJK 直接计信号；仅有无信号内容且无更早正文时停止生成转人工。(c) 评测文件补业务语义断言（enabled/close/correct-App-ID 正则组 + 跟进类禁 completion 措辞），任务登记提交逐样本完整正文与运行信息。基线 main@bcfe47b2。目标环境限定 Preproduction；Production 运行版本、Prompt active release 与真实客户工单不变，13837 仅作脱敏回归样本不重放不补发。 r3 修复（验收二轮 P1 阻塞）：语言证据门 r2 的拉丁字符白名单会整段删除俄语/阿拉伯语/泰语正常正文（误拦转人工、模型零调用），且 CJK 在剔除 URL 前提前放行使含中文路径的纯 URL 绕过排除——改为先剔除占位符/URL（含非 ASCII 路径）/邮箱/≥16 位 hex/数字，再以任意字系统 Unicode 字母（isalpha）判断剩余词，不做清理前放行；补测俄/阿拉伯/泰语正例（真实 render 入口、mock 模型、断言 invoke 恰一次）与含中文路径纯 URL 反例，保留葡语正文+末条纯 App ID 正例。快照新鲜度与模型评测证据两项已经二轮验收通过关闭。 r4 修复（验收三轮 P2 阻塞）：r3 改为 split() 全词匹配后未归一化词周标点，带标点简单确认（OK./yes!/[App ID] OK. 等）被重新当作语言依据放行生成——新增 _CONFIRMATION_PUNCTUATION 剥离集，词先 strip 标点再入确认词集合比较，Unicode 字母判断保留；补测句号/感叹号/逗号引号确认词与 [App ID] OK. 反例，正例改为葡语正文+末条 OK. 放行。非拉丁误拦与中文 URL 漏拦两项已经三轮验收确认修复。",
+      "next_action": "等待计划名「客户回复语言连续性修复」的 r4 复验（planner 线程；r2 快照/评测两项、r3 非拉丁/中文 URL 两项均已过，r4 仅确认词标点回归已修）。验收通过后：finalize 合码 → 官方本地栈重启验证 → 构建/发布 Preproduction 并核对镜像、健康状态与生效 Prompt → Preproduction 部署环境补做不投递客户消息的真实模型检查 → 提交发布报告并停止（不晋级 Production）。",
       "acceptance_criteria": [
         "内部邮件完成、AgentRelay 成功、内部跟进三个入口创建的 enablement reply job 均携带 conversation_context（角色/顺序/消息 ID 保留；私有备注/内部邮件/草稿排除；App ID/邮箱脱敏），快照按 job 创建时点从 canonical ticket 现行公开会话构造（case 快照仅回退），不漏客户最新语言要求；quota 等其他 handler 行为不变。",
         "enablement facts 不再默认 customer_language=en；旧 job 中无来源的 en 按旧默认值对待，语言依据为客户公开会话。",
@@ -15561,9 +15561,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "r3 确定性测试（新增 20 项 + 存量回归）",
+          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
-          "result": "r3 全绿：persona 81 passed/85 subtests（含俄/阿拉伯/泰语正例与含中文路径纯 URL 反例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。"
+          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
         },
         {
           "type": "test",

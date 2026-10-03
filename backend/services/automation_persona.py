@@ -570,6 +570,9 @@ def _conversation_customer_messages(facts: dict[str, Any]) -> list[dict[str, Any
 
 # Bare confirmations carry intent but no identifiable language.
 _LANGUAGE_SIGNAL_ALLOWLIST = frozenset({"ok", "okay", "yes", "no", "done", "k"})
+# Punctuation trimmed from a word before the confirmation comparison, so
+# "OK.", "yes!", and "'done'" stay bare confirmations (acceptance round 3).
+_CONFIRMATION_PUNCTUATION = ".,;:!?\"'`´‘’“”()[]{}<>«»„¡¿。．，；：！？…*_-–—"
 
 
 def _customer_message_carries_language_signal(content: str) -> bool:
@@ -581,21 +584,22 @@ def _customer_message_carries_language_signal(content: str) -> bool:
     message that is only an App ID, an email, or a URL never counts as
     language evidence while normal Russian, Arabic, Thai, CJK, or Latin
     prose always does (acceptance rounds 1-2). Bare confirmations carry
-    intent but no identifiable language. This gate only decides whether
-    usable prose exists; the reply language itself stays with the Persona.
+    intent but no identifiable language, including when they carry
+    surrounding punctuation. This gate only decides whether usable prose
+    exists; the reply language itself stays with the Persona.
     """
     text = str(content or "")
     text = re.sub(r"\[[^\]\n]{0,64}\]", " ", text)
     text = re.sub(r"https?://\S+|www\.\S+", " ", text)
     text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", " ", text)
     text = re.sub(r"\b[0-9a-fA-F]{16,}\b", " ", text)
-    words = [
-        word
-        for word in text.split()
-        if len(word) >= 2 and word.lower() not in _LANGUAGE_SIGNAL_ALLOWLIST
-    ]
+    words = []
+    for word in text.split():
+        token = word.strip(_CONFIRMATION_PUNCTUATION)
+        if len(token) >= 2 and token.lower() not in _LANGUAGE_SIGNAL_ALLOWLIST:
+            words.append(token)
     return any(
-        any(character.isalpha() for character in word) for word in words
+        any(character.isalpha() for character in token) for token in words
     )
 
 

@@ -2188,6 +2188,41 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
                     ),
                 },
             ),
+            # Acceptance round 3: a bare confirmation keeps its bare-confirmation
+            # status even when it carries punctuation; the r3 split() regression
+            # let "OK." and "yes!" through as language evidence.
+            (
+                "only_confirmation_with_period",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("OK."),
+                },
+            ),
+            (
+                "only_confirmation_with_exclamation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("yes!"),
+                },
+            ),
+            (
+                "only_confirmation_with_comma_and_quotes",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("'done',"),
+                },
+            ),
+            (
+                "only_appid_then_punctuated_confirmation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("[App ID] OK."),
+                },
+            ),
         ):
             with self.subTest(label=label), patch(
                 "backend.services.automation_persona.resolve_model_profile",
@@ -2247,7 +2282,9 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
             "conversation_context": enablement_language_context(
                 "Por favor, ative o Media Relay no meu projeto.",
                 "[App ID]",
-                "ok",
+                # Punctuated bare confirmation after real prose: the earlier
+                # Portuguese message stays the language evidence.
+                "OK.",
             ),
         }
         with patch(

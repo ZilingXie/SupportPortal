@@ -31,7 +31,9 @@
   `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成，语言与业务语义（开通/
   结案/更正 App ID）断言全过，逐样本正文存于 p2-184 登记。r3 修订：语言证据门先剔除
   占位符/URL（含非 ASCII 路径）/邮箱/长 hex/数字后以任意字系统 Unicode 字母判断，
-  不再使用拉丁字符白名单、不在清理前放行 CJK，避免误拦非拉丁正文或放行纯 URL。
+  不再使用拉丁字符白名单、不在清理前放行 CJK，避免误拦非拉丁正文或放行纯 URL；
+  r4 再补词周标点归一化（`OK.`/`yes!`/`[App ID] OK.` 等带标点简单确认仍不算语言
+  依据，确认词比较先 strip 标点）。
 
 ## 2026-10-01 - Governance remediation round 5: skill boundary + Summary input contract on the kind/importance mainline (p2-181)
 
