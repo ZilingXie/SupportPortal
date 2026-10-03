@@ -226,6 +226,34 @@ class StandaloneWorkflowTests(unittest.TestCase):
             standalone_summary_task_id_for("article", "doc-9", ARTICLE_INTAKE["source_updated_at"]),
         )
 
+    def test_review_rejects_contract_invalid_decision(self) -> None:
+        """Review round 3, R3-8: a no_change WITHOUT its target violates the
+        shared review contract and must fail the task — the old path ended
+        the candidate as a bogus accepted no-op."""
+        queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+        bad_review = {
+            "decisions": [
+                {
+                    "candidate_id": "c1", "candidate_type": "knowledge",
+                    "decision": "no_change", "confidence": 0.9,
+                    "rationale": "duplicate — but the target is missing",
+                    "proposed_content": "", "target_object": None, "target_version": None,
+                }
+            ]
+        }
+        result = drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(SUMMARY_OUTPUT, bad_review),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 1, "failed": 1})
+        review_rows = list(self.repository._standalone_review_tasks.values())
+        self.assertEqual(review_rows[0]["status"], "failed")
+        self.assertIn("review contract", review_rows[0]["error"])
+        self.assertEqual(self.repository.list_weknora_promotions(), [])
+
     def test_run_failure_is_recorded_not_stranded(self) -> None:
         """Review round 2 R2-10: a failing run must land in status=failed —
         the old datetime.now(timezone) TypeError stranded the row running."""

@@ -153,11 +153,22 @@ class HermesWeKnoraClient:
             raise WeKnoraUnavailable("weknora read response missing data object")
         data = payload["data"]
         metadata = data.get("metadata") if isinstance(data.get("metadata"), dict) else {}
+        content = str(metadata.get("content") or "")
+        content_version = str(metadata.get("version") or "")
+        # Review round 3, R3-7: an entry whose full body or content version
+        # cannot be read (for example a file/url knowledge object with no
+        # manual metadata) is NOT usable evidence — returning it as an empty
+        # success would let merge/supplement/replace decisions proceed on an
+        # unverifiable target. Fail closed; the review downgrades to humans.
+        if not content.strip() or not content_version.strip():
+            raise WeKnoraUnavailable(
+                f"weknora object {normalized_id} has no readable manual body/version"
+            )
         return {
             "object_id": normalized_id,
             "title": str(data.get("title") or ""),
-            "content": str(metadata.get("content") or ""),
-            "content_version": str(metadata.get("version") or ""),
+            "content": content,
+            "content_version": content_version,
             "lineage": metadata.get("lineage") if isinstance(metadata.get("lineage"), dict) else {},
         }
 

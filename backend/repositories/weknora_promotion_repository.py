@@ -182,6 +182,11 @@ def _normalize_human_resolution(
     updated = dict(payload)
     updated["decision"] = action
     updated["content"] = content
+    # Review round 3, R3-4: merge reads merged_content — the human-approved
+    # body IS the complete post-merge body, so it must land there too (and
+    # any stale, unapproved merged draft must not survive).
+    if action == "merge":
+        updated["merged_content"] = content
     for field in ("title", "target_object_id", "base_version", "kind", "merged_content"):
         value = str(resolution.get(field) or "").strip()
         if value:
@@ -359,6 +364,14 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 next_decision = next_payload["decision"]
                 row["candidate_payload"] = copy.deepcopy(next_payload)
                 row["decision"] = next_decision
+                # Review round 3, R3-4: drop the parked attempt's recorded
+                # WeKnora object/version — on re-execution the recovery
+                # reconcile would compare the OLD stored body with the
+                # human-approved body and park again (reconcile_content_
+                # mismatch). The human has already seen and superseded the
+                # parked state; the evidence stays in operation_receipt.
+                row["weknora_object_id"] = None
+                row["weknora_version"] = None
             row.update(
                 status="queued" if decision == "approve" else "rejected",
                 owner_token=None,
@@ -759,8 +772,8 @@ class PostgresWeKnoraPromotionRepositoryMixin:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "SELECT candidate_payload, decision FROM {} WHERE promotion_id=%s "
-                        "AND status='human_review' FOR UPDATE"
+                        "SELECT candidate_payload, decision, weknora_object_id, weknora_version "
+                        "FROM {} WHERE promotion_id=%s AND status='human_review' FOR UPDATE"
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
                     (promotion_id,),
                 )
@@ -770,15 +783,18 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 stored_payload = _json_value(record[0]) or {}
                 next_decision = str(record[1] or "")
                 next_payload = stored_payload
+                clear_object = False
                 if decision == "approve":
                     next_payload = _normalize_human_resolution(resolution, stored_payload)
                     next_decision = next_payload["decision"]
+                    clear_object = True
                 cur.execute(
                     sql.SQL(
                         """
                         UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
                         lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
-                        human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s
+                        human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s,
+                        weknora_object_id=%s, weknora_version=%s
                         WHERE promotion_id=%s AND status='human_review'
                         RETURNING promotion_id
                         """
@@ -791,6 +807,11 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         decided_at,
                         next_decision,
                         Json(next_payload),
+                        # Review round 3, R3-4: clear the parked attempt's
+                        # recorded object/version so the approved write is not
+                        # re-parked by the recovery reconcile.
+                        None if clear_object else record[2] if len(record) > 2 else None,
+                        None if clear_object else record[3] if len(record) > 3 else None,
                         promotion_id,
                     ),
                 )

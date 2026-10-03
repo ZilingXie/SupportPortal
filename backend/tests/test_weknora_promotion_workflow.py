@@ -335,6 +335,109 @@ def test_late_receipt_after_reopen_records_evidence_without_resurrecting() -> No
         )
 
 
+def test_approved_resolution_after_saved_conflict_outcome_completes() -> None:
+    """Review round 3, R3-4: the real worker saves the parked attempt's
+    weknora_object_id/version. Approval must CLEAR them — otherwise the
+    recovery reconcile compares the OLD stored body against the
+    human-approved body and parks again (reconcile_content_mismatch)."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # First attempt parked on a version conflict AND recorded the object
+    # identity — exactly what the real worker persists.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict",
+        weknora_object_id="doc-7", weknora_version="6",
+        completed_at="2026-09-05T08:06:00Z",
+    )
+
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "old stored body", "version": "6"}}
+    )
+    decided = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "replace",
+            "content": "Human-approved new body.",
+            "title": "T",
+            "target_object_id": "doc-7",
+            "base_version": "6",
+        },
+    )
+    assert decided["status"] == "queued"
+    # The parked object identity is cleared with the decision.
+    assert decided["weknora_object_id"] is None
+    assert decided["weknora_version"] is None
+
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "accepted"
+    assert store.objects["doc-7"]["content"] == "Human-approved new body."
+
+
+def test_approved_merge_resolution_reads_the_approved_body() -> None:
+    """Review round 3, R3-4: merge reads merged_content; an approval whose
+    body lands only in `content` would submit an empty (or stale unapproved)
+    merge body."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "merge",
+            "content": "Human-approved merged body.",
+            "target_object_id": "doc-7",
+            "base_version": "6",
+        },
+    )
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "6"}}
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "accepted"
+    assert store.objects["doc-7"]["content"] == "Human-approved merged body."
+
+
 def test_human_decision_approve_requeues_and_reject_is_terminal() -> None:
     """Review round 1 contract gap: the human-review queue needs an exit.
     Approve re-queues under the full write contract; reject is terminal and

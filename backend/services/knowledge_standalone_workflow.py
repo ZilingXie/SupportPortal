@@ -346,6 +346,20 @@ def run_standalone_review_task(
     adjusted, _downgraded = _downgrade_decisions_without_evidence(
         decisions, knowledge_available=knowledge_ok, memory_available=memory_ok
     )
+    # Same per-decision output contract as the case-bound review (review
+    # round 3, R3-8): a structurally invalid decision (for example a
+    # no_change without the target it decided not to change) must fail the
+    # task instead of ending the candidate as a bogus `accepted`.
+    from backend.services.hermes_case_workflow import HermesReviewDecision
+
+    for decision in adjusted:
+        try:
+            HermesReviewDecision.model_validate(decision)
+        except Exception as exc:  # noqa: BLE001 - surface the contract violation
+            raise StandaloneKnowledgeError(
+                "review_output_invalid",
+                f"decision {decision.get('candidate_id')!r} violates the review contract: {exc}",
+            ) from exc
     report["decisions"] = adjusted
     promotions = build_weknora_promotions_from_review_report(
         report,
