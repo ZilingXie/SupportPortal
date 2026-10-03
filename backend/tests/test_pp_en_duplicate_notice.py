@@ -583,6 +583,27 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
         self.assertIn("cross-ticket action", str(ctx.exception))
         self.assertFalse(engine.all_passed())
 
+    def test_delivered_content_with_negation_on_another_verb_fails(self) -> None:
+        """Acceptance r5 full-scenario reproduction: `did not wait and closed`
+        — the negation governs wait, not the close claim."""
+        engine = DupFakeEngine()
+        _happy_queue(engine)
+        engine.db_queue[16] = (
+            "FROM support_account_zendesk_comment_deliveries",
+            [{
+                "status": "delivered",
+                "zendesk_comment_id": "54170000000002",
+                "immutable_content": (
+                    "Thanks for confirming the duplicate. We did not wait and "
+                    "closed the duplicate. We will continue with this ticket."
+                ),
+            }],
+        )
+        with self.assertRaises(AssertionError) as ctx:
+            self._run(engine, workdir=self._workdir())
+        self.assertIn("cross-ticket action", str(ctx.exception))
+        self.assertFalse(engine.all_passed())
+
     def test_empty_delivered_content_fails(self) -> None:
         engine = DupFakeEngine()
         _happy_queue(engine)
@@ -822,6 +843,21 @@ class PpEnDuplicateNoticeTests(unittest.TestCase):
             pp._dup_ack_content_check(
                 "Thanks for the note about the other ticket. We have not closed "
                 "anything; we will continue with this ticket."
+            )
+        )
+        # Acceptance r4/r5: the negation must GOVERN the claimed action — a
+        # negation attached to a different verb never masks the claim.
+        self.assertIn(
+            "cross-ticket action",
+            pp._dup_ack_content_check(
+                "Thanks for confirming the duplicate. We did not wait and closed "
+                "the duplicate. We will continue with this ticket."
+            ),
+        )
+        self.assertIsNone(
+            pp._dup_ack_content_check(
+                "Thanks for the note about the other ticket. We have not closed "
+                "the duplicate; we will continue with this ticket."
             )
         )
 

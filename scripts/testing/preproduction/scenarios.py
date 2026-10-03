@@ -885,6 +885,10 @@ PP_EN_DUP_REQUEST_ACTIVE_STATUSES = {"gated", "dispatch_pending", "dispatching",
 PP_EN_DUP_CLAUSE_SPLIT_RE = re.compile(
     r"(?<=[.!?])\s+|[;\n]+|,\s+(?:but|and|however)\s+|\s+but\s+"
 )
+# Verb-phrase segment boundaries INSIDE a clause: a negation cannot govern
+# an action across one of these joins ("did not wait and closed" — the `not`
+# governs wait, not closed).
+PP_EN_DUP_SEGMENT_SPLIT_RE = re.compile(r"(?i)\s+(?:and|or|but)\s+|,\s+|;+")
 PP_EN_DUP_FORBIDDEN_CLAIM_RE = re.compile(
     r"(?i)\b(?:merged?|closed?|closing|accelerat\w*|speed\w* up|priorit\w* (?:up|higher))\b"
 )
@@ -924,9 +928,11 @@ def _dup_ack_content_check(content: str) -> str | None:
     the duplicate notice AND confirm continuing with this ticket — a negated
     promise ("we will not continue") is not a confirmation. Cross-ticket
     action claims are checked per ACTION: a claim is excused only when a
-    negation DIRECTLY precedes that specific action, so an unrelated negation
-    elsewhere in the clause ("closed the duplicate and will not ask for more
-    details") never masks the claim.
+    negation governs THAT action, i.e. the negation sits in the same
+    verb-phrase segment (bounded by and/or/but/comma/semicolon) BEFORE the
+    claim. A negation attached to a DIFFERENT verb — before ("did not wait
+    and closed") or after ("closed it and will not ask") — never masks the
+    claim. Proximity in characters is never used as the criterion.
     """
     text = str(content or "").strip()
     if not text:
@@ -940,10 +946,17 @@ def _dup_ack_content_check(content: str) -> str | None:
     for clause in clauses:
         if not clause or "?" in clause:
             continue
+        boundaries = [
+            m.end() for m in PP_EN_DUP_SEGMENT_SPLIT_RE.finditer(clause)
+            if m.end() <= len(clause)
+        ]
         for claim in PP_EN_DUP_FORBIDDEN_CLAIM_RE.finditer(clause):
-            window = clause[max(0, claim.start() - 32):claim.start()]
-            if PP_EN_DUP_NEGATION_RE.search(window):
-                continue  # this specific action is directly negated
+            segment_start = max(
+                (b for b in boundaries if b <= claim.start()), default=0
+            )
+            segment_prefix = clause[segment_start:claim.start()]
+            if PP_EN_DUP_NEGATION_RE.search(segment_prefix):
+                continue  # the negation governs this very action
             snippet = clause[max(0, claim.start() - 20):claim.end() + 20].strip()
             return f"ack claims a cross-ticket action: {snippet!r}"
     return None
