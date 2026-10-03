@@ -394,6 +394,10 @@ def run_standalone_review_task(
                 f"decision {decision.get('candidate_id')!r} violates the review contract: {exc}",
             ) from exc
     report["decisions"] = adjusted
+    # Review round 4, R4-2: re-check the generation AFTER the Hermes run — a
+    # source that advanced mid-run must not complete an old-generation review
+    # (the pre-run check alone leaves the window open).
+    _require_standalone_generation(repository, task)
     promotions = build_weknora_promotions_from_review_report(
         report,
         # The bridge reads hermes_session_id/run_id off the summary task;

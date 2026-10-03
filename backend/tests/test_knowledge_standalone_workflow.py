@@ -254,6 +254,45 @@ class StandaloneWorkflowTests(unittest.TestCase):
         self.assertIn("review contract", review_rows[0]["error"])
         self.assertEqual(self.repository.list_weknora_promotions(), [])
 
+    def test_newer_source_mid_review_fails_before_promotion(self) -> None:
+        """Review round 4, R4-2: a source arriving WHILE the review run
+        executes is caught by the post-run generation re-check — the old
+        review must not complete and must enqueue ZERO promotions."""
+        queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+
+        class _MidRunSourceInjection(_ScriptedHermes):
+            """Runs the summary, then accepts a NEWER source version while the
+            review run is in flight (between the review's start and get_run)."""
+
+            def get_run(self, run_id):
+                index = int(str(run_id).rsplit("-", 1)[-1]) - 1
+                if index == 1:  # the review run
+                    newer = dict(CSD_INTAKE, source_updated_at="2026-10-02T09:00:00+00:00")
+                    self.repository.accept_knowledge_source(
+                        {
+                            "schema_version": "knowledge-source-v1",
+                            **{k: v for k, v in newer.items()
+                               if k not in ("intake_id", "references_payload")},
+                            "references": {},
+                        },
+                        now_value="2026-10-02T09:00:01+00:00",
+                    )
+                return super().get_run(run_id)
+
+        client = _MidRunSourceInjection(SUMMARY_OUTPUT, REVIEW_OUTPUT)
+        client.repository = self.repository
+        result = drain_standalone_knowledge_tasks(
+            self.repository, client=client,
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 1, "failed": 1})
+        review_rows = list(self.repository._standalone_review_tasks.values())
+        self.assertEqual(review_rows[0]["status"], "failed")
+        self.assertIn("advanced", review_rows[0]["error"])
+        self.assertEqual(self.repository.list_weknora_promotions(), [])
+
     def test_run_failure_is_recorded_not_stranded(self) -> None:
         """Review round 2 R2-10: a failing run must land in status=failed —
         the old datetime.now(timezone) TypeError stranded the row running."""

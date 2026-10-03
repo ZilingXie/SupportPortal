@@ -2737,7 +2737,12 @@ def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
 def _drain_weknora_promotions(*, limit: int = 20) -> int:
     if not weknora_promotion_enabled():
         return 0
+    from backend.services.hermes_knowledge_workflow import (
+        weknora_promotion_generation_current,
+    )
+
     adapter = WeKnoraPromotionAdapter(WeKnoraClient())
+    native_state_store: Any = None
     processed = 0
     for promotion in ticket_repository.list_weknora_promotions():
         now = datetime.now(timezone.utc)
@@ -2753,6 +2758,36 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
             lease_expires_at=(now + timedelta(seconds=120)).isoformat(),
         )
         if not claimed:
+            continue
+        # Review round 4, R4-2: the generation check sits at the WRITE
+        # boundary — a candidate whose frozen inputs were superseded (newer
+        # source version, case fingerprint drift, or a reopened native
+        # ticket) makes ZERO external calls.
+        if str(claimed.get("source_type") or "") == "knowledge_source_review" and native_state_store is None:
+            try:
+                from backend.services.automation_ecs_runtime import AutomationEcsSettings
+                from backend.services.automation_ecs_store import create_automation_ecs_store
+
+                native_state_store = create_automation_ecs_store(
+                    AutomationEcsSettings.from_env("worker")  # type: ignore[arg-type]
+                )
+            except Exception:  # noqa: BLE001 - absence fails closed in the check
+                native_state_store = False
+        generation_ok, generation_reason = weknora_promotion_generation_current(
+            ticket_repository, claimed,
+            native_state_store=(native_state_store or None),
+        )
+        if not generation_ok:
+            ticket_repository.complete_weknora_promotion(
+                claimed["promotion_id"], owner_token=owner_token,
+                status="failed", failure_code=generation_reason,
+                failure_detail=(
+                    "promotion generation superseded before execution; "
+                    "zero external writes were made"
+                ),
+                completed_at=now_iso(),
+            )
+            processed += 1
             continue
         try:
             outcome = adapter.execute(claimed)

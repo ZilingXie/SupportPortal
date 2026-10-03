@@ -72,7 +72,17 @@ class WeKnoraPromotionAdapter:
         candidate = task.get("candidate_payload") if isinstance(task.get("candidate_payload"), dict) else {}
         decision = str(task.get("decision") or "").strip()
         candidate_type = str(task.get("candidate_type") or "").strip()
+        # Review round 4, R4-4: a HUMAN-APPROVED revision is a NEW operation,
+        # not a retry of the original one. The original key may already hold
+        # a successful receipt (a write whose readback timed out), which
+        # would 409 the different approved request forever. The approved
+        # revision therefore carries its own retryable identity, keyed by the
+        # decision timestamp: retries of THIS approval replay it, and the
+        # original receipt stays untouched for audit.
         idempotency_key = str(task.get("promotion_id") or "").strip()
+        decided_at = str(task.get("human_decided_at") or "").strip()
+        if str(task.get("human_decision") or "") == "approved" and decided_at:
+            idempotency_key = f"{idempotency_key}:h{decided_at}"
 
         if decision == "no_change":
             return WeKnoraPromotionOutcome(

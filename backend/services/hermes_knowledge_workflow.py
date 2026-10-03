@@ -1182,6 +1182,94 @@ def _claimable(task: dict[str, Any], now_iso: str) -> bool:
     return False
 
 
+def native_ticket_state_superseded(
+    native_state_store: Any, ticket_id: str, frozen_version: str
+) -> bool:
+    """Review round 4, R4-3: True when a ticket state change (the n8n status
+    sync's ``ticket.updated`` executions) landed AFTER the frozen source
+    snapshot — the case reopened (or otherwise moved on), so candidates built
+    from that snapshot are stale regardless of whether a newer knowledge
+    snapshot has arrived yet. Unreadable state is treated as superseded
+    (fail-closed: the human can re-close and produce a fresh snapshot).
+    """
+    try:
+        from datetime import datetime
+
+        frozen_at = datetime.fromisoformat(str(frozen_version).replace("Z", "+00:00"))
+        executions = native_state_store.list_case_executions(str(ticket_id)) or []
+        for execution in executions:
+            if not isinstance(execution, dict):
+                continue
+            if str(execution.get("event_type") or "") != "ticket.updated":
+                continue
+            changed_at = datetime.fromisoformat(
+                str(execution.get("created_at") or "").replace("Z", "+00:00")
+            )
+            if changed_at > frozen_at:
+                return True
+        return False
+    except Exception:  # noqa: BLE001 - unverifiable state fails closed
+        return True
+
+
+def weknora_promotion_generation_current(
+    repository: Any, promotion: dict[str, Any], *, native_state_store: Any = None
+) -> tuple[bool, str]:
+    """Review round 4, R4-2: the write boundary's generation check.
+
+    A promotion may only execute (or be human-approved) while its frozen
+    generation is still current:
+    - case-bound rows: the case's recomputed input fingerprint must equal the
+      row's recorded ``input_fingerprint``;
+    - standalone rows: the source's newest ACCEPTED version must equal the
+      row's recorded fingerprint, and (for native Zendesk tickets, when a
+    state store is provided) no ticket state change may have landed after
+      the frozen snapshot.
+
+    Returns ``(ok, reason)``; ``reason`` is a stable failure code for the
+    terminal record when not ok.
+    """
+    fingerprint = str(promotion.get("input_fingerprint") or "")
+    if not fingerprint:
+        return True, ""
+    source_type = str(promotion.get("source_type") or "")
+    if source_type == "hermes_knowledge_review" and str(promotion.get("engineer_case_id") or ""):
+        binding = repository.get_hermes_case_binding(str(promotion["engineer_case_id"]))
+        if not isinstance(binding, dict):
+            return False, "source_input_diverged"
+        current = summary_input_fingerprint(
+            binding,
+            source_versions=_linked_source_versions(repository, str(promotion["engineer_case_id"])),
+        )
+        if current != fingerprint:
+            return False, "source_input_diverged"
+        return True, ""
+    if source_type == "knowledge_source_review":
+        summary_task_id = str(promotion.get("source_id") or "").rsplit(":", 1)[0]
+        summary_row = repository.get_standalone_summary_task(summary_task_id)
+        if not isinstance(summary_row, dict):
+            return False, "source_input_diverged"
+        latest = repository.latest_knowledge_source_version(
+            str(summary_row.get("source_type") or ""), str(summary_row.get("source_id") or "")
+        )
+        if latest and latest != fingerprint:
+            return False, "source_input_diverged"
+        if (
+            str(summary_row.get("source_type") or "") == "zendesk_ticket"
+            and native_state_store is not None
+        ):
+            # False = the caller could not build a state store at all — an
+            # unverifiable reopen state fails closed (no approval, no write).
+            if native_state_store is False:
+                return False, "native_state_unavailable"
+            if native_ticket_state_superseded(
+                native_state_store, str(summary_row.get("source_id") or ""), fingerprint
+            ):
+                return False, "ticket_state_superseded"
+        return True, ""
+    return True, ""
+
+
 def drain_hermes_knowledge_tasks(
     repository: Any,
     *,

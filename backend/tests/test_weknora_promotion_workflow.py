@@ -438,6 +438,89 @@ def test_approved_merge_resolution_reads_the_approved_body() -> None:
     assert store.objects["doc-7"]["content"] == "Human-approved merged body."
 
 
+def test_human_approval_after_unreadable_receipt_writes_as_new_operation() -> None:
+    """Review round 4, R4-4 — the reviewer's exact reproduction chain:
+    write lands but the readback times out (outcome_unknown, receipt EXISTS
+    at WeKnora), the target then moves, the retry reconciles to
+    human_review, and the human approves a NEW body and base_version. The
+    approved revision must write under its OWN idempotency identity — the
+    original key would 409 the different request forever."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # Step 1 (state constructed; the real path writes then times out on the
+    # readback): the WeKnora side holds a SUCCESSFUL receipt for the original
+    # key and the object at v6 with the pre-approval body.
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "pre-approval body", "version": "6"}}
+    )
+
+    # Step 2: the target moves underneath (another operation lands).
+    store.objects["doc-7"] = {"title": "T", "content": "someone else's edit", "version": "9"}
+
+    # Step 3: the retry reconciles against the recorded object → human_review.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="outcome_unknown",
+        failure_code="readback_failed",
+        weknora_object_id="doc-7", weknora_version="6",
+        completed_at="2026-09-05T08:06:00Z",
+    )
+    repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:06:30Z", reason="readback verified later"
+    )
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:00Z",
+        lease_expires_at="2026-09-05T08:09:00Z",
+    )
+    retry = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert retry.status == "human_review"
+    assert retry.failure_code == "reconcile_content_mismatch"
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code=retry.failure_code, failure_detail=retry.failure_detail,
+        weknora_object_id="doc-7", weknora_version="9",
+        completed_at="2026-09-05T08:08:00Z",
+    )
+
+    # Step 4: the human approves the NEW body pinned to the CURRENT version.
+    decided = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:10:00Z",
+        resolution={
+            "action": "replace", "content": "human-corrected body",
+            "title": "T", "target_object_id": "doc-7", "base_version": "9",
+        },
+    )
+    assert decided["status"] == "queued"
+    approved = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w3", claimed_at="2026-09-05T08:10:30Z",
+        lease_expires_at="2026-09-05T08:12:30Z",
+    )
+    final = WeKnoraPromotionAdapter(store).execute(approved)
+    # The OLD contract 409'd here (same key, different request). The approved
+    # revision writes under its own identity and completes.
+    assert final.status == "accepted", (final.status, final.failure_detail)
+    assert store.objects["doc-7"]["content"] == "human-corrected body"
+    update_keys = [kw.get("key") for name, kw in store.calls if name == "knowledge_update"]
+    assert f"{promotion_id}:h2026-09-05T08:10:00Z" in update_keys
+    # Retries of THIS approval replay through the WeKnora server-side key
+    # replay (same key + same request → original result); this fake has no
+    # replay surface, so the version guard parking a re-run is the correct
+    # zero-modification behavior here.
+
+
 def test_human_decision_approve_requeues_and_reject_is_terminal() -> None:
     """Review round 1 contract gap: the human-review queue needs an exit.
     Approve re-queues under the full write contract; reject is terminal and

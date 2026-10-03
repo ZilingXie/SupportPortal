@@ -135,3 +135,36 @@ def test_outcome_unknown_tasks_are_not_reclaimed() -> None:
     ), patch.object(worker, "WeKnoraClient", FakeAdapterClient):
         assert worker._drain_weknora_promotions(limit=20) == 0
     repository.claim_weknora_promotion.assert_not_called()
+
+
+def test_drain_makes_zero_external_calls_for_superseded_generation() -> None:
+    """Review round 4, R4-2: the write boundary checks the generation BEFORE
+    the adapter runs — a candidate whose frozen source version was superseded
+    fails with zero external calls, and an approved-but-stale candidate is
+    caught here too (the approval guard alone leaves the gap)."""
+    superseded = {
+        **TASK,
+        "promotion_id": "weknora:knowledge_source_review:src:c1:knowledge:h",
+        "source_type": "knowledge_source_review",
+        "input_fingerprint": "v1",
+    }
+    repository = _repository()
+    repository.list_weknora_promotions.return_value = [superseded]
+    repository.claim_weknora_promotion.return_value = {**superseded, "status": "active"}
+    repository.get_standalone_summary_task.return_value = {
+        "source_type": "zendesk_ticket", "source_id": "T1", "source_version": "v1",
+    }
+    repository.latest_knowledge_source_version.return_value = "v2"
+    with patch.dict(os.environ, ENABLED_ENV, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ), patch.object(worker, "WeKnoraClient", FakeAdapterClient), patch.object(
+        worker.WeKnoraPromotionAdapter, "execute", side_effect=AssertionError(
+            "the adapter must not run for a superseded generation"
+        )
+    ):
+        assert worker._drain_weknora_promotions(limit=20) == 1
+    repository.complete_weknora_promotion.assert_called_once()
+    kwargs = repository.complete_weknora_promotion.call_args.kwargs
+    assert kwargs["status"] == "failed"
+    assert kwargs["failure_code"] == "source_input_diverged"
+    assert "zero external writes" in kwargs["failure_detail"]

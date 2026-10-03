@@ -321,15 +321,161 @@ def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch
     assert row["status"] == "human_review"  # untouched
 
 
-def _snapshot_for(ticket_id: str, version: str) -> dict:
+def _snapshot_for(ticket_id: str, version: str, *, status: str = "solved") -> dict:
     return {
         "schema_version": "knowledge-source-v1",
         "source_type": "zendesk_ticket",
         "source_id": ticket_id,
         "source_updated_at": version,
-        "payload": {"ticket": {"id": ticket_id}, "comments": []},
+        "payload": {"ticket": {"id": ticket_id, "status": status}, "comments": []},
         "references": {"zendesk_url": f"https://example.invalid/tickets/{ticket_id}"},
     }
+
+
+def test_open_ticket_snapshot_is_recorded_but_never_summarized(monkeypatch) -> None:
+    """Review round 4, R4-3: a reopen (open-state) snapshot is accepted as a
+    source record, but the standalone queue entry refuses non-closed states —
+    no Summary work is minted for a reopened ticket."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    store._hermes_bindings[("automation.production", "13802")] = {
+        "namespace": "automation.production", "zendesk_ticket_id": "13802",
+        "hermes_session_id": "hs", "session_kind": "case", "status": "active",
+        "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+    }
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        response = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13802", "2026-10-02T06:00:00Z", status="open"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == 202
+    body = response.json()
+    assert body["summary_skipped_reason"] == "ticket_not_closed"
+    assert "summary_task_id" not in body
+    assert repository.list_standalone_summary_tasks() == []
+
+
+def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
+    """Review round 4, R4-3: a parked native candidate cannot be approved
+    once a ticket state change (the n8n status sync's ticket.updated
+    execution) landed after the frozen snapshot — even though no newer
+    knowledge snapshot exists. Re-closing and a fresh snapshot is the only
+    path back to a decidable candidate."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    frozen = "2026-10-02T01:00:00Z"
+    store._hermes_bindings[("automation.production", "13803")] = {
+        "namespace": "automation.production", "zendesk_ticket_id": "13803",
+        "hermes_session_id": "hs", "session_kind": "case", "status": "active",
+        "slack_channel_id": None, "slack_thread_ts": None,
+        "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+    }
+    # The knowledge snapshot (solved) is accepted first.
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        accepted = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13803", frozen),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert accepted.status_code == 202
+    # The canonical (normalized) version string is the generation identity.
+    frozen = repository.get_knowledge_source(accepted.json()["task_id"])["source_updated_at"]
+
+    # A parked promotion from that generation.
+    summary_task_id = accepted.json()["summary_task_id"]
+    repository.enqueue_weknora_promotions(
+        [{
+            "source_type": "knowledge_source_review",
+            "source_id": f"{summary_task_id}:c1",
+            "source_version": "hash",
+            "content_hash": "ch",
+            "candidate_type": "knowledge",
+            "decision": "replace",
+            "input_fingerprint": frozen,
+            "candidate_payload": {
+                "schema_version": "v1", "candidate_id": "c1",
+                "candidate_type": "knowledge", "decision": "replace",
+                "title": "T", "content": "body", "target_object_id": "d", "base_version": "1",
+            },
+        }],
+        now_value="2026-10-02T02:00:00Z",
+    )
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-10-02T02:01:00Z",
+        lease_expires_at="2026-10-02T02:05:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-10-02T02:02:00Z",
+    )
+
+    # The ticket REOPENS: the status sync records a ticket.updated execution
+    # AFTER the frozen snapshot (no new knowledge snapshot arrives).
+    store._executions["exec-reopen"] = {
+        "execution_id": "exec-reopen",
+        "namespace": "automation.production",
+        "zendesk_ticket_id": "13803",
+        "event_type": "ticket.updated",
+        "status": "completed",
+        "created_at": "2026-10-02T07:00:00Z",
+        "updated_at": "2026-10-02T07:00:00Z",
+    }
+
+    resolution = {"action": "new", "content": "stale body", "title": "T"}
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        blocked = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": "ops", "resolution": resolution},
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert blocked.status_code == 409
+    assert "ticket_state_superseded" in blocked.json()["detail"]
+    assert repository.list_weknora_promotions()[0]["status"] == "human_review"
+
+
+def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> None:
+    """Review round 4, R4-5: a native conversation at the read cap is an
+    explicit refusal — the earliest engineer feedback must never be silently
+    dropped from the frozen Summary input."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    store._hermes_bindings[("automation.production", "13804")] = {
+        "namespace": "automation.production", "zendesk_ticket_id": "13804",
+        "hermes_session_id": "hs", "session_kind": "case", "status": "active",
+        "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+    }
+    for index in range(500):
+        store._hermes_turns[f"turn-{index}"] = {
+            "turn_id": f"turn-{index}", "namespace": "automation.production",
+            "zendesk_ticket_id": "13804", "created_at": "2026-10-02T00:00:00Z",
+            "updated_at": "2026-10-02T00:00:00Z", "turn_kind": "normal",
+            "phase": "work", "direction": "investigation", "direction_reason": None,
+            "route": None, "work_result": None, "result": None,
+            "status": "completed", "input_snapshot": None,
+        }
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        response = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13804", "2026-10-02T01:00:00Z"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == 422
+    assert "budget" in response.json()["detail"]
+    assert repository.list_standalone_summary_tasks() == []
 
 
 def test_source_intake_requires_bearer_and_state_redacts_raw_payload() -> None:
