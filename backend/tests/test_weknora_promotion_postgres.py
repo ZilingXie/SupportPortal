@@ -308,6 +308,7 @@ def test_human_decision_and_late_receipt_postgres_twins(
             "content_hash": "hx",
             "candidate_type": "knowledge",
             "decision": "replace",
+            "input_fingerprint": "2026-09-05T00:00:00Z",
             "candidate_payload": {
                 "schema_version": "v1", "candidate_id": "c1",
                 "candidate_type": "knowledge", "decision": "replace",
@@ -322,17 +323,51 @@ def test_human_decision_and_late_receipt_postgres_twins(
         fresh_id, owner_token="w2", claimed_at="2026-09-05T08:13:00Z",
         lease_expires_at="2026-09-05T08:15:00Z",
     )
+    # First attempt parks AND records the target identity (real worker
+    # behavior); the PG approve then applies the human resolution (review
+    # round 3: positive PG case) and clears the parked identity.
     repository.complete_weknora_promotion(
         fresh_id, owner_token="w2", status="human_review",
-        failure_code="target_version_conflict", completed_at="2026-09-05T08:14:00Z",
+        failure_code="target_version_conflict",
+        weknora_object_id="doc-7", weknora_version="5",
+        completed_at="2026-09-05T08:14:00Z",
     )
+    approved = repository.decide_weknora_promotion(
+        fresh_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:14:30Z",
+        resolution={
+            "action": "replace", "content": "Human-approved body.",
+            "title": "T", "target_object_id": "doc-7", "base_version": "6",
+        },
+    )
+    assert approved["status"] == "queued"
+    assert approved["decision"] == "replace"
+    approved_row = repository.list_weknora_promotions()[-1]
+    assert approved_row["candidate_payload"]["content"] == "Human-approved body."
+    assert approved_row["candidate_payload"]["base_version"] == "6"
+    assert approved_row["human_decision"] == "approved"
+    # The parked attempt's recorded identity is cleared with the approval.
+    assert approved_row["weknora_object_id"] is None
+    assert approved_row["weknora_version"] is None
+    assert approved_row["input_fingerprint"] == "2026-09-05T00:00:00Z"
+    # The approved row is claimable again under the worker contract.
+    requeued = repository.claim_weknora_promotion(
+        fresh_id, owner_token="w4", claimed_at="2026-09-05T08:15:00Z",
+        lease_expires_at="2026-09-05T08:17:00Z",
+    )
+    assert requeued is not None and requeued["status"] == "active"
+    repository.complete_weknora_promotion(
+        fresh_id, owner_token="w4", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:16:00Z",
+    )
+
     rejected = repository.decide_weknora_promotion(
-        fresh_id, decision="reject", decided_by="ops:ziling", decided_at="2026-09-05T08:15:00Z",
+        fresh_id, decision="reject", decided_by="ops:ziling", decided_at="2026-09-05T08:17:00Z",
     )
     assert rejected["status"] == "rejected"
     row = repository.list_weknora_promotions()[-1]
     assert row["human_decision"] == "rejected"
     assert repository.claim_weknora_promotion(
-        fresh_id, owner_token="w3", claimed_at="2026-09-05T08:15:30Z",
-        lease_expires_at="2026-09-05T08:17:30Z",
+        fresh_id, owner_token="w3", claimed_at="2026-09-05T08:17:30Z",
+        lease_expires_at="2026-09-05T08:19:30Z",
     ) is None
