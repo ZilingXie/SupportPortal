@@ -568,16 +568,49 @@ def _conversation_customer_messages(facts: dict[str, Any]) -> list[dict[str, Any
     ]
 
 
+# Bare confirmations carry intent but no identifiable language.
+_LANGUAGE_SIGNAL_ALLOWLIST = frozenset({"ok", "okay", "yes", "no", "done", "k"})
+
+
+def _customer_message_carries_language_signal(content: str) -> bool:
+    """Whether a customer message contains identifiable language at all.
+
+    Strips the redaction placeholders, identifiers, links, numbers, and bare
+    confirmations first: a message that is only an App ID, an email, a URL,
+    or "ok" must never be counted as language evidence (acceptance round 1,
+    blocker 2). CJK characters count directly.
+    """
+    text = str(content or "")
+    if re.search(r"[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff\uac00-\ud7af]", text):
+        return True
+    text = re.sub(r"\[[^\]\n]{0,64}\]", " ", text)
+    text = re.sub(r"https?://\S+|www\.\S+", " ", text)
+    text = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", " ", text)
+    text = re.sub(r"\b[0-9a-fA-F]{16,}\b", " ", text)
+    text = re.sub(r"[^A-Za-zÀ-ÖØ-öø-ÿ]+", " ", text)
+    words = [
+        word
+        for word in text.split()
+        if len(word) >= 2 and word.lower() not in _LANGUAGE_SIGNAL_ALLOWLIST
+    ]
+    return bool(words)
+
+
 def _assert_enablement_customer_language_evidence(facts: dict[str, Any]) -> None:
     """Fail closed when an Enablement reply has no public language evidence.
 
     ``customer_language`` is a hint only: it was silently defaulted to English
     for years, so a stored ``en`` never proves the customer chose English.
-    The reply language must come from the public customer conversation; when
-    no customer message is available, generation stops here and the existing
-    human-review handoff takes over instead of guessing English.
+    The reply language must come from the public customer conversation, and
+    at least one customer message must carry identifiable language: when the
+    only customer content is an App ID, number, link, or bare confirmation
+    with no earlier prose, generation stops here and the existing
+    human-review handoff takes over instead of guessing a language.
     """
-    if not _conversation_customer_messages(facts):
+    if not any(
+        _customer_message_carries_language_signal(message.get("content"))
+        for message in _conversation_customer_messages(facts)
+    ):
         raise AutomationPersonaError("automation_persona_missing_customer_language")
 
 

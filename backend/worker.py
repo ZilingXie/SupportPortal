@@ -393,42 +393,24 @@ def _enablement_reply_conversation_context(
 ) -> dict[str, Any] | None:
     """Sanitized public conversation for enablement internal-resolution replies.
 
-    Prefers the case-level snapshot (refreshed on every public customer
-    message and already redacted, role-labeled, and filtered of private
-    notes, internal emails, and drafts); legacy cases without one are
-    rebuilt from the canonical ticket. The snapshot contains only the
-    customer's public conversation, so it is the language evidence for a
-    completion reply whose trigger (internal email or relay result) carries
-    no customer text. ``created_before`` freezes the snapshot to the messages
-    that existed when an old pending job was created, so a backfill never
-    adopts later customer messages.
+    The snapshot is rebuilt from the canonical ticket's live public messages,
+    so a completion job created now carries the conversation that exists at
+    job creation - including a customer language request that arrived after
+    the last reply-sync refresh of the case snapshot (acceptance round 1,
+    blocker 1). The case-level snapshot (itself built by these same tools on
+    every public customer message) is only a fallback for tickets that can
+    no longer be read. ``created_before`` freezes the snapshot to the
+    messages that existed when an old pending job was created, so a backfill
+    never adopts later customer messages.
     """
     case = account_case if isinstance(account_case, dict) else {}
     ticket = canonical_ticket if isinstance(canonical_ticket, dict) else {}
-    snapshot = None
-    automation_context = case.get("automation_context")
-    if isinstance(automation_context, dict):
-        candidate = automation_context.get("reply_conversation_context")
-        if (
-            isinstance(candidate, dict)
-            and candidate.get("version") == "automation-context-v1"
-        ):
-            snapshot = candidate
-    if snapshot is not None:
-        conversation = [
-            dict(message)
-            for message in (snapshot.get("conversation") or [])
-            if isinstance(message, dict)
-        ]
-        current_message_id = str(snapshot.get("current_message_id") or "")
-    else:
-        messages = [
-            message
-            for message in (ticket.get("messages") or [])
-            if isinstance(message, dict)
-        ]
-        if not messages:
-            return None
+    messages = [
+        message
+        for message in (ticket.get("messages") or [])
+        if isinstance(message, dict)
+    ]
+    if messages:
         collected = (
             case.get("collected_fields")
             if isinstance(case.get("collected_fields"), dict)
@@ -445,14 +427,40 @@ def _enablement_reply_conversation_context(
                 {"client_ticket_id": ticket.get("ticket_id")},
             )
         except Exception:
+            context = None
+        if context is not None:
+            sanitized = persona_context(context, forbidden_values)
+            conversation = [
+                dict(message)
+                for message in (sanitized.get("conversation") or [])
+                if isinstance(message, dict)
+            ]
+            current_message_id = str(sanitized.get("current_message_id") or "")
+        else:
+            conversation = []
+            current_message_id = ""
+    else:
+        conversation = []
+        current_message_id = ""
+    if not conversation:
+        # Ticket unreadable or empty: fall back to the case-level snapshot.
+        automation_context = case.get("automation_context")
+        snapshot = None
+        if isinstance(automation_context, dict):
+            candidate = automation_context.get("reply_conversation_context")
+            if (
+                isinstance(candidate, dict)
+                and candidate.get("version") == "automation-context-v1"
+            ):
+                snapshot = candidate
+        if snapshot is None:
             return None
-        sanitized = persona_context(context, forbidden_values)
         conversation = [
             dict(message)
-            for message in (sanitized.get("conversation") or [])
+            for message in (snapshot.get("conversation") or [])
             if isinstance(message, dict)
         ]
-        current_message_id = str(sanitized.get("current_message_id") or "")
+        current_message_id = str(snapshot.get("current_message_id") or "")
     cutoff = _enablement_conversation_cutoff(created_before)
     if cutoff is not None:
         kept: list[dict[str, Any]] = []

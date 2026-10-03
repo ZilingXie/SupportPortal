@@ -2120,6 +2120,62 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
                     },
                 },
             ),
+            # Acceptance round 1 blocker 2: content without identifiable
+            # language is not evidence when no earlier prose exists.
+            (
+                "only_redacted_app_id",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("[App ID]"),
+                },
+            ),
+            (
+                "only_raw_app_id",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "0123456789abcdef0123456789abcdef"
+                    ),
+                },
+            ),
+            (
+                "only_number",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("12345"),
+                },
+            ),
+            (
+                "only_url",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "https://example.com/console/project"
+                    ),
+                },
+            ),
+            (
+                "only_bare_confirmation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("ok"),
+                },
+            ),
+            (
+                "only_email",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "cliente@exemplo.com"
+                    ),
+                },
+            ),
         ):
             with self.subTest(label=label), patch(
                 "backend.services.automation_persona.resolve_model_profile",
@@ -2133,6 +2189,37 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
                         persona_assignment={"content": {"instruction": "Warm"}},
                         account_scope=True,
                     )
+
+    def test_enablement_render_accepts_prose_before_signalless_message(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "enablement_completed_and_close",
+            "conversation_context": enablement_language_context(
+                "Por favor, ative o Media Relay no meu projeto.",
+                "[App ID]",
+                "ok",
+            ),
+        }
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile",
+            return_value=profile,
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text",
+            return_value=SimpleNamespace(
+                text=(
+                    "Obrigado pela paciência - o Media Relay já está ativado no seu "
+                    "projeto. Vou encerrar este chamado agora."
+                ),
+                model_name="persona-model",
+            ),
+        ):
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        self.assertIn("Media Relay já está ativado", result.content)
 
     def test_enablement_prompt_states_language_priority(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")

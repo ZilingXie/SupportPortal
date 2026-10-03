@@ -557,6 +557,62 @@ class RelayInboxTests(unittest.TestCase):
         self.assertNotIn("read-back confirmed", contents)
         self.assertIsNone(jobs[0]["payload"]["reply_facts"].get("customer_language"))
 
+    def test_success_result_uses_live_ticket_over_stale_case_snapshot(self):
+        """Acceptance round 1 blocker 1: the relay completion snapshot is
+        rebuilt from the ticket at job creation, so a language request sent
+        after the last reply-sync refresh is not lost to a stale snapshot."""
+        ticket = self.repository.get_ticket("9001")
+        ticket["messages"] = [
+            {
+                "role": "customer",
+                "content": "Hola, por favor activen Media Relay en mi proyecto.",
+                "created_at": "2026-09-15T10:00:00+00:00",
+                "message_id": "es-1",
+                "id": "es-1",
+            },
+            {
+                "role": "customer",
+                # Arrived after the case snapshot below was last refreshed.
+                "content": "Por favor, respóndanme en español de ahora en adelante.",
+                "created_at": "2026-09-16T09:00:00+00:00",
+                "message_id": "es-2",
+                "id": "es-2",
+            },
+        ]
+        self.repository.save_ticket(ticket)
+        stale_view = dict(ticket)
+        stale_view["messages"] = ticket["messages"][:1]
+        case = self.repository.get_account_case("AC-RELAY-1")
+        case["automation_context"] = {
+            "reply_conversation_context": persona_context(
+                build_automation_context(stale_view, {"client_ticket_id": "9001"}),
+                [],
+            )
+        }
+        self.repository.save_account_case(case)
+        client, _payload = self._client_with_result()
+        with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
+            WORKER, "ticket_repository", self.repository
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=_open_ticket_snapshot(),
+        ):
+            WORKER._cycle_enablement_relay_inbox(max_events=5)
+        jobs = [
+            job
+            for job in self.repository._account_reply_jobs.values()
+            if job.get("job_id") == f"enablement-relay-complete-{self.request_id}"
+        ]
+        self.assertEqual(len(jobs), 1)
+        contents = "\n".join(
+            message["content"]
+            for message in jobs[0]["payload"]["reply_facts"]["conversation_context"][
+                "conversation"
+            ]
+        )
+        self.assertIn("respóndanme en español", contents)
+        self.assertIn("por favor activen Media Relay", contents)
+
     def test_closed_ticket_result_is_evidence_only(self):
         """PR-D: a result arriving after the ticket closed is recorded as
         evidence but never creates a completion reply or reopens anything."""

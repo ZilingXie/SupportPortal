@@ -7913,6 +7913,90 @@ class EnablementReplyLanguageContinuityTests(unittest.TestCase):
             job["payload"]["reply_facts"]["conversation_context"]
         )
 
+    def test_completion_job_uses_live_ticket_over_stale_case_snapshot(self) -> None:
+        """Acceptance round 1 blocker 1: the snapshot must reflect the public
+        conversation at job-creation time, so a customer language request
+        that arrived after the last reply-sync refresh of the case snapshot
+        is still language evidence."""
+        ticket = self.repository.get_ticket(self.ticket_id)
+        ticket["messages"].append(
+            {
+                "role": "customer",
+                # A later explicit language request, absent from the stale
+                # case snapshot seeded below.
+                "content": "De agora em diante, por favor respondam em português.",
+                "created_at": "2026-09-30T11:30:00+00:00",
+                "message_id": "cust-3",
+                "id": "cust-3",
+            }
+        )
+        self.repository.save_ticket(ticket)
+        stale_case = self.repository.get_account_case_by_ticket_id(self.ticket_id)
+        assert stale_case is not None
+        stale_view = dict(ticket)
+        stale_view["messages"] = ticket["messages"][:-1]
+        stale_case["automation_context"] = {
+            "reply_conversation_context": persona_context(
+                build_automation_context(
+                    stale_view, {"client_ticket_id": self.ticket_id}
+                ),
+                [self.APP_ID],
+            ),
+        }
+        self.repository.save_account_case(stale_case)
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-stale",
+                owner_token="owner-stale",
+                account_case=dict(stale_case),
+                canonical_ticket=ticket,
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-stale",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        contents = "\n".join(
+            str(message.get("content"))
+            for message in job["payload"]["reply_facts"]["conversation_context"][
+                "conversation"
+            ]
+        )
+        self.assertIn("por favor respondam em português", contents)
+        self.assertIn("Por favor, ative o Media Relay", contents)
+
+    def test_completion_job_falls_back_to_case_snapshot_without_ticket(self) -> None:
+        self._seed_case_snapshot()
+        refreshed_case = self.repository.get_account_case_by_ticket_id(self.ticket_id)
+        assert refreshed_case is not None
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-fallback",
+                owner_token="owner-fallback",
+                account_case=dict(refreshed_case),
+                # The relay entry's shape for an unreadable ticket: an empty
+                # dict, so the helper must fall back to the case snapshot.
+                canonical_ticket={},
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-fallback",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        self._assert_public_conversation(
+            job["payload"]["reply_facts"]["conversation_context"]
+        )
+
     def test_quota_completion_job_keeps_existing_language_contract(self) -> None:
         self._seed_case_snapshot()
         ticket = self.repository.get_ticket(self.ticket_id)

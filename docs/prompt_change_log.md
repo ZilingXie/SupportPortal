@@ -16,16 +16,19 @@
   情形）；(4) 版本 v31→v32 使未发布旧 job 经 `_account_reply_needs_persona_render`
   版本围栏按新合同重新生成，已发布 job 复用原消息。无 Reviewer 架构不变；固定
   问候语/签名/尾注的全面本地化不在本次范围。
-- 输入构造（同 PR）：worker.py 三个内部触达入口（内部邮件完成、AgentRelay 成功、
-  内部跟进，仅 enablement）挂载脱敏公开会话快照 `reply_facts.conversation_context`；
-  prepare/publish 两路径为旧未发布 enablement job 按 `job.created_at` 冻结时点回填
-  快照。
+- 输入构造（同 PR，r2 修订）：worker.py 三个内部触达入口（内部邮件完成、AgentRelay 成功、
+  内部跟进，仅 enablement）挂载脱敏公开会话快照 `reply_facts.conversation_context`——按
+  job 创建时点从 canonical ticket 现行公开会话现建（case 级
+  `automation_context.reply_conversation_context` 仅在 ticket 不可读/无消息时回退，避免
+  过期快照漏掉客户最新语言要求）；prepare/publish 两路径为旧未发布 enablement job 按
+  `job.created_at` 冻结时点回填快照。
 - 部署提示：仅代码级 Prompt（随镜像发布），无 Prompt catalog 变更；按计划仅发布
   Preproduction，Production 不变。
-- 验证：确定性测试新增 13 项（worker/relay/failure/persona）+ 存量回归全绿
-  （test_worker 14 个预存失败与基线一致，与本变更无关）；真实模型评测
-  `backend/tests/test_enablement_reply_language_eval.py`（gpt-6-astra，门控
-  `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成、语言与合同校验全过。
+- 验证：确定性测试新增 18 项（worker/relay/failure/persona，含两入口过期 case 快照
+  回归与无语言信号门反例）+ 存量回归全绿（test_worker 14 个预存失败与基线一致，与本
+  变更无关）；真实模型评测 `backend/tests/test_enablement_reply_language_eval.py`
+  （gpt-6-astra，门控 `ENABLEMENT_REPLY_LANGUAGE_EVAL=1`）七场景全部首轮生成，语言与
+  业务语义（开通/结案/更正 App ID）断言全过，逐样本正文存于 p2-184 登记。
 
 ## 2026-10-01 - Governance remediation round 5: skill boundary + Summary input contract on the kind/importance mainline (p2-181)
 

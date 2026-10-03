@@ -200,6 +200,46 @@ def _detect_language(body: str) -> str:
     return "en"
 
 
+# Business-semantic expectations per sample: every group must have at least
+# one pattern present in the body (acceptance round 1, blocker 3 - the
+# evaluation must verify the business meaning, not only the language).
+SEMANTIC_EXPECTATIONS = {
+    "pt_completion_english_internal": {
+        "enabled_claim": [r"ativad|habilitad|ligad|funcional"],
+        "close_claim": [r"encerr|fech|finaliz"],
+    },
+    "es_relay_success_english_internal": {
+        "enabled_claim": [r"habilitad|activad|listo|funcion"],
+        "close_claim": [r"cierr|cerr|finaliz"],
+    },
+    "pt_bare_appid_last_message": {
+        "enabled_claim": [r"ativad|habilitad|ligad|funcional"],
+        "close_claim": [r"encerr|fech|finaliz"],
+    },
+    "explicit_switch_to_english": {
+        "enabled_claim": [r"enabled|activated|set up|up and running"],
+        "close_claim": [r"clos|finaliz|wrap"],
+    },
+    "en_only_conversation": {
+        "enabled_claim": [r"enabled|activated|set up|up and running"],
+        "close_claim": [r"clos|finaliz|wrap"],
+    },
+    "zh_conversation": {
+        "enabled_claim": ["开通|启用|已开启|已激活"],
+        "close_claim": ["关闭|结束|结案"],
+    },
+    "es_internal_followup": {
+        "app_id_correction": [r"app\s*id", r"correct"],
+        "resend_request": [r"enví|reenv|verifi|compart"],
+    },
+}
+
+SEMANTIC_FORBIDDEN = {
+    # The correction follow-up must not claim enablement or case closure.
+    "es_internal_followup": [r"habilitad|activad ya|cerrando este caso"],
+}
+
+
 @pytest.fixture(scope="module", autouse=True)
 def provider_environment():
     if os.getenv("ENABLEMENT_REPLY_LANGUAGE_EVAL") != "1":
@@ -226,10 +266,21 @@ def test_enablement_reply_language(sample_id, expected_language, facts_builder, 
     )
     body = rendered.content.split("\n", 1)[-1] if "\n" in rendered.content else rendered.content
     detected = _detect_language(body)
+    semantic_findings = {
+        group: [pattern for pattern in patterns if re.search(pattern, body, re.IGNORECASE)]
+        for group, patterns in SEMANTIC_EXPECTATIONS[sample_id].items()
+    }
+    semantic_violations = [
+        pattern
+        for pattern in SEMANTIC_FORBIDDEN.get(sample_id, [])
+        if re.search(pattern, body, re.IGNORECASE)
+    ]
     record = {
         "sample": sample_id,
         "expected_language": expected_language,
         "detected_language": detected,
+        "semantic_findings": semantic_findings,
+        "semantic_violations": semantic_violations,
         "model": rendered.model,
         "prompt_version": rendered.prompt_version,
         "generation_attempts": rendered.generation_attempts,
@@ -241,3 +292,6 @@ def test_enablement_reply_language(sample_id, expected_language, facts_builder, 
     print(json.dumps(record, ensure_ascii=False, indent=2))
     assert rendered.prompt_version == AUTOMATION_PERSONA_PROMPT_VERSION
     assert detected == expected_language, record["content"]
+    for group, matches in semantic_findings.items():
+        assert matches, f"{sample_id}: missing business semantic '{group}' in: {record['content']}"
+    assert not semantic_violations, f"{sample_id}: forbidden semantic present in: {record['content']}"
