@@ -2343,6 +2343,44 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
         quota_prompt = _system_prompt("quota")
         self.assertNotIn("Language policy for Enablement replies", quota_prompt)
 
+    def test_es_followup_resend_request_accepts_unaccented_enviar(self) -> None:
+        """Acceptance follow-up on the release review: the real Spanish
+        correction reply "¿podrías comprobarlo y enviarme el App ID correcto
+        de 32 caracteres?" is business-correct but the resend_request stem
+        list missed the unaccented "enviarme" and reported a false failure.
+        The semantic groups must accept it while the completion-claim ban
+        stays intact."""
+        import re as _re
+
+        from backend.tests.test_enablement_reply_language_eval import (
+            SEMANTIC_EXPECTATIONS,
+            SEMANTIC_FORBIDDEN,
+        )
+
+        body = (
+            "Gracias por enviarlo. El que recibí no es correcto; ¿podrías "
+            "comprobarlo y enviarme el App ID correcto de 32 caracteres?"
+        )
+        groups = SEMANTIC_EXPECTATIONS["es_internal_followup"]
+        for group, patterns in groups.items():
+            self.assertTrue(
+                any(_re.search(pattern, body, _re.IGNORECASE) for pattern in patterns),
+                f"semantic group '{group}' must accept the unaccented request: {body}",
+            )
+        self.assertFalse(
+            any(
+                _re.search(pattern, body, _re.IGNORECASE)
+                for pattern in SEMANTIC_FORBIDDEN["es_internal_followup"]
+            )
+        )
+        # An English or unrelated body must still fail the request semantics.
+        self.assertFalse(
+            any(
+                _re.search(pattern, "Thanks, this is now enabled.", _re.IGNORECASE)
+                for pattern in groups["resend_request"]
+            )
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
