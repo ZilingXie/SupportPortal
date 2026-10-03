@@ -177,6 +177,82 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     assert not promotions[0]["engineer_case_id"]
 
 
+def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch) -> None:
+    """Review round 3, R3-6: a parked case-bound candidate may only be
+    decided while its frozen-input fingerprint is still the newest
+    generation — a newer linked source must 409 the decision even though the
+    candidate's own content hash never changed."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, _store = _client()
+    repository = _repository()
+    from backend.services.hermes_knowledge_workflow import (
+        _linked_source_versions,
+        summary_input_fingerprint,
+    )
+
+    binding = repository.get_hermes_case_binding("13793-1")
+    fingerprint = summary_input_fingerprint(
+        binding, source_versions=_linked_source_versions(repository, "13793-1")
+    )
+    repository.enqueue_weknora_promotions(
+        [{
+            "engineer_case_id": "13793-1",
+            "client_ticket_id": "13793",
+            "source_type": "hermes_knowledge_review",
+            "source_id": "rev-1:cand-1",
+            "source_version": "hash-1",
+            "content_hash": "c1hash",
+            "input_fingerprint": fingerprint,
+            "candidate_type": "knowledge",
+            "decision": "human_review",
+            "candidate_payload": {
+                "schema_version": "v1", "candidate_id": "cand-1",
+                "candidate_type": "knowledge", "decision": "human_review",
+                "title": "T", "content": "body",
+            },
+        }],
+        now_value="2026-10-02T00:00:00Z",
+    )
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-10-02T00:01:00Z",
+        lease_expires_at="2026-10-02T00:03:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-10-02T00:02:00Z",
+    )
+    headers = {"Authorization": "Bearer secret"}
+    resolution = {"action": "new", "content": "Human-approved body.", "title": "T"}
+
+    # A NEWER linked source supersedes the parked generation.
+    intake = repository.accept_knowledge_source(
+        {
+            "schema_version": "knowledge-source-v1",
+            "source_type": "zendesk_ticket", "source_id": "13793",
+            "source_updated_at": "2026-10-02T06:00:00Z",
+            "payload": {"ticket": {"id": "13793"}}, "references": {},
+        },
+        now_value="2026-10-02T06:00:01Z",
+    )
+    repository.link_knowledge_source_summary(
+        intake["intake_id"], engineer_case_id="13793-1",
+        summary_task_id=None, now_value="2026-10-02T06:00:02Z",
+    )
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        superseded = client.post(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
+            json={"decision": "approve", "operator": "ops", "resolution": resolution},
+            headers=headers,
+        )
+    assert superseded.status_code == 409
+    assert "superseded" in superseded.json()["detail"]
+    row = repository.list_weknora_promotions()[0]
+    assert row["status"] == "human_review"  # untouched
+
+
 def _snapshot_for(ticket_id: str, version: str) -> dict:
     return {
         "schema_version": "knowledge-source-v1",

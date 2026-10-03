@@ -1047,6 +1047,7 @@ class PostgresHermesCaseRepositoryMixin:
                 client_ticket_id TEXT NOT NULL, investigation_id TEXT NOT NULL,
                 episode INTEGER NOT NULL, ledger_revision INTEGER NOT NULL, conversation_version INTEGER NOT NULL,
                 review_session_id TEXT NOT NULL,
+                input_fingerprint TEXT,
                 status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','invalidated')),
                 idempotency_key TEXT NOT NULL, run_id TEXT,
                 prompt_version TEXT, skill_version TEXT, agent_model TEXT, reasoning_effort TEXT,
@@ -1095,6 +1096,11 @@ class PostgresHermesCaseRepositoryMixin:
         ).format(
             sql.Identifier("idx_support_hermes_summary_tasks_episode"),
             self._table("support_hermes_summary_tasks")))
+        # Review round 3, R3-6: the frozen-input fingerprint travels with the
+        # Review task too, so the same generation check covers the review and
+        # everything downstream of it.
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS input_fingerprint TEXT").format(
+            self._table("support_hermes_review_tasks")))
         turn_table = self._table("support_hermes_turn_requests")
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS runtime_receipt JSONB").format(turn_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS failure_code TEXT").format(turn_table))
@@ -1778,7 +1784,7 @@ class PostgresHermesCaseRepositoryMixin:
     _REVIEW_TASK_FIELDS = (
         "review_task_id", "summary_task_id", "engineer_case_id", "client_ticket_id",
         "investigation_id", "episode", "ledger_revision", "conversation_version",
-        "review_session_id", "status", "idempotency_key", "run_id",
+        "review_session_id", "input_fingerprint", "status", "idempotency_key", "run_id",
         "prompt_version", "skill_version", "agent_model", "reasoning_effort",
         "weknora_available", "weknora_query", "report", "report_hash",
         "weknora_adapter_status", "weknora_submissions", "error_code", "error_message",
@@ -1916,15 +1922,19 @@ class PostgresHermesCaseRepositoryMixin:
         cur.execute(sql.SQL("""
             INSERT INTO {} (review_task_id, summary_task_id, engineer_case_id, client_ticket_id,
                 investigation_id, episode, ledger_revision, conversation_version, review_session_id,
-                status, idempotency_key, prompt_version, skill_version, agent_model,
+                input_fingerprint, status, idempotency_key, prompt_version, skill_version, agent_model,
                 reasoning_effort, created_at, updated_at)
-            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT DO NOTHING
         """).format(self._table("support_hermes_review_tasks")), (
             payload["review_task_id"], payload["summary_task_id"], payload["engineer_case_id"],
             payload["client_ticket_id"], payload["investigation_id"], payload["episode"],
             payload["ledger_revision"], payload["conversation_version"],
-            payload["review_session_id"], payload["idempotency_key"],
+            payload["review_session_id"],
+            # Review round 3, R3-6: the review inherits its summary
+            # generation's frozen-input fingerprint.
+            str(payload.get("input_fingerprint") or "") or None,
+            payload["idempotency_key"],
             payload.get("prompt_version"), payload.get("skill_version"),
             payload.get("agent_model"), payload.get("reasoning_effort"),
             payload["created_at"], payload["created_at"],

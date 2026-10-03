@@ -131,6 +131,26 @@ class InMemoryKnowledgeSourceRepositoryMixin:
             row = self._knowledge_source_intakes.get(str(intake_id))
             return copy.deepcopy(row) if row else None
 
+    def latest_knowledge_source_version(self, source_type: str, source_id: str) -> str | None:
+        """Newest ACCEPTED version of one logical source (review round 3, R3-6).
+
+        The standalone generation check compares a task's frozen source
+        version against this: a newer accepted version means the task's
+        generation is superseded.
+        """
+        best: tuple[str, float] | None = None
+        with self._assignment_lock:
+            for row in self._knowledge_source_intakes.values():
+                if (
+                    row["source_type"] == str(source_type)
+                    and row["source_id"] == str(source_id)
+                    and row["status"] == "accepted"
+                ):
+                    epoch = float(row["source_updated_at_epoch"])
+                    if best is None or epoch > best[1]:
+                        best = (str(row["source_updated_at"]), epoch)
+        return best[0] if best else None
+
     def list_knowledge_sources_for_case(self, engineer_case_id: str) -> list[dict[str, Any]]:
         """Accepted sources linked to the case, latest version per source.
 
@@ -335,6 +355,25 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 return self._row_to_source(cur.fetchone())
 
         return self._run_with_connection_retry("get_knowledge_source", operation)
+
+    def latest_knowledge_source_version(self, source_type: str, source_id: str) -> str | None:
+        """PG twin of the newest-accepted-version query (review round 3, R3-6)."""
+        table = self._table("support_knowledge_source_intakes")
+
+        def operation(conn: psycopg.Connection[Any]) -> str | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT source_updated_at FROM {} "
+                        "WHERE source_type=%s AND source_id=%s AND status='accepted' "
+                        "ORDER BY source_updated_at_epoch DESC LIMIT 1"
+                    ).format(table),
+                    (str(source_type), str(source_id)),
+                )
+                row = cur.fetchone()
+                return str(row[0]) if row is not None else None
+
+        return self._run_with_connection_retry("latest_knowledge_source_version", operation)
 
     def list_knowledge_sources_for_case(self, engineer_case_id: str) -> list[dict[str, Any]]:
         """Accepted sources linked to the case, latest version per source.

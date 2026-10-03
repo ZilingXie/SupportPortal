@@ -57,6 +57,7 @@ WEKNORA_PROMOTION_FIELDS = (
     "human_decision",
     "human_decision_detail",
     "human_decided_at",
+    "input_fingerprint",
     "created_at",
     "updated_at",
 )
@@ -120,6 +121,9 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         "human_decision": None,
         "human_decision_detail": None,
         "human_decided_at": None,
+        # Frozen-input generation this promotion was produced from (review
+        # round 3, R3-6); standalone promotions carry the source version.
+        "input_fingerprint": str(task.get("input_fingerprint") or "") or None,
         "created_at": now_value,
         "updated_at": now_value,
     }
@@ -418,6 +422,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     weknora_object_id TEXT, weknora_version TEXT, operation_receipt JSONB,
                     failure_code TEXT, failure_detail TEXT,
                     human_decision TEXT, human_decision_detail TEXT, human_decided_at TIMESTAMPTZ,
+                    input_fingerprint TEXT,
                     created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
                 )
                 """
@@ -466,6 +471,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decision TEXT").format(promotion_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decision_detail TEXT").format(promotion_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decided_at TIMESTAMPTZ").format(promotion_table))
+        cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS input_fingerprint TEXT").format(promotion_table))
         cur.execute(
             sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
                 promotion_table,
@@ -514,8 +520,8 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         summary_session_id, summary_run_id, review_session_id, review_run_id,
                         slack_channel_id, slack_thread_ts, source_type, source_id, source_version,
                         content_hash, candidate_type, decision, candidate_payload, status,
-                        attempt_count, created_at, updated_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',0,%s,%s)
+                        attempt_count, input_fingerprint, created_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'queued',0,%s,%s,%s)
                     ON CONFLICT (promotion_id) DO NOTHING
                     RETURNING promotion_id
                     """
@@ -540,6 +546,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                     normalized["candidate_type"],
                     normalized["decision"],
                     Json(normalized["candidate_payload"]),
+                    normalized["input_fingerprint"] or None,
                     now_value,
                     now_value,
                 ),

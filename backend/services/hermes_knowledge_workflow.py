@@ -669,6 +669,9 @@ def run_hermes_summary_task(
             "episode": int(task["episode"]),
             "ledger_revision": int(task["ledger_revision"]),
             "conversation_version": int(task["conversation_version"]),
+            # Review round 3, R3-6: the review carries its generation's frozen
+            # fingerprint so the same source-divergence check covers it.
+            "input_fingerprint": str(task.get("input_fingerprint") or ""),
             "review_session_id": review_session_id_for(
                 str(task["engineer_case_id"]), int(task["episode"]), generation=generation
             ),
@@ -912,6 +915,10 @@ def build_weknora_promotions_from_review_report(
         "slack_thread_ts": str(slack_thread_ts or ""),
         "source_type": "hermes_knowledge_review",
         "source_version": str(report.get("content_hash") or ""),
+        # Review round 3, R3-6: promotions remember the frozen-input
+        # generation they were produced from, so a human decision can be
+        # refused when the case's inputs have moved on.
+        "input_fingerprint": str(review_task.get("input_fingerprint") or ""),
     }
     tasks: list[dict[str, Any]] = []
     for decision in report.get("decisions") or []:

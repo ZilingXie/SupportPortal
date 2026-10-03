@@ -735,6 +735,7 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     human_decision TEXT,
     human_decision_detail TEXT,
     human_decided_at TIMESTAMPTZ,
+    input_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -793,6 +794,7 @@ CREATE TABLE IF NOT EXISTS support_hermes_review_tasks (
     ledger_revision INTEGER NOT NULL,
     conversation_version INTEGER NOT NULL,
     review_session_id TEXT NOT NULL,
+    input_fingerprint TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
     idempotency_key TEXT NOT NULL,
     run_id TEXT,

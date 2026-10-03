@@ -301,14 +301,7 @@ class StandaloneWorkflowTests(unittest.TestCase):
         task = queue_standalone_summary_for_source(
             self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
         )
-        # Advance the same source to a NEWER accepted version (a second
-        # generation exists), then hand the review a task row whose
-        # source_version belongs to the old generation while the stored
-        # summary row was queued for it — mutate the stored summary row's
-        # lineage to simulate divergence.
-        stored = self.repository._standalone_summary_tasks[task["summary_task_id"]]
-        stored["source_version"] = "2026-10-01T00:00:00+00:00"
-
+        # First drain completes summary + review normally.
         drain_standalone_knowledge_tasks(
             self.repository,
             client=_ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT),
@@ -316,9 +309,12 @@ class StandaloneWorkflowTests(unittest.TestCase):
         )
         review_rows = list(self.repository._standalone_review_tasks.values())
         self.assertEqual(len(review_rows), 1)
-        review_rows[0]["source_version"] = "2099-01-01T00:00:00+00:00"
+        # Forge a lineage divergence that the generation check cannot shadow:
+        # an unknown source_type has no newest-version to compare, so the
+        # summary-row vs review-task mismatch is what must fire.
         self.repository._standalone_review_tasks[review_rows[0]["review_task_id"]].update(
             status="pending", owner_token=None, claimed_at=None, lease_expires_at=None,
+            source_type="csd_issue_mistyped",
         )
         result = drain_standalone_knowledge_tasks(
             self.repository,
@@ -331,6 +327,35 @@ class StandaloneWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(failed_row["status"], "failed")
         self.assertIn("diverged", failed_row["error"])
+
+    def test_newer_source_version_fails_the_stale_generation(self) -> None:
+        """Review round 3, R3-6: a NEWER accepted source version supersedes
+        the queued generation — the stale summary must fail visibly and never
+        run, while the queue mints the new generation."""
+        task = queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+        newer = dict(CSD_INTAKE, source_updated_at="2026-10-02T08:00:00+00:00")
+        self.repository.accept_knowledge_source(
+            {
+                "schema_version": "knowledge-source-v1",
+                **{k: v for k, v in newer.items() if k not in ("intake_id", "references_payload")},
+                "references": {},
+            },
+            now_value="2026-10-02T08:00:01+00:00",
+        )
+        result = drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 0, "failed": 1})
+        stored = self.repository.get_standalone_summary_task(task["summary_task_id"])
+        self.assertEqual(stored["status"], "failed")
+        self.assertIn("advanced", stored["error"])
+        # No review, no promotion from the stale generation.
+        self.assertEqual(list(self.repository._standalone_review_tasks.values()), [])
+        self.assertEqual(self.repository.list_weknora_promotions(), [])
 
 
 if __name__ == "__main__":

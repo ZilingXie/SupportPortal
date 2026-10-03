@@ -719,6 +719,48 @@ def create_app(    *,
             raise HTTPException(
                 status_code=409, detail="promotion is not awaiting a human decision",
             )
+        # Review round 3, R3-6: generation guard — a parked candidate may only
+        # be decided while its frozen inputs are still the newest generation.
+        # expected_content_hash stays an optional extra; THIS check is
+        # mandatory whenever the promotion recorded its generation.
+        fingerprint = str(current.get("input_fingerprint") or "")
+        source_type = str(current.get("source_type") or "")
+        if source_type == "hermes_knowledge_review" and fingerprint:
+            from backend.services.hermes_knowledge_workflow import (
+                _linked_source_versions,
+                summary_input_fingerprint,
+            )
+            binding = repository.get_hermes_case_binding(
+                str(current.get("engineer_case_id") or "")
+            )
+            if isinstance(binding, dict):
+                current_fingerprint = summary_input_fingerprint(
+                    binding,
+                    source_versions=_linked_source_versions(
+                        repository, str(current["engineer_case_id"])
+                    ),
+                )
+                if current_fingerprint != fingerprint:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="candidate generation superseded: the case's inputs moved on",
+                    )
+        elif source_type == "knowledge_source_review" and fingerprint:
+            # Standalone lineage: the promotion's source_id is
+            # "<summary_task_id>:<candidate_id>"; the summary row carries the
+            # authoritative source identity for the generation check.
+            summary_task_id = str(current.get("source_id") or "").rsplit(":", 1)[0]
+            summary_row = repository.get_standalone_summary_task(summary_task_id)
+            if isinstance(summary_row, dict):
+                latest = repository.latest_knowledge_source_version(
+                    str(summary_row.get("source_type") or ""),
+                    str(summary_row.get("source_id") or ""),
+                )
+                if latest and latest != fingerprint:
+                    raise HTTPException(
+                        status_code=409,
+                        detail="candidate generation superseded: a newer source version exists",
+                    )
         if expected_hash and str(current.get("content_hash") or "") != expected_hash:
             raise HTTPException(
                 status_code=409,

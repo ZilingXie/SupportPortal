@@ -194,6 +194,21 @@ def _run_session(
         time.sleep(STANDALONE_POLL_INTERVAL_SECONDS)
 
 
+def _require_standalone_generation(repository: Any, task: dict[str, Any]) -> None:
+    """Review round 3, R3-6: a standalone task may only execute while its
+    frozen source version is still the newest ACCEPTED generation — a newer
+    version means a fresh task exists (or will be queued) for that material
+    and this generation must fail visibly instead."""
+    latest = repository.latest_knowledge_source_version(
+        str(task.get("source_type") or ""), str(task.get("source_id") or "")
+    )
+    if latest and latest != str(task.get("source_version") or ""):
+        raise StandaloneKnowledgeError(
+            "source_input_diverged",
+            f"source advanced to {latest} while this task froze {task.get('source_version')}",
+        )
+
+
 def run_standalone_summary_task(
     repository: Any,
     task: dict[str, Any],
@@ -211,6 +226,7 @@ def run_standalone_summary_task(
         intake = repository.get_knowledge_source(str(task.get("intake_id") or ""))
     if not isinstance(intake, dict):
         raise StandaloneKnowledgeError("intake_missing", "source intake row disappeared")
+    _require_standalone_generation(repository, task)
     bundle = build_standalone_bundle(intake)
     rendered = json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True, default=str)
     if len(rendered) > STANDALONE_BUNDLE_MAX_CHARS:
@@ -286,6 +302,7 @@ def run_standalone_review_task(
                 "standalone_lineage_mismatch",
                 f"{lineage_field} diverged between the summary row and the review task",
             )
+    _require_standalone_generation(repository, task)
     packet = dict(summary["packet"])
     candidates = packet.get("candidates") or []
     knowledge_client = weknora_client
@@ -379,6 +396,10 @@ def run_standalone_review_task(
         promotion["source_version"] = str(
             summary.get("packet_hash") or task["source_version"]
         )
+        # Review round 3, R3-6: standalone promotions carry the source
+        # version they were produced from, so decisions can be generation-
+        # checked against the newest accepted intake.
+        promotion["input_fingerprint"] = str(task["source_version"])
     return repository.complete_standalone_review_task(
         str(task["review_task_id"]),
         report=report,
