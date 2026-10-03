@@ -22,6 +22,29 @@ from backend.services.billing_automation import build_billing_automation_result
 from backend.services.llm_factory import LlmInvocationError
 
 
+def enablement_language_context(*customer_contents: str) -> dict:
+    """Minimal public-conversation fixture: the enablement language evidence.
+
+    Enablement replies no longer default to English; their render requires
+    at least one public customer message as language evidence, exactly like
+    the production reply jobs that carry the case conversation snapshot.
+    """
+    conversation = [
+        {
+            "message_id": f"customer-{index}",
+            "role": "customer",
+            "created_at": f"2026-10-01T10:0{index - 1}:00+00:00",
+            "content": content,
+        }
+        for index, content in enumerate(customer_contents or ("Please enable Media Relay on my project.",), 1)
+    ]
+    return {
+        "version": "automation-context-v1",
+        "current_message_id": conversation[-1]["message_id"],
+        "conversation": conversation,
+    }
+
+
 class AutomationPersonaTests(unittest.TestCase):
     def test_normal_render_uses_one_single_attempt_generation(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -149,6 +172,7 @@ class AutomationPersonaTests(unittest.TestCase):
             missing_information=[] if outcome == "enabled" else ["app_id"],
             customer_name="Ada Customer",
         )
+        facts["conversation_context"] = enablement_language_context()
         if outcome == "enabled":
             facts["completion_acknowledgement"] = "patience"
         return facts
@@ -286,7 +310,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v31")
+        self.assertEqual(result.prompt_version, "automation-persona-v32")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -367,6 +391,7 @@ class AutomationPersonaTests(unittest.TestCase):
             behavior="enablement", reply_intent="resolution_update",
             known_information={"app_id": "abcdefabcdefabcdefabcdefabcdefab", "requested_feature": "media_relay"},
         )
+        facts["conversation_context"] = enablement_language_context()
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text="Media Relay is enabled for abcdefabcdefabcdefabcdefabcdefab.", model_name="persona-model"
@@ -407,6 +432,7 @@ class AutomationPersonaTests(unittest.TestCase):
             customer_name="Kaber",
         )
         facts["completion_acknowledgement"] = "patience"
+        facts["conversation_context"] = enablement_language_context()
         return facts
 
     def test_ac13085_completion_note_is_sanitized_before_persona(self) -> None:
@@ -498,6 +524,7 @@ class AutomationPersonaTests(unittest.TestCase):
             customer_name="Maya",
         )
         facts["completion_acknowledgement"] = "patience"
+        facts["conversation_context"] = enablement_language_context()
         self.assertEqual(facts["known_information"], {})
 
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
@@ -580,9 +607,12 @@ class AutomationPersonaTests(unittest.TestCase):
             ),
             (
                 "enablement_submission",
-                build_automation_reply_facts(
-                    behavior="enablement",
-                    reply_intent="submission_confirmation",
+                dict(
+                    build_automation_reply_facts(
+                        behavior="enablement",
+                        reply_intent="submission_confirmation",
+                    ),
+                    conversation_context=enablement_language_context(),
                 ),
                 (
                     "Thanks for sending this. I am reviewing it internally and will keep you posted. "
@@ -616,9 +646,12 @@ class AutomationPersonaTests(unittest.TestCase):
             ),
             (
                 "enablement_completion",
-                build_automation_reply_facts(
-                    behavior="enablement",
-                    reply_intent="enablement_completed_and_close",
+                dict(
+                    build_automation_reply_facts(
+                        behavior="enablement",
+                        reply_intent="enablement_completed_and_close",
+                    ),
+                    conversation_context=enablement_language_context(),
                 ),
                 "The feature is already enabled, so I am closing this case now.",
                 ("For completed Enablement",),
@@ -804,6 +837,7 @@ class AutomationPersonaTests(unittest.TestCase):
             behavior="enablement", reply_intent="resolution_update",
             known_information={"requested_feature": "media_relay", "requested_feature_label": "Media Relay"},
         )
+        facts["conversation_context"] = enablement_language_context()
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(text="Media Relay is now enabled.", model_name="persona-model")
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
@@ -825,6 +859,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 "requested_feature_label": "channel media rele",
             },
         )
+        facts["conversation_context"] = enablement_language_context()
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
@@ -878,6 +913,7 @@ class AutomationPersonaTests(unittest.TestCase):
             behavior="enablement",
             reply_intent="submission_confirmation",
         )
+        facts["conversation_context"] = enablement_language_context()
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
@@ -914,6 +950,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 reply_facts={
                     "behavior": "enablement",
                     "reply_intent": "submission_confirmation",
+                    "conversation_context": enablement_language_context(),
                     "performed_actions": [
                         "The assigned Support Engineer has started coordinating the request with the internal team."
                     ],
@@ -1020,7 +1057,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v31")
+        self.assertEqual(result.prompt_version, "automation-persona-v32")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1215,6 +1252,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 reply_facts={
                     "behavior": "enablement",
                     "reply_intent": "submission_confirmation",
+                    "conversation_context": enablement_language_context(),
                     "customer_first_name": "Jack",
                 },
                 persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
@@ -1456,6 +1494,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 reply_facts={
                     "behavior": "enablement",
                     "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(),
                 },
                 persona_assignment={"content": {"instruction": "Warm"}},
                 account_scope=True,
@@ -1484,6 +1523,7 @@ class AutomationPersonaTests(unittest.TestCase):
                     reply_facts={
                         "behavior": "enablement",
                         "reply_intent": "enablement_completed_and_close",
+                        "conversation_context": enablement_language_context(),
                     },
                     persona_assignment={"content": {"instruction": "Warm"}},
                     account_scope=True,
@@ -1527,6 +1567,7 @@ class AutomationPersonaTests(unittest.TestCase):
             collected_fields={"requested_feature": "media_relay"},
             submitted=True,
         )
+        facts["conversation_context"] = enablement_language_context()
 
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.account_ai_execution.invoke_responses_text", return_value=response
@@ -1538,7 +1579,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v31")
+        self.assertEqual(result.prompt_version, "automation-persona-v32")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1551,6 +1592,7 @@ class AutomationPersonaTests(unittest.TestCase):
             collected_fields={"requested_feature": "media_relay"},
             submitted=True,
         )
+        facts["conversation_context"] = enablement_language_context()
         bodies = (
             "I am reviewing the request and will keep you updated. Activation may take up to 24 hours, and "
             "the change window is Monday-Friday.",
@@ -1586,6 +1628,7 @@ class AutomationPersonaTests(unittest.TestCase):
             collected_fields={"requested_feature": "media_relay"},
             submitted=True,
         )
+        facts["conversation_context"] = enablement_language_context()
         response = SimpleNamespace(
             text="I am reviewing the request and will keep you updated.",
             model_name="persona-model",
@@ -1846,6 +1889,7 @@ class AutomationPersonaTests(unittest.TestCase):
             known_information={"requested_feature": "media_relay"},
             customer_name="Ziling",
         )
+        facts["conversation_context"] = enablement_language_context()
 
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.account_ai_execution.invoke_responses_text", return_value=response
@@ -1857,7 +1901,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v31")
+        self.assertEqual(result.prompt_version, "automation-persona-v32")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
@@ -1895,6 +1939,7 @@ class AutomationPersonaTests(unittest.TestCase):
             reply_intent="submission_confirmation",
             known_information={"requested_feature": "media_relay"},
         )
+        facts["conversation_context"] = enablement_language_context()
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ):
@@ -1915,6 +1960,7 @@ class AutomationPersonaTests(unittest.TestCase):
             behavior="enablement",
             reply_intent="submission_confirmation",
         )
+        facts["conversation_context"] = enablement_language_context()
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
         ) as invoke:
@@ -2035,6 +2081,267 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
         )
         self.assertEqual(result.customer_reply, "")
         self.assertEqual(result.missing_fields, ["transaction_id", "amount"])
+
+    def test_enablement_facts_do_not_default_language_to_english(self) -> None:
+        enablement = build_automation_reply_facts(
+            behavior="enablement",
+            reply_intent="enablement_completed_and_close",
+        )
+        self.assertIsNone(enablement["customer_language"])
+        quota = build_automation_reply_facts(
+            behavior="quota",
+            reply_intent="resolution_update",
+        )
+        self.assertEqual(quota["customer_language"], "en")
+
+    def test_enablement_render_requires_customer_language_evidence(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        for label, facts in (
+            ("no_context", {"behavior": "enablement", "reply_intent": "submission_confirmation"}),
+            (
+                "legacy_english_default",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "customer_language": "en",
+                },
+            ),
+            (
+                "context_without_customer_messages",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": {
+                        "version": "automation-context-v1",
+                        "current_message_id": "agent-1",
+                        "conversation": [
+                            {"message_id": "agent-1", "role": "assistant", "content": "Hello."}
+                        ],
+                    },
+                },
+            ),
+            # Acceptance round 1 blocker 2: content without identifiable
+            # language is not evidence when no earlier prose exists.
+            (
+                "only_redacted_app_id",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("[App ID]"),
+                },
+            ),
+            (
+                "only_raw_app_id",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "0123456789abcdef0123456789abcdef"
+                    ),
+                },
+            ),
+            (
+                "only_number",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("12345"),
+                },
+            ),
+            (
+                "only_url",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "https://example.com/console/project"
+                    ),
+                },
+            ),
+            # A non-ASCII URL path must not bypass the URL exclusion
+            # (acceptance round 2: CJK inside the link used to pass).
+            (
+                "only_url_with_chinese_path",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "https://example.com/文档"
+                    ),
+                },
+            ),
+            (
+                "only_bare_confirmation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("ok"),
+                },
+            ),
+            (
+                "only_email",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context(
+                        "cliente@exemplo.com"
+                    ),
+                },
+            ),
+            # Acceptance round 3: a bare confirmation keeps its bare-confirmation
+            # status even when it carries punctuation; the r3 split() regression
+            # let "OK." and "yes!" through as language evidence.
+            (
+                "only_confirmation_with_period",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("OK."),
+                },
+            ),
+            (
+                "only_confirmation_with_exclamation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("yes!"),
+                },
+            ),
+            (
+                "only_confirmation_with_comma_and_quotes",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("'done',"),
+                },
+            ),
+            (
+                "only_appid_then_punctuated_confirmation",
+                {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    "conversation_context": enablement_language_context("[App ID] OK."),
+                },
+            ),
+        ):
+            with self.subTest(label=label), patch(
+                "backend.services.automation_persona.resolve_model_profile",
+                return_value=profile,
+            ):
+                with self.assertRaisesRegex(
+                    AutomationPersonaError, "automation_persona_missing_customer_language"
+                ):
+                    render_automation_reply(
+                        reply_facts=dict(facts),
+                        persona_assignment={"content": {"instruction": "Warm"}},
+                        account_scope=True,
+                    )
+
+    def test_enablement_render_accepts_non_latin_prose(self) -> None:
+        """Acceptance round 2: the language-evidence gate must accept normal
+        prose in any script. The r2 Latin-only whitelist wrongly routed
+        Russian, Arabic, and Thai requests to human review with zero model
+        calls; the gate now keeps Unicode letters of any script after
+        stripping the no-language payload."""
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        for label, prose in (
+            ("russian", "Пожалуйста, включите Media Relay для моего проекта."),
+            ("arabic", "يرجى تفعيل ميديا ريلي في مشروعي."),
+            ("thai", "กรุณาเปิดใช้งาน Media Relay ในโปรเจกต์ของฉัน"),
+        ):
+            with self.subTest(label=label), patch(
+                "backend.services.automation_persona.resolve_model_profile",
+                return_value=profile,
+            ), patch(
+                "backend.services.automation_persona.invoke_responses_text",
+                return_value=SimpleNamespace(
+                    text=(
+                        "Thanks for your patience - Media Relay is already "
+                        "enabled on your project. I'm closing this case now."
+                    ),
+                    model_name="persona-model",
+                ),
+            ) as invoke:
+                result = render_automation_reply(
+                    reply_facts={
+                        "behavior": "enablement",
+                        "reply_intent": "enablement_completed_and_close",
+                        "conversation_context": enablement_language_context(prose),
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+            invoke.assert_called_once()
+            self.assertIn("Media Relay is already enabled", result.content)
+
+    def test_enablement_render_accepts_prose_before_signalless_message(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        facts = {
+            "behavior": "enablement",
+            "reply_intent": "enablement_completed_and_close",
+            "conversation_context": enablement_language_context(
+                "Por favor, ative o Media Relay no meu projeto.",
+                "[App ID]",
+                # Punctuated bare confirmation after real prose: the earlier
+                # Portuguese message stays the language evidence.
+                "OK.",
+            ),
+        }
+        with patch(
+            "backend.services.automation_persona.resolve_model_profile",
+            return_value=profile,
+        ), patch(
+            "backend.services.automation_persona.invoke_responses_text",
+            return_value=SimpleNamespace(
+                text=(
+                    "Obrigado pela paciência - o Media Relay já está ativado no seu "
+                    "projeto. Vou encerrar este chamado agora."
+                ),
+                model_name="persona-model",
+            ),
+        ):
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm"}},
+                account_scope=True,
+            )
+        self.assertIn("Media Relay já está ativado", result.content)
+
+    def test_enablement_prompt_states_language_priority(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+
+        def _system_prompt(behavior: str) -> str:
+            facts = build_automation_reply_facts(
+                behavior=behavior,
+                reply_intent="enablement_completed_and_close"
+                if behavior == "enablement"
+                else "resolution_update",
+            )
+            if behavior == "enablement":
+                facts["conversation_context"] = enablement_language_context()
+            with patch(
+                "backend.services.automation_persona.resolve_model_profile",
+                return_value=profile,
+            ), patch(
+                "backend.services.automation_persona.invoke_responses_text",
+                return_value=SimpleNamespace(
+                    text="Media Relay is already enabled on your project. I'm closing this case now.",
+                    model_name="persona-model",
+                ),
+            ) as invoke:
+                render_automation_reply(
+                    reply_facts=facts,
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                    account_scope=True,
+                )
+            return invoke.call_args.kwargs["system_prompt"]
+
+        enablement_prompt = _system_prompt("enablement")
+        self.assertIn("Language policy for Enablement replies", enablement_prompt)
+        self.assertIn("not a language switch", enablement_prompt)
+        self.assertIn("follow the conversation", enablement_prompt)
+        quota_prompt = _system_prompt("quota")
+        self.assertNotIn("Language policy for Enablement replies", quota_prompt)
 
 
 if __name__ == "__main__":

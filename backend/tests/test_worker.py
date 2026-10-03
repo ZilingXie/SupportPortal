@@ -22,6 +22,7 @@ from backend.repositories.ticket_repository import (
     ACCOUNT_RERUN_RESET_CUSTOMER_MESSAGES_ONLY,
     InMemoryTicketRepository,
 )
+from backend.services.automation_context import build_automation_context, persona_context
 from backend.services.rag_qa import INSUFFICIENT_EVIDENCE_REPLY
 from backend.services.account_admin import AccountPersonaUnavailableError
 from backend.services.account_zendesk_internal_comment import AccountZendeskCommentResult
@@ -7243,7 +7244,7 @@ class WorkerResilienceTests(unittest.TestCase):
                 "We are archiving this case now. If you have further questions, you can open a new ticket."
             ),
             model="persona-model",
-            prompt_version="automation-persona-v31",
+            prompt_version="automation-persona-v32",
             generation_attempts=1,
             safety_status="passed",
             safety_issue_codes=(),
@@ -7255,12 +7256,12 @@ class WorkerResilienceTests(unittest.TestCase):
         ) as render:
             worker._publish_account_reply_job(job)
 
-        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v31")
+        self.assertEqual(worker.AUTOMATION_PERSONA_PROMPT_VERSION, "automation-persona-v32")
         self.assertEqual(
             render.call_args.kwargs["reply_facts"]["completion_acknowledgement"],
             "additional_information",
         )
-        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v31")
+        self.assertEqual(job["payload"]["persona_prompt_version"], "automation-persona-v32")
         repository.publish_account_reply.assert_called_once()
 
     def test_invalid_account_content_moves_to_human_review_before_publish(self) -> None:
@@ -7759,6 +7760,477 @@ class WorkerResilienceTests(unittest.TestCase):
             "account_reply_preparation_failed",
         )
         record_failure.assert_called_once()
+
+
+class EnablementReplyLanguageContinuityTests(unittest.TestCase):
+    """13837 regression: enablement replies keep the customer's language.
+
+    Internal-resolution triggers (completion email, relay success, internal
+    follow-up) carry no customer text of their own, so their reply jobs must
+    attach the public conversation snapshot as language evidence instead of
+    falling back to an English default.
+    """
+
+    APP_ID = "11111111111111111111111111111111"
+
+    def setUp(self) -> None:
+        self.repository = InMemoryTicketRepository()
+        self.ticket_id = "13837"
+        self.repository.save_ticket(
+            {
+                "ticket_id": self.ticket_id,
+                "status": "open",
+                "customer_id": "cliente@exemplo.com",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "Por favor, ative o Media Relay no meu projeto.",
+                        "created_at": "2026-09-30T10:00:00+00:00",
+                        "message_id": "cust-1",
+                        "id": "cust-1",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": "Could you share your App ID?",
+                        "created_at": "2026-09-30T10:05:00+00:00",
+                        "message_id": "agent-1",
+                        "id": "agent-1",
+                    },
+                    {
+                        "role": "internal",
+                        "content": "Internal: configuration write completed.",
+                        "created_at": "2026-09-30T10:06:00+00:00",
+                        "visibility": "internal",
+                    },
+                    {
+                        "role": "customer",
+                        "content": f"Segue o App ID {self.APP_ID}, obrigado.",
+                        "created_at": "2026-09-30T11:00:00+00:00",
+                        "message_id": "cust-2",
+                        "id": "cust-2",
+                    },
+                ],
+            },
+            new_messages=[],
+        )
+        self.account_case = {
+            "account_case_id": "AC-13837-LANG",
+            "billing_ticket_id": "AC-13837-LANG",
+            "client_ticket_id": self.ticket_id,
+            "zendesk_ticket_id": self.ticket_id,
+            "processing_profile": "production",
+            "automation_status": "automation",
+            "automation_handler": "enablement",
+            "route": "enablement",
+            "execution_action": "enablement",
+            "route_family": "automated",
+            "customer_name": "Cliente Exemplo",
+            "collected_fields": {
+                "app_id": self.APP_ID,
+                "requested_feature": "media_relay",
+            },
+            "internal_email_payload": {
+                "delivery_key": "enablement:AC-13837-LANG:v1"
+            },
+            "internal_email_send_status": "sent",
+            "automation_context": {},
+        }
+        self.repository.save_account_case(self.account_case)
+
+    def _seed_case_snapshot(self) -> None:
+        ticket = self.repository.get_ticket(self.ticket_id)
+        case = self.repository.get_account_case_by_ticket_id(self.ticket_id)
+        assert case is not None
+        case["automation_context"] = {
+            "reply_conversation_context": persona_context(
+                build_automation_context(
+                    ticket, {"client_ticket_id": self.ticket_id}
+                ),
+                [self.APP_ID],
+            ),
+        }
+        self.repository.save_account_case(case)
+
+    def _completion_job(self) -> dict | None:
+        return self.repository.get_latest_account_reply_job(self.ticket_id)
+
+    def _assert_public_conversation(self, context: dict) -> None:
+        self.assertEqual(context.get("version"), "automation-context-v1")
+        roles = [str(message.get("role")) for message in context["conversation"]]
+        self.assertEqual(roles, ["customer", "assistant", "customer"])
+        contents = "\n".join(
+            str(message.get("content")) for message in context["conversation"]
+        )
+        self.assertIn("Por favor, ative o Media Relay", contents)
+        self.assertNotIn(self.APP_ID, contents)
+        self.assertNotIn("configuration write completed", contents)
+
+    def test_completion_email_job_carries_public_conversation(self) -> None:
+        self._seed_case_snapshot()
+        ticket = self.repository.get_ticket(self.ticket_id)
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-1",
+                owner_token="owner-1",
+                account_case=dict(self.account_case),
+                canonical_ticket=ticket,
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-1",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        facts = job["payload"]["reply_facts"]
+        self._assert_public_conversation(facts["conversation_context"])
+        # The internal English note stays a source fact, never language evidence.
+        self.assertNotIn("Media Relay is enabled", str(facts["conversation_context"]))
+
+    def test_completion_email_job_rebuilds_conversation_without_case_snapshot(self) -> None:
+        ticket = self.repository.get_ticket(self.ticket_id)
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-2",
+                owner_token="owner-2",
+                account_case=dict(self.account_case),
+                canonical_ticket=ticket,
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-2",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        self._assert_public_conversation(
+            job["payload"]["reply_facts"]["conversation_context"]
+        )
+
+    def test_completion_job_uses_live_ticket_over_stale_case_snapshot(self) -> None:
+        """Acceptance round 1 blocker 1: the snapshot must reflect the public
+        conversation at job-creation time, so a customer language request
+        that arrived after the last reply-sync refresh of the case snapshot
+        is still language evidence."""
+        ticket = self.repository.get_ticket(self.ticket_id)
+        ticket["messages"].append(
+            {
+                "role": "customer",
+                # A later explicit language request, absent from the stale
+                # case snapshot seeded below.
+                "content": "De agora em diante, por favor respondam em português.",
+                "created_at": "2026-09-30T11:30:00+00:00",
+                "message_id": "cust-3",
+                "id": "cust-3",
+            }
+        )
+        self.repository.save_ticket(ticket)
+        stale_case = self.repository.get_account_case_by_ticket_id(self.ticket_id)
+        assert stale_case is not None
+        stale_view = dict(ticket)
+        stale_view["messages"] = ticket["messages"][:-1]
+        stale_case["automation_context"] = {
+            "reply_conversation_context": persona_context(
+                build_automation_context(
+                    stale_view, {"client_ticket_id": self.ticket_id}
+                ),
+                [self.APP_ID],
+            ),
+        }
+        self.repository.save_account_case(stale_case)
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-stale",
+                owner_token="owner-stale",
+                account_case=dict(stale_case),
+                canonical_ticket=ticket,
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-stale",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        contents = "\n".join(
+            str(message.get("content"))
+            for message in job["payload"]["reply_facts"]["conversation_context"][
+                "conversation"
+            ]
+        )
+        self.assertIn("por favor respondam em português", contents)
+        self.assertIn("Por favor, ative o Media Relay", contents)
+
+    def test_completion_job_falls_back_to_case_snapshot_without_ticket(self) -> None:
+        self._seed_case_snapshot()
+        refreshed_case = self.repository.get_account_case_by_ticket_id(self.ticket_id)
+        assert refreshed_case is not None
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-fallback",
+                owner_token="owner-fallback",
+                account_case=dict(refreshed_case),
+                # The relay entry's shape for an unreadable ticket: an empty
+                # dict, so the helper must fall back to the case snapshot.
+                canonical_ticket={},
+                client_ticket_id=self.ticket_id,
+                note="Media Relay is enabled on the project.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-fallback",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        self._assert_public_conversation(
+            job["payload"]["reply_facts"]["conversation_context"]
+        )
+
+    def test_quota_completion_job_keeps_existing_language_contract(self) -> None:
+        self._seed_case_snapshot()
+        ticket = self.repository.get_ticket(self.ticket_id)
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_enablement_completion_reply_job(
+                reply_key="rk-lang-3",
+                owner_token="owner-3",
+                account_case=dict(self.account_case),
+                canonical_ticket=ticket,
+                client_ticket_id=self.ticket_id,
+                note="Quota handled.",
+                known_information={"products": ["media_relay"]},
+                message_id="internal-msg-3",
+                handler="quota",
+            )
+        job = self._completion_job()
+        assert job is not None
+        facts = job["payload"]["reply_facts"]
+        self.assertNotIn("conversation_context", facts)
+        self.assertEqual(facts.get("customer_language"), "en")
+
+    def test_internal_followup_job_carries_public_conversation(self) -> None:
+        self._seed_case_snapshot()
+        with patch.object(worker, "ticket_repository", self.repository):
+            worker._queue_internal_followup_reply_job(
+                reply_key="rk-lang-4",
+                owner_token="owner-4",
+                account_case=dict(self.account_case),
+                client_ticket_id=self.ticket_id,
+                note="The App ID provided is not correct.",
+                known_information={
+                    "app_id": self.APP_ID,
+                    "requested_feature": "media_relay",
+                },
+                message_id="internal-msg-4",
+                handler="enablement",
+            )
+        job = self._completion_job()
+        assert job is not None
+        facts = job["payload"]["reply_facts"]
+        self._assert_public_conversation(facts["conversation_context"])
+        self.assertIsNone(facts.get("resolution_status"))
+
+    def _legacy_enablement_job(self, *, created_at: str) -> dict:
+        return {
+            "job_id": "account-reply-legacy-lang",
+            "ticket_id": self.ticket_id,
+            "trigger_message_created_at": created_at,
+            "status": worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+            "scheduled_for": created_at,
+            "payload": {
+                "draft_content": "",
+                "reply_facts": {
+                    "behavior": "enablement",
+                    "reply_intent": "enablement_completed_and_close",
+                    # Legacy default: English without any customer evidence.
+                    "customer_language": "en",
+                    "known_information": {"requested_feature": "media_relay"},
+                    "resolution_status": "completed",
+                },
+                "reply_pipeline": worker.ACCOUNT_REPLY_PERSONA_PIPELINE,
+                "asked_field_keys": [],
+                "visibility": "account_only",
+                "internal_resolution": True,
+                "close_after_publish": True,
+                "reply_intent": "enablement_completed_and_close",
+                "automation_delivery_key": "enablement:AC-13837-LANG:v1",
+            },
+            "attempt_count": 0,
+            "claimed_at": "2026-09-30T12:00:00+00:00",
+            "published_at": None,
+            "created_at": created_at,
+            "updated_at": "2026-09-30T12:00:00+00:00",
+        }
+
+    def _rendered(self, content: str = "Reply body.") -> types.SimpleNamespace:
+        return types.SimpleNamespace(
+            content=content,
+            model="test-model",
+            prompt_version=worker.AUTOMATION_PERSONA_PROMPT_VERSION,
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
+            generation_diagnostics=(),
+        )
+
+    def test_old_pending_job_backfill_freezes_at_creation_time(self) -> None:
+        # The job existed before the last customer message arrived.
+        job = self._legacy_enablement_job(created_at="2026-09-30T10:30:00+00:00")
+        self.repository.save_account_reply_job(job)
+        later_ticket = self.repository.get_ticket(self.ticket_id)
+        later_ticket["messages"].append(
+            {
+                "role": "customer",
+                "content": "Muito obrigado pelo suporte!",
+                "created_at": "2026-09-30T13:00:00+00:00",
+                "message_id": "cust-3",
+                "id": "cust-3",
+            }
+        )
+        self.repository.save_ticket(later_ticket)
+        with patch.object(worker, "ticket_repository", self.repository), patch.object(
+            worker, "render_automation_reply", return_value=self._rendered()
+        ) as render:
+            worker._prepare_account_reply_job(dict(job))
+        facts = render.call_args.kwargs["reply_facts"]
+        conversation = facts["conversation_context"]["conversation"]
+        message_ids = [message["message_id"] for message in conversation]
+        # Frozen at job creation (10:30): the 11:00 App ID message and the
+        # later thank-you message must both stay out of the snapshot.
+        self.assertEqual(message_ids, ["cust-1", "agent-1"])
+        # A retry reuses the persisted snapshot instead of refreezing.
+        prepared = self.repository.get_account_reply_job(job["job_id"])
+        assert prepared is not None
+        self.assertIsNotNone(prepared["payload"].get("generated_content"))
+        frozen = copy.deepcopy(prepared["payload"]["reply_facts"]["conversation_context"])
+        prepared["payload"].pop("generated_content", None)
+        prepared["payload"]["persona_prompt_version"] = "automation-persona-v30"
+        prepared["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PREPARING
+        prepared["claimed_at"] = "2026-09-30T12:05:00+00:00"
+        self.repository.save_account_reply_job(prepared)
+        with patch.object(worker, "ticket_repository", self.repository), patch.object(
+            worker, "render_automation_reply", return_value=self._rendered()
+        ) as render_retry:
+            worker._prepare_account_reply_job(dict(prepared))
+        self.assertEqual(
+            render_retry.call_args.kwargs["reply_facts"]["conversation_context"],
+            frozen,
+        )
+
+    def test_old_pending_job_backfill_applies_at_publish_stage(self) -> None:
+        job = self._legacy_enablement_job(created_at="2026-09-30T11:30:00+00:00")
+        job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PUBLISHING
+        job["payload"]["persona_key"] = "sid-warm"
+        job["payload"]["persona_version"] = 1
+        job["payload"]["effective_prompt"] = {"instruction": "Warm"}
+        job["payload"]["generated_content"] = "Old English body."
+        job["payload"]["persona_prompt_version"] = "automation-persona-v30"
+        self.repository.save_account_reply_job(job)
+        with patch.object(worker, "ticket_repository", self.repository), patch.object(
+            worker, "render_automation_reply", return_value=self._rendered()
+        ) as render, patch.object(
+            worker, "_deliver_production_account_reply_to_zendesk"
+        ):
+            worker._publish_account_reply_job(dict(job))
+        facts = render.call_args.kwargs["reply_facts"]
+        self.assertEqual(
+            facts["conversation_context"]["version"], "automation-context-v1"
+        )
+        published_job = self.repository.get_account_reply_job(job["job_id"])
+        assert published_job is not None
+        self.assertIsNotNone(published_job.get("published_at"))
+
+    def test_published_job_with_existing_message_is_not_regenerated(self) -> None:
+        job = self._legacy_enablement_job(created_at="2026-09-30T11:30:00+00:00")
+        job["status"] = worker.ACCOUNT_REPLY_PERSONA_V8_PUBLISHING
+        job["payload"]["generated_content"] = "Original delivered body."
+        job["payload"]["persona_prompt_version"] = worker.AUTOMATION_PERSONA_PROMPT_VERSION
+        job["published_at"] = "2026-09-30T12:00:00+00:00"
+        self.repository.save_account_reply_job(job)
+        ticket = self.repository.get_ticket(self.ticket_id)
+        ticket["messages"].append(
+            {
+                "role": "assistant",
+                "content": "Original delivered body.",
+                "created_at": "2026-09-30T12:00:00+00:00",
+                "message_id": "published-msg-1",
+                "id": "published-msg-1",
+                "meta": {"account_reply_job_id": job["job_id"]},
+            }
+        )
+        self.repository.save_ticket(ticket)
+        with patch.object(worker, "ticket_repository", self.repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render, patch.object(
+            worker, "_deliver_production_account_reply_to_zendesk"
+        ) as deliver:
+            worker._publish_account_reply_job(dict(job))
+        render.assert_not_called()
+        stored = self.repository.get_ticket(self.ticket_id)
+        assistant_messages = [
+            message
+            for message in stored["messages"]
+            if message.get("role") == "assistant"
+        ]
+        self.assertEqual(len(assistant_messages), 2)
+        self.assertEqual(assistant_messages[-1]["content"], "Original delivered body.")
+
+    def test_missing_language_evidence_fails_closed_to_human_review(self) -> None:
+        bare_ticket = {
+            "ticket_id": "13837-bare",
+            "status": "open",
+            "customer_id": "cliente@exemplo.com",
+            "messages": [],
+        }
+        self.repository.save_ticket(bare_ticket, new_messages=[])
+        bare_case = dict(self.account_case)
+        bare_case["account_case_id"] = "AC-13837-BARE"
+        bare_case["billing_ticket_id"] = "AC-13837-BARE"
+        bare_case["client_ticket_id"] = "13837-bare"
+        bare_case["collected_fields"] = {"requested_feature": "media_relay"}
+        self.repository.save_account_case(bare_case)
+        job = self._legacy_enablement_job(created_at="2026-09-30T10:30:00+00:00")
+        job["ticket_id"] = "13837-bare"
+        self.repository.save_account_reply_job(job)
+        profile = types.SimpleNamespace(
+            has_invocation_credentials=lambda: True, model="test-model"
+        )
+        # The worker-under-test holds its own automation_persona module
+        # instance, so the real render's module globals are patched directly
+        # to let generation reach the language-evidence gate.
+        render_globals = worker.render_automation_reply.__globals__
+        saved_guard = render_globals["account_profile_has_primary_credentials"]
+        saved_resolver = render_globals["resolve_model_profile"]
+        render_globals["account_profile_has_primary_credentials"] = lambda _profile: True
+        render_globals["resolve_model_profile"] = lambda *_args, **_kwargs: profile
+        try:
+            with patch.object(worker, "ticket_repository", self.repository):
+                worker._prepare_account_reply_job(dict(job))
+        finally:
+            render_globals["account_profile_has_primary_credentials"] = saved_guard
+            render_globals["resolve_model_profile"] = saved_resolver
+        transitioned = self.repository.get_account_reply_job(job["job_id"])
+        assert transitioned is not None
+        self.assertEqual(transitioned["status"], "manual_attention")
+        self.assertEqual(
+            transitioned["payload"].get("failure_code"),
+            "automation_persona_missing_customer_language",
+        )
+        stored = self.repository.get_ticket("13837-bare")
+        self.assertEqual(
+            [m for m in stored["messages"] if m.get("role") == "assistant"],
+            [],
+        )
 
 
 if __name__ == "__main__":
