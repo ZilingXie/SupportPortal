@@ -585,11 +585,53 @@ def create_app(    *,
                                 queue_standalone_summary_for_source,
                             )
 
+                            # Review round 3, R3-5: freeze the native case's
+                            # investigation context (binding lineage, engineer
+                            # Hermes turns, timeline) with the task so the
+                            # Summary sees the engineer conversation and the
+                            # promotion lineage keeps the Slack thread.
+                            case_context = {
+                                "binding": {
+                                    key: binding.get(key)
+                                    for key in (
+                                        "hermes_session_id", "slack_channel_id",
+                                        "slack_thread_ts", "status", "conversation_version",
+                                        "created_at",
+                                    )
+                                    if binding.get(key) is not None
+                                },
+                                "turns": [
+                                    {
+                                        key: turn.get(key)
+                                        for key in (
+                                            "turn_id", "turn_kind", "phase", "direction",
+                                            "direction_reason", "work_result", "result",
+                                            "status", "created_at",
+                                        )
+                                    }
+                                    for turn in coordination_store.list_hermes_case_turns(
+                                        snapshot.source_id, limit=50
+                                    )
+                                    if isinstance(turn, dict)
+                                ],
+                                "timeline": [
+                                    {
+                                        "event_type": str(event.get("event_type") or ""),
+                                        "payload": event.get("payload") or {},
+                                        "created_at": str(event.get("created_at") or ""),
+                                    }
+                                    for event in coordination_store.list_case_timeline(
+                                        snapshot.source_id
+                                    )
+                                    if isinstance(event, dict)
+                                ],
+                            }
                             queued_standalone = await asyncio.to_thread(
                                 queue_standalone_summary_for_source,
                                 repository,
                                 intake=record,
                                 now_value=now,
+                                case_context=case_context,
                             )
                             if isinstance(queued_standalone, dict):
                                 summary_task_id = (

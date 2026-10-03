@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from psycopg import sql
+from psycopg.types.json import Json
 
 STANDALONE_SUMMARY_STATUSES = ("pending", "running", "completed", "failed", "invalidated")
 STANDALONE_REVIEW_STATUSES = ("pending", "running", "completed", "failed", "invalidated")
@@ -252,6 +253,7 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
     _STANDALONE_SUMMARY_FIELDS = (
         "summary_task_id", "intake_id", "source_type", "source_id", "source_version",
         "summary_session_id", "status", "idempotency_key", "run_id", "prompt_version",
+        "context_snapshot",
         "packet", "packet_hash", "error", "owner_token", "claimed_at", "lease_expires_at",
         "created_at", "updated_at",
     )
@@ -276,11 +278,17 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 status TEXT NOT NULL CHECK (status IN ('pending','running','completed','failed','invalidated')),
                 idempotency_key TEXT NOT NULL UNIQUE,
                 run_id TEXT, prompt_version TEXT,
+                context_snapshot JSONB,
                 packet JSONB, packet_hash TEXT, error TEXT,
                 owner_token TEXT, claimed_at TIMESTAMPTZ, lease_expires_at TIMESTAMPTZ,
                 created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
             )
         """).format(summaries))
+        # Review round 3, R3-5: the native-case investigation context captured
+        # at queue time travels on the task row (frozen input).
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS context_snapshot JSONB"
+        ).format(summaries))
         cur.execute(sql.SQL("""
             CREATE TABLE IF NOT EXISTS {} (
                 review_task_id TEXT PRIMARY KEY,
@@ -308,13 +316,14 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 cur.execute(sql.SQL("""
                     INSERT INTO {} (summary_task_id, intake_id, source_type, source_id,
                         source_version, summary_session_id, status, idempotency_key,
-                        prompt_version, created_at, updated_at)
-                    VALUES (%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s)
+                        prompt_version, context_snapshot, created_at, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,'pending',%s,%s,%s,%s,%s)
                     ON CONFLICT (summary_task_id) DO NOTHING
                 """).format(self._table("support_knowledge_source_summaries")), (
                     payload["summary_task_id"], payload["intake_id"], payload["source_type"],
                     payload["source_id"], payload["source_version"], payload["summary_session_id"],
                     payload["idempotency_key"], payload.get("prompt_version"),
+                    Json(payload.get("context_snapshot")) if payload.get("context_snapshot") is not None else None,
                     payload["created_at"], payload["created_at"],
                 ))
                 cur.execute(sql.SQL("SELECT {} FROM {} WHERE summary_task_id=%s").format(

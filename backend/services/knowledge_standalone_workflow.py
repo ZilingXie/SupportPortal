@@ -80,6 +80,7 @@ def standalone_session_id_for(kind: str, source_type: str, source_id: str, sourc
 
 def queue_standalone_summary_for_source(
     repository: Any, *, intake: dict[str, Any], now_value: str | None = None,
+    case_context: dict[str, Any] | None = None,
 ) -> dict[str, Any] | None:
     """Create-or-reuse the standalone Summary task for one accepted source.
 
@@ -111,15 +112,22 @@ def queue_standalone_summary_for_source(
         "status": "pending",
         "idempotency_key": f"hmknow-standalone:{task_id}",
         "prompt_version": STANDALONE_SUMMARY_PROMPT_KEY,
+        # Review round 3, R3-5: the native-case investigation context (binding
+        # lineage, engineer turns, timeline) is frozen onto the task row so
+        # the Summary sees the engineer conversation, not just the snapshot.
+        "context_snapshot": case_context or None,
         "created_at": now,
         "updated_at": now,
     }
     return repository.ensure_standalone_summary_task(payload)
 
 
-def build_standalone_bundle(intake: dict[str, Any]) -> dict[str, Any]:
-    """Freeze the raw snapshot into the Summary input bundle."""
-    return {
+def build_standalone_bundle(
+    intake: dict[str, Any], *, case_snapshot: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Freeze the raw snapshot (and, for native cases, the investigation
+    context) into the Summary input bundle."""
+    bundle = {
         "schema": "knowledge-source-bundle-v1",
         "source": {
             "source_type": str(intake.get("source_type") or ""),
@@ -129,6 +137,11 @@ def build_standalone_bundle(intake: dict[str, Any]) -> dict[str, Any]:
         },
         "payload": dict(intake.get("payload") or {}),
     }
+    if isinstance(case_snapshot, dict) and case_snapshot:
+        # Review round 3, R3-5: the native case's engineer conversation and
+        # lineage travel with the frozen input.
+        bundle["case_context"] = case_snapshot
+    return bundle
 
 
 def _instructions(prompt_key: str, *, core: bool) -> str:
@@ -227,7 +240,10 @@ def run_standalone_summary_task(
     if not isinstance(intake, dict):
         raise StandaloneKnowledgeError("intake_missing", "source intake row disappeared")
     _require_standalone_generation(repository, task)
-    bundle = build_standalone_bundle(intake)
+    bundle = build_standalone_bundle(
+        intake, case_snapshot=task.get("context_snapshot")
+        if isinstance(task.get("context_snapshot"), dict) else None,
+    )
     rendered = json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True, default=str)
     if len(rendered) > STANDALONE_BUNDLE_MAX_CHARS:
         raise StandaloneKnowledgeError("bundle_too_large", "source snapshot exceeds budget")
@@ -387,6 +403,16 @@ def run_standalone_review_task(
         review_run_id=str(outcome.get("run_id") or ""),
         packet=packet,
     )
+    # Native-case lineage (review round 3, R3-5): the Slack thread binding
+    # captured at queue time reaches the promotion rows.
+    context = summary.get("context_snapshot")
+    context = context if isinstance(context, dict) else {}
+    native_binding = context.get("binding")
+    native_binding = native_binding if isinstance(native_binding, dict) else {}
+    if native_binding:
+        for promotion in promotions:
+            promotion["slack_channel_id"] = str(native_binding.get("slack_channel_id") or "") or None
+            promotion["slack_thread_ts"] = str(native_binding.get("slack_thread_ts") or "") or None
     # Rewrite the case-flavored lineage to standalone lineage before enqueue.
     for promotion in promotions:
         promotion["source_type"] = "knowledge_source_review"

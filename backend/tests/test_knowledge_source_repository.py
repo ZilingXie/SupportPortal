@@ -133,8 +133,31 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
         "hermes_session_id": "hermes-session:native-13801",
         "session_kind": "case",
         "status": "active",
+        "slack_channel_id": "C-NATIVE",
+        "slack_thread_ts": "1696900000.000100",
         "created_at": "2026-10-02T00:00:00Z",
         "updated_at": "2026-10-02T00:00:00Z",
+    }
+    # Engineer feedback that exists ONLY in the investigation conversation —
+    # the n8n source snapshot does not carry it (review round 3, R3-5).
+    store._hermes_turns["turn-13801-1"] = {
+        "turn_id": "turn-13801-1",
+        "namespace": "automation.production",
+        "zendesk_ticket_id": "13801",
+        "created_at": "2026-10-02T00:30:00Z",
+        "updated_at": "2026-10-02T00:30:00Z",
+        "turn_kind": "normal",
+        "phase": "work",
+        "direction": "investigation",
+        "direction_reason": None,
+        "route": None,
+        "work_result": {
+            "summary": "Root cause confirmed: EU relay misroute; feedback from the "
+                       "engineer thread says the fix requires firmware >= 2.4.",
+        },
+        "result": None,
+        "status": "completed",
+        "input_snapshot": None,
     }
 
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
@@ -154,27 +177,72 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     assert intake["engineer_case_id"] is None
 
     # The full pipeline runs: standalone Summary → Review → promotion.
+    scripted = _ScriptedHermes(SUMMARY_OUTPUT, {
+        "decisions": [
+            {
+                "candidate_id": "c1", "candidate_type": "knowledge",
+                "decision": "human_review", "confidence": 0.4,
+                "rationale": "evidence surfaces unavailable in this test",
+                "proposed_content": "", "target_object": None,
+                "target_version": None,
+            }
+        ]
+    })
     drain_standalone_knowledge_tasks(
         repository,
-        client=_ScriptedHermes(SUMMARY_OUTPUT, {
-            "decisions": [
-                {
-                    "candidate_id": "c1", "candidate_type": "knowledge",
-                    "decision": "human_review", "confidence": 0.4,
-                    "rationale": "evidence surfaces unavailable in this test",
-                    "proposed_content": "", "target_object": None,
-                    "target_version": None,
-                }
-            ]
-        }),
+        client=scripted,
         weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
     )
+    # The engineer feedback from the native conversation reached the Summary
+    # input even though the source snapshot does not carry it (R3-5).
+    assert "firmware >= 2.4" in scripted.runs[0]["input_text"]
     promotions = repository.list_weknora_promotions()
     assert len(promotions) == 1
     assert promotions[0]["source_type"] == "knowledge_source_review"
+    # Native Slack lineage is preserved on the promotion (R3-5).
+    assert promotions[0]["slack_channel_id"] == "C-NATIVE"
+    assert promotions[0]["slack_thread_ts"] == "1696900000.000100"
     # Case-less lineage: empty in the in-memory twin (the PG twin stores
     # NULL on the same enqueue path).
     assert not promotions[0]["engineer_case_id"]
+
+    # Reopen (review round 3, R3-5/R3-6): the ticket reopens and n8n delivers
+    # the NEWER source version; the parked old-generation candidate can no
+    # longer be approved.
+    parked_id = promotions[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        parked_id, owner_token="w1", claimed_at="2026-10-02T02:00:00Z",
+        lease_expires_at="2026-10-02T02:05:00Z",
+    )
+    repository.complete_weknora_promotion(
+        parked_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-10-02T02:01:00Z",
+    )
+    reopened = repository.accept_knowledge_source(
+        {
+            "schema_version": "knowledge-source-v1",
+            "source_type": "zendesk_ticket", "source_id": "13801",
+            "source_updated_at": "2026-10-02T05:00:00Z",
+            "payload": {"ticket": {"id": "13801"}, "comments": []}, "references": {},
+        },
+        now_value="2026-10-02T05:00:01Z",
+    )
+    repository.link_knowledge_source_summary(
+        reopened["intake_id"], engineer_case_id=None,
+        summary_task_id=None, now_value="2026-10-02T05:00:02Z",
+    )
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        blocked = client.post(
+            f"/automation/production/v1/knowledge/promotions/{parked_id}/decision",
+            json={
+                "decision": "approve", "operator": "ops",
+                "resolution": {"action": "new", "content": "stale body", "title": "T"},
+            },
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert blocked.status_code == 409
+    assert "superseded" in blocked.json()["detail"]
+    assert repository.list_weknora_promotions()[0]["status"] == "human_review"
 
 
 def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch) -> None:

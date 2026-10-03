@@ -694,6 +694,21 @@ class InMemoryAutomationEcsStore:
             ]
         return sorted(rows, key=lambda item: item["created_at"], reverse=True)
 
+    def list_case_timeline(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
+        """Timeline events across every execution of one ticket, oldest first."""
+        with self._lock:
+            execution_ids = {
+                item["execution_id"]
+                for item in self._executions.values()
+                if item["zendesk_ticket_id"] == str(zendesk_ticket_id)
+            }
+            rows = [
+                copy.deepcopy(item)
+                for item in self._events
+                if item.get("execution_id") in execution_ids
+            ]
+        return sorted(rows, key=lambda item: str(item.get("created_at") or ""))
+
     def list_executions(
         self,
         *,
@@ -3206,6 +3221,37 @@ class PostgresAutomationEcsStore:
     def list_case_executions(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
         rows = self._execution_rows(ticket_id=str(zendesk_ticket_id))
         return sorted(rows, key=lambda row: row["created_at"], reverse=True)
+
+    def list_hermes_case_turns(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
+        """PG twin: investigation turns of a native Hermes case, oldest first."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT turn_id, turn_kind, phase, direction, direction_reason, route, "
+                        "work_result, result, status, input_snapshot, created_at, updated_at "
+                        "FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s ORDER BY created_at"
+                    ).format(self._table("automation_hermes_case_turns")),
+                    (self.settings.job_namespace, str(zendesk_ticket_id)),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+
+    def list_case_timeline(self, zendesk_ticket_id: str) -> list[dict[str, Any]]:
+        """PG twin: timeline events across every execution of one ticket."""
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT e.timeline_event_id, e.execution_id, e.event_type, e.payload, e.created_at "
+                        "FROM {} e JOIN {} x ON e.execution_id = x.execution_id "
+                        "WHERE x.namespace=%s AND x.zendesk_ticket_id=%s ORDER BY e.created_at, e.sequence"
+                    ).format(
+                        self._table("automation_execution_events"),
+                        self._table("automation_executions"),
+                    ),
+                    (self.settings.job_namespace, str(zendesk_ticket_id)),
+                )
+                return [dict(row) for row in cursor.fetchall()]
 
     def list_executions(
         self,
