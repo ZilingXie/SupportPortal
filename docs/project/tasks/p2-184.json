@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "第六轮修复完成未 finalize：R6-1～R6-3 全部处理（frozen-version ctx 贯穿 manual 运行全部写点、单调 mirror+reopen 事实+快照同步入口+代际感知守卫），等待第七轮定向复验。验收通过后按已授权流程合并并部署 Preproduction（WeKnora fork 镜像通道、n8n 发布协调、AgentMemory 退休另行授权；investigation-manual prompt 变更须部署前显式 draft+schedule）。交接口径更新：[kb]Build|Solved Cases 已由验收方确认发布（ab3563f8），不再是草稿。",
+  "next_action": "第七轮修复完成未 finalize：R7-1～R7-6 全部处理（011 迁移归位 PG 类+真库验证、processChunks 全部保存点守卫、cleanup 前置检查+测试交错修正、Jsonb 包装、时区感知单调比较、快照规范化内部合同），等待第八轮定向复验。验收通过后按已授权流程合并并部署 Preproduction。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -23,21 +23,27 @@
   "evidence": [
     {
       "type": "test",
-      "label": "SupportPortal 修复轮六全量定向（13 套件）",
+      "label": "SupportPortal 修复轮七全量定向（13 套件）",
       "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
-      "result": "215 passed, 11 skipped（新增：迟到旧 solved 不回退 mirror 且旧候选持续拒；再关闭经 /v1/knowledge/sources 同步 mirror 后旧代际拒/新代际过）"
+      "result": "216 passed, 11 skipped（新增：raw Zendesk ticket 快照同步后内部合同保持 + synthetic turn 事件可构造）"
     },
     {
       "type": "test",
-      "label": "隔离 PostgreSQL（本地 PG14 独立库）",
-      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... 四套件；WEKNORA_TEST_POSTGRES_DSN 门控 Go 守卫",
-      "result": "SP 42 passed；Go PG 全过（R5-4 三列 guard + R6-1 整行 guard 两方言）"
+      "label": "真实 Automation ECS PostgreSQL 路径（R7-1/4/5 验收要求）",
+      "command": "本地 PG14 独立库：PostgresAutomationEcsStore.migrate 建库 + 重复迁移 + check_schema + accept_intake 迟到事件 + sync_case_ticket_from_snapshot",
+      "result": "全部通过：011 列存在且幂等；迟到旧 solved 提交成功且 mirror 保持 open；reopen 标记经 PG datetime 回读后仍单调（09:00Z 不被 02:00Z 倒退）；时区偏移比较语义正确（17:00+08:00 == 09:00Z，16:00+08:00 更旧）；快照同步不变路径提交成功"
     },
     {
       "type": "test",
-      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ e4f9f3a）",
+      "label": "隔离 PostgreSQL（四套件）",
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... （独立库）",
+      "result": "42 passed"
+    },
+    {
+      "type": "test",
+      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ ec8cde4）",
       "command": "go test ./internal/... -count=1",
-      "result": "111 packages ok 零 FAIL（新增：入口 guard 通过后交错——v2 正文/版本/完成状态不回退、旧运行零 chunk 清理写入）"
+      "result": "111 packages ok 零 FAIL（新增三交错：入口通过后 NeedCleanup=true 交错零删除、v2 已完成后恢复 v1 零 chunk 破坏、chunk 创建错误分支零回退）"
     }
   ],
   "source_refs": [
@@ -51,7 +57,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-04T03:30:00Z",
+  "updated_at": "2026-10-04T05:00:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
@@ -85,6 +91,10 @@
     {
       "at": "2026-10-04T03:30:00Z",
       "note": "第六轮验收修复：SP 1 提交（7f4fc1cc）；WeKnora 1 提交（e4f9f3a）。schema 011（automation_cases ticket_updated_at/last_nonclosed_at）。"
+    },
+    {
+      "at": "2026-10-04T05:00:00Z",
+      "note": "第七轮验收修复：SP 2 提交（f2efe1cf+登记）；WeKnora 1 提交（ec8cde4）。"
     }
   ]
 }
