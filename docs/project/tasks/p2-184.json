@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "第八轮修复完成未 finalize：R8-1 已闭合（检索单据三面栅栏：原子条件删除/claim 门控外部清理/前后双 claim 写入+按 ID 补偿），两个验收交错以真实注入点补实，等待第九轮定向复验。验收通过后按已授权流程合并并部署 Preproduction。",
+  "next_action": "第九轮修复完成未 finalize：R9-1（processChunks 初始化清理栅栏化）、R9-2（行锁跨越外部删除 + claim 报错 fail-closed）、R9-3（补偿失败返回错误重试）全部处理，7 个交错含向量边界，等待第十轮定向复验。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -24,20 +24,26 @@
     {
       "type": "test",
       "label": "SupportPortal 回归确认（13 套件，本轮无 SP 代码增量）",
-      "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
+      "command": ".venv/bin/python -m pytest -q",
       "result": "216 passed, 11 skipped"
     },
     {
       "type": "test",
-      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 98e75c9）",
+      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 7dc2875）",
       "command": "go test ./internal/... -count=1",
       "result": "111 packages ok 零 FAIL"
     },
     {
       "type": "test",
-      "label": "R8 验收要求的两个交错（真实注入点）",
-      "command": "go test ./internal/application/service/ -run 'TestStaleErrorBranchNeverRollsBackNewerBody|TestStaleSuccessAfterV2CompletedLeavesNewIndexIntact' -count=1 -v",
-      "result": "两测试通过。错误路径：v1 在 CreateChunks 内部暂停→v2 提交→注入创建错误→错误分支真实执行（createCalls≥1 断言）→v2 正文/版本/状态/零 chunk 残留。索引隔离路径：v1 在 chunk 写入内部暂停→v2 完全完成（含自身 chunk 行+completed）→v1 写入成功→post-claim 失配→按 ID 补偿删除仅自身行→v2 chunk 存活、无旧正文残留、状态保持 completed"
+      "label": "R9 验收交错（真实注入点，含向量边界）",
+      "command": "go test ./internal/application/service/ -run 'TestStale|TestVector' -count=1 -v",
+      "result": "7 测试全过：入口→入口后→NeedCleanup→v2 完成→错误分支→成功写入补偿→向量成功/失败两路（真 BatchIndex 注入，VectorEnabled=true，claim 前后 deleteCalls 无增长）"
+    },
+    {
+      "type": "test",
+      "label": "PG 行锁排除证明（R9-2 验收要求）",
+      "command": "WEKNORA_TEST_POSTGRES_DSN=... go test -run TestPostgresWithKnowledgeVersionLock -count=1 -v（独立库）",
+      "result": "通过：WithKnowledgeVersionLock 持锁期间并发修订提交被阻塞（300ms 验证）、锁释放后完成；过期 claim 不执行 fn 且返回 false"
     }
   ],
   "source_refs": [
@@ -51,7 +57,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-04T07:00:00Z",
+  "updated_at": "2026-10-05T01:30:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
@@ -93,6 +99,10 @@
     {
       "at": "2026-10-04T07:00:00Z",
       "note": "第八轮验收修复：WeKnora 1 提交（98e75c9）；SP 无代码增量（回归确认 216 过）。"
+    },
+    {
+      "at": "2026-10-05T01:30:00Z",
+      "note": "第九轮验收修复：WeKnora 1 提交（7dc2875）；SP 无代码增量（回归确认 216 过）。"
     }
   ]
 }
