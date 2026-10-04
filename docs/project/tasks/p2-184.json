@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "第九轮修复完成未 finalize：R9-1（processChunks 初始化清理栅栏化）、R9-2（行锁跨越外部删除 + claim 报错 fail-closed）、R9-3（补偿失败返回错误重试）全部处理，7 个交错含向量边界，等待第十轮定向复验。",
+  "next_action": "第十轮修复完成未 finalize：R10-1（task_pending_ops 持久化跨重试补偿+completed/mismatch 快路径前排水+真实入口两执回归）、R10-2（向量测试真实 DB 写入+v2 向量条目存活断言+post-index 补偿闭合 write-then-supersede 窗口），等待第十一定向复验。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -29,21 +29,15 @@
     },
     {
       "type": "test",
-      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 7dc2875）",
+      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ a14c12f）",
       "command": "go test ./internal/... -count=1",
-      "result": "111 packages ok 零 FAIL"
+      "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（stash 后基线同败=环境性 venv 缺包）"
     },
     {
       "type": "test",
-      "label": "R9 验收交错（真实注入点，含向量边界）",
-      "command": "go test ./internal/application/service/ -run 'TestStale|TestVector' -count=1 -v",
-      "result": "7 测试全过：入口→入口后→NeedCleanup→v2 完成→错误分支→成功写入补偿→向量成功/失败两路（真 BatchIndex 注入，VectorEnabled=true，claim 前后 deleteCalls 无增长）"
-    },
-    {
-      "type": "test",
-      "label": "PG 行锁排除证明（R9-2 验收要求）",
-      "command": "WEKNORA_TEST_POSTGRES_DSN=... go test -run TestPostgresWithKnowledgeVersionLock -count=1 -v（独立库）",
-      "result": "通过：WithKnowledgeVersionLock 持锁期间并发修订提交被阻塞（300ms 验证）、锁释放后完成；过期 claim 不执行 fn 且返回 false"
+      "label": "R10 验收交错（真实 DB 写入+跨重试）",
+      "command": "go test ./internal/application/service/ -run 'TestCompensationSurvives|TestVectorStale|TestStale' -count=1 -v",
+      "result": "8 测试全过。跨重试：首补偿真失败（错误返回+义务持久化）→真实入口二执→v2 completed 快路径前排水→旧 chunk 清除+义务消费；向量成功路（真 DB 写入 v1 chunk）：v1 BatchIndex 期间 v2 完成→post-index 补偿删 v1 行→v2 chunk+向量条目存活；向量失败路：v2 完成后零跨代际删除"
     }
   ],
   "source_refs": [
@@ -57,7 +51,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-05T01:30:00Z",
+  "updated_at": "2026-10-05T03:00:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
@@ -103,6 +97,10 @@
     {
       "at": "2026-10-05T01:30:00Z",
       "note": "第九轮验收修复：WeKnora 1 提交（7dc2875）；SP 无代码增量（回归确认 216 过）。"
+    },
+    {
+      "at": "2026-10-05T03:00:00Z",
+      "note": "第十轮验收修复：WeKnora 1 提交（a14c12f）；SP 无代码增量（回归确认 216 过）。"
     }
   ]
 }
