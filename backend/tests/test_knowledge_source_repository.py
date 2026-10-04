@@ -821,7 +821,8 @@ def test_reclosed_generation_can_be_approved_without_waiting(monkeypatch) -> Non
     assert second.json()["summary_task_id"]
     mirror = store.get_case_mirror("13806")
     assert str(mirror["ticket"]["status"]).lower() == "solved"
-    assert str(mirror["last_nonclosed_at"]) == "2026-10-02T04:00:00Z"
+    from datetime import datetime as _dt
+    assert _dt.fromisoformat(str(mirror["last_nonclosed_at"]).replace("Z", "+00:00")) == _dt.fromisoformat("2026-10-02T04:00:00+00:00")
 
     # OLD candidate (frozen 01:00, before the reopen at 04:00): blocked.
     blocked, reason = native_ticket_state_blocks_knowledge(store, "13806", "2026-10-02T01:00:00Z")
@@ -830,3 +831,80 @@ def test_reclosed_generation_can_be_approved_without_waiting(monkeypatch) -> Non
     blocked_new, reason_new = native_ticket_state_blocks_knowledge(store, "13806", "2026-10-02T08:00:00Z")
     assert (blocked_new, reason_new) == (False, "")
 
+
+
+def test_raw_zendesk_ticket_snapshot_keeps_internal_contract(monkeypatch) -> None:
+    """Review round 7, R7-6: a raw Zendesk ticket response synced through the
+    knowledge-source endpoint must land in the mirror as a valid INTERNAL
+    ZendeskTicketSnapshot, so later Hermes feedback/reply turn creation
+    reading the mirror still passes validation."""
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    client, store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    store._hermes_bindings[("automation.production", "13807")] = {
+        "namespace": "automation.production", "zendesk_ticket_id": "13807",
+        "hermes_session_id": "hs", "session_kind": "case", "status": "active",
+        "created_at": "2026-10-02T00:00:00Z", "updated_at": "2026-10-02T00:00:00Z",
+    }
+    raw_snapshot = {
+        "schema_version": "knowledge-source-v1",
+        "source_type": "zendesk_ticket",
+        "source_id": "13807",
+        "source_updated_at": "2026-10-02T06:00:00Z",
+        "payload": {
+            "ticket": {
+                "id": 13807,  # numeric — raw Zendesk shape
+                "status": "solved",
+                "subject": "Native case",
+                "description": "raw response",
+                "requester_id": 12345,
+                "url": "https://example.zendesk.com/api/v2/tickets/13807.json",
+                "custom_fields": [{"id": 222, "value": "case-type"}],
+                "updated_at": "2026-10-02T06:00:00Z",
+            },
+            "comments": [],
+        },
+        "references": {},
+    }
+    # The case must exist in the mirror first (created by the real intake
+    # chain — the n8n [case]Intake flow).
+    intake_delivery = client.post(
+        "/automation/production/v1/intake",
+        json=_intake_comment_event(
+            "13807", "open", "z1", ticket_updated_at="2026-10-02T00:00:00Z"
+        ),
+        headers={"Authorization": "Bearer secret"},
+    )
+    assert intake_delivery.status_code == 202
+
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        response = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=raw_snapshot, headers={"Authorization": "Bearer secret"},
+        )
+    assert response.status_code == 202
+
+    # The mirror ticket validates against the INTERNAL contract.
+    from backend.services.automation_ecs_contracts import ZendeskTicketSnapshot
+
+    mirror = store.get_case_mirror("13807")
+    assert mirror is not None
+    normalized = ZendeskTicketSnapshot.model_validate(mirror["ticket"])
+    assert normalized.status == "solved"
+    assert normalized.custom_fields == {"222": "case-type"}
+
+    # And the synthetic turn-event payload builder — what Hermes
+    # feedback/reply turn creation reads from the mirror — still works.
+    from backend.services.automation_ecs_store import _synthetic_turn_event_payload
+
+    event = _synthetic_turn_event_payload(
+        event_id="evt-1",
+        event_type="investigation_feedback",
+        ticket_row=mirror["ticket"],
+        occurred_at="2026-10-02T07:00:00Z",
+    )
+    assert str(event["ticket"]["id"]) == "13807"
+    assert isinstance(event["ticket"]["custom_fields"], dict)

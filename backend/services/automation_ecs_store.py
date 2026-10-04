@@ -6,6 +6,7 @@ import copy
 import os
 import threading
 from dataclasses import dataclass
+import json
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
@@ -117,6 +118,30 @@ def _synthetic_turn_event_payload(
 MIRROR_CLOSED_TICKET_STATES = frozenset({"solved", "closed"})
 
 
+def _parse_mirror_timestamp(value: Any) -> datetime | None:
+    """Parse an ISO-8601 timestamp (or a PG datetime) into an aware UTC time.
+
+    Review round 7, R7-5: mirror ordering must compare TIME VALUES, never
+    strings — a PG read-back renders ``09:00+00:00`` with a space while an
+    incoming ISO stamp uses ``T``/``Z``/offsets, and lexicographic order
+    then moves the reopen marker backwards. Unparseable values return None
+    (the caller treats absence as "no ordering information").
+    """
+    if isinstance(value, datetime):
+        moment = value
+    else:
+        text = str(value or "").strip()
+        if not text:
+            return None
+        try:
+            moment = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
 def _mirror_ticket_updated_at(ticket: dict[str, Any]) -> str:
     """Source version of a ticket snapshot (Zendesk-side updated_at)."""
     value = ticket.get("updated_at")
@@ -130,10 +155,14 @@ def mirror_accepts_incoming_ticket(
     snapshot's source version — a LATE delivery of an older state must never
     roll a newer one back. Snapshots without a timestamp are accepted as-is
     (legacy behavior): the ordering information is absent.
+
+    Review round 7, R7-5: the comparison is between timezone-aware TIME
+    VALUES (``15:00+08:00`` is NOT newer than ``09:00Z``), robust to PG
+    datetime read-backs and differing offsets.
     """
-    current_ts = _mirror_ticket_updated_at(current_ticket or {})
-    incoming_ts = _mirror_ticket_updated_at(incoming)
-    if not current_ts or not incoming_ts:
+    current_ts = _parse_mirror_timestamp((current_ticket or {}).get("updated_at"))
+    incoming_ts = _parse_mirror_timestamp(incoming.get("updated_at"))
+    if current_ts is None or incoming_ts is None:
         return True
     return incoming_ts >= current_ts
 
@@ -154,11 +183,29 @@ def merge_mirror_state(
         updates["ticket_updated_at"] = _mirror_ticket_updated_at(incoming_ticket) or None
     status = str(incoming_ticket.get("status") or "").strip().lower()
     if status and status not in MIRROR_CLOSED_TICKET_STATES:
-        marker = _mirror_ticket_updated_at(incoming_ticket) or str(occurred_at or "")
-        existing_marker = str(case_row.get("last_nonclosed_at") or "")
-        if marker and (not existing_marker or marker > existing_marker):
-            updates["last_nonclosed_at"] = marker
+        # Monotonic reopen marker by TIME VALUE (review round 7, R7-5): a
+        # late older event must never push the marker backwards.
+        incoming_marker = _parse_mirror_timestamp(incoming_ticket.get("updated_at")) or \
+            _parse_mirror_timestamp(occurred_at)
+        existing_marker = _parse_mirror_timestamp(case_row.get("last_nonclosed_at"))
+        if incoming_marker is not None and (
+            existing_marker is None or incoming_marker > existing_marker
+        ):
+            updates["last_nonclosed_at"] = incoming_marker.isoformat()
     return updates
+
+
+def _jsonb_value(raw: Any) -> Any:
+    """Coerce a possibly already-serialized JSON value into a psycopg Jsonb."""
+    if isinstance(raw, Jsonb):
+        return raw
+    if raw is None:
+        return None
+    if isinstance(raw, (bytes, memoryview)):
+        return Jsonb(json.loads(bytes(raw).decode("utf-8")))
+    if isinstance(raw, str):
+        return Jsonb(json.loads(raw))
+    return Jsonb(raw)
 
 
 class IntakeConflictError(RuntimeError):
@@ -344,23 +391,6 @@ class AutomationEcsStore(Protocol):
                     self._table("automation_hermes_case_drafts"),
                     sql.Identifier(column),
                     sql.SQL(definition),
-                )
-            )
-
-    def _apply_schema_011_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
-        """Idempotent 010→011 evolution: monotonic case-mirror state.
-
-        ``ticket_updated_at`` is the source version of the mirrored ticket
-        snapshot (late older deliveries cannot roll newer state back) and
-        ``last_nonclosed_at`` records the newest NON-CLOSED state seen — the
-        durable reopen fact for the knowledge governance guards (review
-        round 6, R6-2/R6-3).
-        """
-        for column in ("ticket_updated_at TIMESTAMPTZ", "last_nonclosed_at TIMESTAMPTZ"):
-            cursor.execute(
-                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {}").format(
-                    self._table("automation_cases"),
-                    sql.SQL(column),
                 )
             )
 
@@ -2975,6 +3005,23 @@ class PostgresAutomationEcsStore:
                 )
             )
 
+    def _apply_schema_011_migrations(self, cursor: psycopg.Cursor[Any]) -> None:
+        """Idempotent 010→011 evolution: monotonic case-mirror state.
+
+        ``ticket_updated_at`` is the source version of the mirrored ticket
+        snapshot (late older deliveries cannot roll newer state back) and
+        ``last_nonclosed_at`` records the newest NON-CLOSED state seen — the
+        durable reopen fact for the knowledge governance guards (review
+        round 6, R6-2/R6-3).
+        """
+        for column in ("ticket_updated_at TIMESTAMPTZ", "last_nonclosed_at TIMESTAMPTZ"):
+            cursor.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {}").format(
+                    self._table("automation_cases"),
+                    sql.SQL(column),
+                )
+            )
+
     def check_schema(self) -> None:
         with self._connect() as connection:
             with connection.cursor() as cursor:
@@ -3148,7 +3195,7 @@ class PostgresAutomationEcsStore:
                     )
                     ticket_value = (
                         Jsonb(mirror_updates["ticket"]) if "ticket" in mirror_updates
-                        else case_row["ticket"]
+                        else _jsonb_value(case_row.get("ticket"))
                     )
                     ticket_updated_value = mirror_updates.get(
                         "ticket_updated_at", case_row.get("ticket_updated_at")
@@ -4654,7 +4701,7 @@ class PostgresAutomationEcsStore:
                         "updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s"
                     ).format(self._table("automation_cases")),
                     (
-                        Jsonb(updates["ticket"]) if "ticket" in updates else case_row["ticket"],
+                        Jsonb(updates["ticket"]) if "ticket" in updates else _jsonb_value(case_row.get("ticket")),
                         updates.get("ticket_updated_at", case_row.get("ticket_updated_at")),
                         updates.get("last_nonclosed_at", case_row.get("last_nonclosed_at")),
                         self.settings.job_namespace,

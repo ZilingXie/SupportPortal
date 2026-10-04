@@ -296,6 +296,46 @@ def _require_hermes_callback_token(
 
 
 
+def _normalize_raw_zendesk_ticket(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project a raw Zendesk ticket response onto the internal snapshot shape.
+
+    Review round 7, R7-6: raw responses carry numeric ids, array
+    ``custom_fields``, and extra keys (``requester_id``, ``url``, ...) that
+    the internal ``ZendeskTicketSnapshot`` contract forbids.
+    """
+    custom_fields: dict[str, Any] = {}
+    raw_fields = raw.get("custom_fields")
+    if isinstance(raw_fields, dict):
+        custom_fields = dict(raw_fields)
+    elif isinstance(raw_fields, list):
+        for field in raw_fields:
+            if isinstance(field, dict) and field.get("id") is not None:
+                custom_fields[str(field["id"])] = field.get("value")
+
+    requester = raw.get("requester")
+    if not isinstance(requester, dict):
+        requester = {}
+    organization = raw.get("organization")
+    if not isinstance(organization, dict):
+        organization = None
+
+    return {
+        "id": str(raw.get("id") or ""),
+        "status": str(raw.get("status") or ""),
+        "subject": str(raw.get("subject") or ""),
+        "description": str(raw.get("description") or ""),
+        "requester": {
+            key: requester.get(key)
+            for key in ("email", "name")
+            if requester.get(key) is not None
+        },
+        "organization": organization,
+        "tags": [str(tag) for tag in raw.get("tags") or []],
+        "custom_fields": custom_fields,
+        "updated_at": raw.get("updated_at"),
+    }
+
+
 def create_app(    *,
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
@@ -622,13 +662,23 @@ def create_app(    *,
                             # status delivery to ECS is guaranteed).
                             if isinstance(ticket, dict) and ticket.get("status") is not None:
                                 try:
+                                    # Review round 7, R7-6: the mirror speaks the
+                                    # INTERNAL ZendeskTicketSnapshot contract
+                                    # (string ids, dict custom_fields, no extra
+                                    # fields) — raw Zendesk responses must be
+                                    # normalized BEFORE syncing, or later Hermes
+                                    # turn creation reading the mirror fails
+                                    # validation.
+                                    from backend.services.automation_ecs_contracts import (
+                                        ZendeskTicketSnapshot,
+                                    )
+
+                                    normalized = ZendeskTicketSnapshot.model_validate(
+                                        _normalize_raw_zendesk_ticket(ticket)
+                                    ).model_dump(mode="json")
                                     coordination_store.sync_case_ticket_from_snapshot(
                                         snapshot.source_id,
-                                        {
-                                            key: value
-                                            for key, value in ticket.items()
-                                            if key != "comments"
-                                        },
+                                        normalized,
                                         occurred_at=str(
                                             (record or {}).get("source_updated_at") or ""
                                         ) or None,
