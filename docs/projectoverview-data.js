@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-04T14:13:06Z",
-  "source_base_commit": "f2efe1cf371cdd469c02325adc6b9e00536ef3c8",
-  "registry_digest": "1c4770313d756228ee6a77044f949f9869fbec75de9fad18763ea23c36a7994f",
+  "generated_at": "2026-10-04T14:59:03Z",
+  "source_base_commit": "54a3c20e24a548692d396782d17dedea35b5e826",
+  "registry_digest": "4438231da50243e95c3733d0bd6ef66e4651b3192091dfe24e679bdf4ed9d4a3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4856,27 +4856,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮七全量定向（13 套件）",
+          "label": "SupportPortal 回归确认（13 套件，本轮无 SP 代码增量）",
           "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
-          "result": "216 passed, 11 skipped（新增：raw Zendesk ticket 快照同步后内部合同保持 + synthetic turn 事件可构造）"
+          "result": "216 passed, 11 skipped"
         },
         {
           "type": "test",
-          "label": "真实 Automation ECS PostgreSQL 路径（R7-1/4/5 验收要求）",
-          "command": "本地 PG14 独立库：PostgresAutomationEcsStore.migrate 建库 + 重复迁移 + check_schema + accept_intake 迟到事件 + sync_case_ticket_from_snapshot",
-          "result": "全部通过：011 列存在且幂等；迟到旧 solved 提交成功且 mirror 保持 open；reopen 标记经 PG datetime 回读后仍单调（09:00Z 不被 02:00Z 倒退）；时区偏移比较语义正确（17:00+08:00 == 09:00Z，16:00+08:00 更旧）；快照同步不变路径提交成功"
-        },
-        {
-          "type": "test",
-          "label": "隔离 PostgreSQL（四套件）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... （独立库）",
-          "result": "42 passed"
-        },
-        {
-          "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ ec8cde4）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 98e75c9）",
           "command": "go test ./internal/... -count=1",
-          "result": "111 packages ok 零 FAIL（新增三交错：入口通过后 NeedCleanup=true 交错零删除、v2 已完成后恢复 v1 零 chunk 破坏、chunk 创建错误分支零回退）"
+          "result": "111 packages ok 零 FAIL"
+        },
+        {
+          "type": "test",
+          "label": "R8 验收要求的两个交错（真实注入点）",
+          "command": "go test ./internal/application/service/ -run 'TestStaleErrorBranchNeverRollsBackNewerBody|TestStaleSuccessAfterV2CompletedLeavesNewIndexIntact' -count=1 -v",
+          "result": "两测试通过。错误路径：v1 在 CreateChunks 内部暂停→v2 提交→注入创建错误→错误分支真实执行（createCalls≥1 断言）→v2 正文/版本/状态/零 chunk 残留。索引隔离路径：v1 在 chunk 写入内部暂停→v2 完全完成（含自身 chunk 行+completed）→v1 写入成功→post-claim 失配→按 ID 补偿删除仅自身行→v2 chunk 存活、无旧正文残留、状态保持 completed"
         }
       ],
       "source_refs": [
@@ -15539,7 +15533,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "第七轮修复完成未 finalize：R7-1～R7-6 全部处理（011 迁移归位 PG 类+真库验证、processChunks 全部保存点守卫、cleanup 前置检查+测试交错修正、Jsonb 包装、时区感知单调比较、快照规范化内部合同），等待第八轮定向复验。验收通过后按已授权流程合并并部署 Preproduction。",
+      "next_action": "第八轮修复完成未 finalize：R8-1 已闭合（检索单据三面栅栏：原子条件删除/claim 门控外部清理/前后双 claim 写入+按 ID 补偿），两个验收交错以真实注入点补实，等待第九轮定向复验。验收通过后按已授权流程合并并部署 Preproduction。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15557,27 +15551,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "SupportPortal 修复轮七全量定向（13 套件）",
+          "label": "SupportPortal 回归确认（13 套件，本轮无 SP 代码增量）",
           "command": ".venv/bin/python -m pytest -q（12 治理套件 + automation_ecs_store）",
-          "result": "216 passed, 11 skipped（新增：raw Zendesk ticket 快照同步后内部合同保持 + synthetic turn 事件可构造）"
+          "result": "216 passed, 11 skipped"
         },
         {
           "type": "test",
-          "label": "真实 Automation ECS PostgreSQL 路径（R7-1/4/5 验收要求）",
-          "command": "本地 PG14 独立库：PostgresAutomationEcsStore.migrate 建库 + 重复迁移 + check_schema + accept_intake 迟到事件 + sync_case_ticket_from_snapshot",
-          "result": "全部通过：011 列存在且幂等；迟到旧 solved 提交成功且 mirror 保持 open；reopen 标记经 PG datetime 回读后仍单调（09:00Z 不被 02:00Z 倒退）；时区偏移比较语义正确（17:00+08:00 == 09:00Z，16:00+08:00 更旧）；快照同步不变路径提交成功"
-        },
-        {
-          "type": "test",
-          "label": "隔离 PostgreSQL（四套件）",
-          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=... （独立库）",
-          "result": "42 passed"
-        },
-        {
-          "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ ec8cde4）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 98e75c9）",
           "command": "go test ./internal/... -count=1",
-          "result": "111 packages ok 零 FAIL（新增三交错：入口通过后 NeedCleanup=true 交错零删除、v2 已完成后恢复 v1 零 chunk 破坏、chunk 创建错误分支零回退）"
+          "result": "111 packages ok 零 FAIL"
+        },
+        {
+          "type": "test",
+          "label": "R8 验收要求的两个交错（真实注入点）",
+          "command": "go test ./internal/application/service/ -run 'TestStaleErrorBranchNeverRollsBackNewerBody|TestStaleSuccessAfterV2CompletedLeavesNewIndexIntact' -count=1 -v",
+          "result": "两测试通过。错误路径：v1 在 CreateChunks 内部暂停→v2 提交→注入创建错误→错误分支真实执行（createCalls≥1 断言）→v2 正文/版本/状态/零 chunk 残留。索引隔离路径：v1 在 chunk 写入内部暂停→v2 完全完成（含自身 chunk 行+completed）→v1 写入成功→post-claim 失配→按 ID 补偿删除仅自身行→v2 chunk 存活、无旧正文残留、状态保持 completed"
         }
       ],
       "source_refs": [
@@ -15591,7 +15579,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-04T05:00:00Z",
+      "updated_at": "2026-10-04T07:00:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
@@ -15629,6 +15617,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-10-04T05:00:00Z",
           "note": "第七轮验收修复：SP 2 提交（f2efe1cf+登记）；WeKnora 1 提交（ec8cde4）。"
+        },
+        {
+          "at": "2026-10-04T07:00:00Z",
+          "note": "第八轮验收修复：WeKnora 1 提交（98e75c9）；SP 无代码增量（回归确认 216 过）。"
         }
       ]
     },
