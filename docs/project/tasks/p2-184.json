@@ -63,12 +63,12 @@
   "function_id": "rag-scope-governance",
   "legacy_ids": [],
   "legacy_refs": [
-    "p2-184 (language-continuity thread, closed 2026-10-04, PR#1381)"
+    "p2-185 (客户回复语言连续性修复, closed 2026-10-04, PR#1381/PR#1383)"
   ],
   "history": [
     {
       "at": "2026-10-03",
-      "note": "同一任务号 p2-184 先前由「客户回复语言连续性修复」使用并已收口 done（PR#1381=main 1c867cfd，r20261003-1c867cf 已部署 Preproduction，七场景全过）。本治理线程合并时 p2-184.json add/add 冲突以治理线记录覆盖，此条目保留语言连续性线程的关闭痕迹。"
+      "note": "同一任务号 p2-184 先前由「客户回复语言连续性修复」使用并已收口 done（PR#1381=main 1c867cfd，r20261003-1c867cf 已部署 Preproduction，七场景全过）。本治理线程合并时 p2-184.json add/add 冲突以治理线记录覆盖，此条目保留语言连续性线程的关闭痕迹。 完整独立登记已恢复为 docs/project/tasks/p2-185.json。"
     },
     {
       "at": "2026-10-02T00:00:00Z",
