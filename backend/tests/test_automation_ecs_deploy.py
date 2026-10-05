@@ -258,6 +258,82 @@ def test_render_task_definition_sets_engineer_slack_outbound_switch(
     assert values["ENGINEER_SLACK_OUTBOUND_ENABLED"] == expected
 
 
+@pytest.mark.parametrize("role", ["api", "worker"])
+def test_render_task_definition_attaches_hermes_agent_secrets_to_both_roles(
+    tmp_path: Path, role: str
+) -> None:
+    """r20261005-a4dcc29 regression: the knowledge-source intake endpoints
+    queue standalone Summary tasks on the API role, and that queue gate reads
+    the agent gateway settings from the API's own environment. Rendering with
+    the agent enabled must attach BOTH secrets to api and worker alike."""
+    current = _task_definition(tmp_path, role)
+    _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        hermes_agent_enabled=True,
+    )
+
+    secrets = {
+        item["name"]: item["valueFrom"]
+        for item in rendered["containerDefinitions"][0]["secrets"]
+    }
+    assert secrets["HERMES_AGENT_BASE_URL"].endswith(
+        "parameter/supportportal/preproduction/hermes-agent-base-url"
+    )
+    assert secrets["HERMES_AGENT_API_TOKEN"].endswith(
+        "parameter/supportportal/preproduction/hermes-api-server-key"
+    )
+
+
+def test_render_task_definition_without_agent_enabled_drops_agent_secrets(
+    tmp_path: Path,
+) -> None:
+    """When the engine/agent block runs (an explicit --automation-case-engine,
+    as the release pipeline always passes) and the agent is NOT enabled, the
+    renderer removes the references instead of silently keeping the clones."""
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    container["secrets"].extend(
+        [
+            {
+                "name": "HERMES_AGENT_BASE_URL",
+                "valueFrom": "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/preproduction/hermes-agent-base-url",
+            },
+            {
+                "name": "HERMES_AGENT_API_TOKEN",
+                "valueFrom": "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/preproduction/hermes-api-server-key",
+            },
+        ]
+    )
+    current.write_text(json.dumps(payload))
+
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        automation_case_engine="legacy",
+    )
+
+    names = {item["name"] for item in rendered["containerDefinitions"][0]["secrets"]}
+    assert "HERMES_AGENT_BASE_URL" not in names
+    assert "HERMES_AGENT_API_TOKEN" not in names
+
+
 @pytest.mark.parametrize("role", ["api", "route", "worker"])
 def test_render_task_definition_preproduction_pins_agent_model(tmp_path: Path, role: str) -> None:
     current = _task_definition(tmp_path, role)

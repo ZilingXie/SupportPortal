@@ -641,7 +641,7 @@ def render_initial_task_definition(
         )
     if role == "api" and hermes_case_workflow_mode != "disabled":
         secret_names[role]["HERMES_CALLBACK_TOKEN"] = "hermes-callback-token"
-    if hermes_agent_enabled and role == "worker":
+    if hermes_agent_enabled and role in {"api", "worker"}:
         secret_names[role].update(
             {
                 "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
@@ -935,7 +935,13 @@ def render_task_definition(
             else environment_values.get("AUTOMATION_CASE_ENGINE") == "hermes"
         )
         agent_required: set[str] = set()
-        if effective_agent_enabled and role == "worker":
+        # The knowledge-source intake endpoints queue standalone Summary
+        # tasks on the API role, and that queue gate
+        # (knowledge_workflow_active) checks the agent gateway settings from
+        # the API's own environment — attach them to BOTH roles, not only
+        # the worker (r20261005-a4dcc29 lost them on the worker and the
+        # backfill receipts silently carried no summary task).
+        if effective_agent_enabled and role in {"api", "worker"}:
             agent_required.update({"HERMES_AGENT_BASE_URL", "HERMES_AGENT_API_TOKEN"})
         _remove_secret_references(container, HERMES_AGENT_SECRET_NAMES)
         if agent_required:
