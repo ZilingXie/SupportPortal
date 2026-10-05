@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T13:29:39Z",
-  "source_base_commit": "be92390ec7424605318a8c2d9439f58898944dc7",
-  "registry_digest": "6b3a70e0b1bb61f5681191c1d25726c9b9ecc585c36a01a2b2f34c60db9c9afb",
+  "generated_at": "2026-10-05T14:02:28Z",
+  "source_base_commit": "08281ec1dcff5a248d2028668fe79cd6122d1c2c",
+  "registry_digest": "6e5d943a7b3e7d97b3d4fa13f91c677b3d5aa8797f44c277240bc2dfc65ff3a2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4933,6 +4933,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": ".venv/bin/python -m pytest backend/tests/test_hermes_slack_knowledge_review.py -q",
           "result": "9 passed（stash 复演：R18 通知下 2 failed/7 passed）",
           "recorded_at": "2026-10-05T22:30:00Z"
+        },
+        {
+          "type": "decision",
+          "label": "R19 定向独立验收通过（decision 记录；含证据边界收窄）",
+          "command": "验收方独立复跑：SP 七套件 128 passed+5 subtests；插件 13 passed；Overview --check 通过",
+          "result": "通过；结论不授权部署；测试证明快照合同下配合，不证明部署配置与发布工作流一致",
+          "recorded_at": "2026-10-05T23:40:00Z"
         }
       ],
       "source_refs": [
@@ -15595,7 +15602,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R19 阻断修复已实施待定向复验：通知回复命令要求 @bot mention（ENGINEER_SLACK_BOT_USER_ID 渲染真实 mention，未配置回退 @this bot），对齐已发布 n8n 接收链 r1HIW8UNuCabiOPn(ddf01d26) 的 Validate Slack Mention 强制过滤；新增契约测试从钉死快照提取 bot id，通知示例经 发布链过滤+mention 去除 后进真实 handler 完成决策（对 R18 通知两例必败）。hermes-deploy 5e9675b：硬上限总数改 total_available_at_least 显式下界。先不要部署继续有效。",
+      "next_action": "R19 定向验收通过（SP=main 08281ec1 PR#1390；deploy=5e9675b）：@bot mention 通知+发布链契约测试+total_available_at_least 下界两项关闭。★验收方收窄的证据边界：契约测试从快照提取 bot id 并注入 env——只证明当前快照合同下通知与 handler 的配合，不证明部署配置与发布工作流始终一致。部署时必须核对：(1) ENGINEER_SLACK_BOT_USER_ID 与接收工作流 bot id 一致（当前=U08RVQSJQF2/发布版 ddf01d26），未配置时 @this bot 仅为提示非真实 mention；(2) 真实 Slack 回复完成 过滤→转发→决策落库 端到端。先不要部署继续有效。完整计划未闭合项：CSD n8n fields 加 updated、AgentMemory 迁移与退休、WeKnora fork 镜像/部署通道、Preproduction 部署+部署后端到端验收（含上述两项部署核对）。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15648,6 +15655,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": ".venv/bin/python -m pytest backend/tests/test_hermes_slack_knowledge_review.py -q",
           "result": "9 passed（stash 复演：R18 通知下 2 failed/7 passed）",
           "recorded_at": "2026-10-05T22:30:00Z"
+        },
+        {
+          "type": "decision",
+          "label": "R19 定向独立验收通过（decision 记录；含证据边界收窄）",
+          "command": "验收方独立复跑：SP 七套件 128 passed+5 subtests；插件 13 passed；Overview --check 通过",
+          "result": "通过；结论不授权部署；测试证明快照合同下配合，不证明部署配置与发布工作流一致",
+          "recorded_at": "2026-10-05T23:40:00Z"
         }
       ],
       "source_refs": [
@@ -15661,7 +15675,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-05T22:30:00Z",
+      "updated_at": "2026-10-05T23:40:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
