@@ -812,6 +812,22 @@ def notify_hermes_prep_failed(
 # Knowledge review candidate notification (governance plan WP3, R15/P1-3)
 # ---------------------------------------------------------------------------
 
+
+def _knowledge_review_reply_mention() -> str:
+    """The bot mention that MUST lead a knowledge review reply (R19/P1).
+
+    The published n8n receiving workflow only forwards thread messages that
+    @-mention the bot: a bare ``knowledge reject`` reply is filtered out
+    before it ever reaches the messages endpoint, leaving the candidate
+    parked at human_review. With ``ENGINEER_SLACK_BOT_USER_ID`` configured
+    (the bot user id the workflow filters on) the examples render the real
+    clickable mention; otherwise a plain-text stand-in keeps the
+    instruction unambiguous.
+    """
+    bot_user_id = str(os.getenv("ENGINEER_SLACK_BOT_USER_ID") or "").strip()
+    return f"<@{bot_user_id}>" if bot_user_id else "@this bot"
+
+
 def build_knowledge_review_event(
     *,
     event_id: str,
@@ -859,12 +875,14 @@ def build_knowledge_review_event(
         lines.append(f"*Rationale:* {rationale}")
     if source_type:
         lines.append(f"*Source:* `{source_type}:{source_id or ''}`")
+    mention = _knowledge_review_reply_mention()
     lines.extend([
         "",
         f"*Promotion ID:* `{normalized_promotion}`",
-        "Reply in this thread with a decision:",
-        "• `knowledge reject` — reject this candidate",
-        "• `knowledge approve <new|supplement|replace|merge> <complete body>` — approve with the full post-operation content",
+        "Reply in this thread, @-mentioning this bot first, with a decision:",
+        f"• {mention} `knowledge reject` — reject this candidate",
+        f"• {mention} `knowledge approve <new|supplement|replace|merge> "
+        "[target=<object_id>] [base_version=<version>] <complete body>` — approve with the full post-operation content",
         "• For supplement/replace/merge add `target=<object_id> base_version=<version>` before the body "
         "(pre-filled from the candidate when it carries them)",
         "Or use the knowledge promotion decision API directly.",

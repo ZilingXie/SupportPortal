@@ -18,6 +18,7 @@ R18 findings the injected-repository tests could not see:
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -365,3 +366,117 @@ def test_real_entry_non_command_reply_still_opens_feedback_turn(monkeypatch) -> 
     turn = store.get_hermes_turn(result["turn_id"])
     assert turn["turn_kind"] == "investigation_feedback"
     assert turn["work_result"]["reviewer_feedback"] == "Check the audio session category first."
+
+
+# ---------------------------------------------------------------------------
+# R19/P1: the notification's reply examples must survive the PUBLISHED n8n
+# receiving chain — the mention filter in ``Validate Slack Mention`` and the
+# mention strip in ``Send Hermes Message`` — before the handler runs.
+# ---------------------------------------------------------------------------
+
+_PUBLISHED_RECEIVING_WORKFLOW_SNAPSHOT = (
+    "docs/integrations/n8n/workflows/active/r1HIW8UNuCabiOPn.published.json"
+)
+
+
+def _published_bot_user_id() -> str:
+    """Bot user id the published receiving workflow's mention filter pins.
+
+    Read from the pinned snapshot so this contract test fails loudly when
+    the workflow is republished with a different bot identity.
+    """
+    import json
+
+    with open(_PUBLISHED_RECEIVING_WORKFLOW_SNAPSHOT, encoding="utf-8") as handle:
+        document = json.load(handle)
+    nodes = document["workflow"]["nodes"]
+    validate = next(node for node in nodes if node.get("name") == "Validate Slack Mention")
+    expression = str(
+        validate["parameters"]["conditions"]["conditions"][0]["leftValue"]
+    )
+    match = re.search(r"text\.includes\('<(@[A-Z0-9]+)>'\)", expression)
+    assert match, "published mention filter no longer requires a bot mention"
+    return match.group(1)[1:]
+
+
+def _published_receiving_chain(event_text: str) -> tuple[bool, str]:
+    """Mirror the published workflow: mention filter → mention strip → trim.
+
+    ``Validate Slack Mention`` requires the raw ``<@BOT>`` token in the
+    message text with a non-empty remainder; ``Send Hermes Message``
+    forwards ``text.replace(/<@BOT>/g, '').trim()`` to the messages
+    endpoint (published version ddf01d26).
+    """
+    mention = f"<@{_published_bot_user_id()}>"
+    accepted = mention in event_text and bool(event_text.replace(mention, "").strip())
+    forwarded = event_text.replace(mention, "").strip()
+    return accepted, forwarded
+
+
+def test_notification_examples_reach_decision_through_published_chain(monkeypatch) -> None:
+    """R19/P1: examples shown to the engineer must clear the published
+    receiving chain and complete a decision through the real entry."""
+    from backend.services.engineer_slack import build_knowledge_review_event
+
+    bot_id = _published_bot_user_id()
+    monkeypatch.setenv("ENGINEER_SLACK_BOT_USER_ID", bot_id)
+    store = _bound_store()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    promotion_id = _parked_promotion(repository)
+    _install_real_factory(monkeypatch, repository)
+
+    event = build_knowledge_review_event(
+        event_id="knowledge-review:evt-1",
+        engineer_case_id="123-1",
+        promotion_id=promotion_id,
+        candidate_type="knowledge",
+        decision="human_review",
+        statement="Join failures after upgrade",
+        proposed_content="proposed body",
+    )
+    message_text = event["message_text"]
+
+    # Every reply example leads with the bot mention the workflow filters on.
+    mention = f"<@{bot_id}>"
+    examples = re.findall(re.escape(mention) + r" `([^`]+)`", message_text)
+    assert examples and all(
+        command.startswith(("knowledge reject", "knowledge approve")) for command in examples
+    ), "notification must show bot-prefixed decision-command examples"
+    # The instruction itself demands the mention.
+    assert "@-mentioning this bot first" in message_text
+    # Without the mention the published filter drops the reply before the
+    # handler — the exact R19 failure mode of the R18 notification.
+    accepted_bare, _ = _published_receiving_chain("knowledge reject")
+    assert accepted_bare is False
+
+    # The reject example, forwarded verbatim by the published chain
+    # (filter → strip → trim), completes a decision through the real entry.
+    reject_command = next(
+        command for command in examples if command.startswith("knowledge reject")
+    )
+    accepted, forwarded = _published_receiving_chain(f"{mention} {reject_command}")
+    assert accepted is True
+    result = _reply(store, forwarded)
+    assert result["ok"] is True, result
+    assert result["status"] == "knowledge_review_rejected"
+    assert _promotion(repository, promotion_id)["status"] == "rejected"
+
+
+def test_notification_mention_falls_back_without_bot_user_id(monkeypatch) -> None:
+    """Unset ENGINEER_SLACK_BOT_USER_ID keeps the instruction explicit."""
+    from backend.services.engineer_slack import build_knowledge_review_event
+
+    monkeypatch.delenv("ENGINEER_SLACK_BOT_USER_ID", raising=False)
+    event = build_knowledge_review_event(
+        event_id="knowledge-review:evt-2",
+        engineer_case_id="123-1",
+        promotion_id="weknora:p:1",
+        candidate_type="knowledge",
+        decision="human_review",
+        statement="s",
+        proposed_content="c",
+    )
+    message_text = event["message_text"]
+    assert "@-mentioning this bot first" in message_text
+    assert "@this bot `knowledge reject`" in message_text
