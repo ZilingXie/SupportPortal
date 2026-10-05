@@ -58,15 +58,20 @@ def test_search_uses_official_hybrid_search_contract(monkeypatch) -> None:
     assert captured["body"] == {"query_text": "RTC failure", "match_count": 4}
     assert captured["headers"]["X-api-key"] == "redacted-token"
     assert captured["headers"]["User-agent"] == "supportportal-weknora/1"
+    # R2-6: search results do NOT carry a version — chunk revisions are not
+    # the object's content version. The authoritative body and content
+    # version come from read() (see the full-body evidence contract).
     assert results == [
         {
             "object_id": "knowledge-1",
-            "version": "",
             "title": "RTC 排查",
             "snippet": "检查网络与路由。",
             "score": 0.92,
         }
     ]
+    assert all("version" not in item for item in results), (
+        "search results must not carry a version field"
+    )
 
 
 def test_search_requires_knowledge_base_id(monkeypatch) -> None:

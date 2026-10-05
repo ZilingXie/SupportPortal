@@ -862,7 +862,10 @@ def build_knowledge_review_event(
     lines.extend([
         "",
         f"*Promotion ID:* `{normalized_promotion}`",
-        "Use the knowledge promotion decision API to approve or reject this candidate.",
+        "Reply in this thread with a decision:",
+        "• `knowledge reject` — reject this candidate",
+        "• `knowledge approve <new|supplement|replace|merge> <complete body>` — approve with the full post-operation content",
+        "Or use the knowledge promotion decision API directly.",
     ])
     message_text = "\n".join(lines)
 
