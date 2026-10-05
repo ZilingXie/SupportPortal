@@ -865,6 +865,8 @@ def build_knowledge_review_event(
         "Reply in this thread with a decision:",
         "• `knowledge reject` — reject this candidate",
         "• `knowledge approve <new|supplement|replace|merge> <complete body>` — approve with the full post-operation content",
+        "• For supplement/replace/merge add `target=<object_id> base_version=<version>` before the body "
+        "(pre-filled from the candidate when it carries them)",
         "Or use the knowledge promotion decision API directly.",
     ])
     message_text = "\n".join(lines)
