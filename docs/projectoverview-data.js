@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T14:02:28Z",
-  "source_base_commit": "08281ec1dcff5a248d2028668fe79cd6122d1c2c",
-  "registry_digest": "6e5d943a7b3e7d97b3d4fa13f91c677b3d5aa8797f44c277240bc2dfc65ff3a2",
+  "generated_at": "2026-10-05T15:17:35Z",
+  "source_base_commit": "5a8bfa30d874907990177432cfed562582fd6b74",
+  "registry_digest": "76641a6b0e79db0557ba7d10ebd5f019c36e5903eb8ee3b2aa8132dfc665be7e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4940,6 +4940,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "验收方独立复跑：SP 七套件 128 passed+5 subtests；插件 13 passed；Overview --check 通过",
           "result": "通过；结论不授权部署；测试证明快照合同下配合，不证明部署配置与发布工作流一致",
           "recorded_at": "2026-10-05T23:40:00Z"
+        },
+        {
+          "type": "test",
+          "label": "R20 memory 畸形响应 fail-closed（真实排水入口）+ n8n CSD fields 修复实链执行",
+          "command": ".venv/bin/python -m pytest backend/tests/test_weknora_client.py backend/tests/test_knowledge_standalone_workflow.py -q",
+          "result": "34+12 passed（stash 复演对未修复客户端 11 例必败）；n8n 执行 186715 全链 success，18 来源 accepted",
+          "recorded_at": "2026-10-05T23:55:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "[kb]Build|CSD 发布 ae44bc1b（fields 具名列表）",
+          "command": "n8n update_workflow(setNodeParameter fields) → manual 执行 186715 验证 → publish → 快照/manifest 刷新 + validate_workflow_snapshots.py",
+          "result": "activeVersionId=ae44bc1b；Get_CSD_Detail 回读含 updated/summary/description/comment；18 来源 accepted；校验器 15 published/1 draft/51 redacted 通过",
+          "recorded_at": "2026-10-05T23:55:00Z"
         }
       ],
       "source_refs": [
@@ -15602,7 +15616,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R19 定向验收通过（SP=main 08281ec1 PR#1390；deploy=5e9675b）：@bot mention 通知+发布链契约测试+total_available_at_least 下界两项关闭。★验收方收窄的证据边界：契约测试从快照提取 bot id 并注入 env——只证明当前快照合同下通知与 handler 的配合，不证明部署配置与发布工作流始终一致。部署时必须核对：(1) ENGINEER_SLACK_BOT_USER_ID 与接收工作流 bot id 一致（当前=U08RVQSJQF2/发布版 ddf01d26），未配置时 @this bot 仅为提示非真实 mention；(2) 真实 Slack 回复完成 过滤→转发→决策落库 端到端。先不要部署继续有效。完整计划未闭合项：CSD n8n fields 加 updated、AgentMemory 迁移与退休、WeKnora fork 镜像/部署通道、Preproduction 部署+部署后端到端验收（含上述两项部署核对）。",
+      "next_action": "R20 完整计划验收未通过后已实施两项阻断修复，待定向复验：(1) SP memory 客户端 P1——memory_list_page/memory_list 把 {\"success\":false}/{} /data:null /data:[null] 当空列表（R20 复现：畸形响应经真实 standalone 排水产生 memory/new/queued 自动写入）。修复=_memory_page_results/_memory_page_items 具名校验：缺失/畸形列表与非对象条目显式 invalid_response；data.items/data.results 包装形态可读。测试=客户端 3 例（四畸形/合法空+包装/非分页）+真实排水 3 例（四畸形首页/中途畸形页/合法空，memory 候选停 human_review 而非 new；stash 复演对未修复代码 11 例必败）。(2) CSD n8n 断点——[kb]Build|CSD Get_CSD_Detail fields=*,comment 的 * 不被该 Jira 端点展开（执行 186451 证据只返回 comment）。改为具名列表 summary,description,updated,created,status,resolution,comment，manual 执行 186715 全链 success：Get_CSD_Detail 实际返回全部具名字段，18 个来源投递 Preproduction 全部 accepted（各带 knowledge-source task_id=来源接收+独立 Summary 排队证据）；已发布 ae44bc1b，快照+manifest 回读刷新，校验器通过。先不要部署继续有效；完整计划未闭合：AgentMemory 迁移/退休、WeKnora fork 镜像/部署通道、Prompt/插件镜像/profile 发布、Preproduction 全链端到端（含 bot id 一致性+真实 Slack E2E 两项部署核对）。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15662,6 +15676,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "验收方独立复跑：SP 七套件 128 passed+5 subtests；插件 13 passed；Overview --check 通过",
           "result": "通过；结论不授权部署；测试证明快照合同下配合，不证明部署配置与发布工作流一致",
           "recorded_at": "2026-10-05T23:40:00Z"
+        },
+        {
+          "type": "test",
+          "label": "R20 memory 畸形响应 fail-closed（真实排水入口）+ n8n CSD fields 修复实链执行",
+          "command": ".venv/bin/python -m pytest backend/tests/test_weknora_client.py backend/tests/test_knowledge_standalone_workflow.py -q",
+          "result": "34+12 passed（stash 复演对未修复客户端 11 例必败）；n8n 执行 186715 全链 success，18 来源 accepted",
+          "recorded_at": "2026-10-05T23:55:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "[kb]Build|CSD 发布 ae44bc1b（fields 具名列表）",
+          "command": "n8n update_workflow(setNodeParameter fields) → manual 执行 186715 验证 → publish → 快照/manifest 刷新 + validate_workflow_snapshots.py",
+          "result": "activeVersionId=ae44bc1b；Get_CSD_Detail 回读含 updated/summary/description/comment；18 来源 accepted；校验器 15 published/1 draft/51 redacted 通过",
+          "recorded_at": "2026-10-05T23:55:00Z"
         }
       ],
       "source_refs": [
@@ -15675,7 +15703,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-05T23:40:00Z",
+      "updated_at": "2026-10-05T23:55:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",

@@ -486,3 +486,59 @@ class MemoryPaginationTests(unittest.TestCase):
             with self.assertRaises(WeKnoraError) as ctx:
                 client.memory_list_all()
         self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")
+
+    def test_malformed_memory_page_is_explicit_error_never_empty(self) -> None:
+        """R20/P1: an error body, a missing list, or a malformed entry is an
+        explicit invalid_response — never a silent empty listing that lets a
+        Review skip the memory dedup check."""
+        malformed_pages = [
+            {"success": False, "error": "backend unavailable"},
+            {},
+            {"data": None},
+            {"data": [None]},
+        ]
+        for payload in malformed_pages:
+            with self.subTest(payload=payload):
+                client = self._paging_client()
+
+                def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+                    return payload
+
+                with patch.object(client, "_request", side_effect=fake_request):
+                    with self.assertRaises(WeKnoraError) as ctx:
+                        client.memory_list_page(limit=50, offset=0)
+                self.assertEqual(ctx.exception.failure_kind, "invalid_response")
+
+    def test_legal_empty_and_wrapped_memory_pages(self) -> None:
+        """A legal empty page ends the walk; the wrapped official shapes
+        (data as list, data.items) stay readable."""
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"data": []}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            self.assertEqual(client.memory_list_all(), [])
+
+        wrapped = self._paging_client()
+
+        def wrapped_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"data": {"items": [{"id": "m1"}, {"id": "m2"}], "total": 2}}
+
+        with patch.object(wrapped, "_request", side_effect=wrapped_request):
+            items = wrapped.memory_list_all()
+        self.assertEqual([item["id"] for item in items], ["m1", "m2"])
+
+    def test_memory_list_non_paginated_rejects_missing_results(self) -> None:
+        """The non-paginated memory_list shares the same contract: a response
+        without a recognizable list is invalid_response, not an empty
+        success."""
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"success": False, "error": "backend unavailable"}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list()
+        self.assertEqual(ctx.exception.failure_kind, "invalid_response")
