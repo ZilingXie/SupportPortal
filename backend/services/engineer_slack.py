@@ -805,3 +805,107 @@ def notify_hermes_prep_failed(
         },
         thread_ts=thread_ts,
     )
+
+
+# ---------------------------------------------------------------------------
+# Knowledge review candidate notification (governance plan WP3, R15/P1-3)
+# ---------------------------------------------------------------------------
+
+def build_knowledge_review_event(
+    *,
+    event_id: str,
+    engineer_case_id: str,
+    promotion_id: str,
+    candidate_type: str,
+    decision: str,
+    statement: str,
+    proposed_content: str,
+    target_object_id: str | None = None,
+    base_version: str | None = None,
+    rationale: str | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+) -> dict[str, Any]:
+    """Thread event for a governance candidate parked at human_review.
+
+    The FULL proposed content travels in ``message_text`` so the reviewing
+    engineer sees the complete body, target, and rationale in the case
+    thread — not a truncated statement. The promotion_id is included for the
+    decision API call.
+    """
+    normalized_case = str(engineer_case_id or "").strip()
+    normalized_promotion = str(promotion_id or "").strip()
+    normalized_statement = str(statement or "").strip()
+    if not all((event_id, normalized_case, normalized_promotion)):
+        raise ValueError("Knowledge review event requires event_id, case, and promotion")
+
+    # Format the message for the engineer: full candidate, not truncated.
+    lines = [
+        f"🔍 *Knowledge review required* (`{candidate_type}` → `{decision}`)",
+        "",
+        f"*Statement:* {normalized_statement or '—'}",
+    ]
+    if proposed_content:
+        # Show up to 1500 chars of the proposed content — enough for review
+        # without flooding the thread; the full text is in the queue API.
+        display = proposed_content[:1500]
+        if len(proposed_content) > 1500:
+            display += "… (truncated — full text in the review queue)"
+        lines.extend(["", f"*Proposed content:*", "```", display, "```"])
+    if target_object_id:
+        lines.append(f"*Target:* `{target_object_id}` (base version `{base_version or 'n/a'}`)")
+    if rationale:
+        lines.append(f"*Rationale:* {rationale}")
+    if source_type:
+        lines.append(f"*Source:* `{source_type}:{source_id or ''}`")
+    lines.extend([
+        "",
+        f"*Promotion ID:* `{normalized_promotion}`",
+        "Use the knowledge promotion decision API to approve or reject this candidate.",
+    ])
+    message_text = "\n".join(lines)
+
+    return build_engineer_case_thread_event(
+        event_id=event_id,
+        event_type="knowledge_review_required",
+        engineer_case_id=normalized_case,
+        message_text=message_text,
+        action="knowledge_review",
+    )
+
+
+def notify_knowledge_review_candidate(
+    *,
+    engineer_case_id: str,
+    promotion_id: str,
+    candidate: dict[str, Any],
+    slack_thread_ts: str | None = None,
+) -> dict[str, Any] | None:
+    """Post a review candidate to the case's Slack thread (best effort).
+
+    Returns the Slack API response on success, None when the Slack surface
+    is not configured or the post fails (the queue API remains the primary
+    surface — Slack is a notification, not a dependency).
+    """
+    if not engineer_slack_configured() or engineer_slack_outbound_disabled():
+        return None
+    from uuid import uuid4
+
+    event = build_knowledge_review_event(
+        event_id=f"knowledge-review:{uuid4().hex}",
+        engineer_case_id=str(engineer_case_id),
+        promotion_id=str(promotion_id),
+        candidate_type=str(candidate.get("candidate_type") or ""),
+        decision=str(candidate.get("decision") or ""),
+        statement=str(candidate.get("statement") or ""),
+        proposed_content=str(candidate.get("content") or candidate.get("merged_content") or ""),
+        target_object_id=str(candidate.get("target_object_id") or "") or None,
+        base_version=str(candidate.get("base_version") or "") or None,
+        rationale=str(candidate.get("note") or ""),
+        source_type=str(candidate.get("source_type") or ""),
+        source_id=str(candidate.get("source_id") or ""),
+    )
+    try:
+        return post_engineer_slack_event(event, thread_ts=slack_thread_ts)
+    except Exception:  # noqa: BLE001 - Slack failure must not block the worker
+        return None

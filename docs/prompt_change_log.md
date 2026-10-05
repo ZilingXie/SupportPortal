@@ -5019,3 +5019,10 @@ For each new entry, record:
 - 动机（验收第二轮未闭合项）：旧写入路径与「所有入库经过 Review」的治理架构冲突——调查会话可绕过 Review 直写知识库。
 - 发布注意：既有 prompt key（hermes-investigation-manual）内容变更须在部署前显式 create_draft + schedule 进 Prompt Release（2026-09-29 教训），否则发布回落旧文案。
 - Verification: 代码级 grep 全库无 `memory_tencentdb_write_knowledge` 残留指引；工具注册面未变（工具本身仍存在，仅 prompt 不再引导调查阶段使用）；prompt 运行时测试套件全过。
+
+## 2026-10-05 - 架构审查修复：调查手册全面切换到 WeKnora 知识工具（p2-184 R15 P1-4）
+
+- Investigation Manual v2 与 Ad-hoc Investigation Manual v2 均移除全部 `memory_tencentdb_*` 工具引用，替换为 WeKnora 三件套（`weknora_search` / `weknora_read_knowledge` / `weknora_recall_memory`）。
+- Ad-hoc 手册中残留的" Persist verified, sanitized conclusions as shared knowledge"指令（R2-11 只修了 work 手册，ad-hoc 手册遗漏）一并移除——与治理管线合同对齐：调查不写知识，关闭后经 Summary → Review → 受控写入。
+- hermes-deploy config：`memory.provider` 从 `memory_tencentdb` 改为 `none`，`plugins.enabled` 增加 `weknora_tools`，`_config_version` 40→41。
+- 发布注意：prompt 变更须部署前 draft+schedule；hermes-deploy config 变更须随镜像发布。

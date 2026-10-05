@@ -3010,8 +3010,37 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
             failure_detail=outcome.failure_detail,
             completed_at=now_iso(),
         )
+        # R15/P1-3: a candidate parking at human_review notifies the case's
+        # Slack thread so the reviewing engineer sees the full proposal. Best
+        # effort — the queue API remains the primary decision surface.
+        if outcome.status == "human_review" and str(claimed.get("engineer_case_id") or "").strip():
+            _notify_knowledge_review(claimed)
         processed += 1
     return processed
+
+
+def _notify_knowledge_review(claimed: dict) -> None:
+    """Post a human-review candidate to the case's Slack thread (R15/P1-3)."""
+    try:
+        from backend.services.engineer_slack import notify_knowledge_review_candidate
+
+        candidate = claimed.get("candidate_payload") if isinstance(claimed.get("candidate_payload"), dict) else {}
+        notify_knowledge_review_candidate(
+            engineer_case_id=str(claimed.get("engineer_case_id") or "").strip(),
+            promotion_id=str(claimed.get("promotion_id") or ""),
+            candidate={
+                **candidate,
+                "source_type": str(claimed.get("source_type") or ""),
+                "source_id": str(claimed.get("source_id") or ""),
+            },
+            slack_thread_ts=str(claimed.get("slack_thread_ts") or "").strip() or None,
+        )
+    except Exception:  # noqa: BLE001 - Slack failure must never block the drain
+        LOGGER.warning(
+            "knowledge_review_slack_notify_failed promotion_id=%s",
+            claimed.get("promotion_id"),
+            exc_info=True,
+        )
 
 
 def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
