@@ -5026,3 +5026,8 @@ For each new entry, record:
 - Ad-hoc 手册中残留的" Persist verified, sanitized conclusions as shared knowledge"指令（R2-11 只修了 work 手册，ad-hoc 手册遗漏）一并移除——与治理管线合同对齐：调查不写知识，关闭后经 Summary → Review → 受控写入。
 - hermes-deploy config：`memory.provider` 从 `memory_tencentdb` 改为 `none`，`plugins.enabled` 增加 `weknora_tools`，`_config_version` 40→41。
 - 发布注意：prompt 变更须部署前 draft+schedule；hermes-deploy config 变更须随镜像发布。
+
+## 2026-10-06 - R15 治理手册 v3 经 pr-89c354c051b7 在 Preproduction 激活（p2-184 R24 部署）
+
+- r20261005-a4dcc29 / r20261005-91e3a63 两次发布将 prompt release pr-89c354c051b7（41 items）同步并激活：hermes-investigation-manual v3、hermes-adhoc-investigation-manual v3、hermes-knowledge-review-manual v3（调查只读 WeKnora 三件套、调查阶段零知识写入）首次上线生效。
+- 同窗口实测发现：hermes-case-summary-manual v1 未钉死 `timeline` 字段类型，CSD 来源的独立 Summary 18/18 确定性失败于 `_normalize_summary_text`（timeline must be a string or an array of strings）——待 v4 修订（见 p2-184 登记）。

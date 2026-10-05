@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "R24 部署窗口进行中（用户授权\"开启部署\"）：r20261005-a4dcc29 已上 Preproduction（v19 治理管线 schema+ECS 013 bootstrap、独立管线表已建、prompt pr-89c354c051b7 含三个 v3 手册已激活、全检查 passed）。★发现并修复部署回归：新 task def 丢失 HERMES_AGENT_* secrets（渲染器 worker-only 门控+未传 --hermes-agent-enabled；API 角色的独立 Summary 排队门因此关闭，18 源补投回执 already_exists 但零任务）——渲染器已改为 api+worker 双角色挂载+回归测试。下一步：渲染器修复合入后以 --hermes-agent-enabled 重发新 release，验证 API 任务 env，再按 backfill_intakes 清单补投 18 源并表级回读任务 ID/来源版本/状态。",
+  "next_action": "R24 部署窗口（用户授权\"开启部署\"）闭环完成：(1) r20261005-a4dcc29 部署 main a4dcc29c——v19 治理管线 schema+ECS 013 bootstrap 成功、独立管线表已建、prompt pr-89c354c051b7（3 个手册 v3）同步激活、全检查 passed；(2) 发现并修复部署回归 PR#1397=91e3a63f：渲染器 worker-only 门控+未传 --hermes-agent-enabled 丢失 HERMES_AGENT_* secrets、API 排队门关闭——渲染器已改 api+worker 双角色+回归测试+runbook 更新；(3) r20261005-91e3a63 重部署（agent-enabled），api:102/worker:102 均带 agent 配置；(4) 18 源按 backfill_intakes 清单显式补投：18/18 already_exists+summary_task_id；(5) 表级回读闭合 R23 条件：18 行/18 唯一任务 ID/版本=intake 冻结时间戳。★R23 排队段关闭。★新缺陷（排水实测，非本次授权范围）：独立 Summary 18/18 确定性失败于 timeline 契约（hermes-case-summary-manual v1 未钉死 timeline 类型→模型返回对象数组被 _normalize_summary_text 拒绝）且 failed 任务无重试路径（ensure 不复活 failed 行）——两个 bounded 修复待下轮：prompt v4 钉死字段类型+失败重试语义。Production 未触碰；WeKnora fork 通道/AgentMemory 迁移退休/全链 E2E 仍待。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -100,6 +100,13 @@
       "command": "R23 独立复核（SSM read_only=on）：表级证据成立；部署后补投用",
       "result": "backfill_intakes=[CSD-80108:knowledge-source:7abc4c95acf0477bbfd3c05d8514f685, CSD-80041:knowledge-source:ee67cf9e05f94a1bb8e1307778b84bb5, CSD-79994:knowledge-source:7f6a97241d9f4db3ac839d3a35921c10, CSD-79950:knowledge-source:5cc5d6a76b314d9aa8dcfbe4b0256c68, CSD-79958:knowledge-source:b0f7bd2f38cb4cf19cc664bf1c184c13, CSD-79914:knowledge-source:14edd0d528254f56a81f1af2ef746ce7, CSD-79943:knowledge-source:ccd80055d3784490959012d33d2d13f7, CSD-79846:knowledge-source:f31e7764db7f4ac0af5d5c5862d88aa4, CSD-79822:knowledge-source:1a0a6f04358a475b8f976df0f7142d36, CSD-79571:knowledge-source:31381defcdf340c69613b4dd62da7b74, CSD-79599:knowledge-source:c5c43fbb381744b08caec7d5048a5b64, CSD-79664:knowledge-source:f03d07f4b4714da7a594635d600e2236, CSD-79668:knowledge-source:418c344c56d64c22a65e62fdf274c792, CSD-80103:knowledge-source:5a32455d33904ffe922ea58eb9662e49, CSD-80040:knowledge-source:c7f5909023b64db7afdfb05ccb2913cd, CSD-79965:knowledge-source:413f382149e44d03af584558ec4d42b5, CSD-79703:knowledge-source:94e1db5f686449cb8189825690e6f739, CSD-79603:knowledge-source:9b8d60add4034553a435d13dcd99c3d1]",
       "recorded_at": "2026-10-06T12:30:00Z"
+    },
+    {
+      "type": "deployment",
+      "label": "R24 Preproduction 部署+激活+18 源补投+表级回读（R23 关闭条件闭合）",
+      "command": "release pipeline ×2（r20261005-a4dcc29→r20261005-91e3a63, --hermes-agent-enabled --bootstrap-account-schema real）+ 18×POST 同版本重投 + psql 表级回读",
+      "result": "v19/013 上线；prompt pr-89c354c051b7 激活；18/18 already_exists+summary_task_id；表回读 18 行/18 唯一 ID/版本一致；排水后 18/18 failed=timeline 契约（新缺陷已登记）",
+      "recorded_at": "2026-10-06T03:40:00Z"
     }
   ],
   "source_refs": [
@@ -113,7 +120,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-06T02:00:00Z",
+  "updated_at": "2026-10-06T03:40:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
