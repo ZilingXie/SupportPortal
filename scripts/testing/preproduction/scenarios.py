@@ -20,8 +20,10 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
@@ -873,6 +875,746 @@ def tempfile_mkdtemp() -> str:
     return tempfile.mkdtemp(prefix="pp-en-quick-")
 
 
+PP_EN_DUP_FALLBACK_INTENTS = {"rag_fallback_answer"}
+# A still-valid relay request for the main ticket: the notice must never
+# finish/cancel/supersede the original application.
+PP_EN_DUP_REQUEST_ACTIVE_STATUSES = {"gated", "dispatch_pending", "dispatching", "dispatched"}
+# Sub-clause split: sentence enders, semicolons/newlines, comma+but/and
+# joins, and bare `but` joins — a negation only excuses the action inside
+# its OWN sub-clause.
+PP_EN_DUP_CLAUSE_SPLIT_RE = re.compile(
+    r"(?<=[.!?])\s+|[;\n]+|,\s+(?:but|and|however)\s+|\s+but\s+"
+)
+# Verb-phrase segment boundaries INSIDE a clause: a negation cannot govern
+# an action across one of these joins ("did not wait and closed" — the `not`
+# governs wait, not closed).
+PP_EN_DUP_SEGMENT_SPLIT_RE = re.compile(r"(?i)\s+(?:and|or|but)\s+|,\s+|;+")
+PP_EN_DUP_FORBIDDEN_CLAIM_RE = re.compile(
+    r"(?i)\b(?:merged?|closed?|closing|accelerat\w*|speed\w* up|priorit\w* (?:up|higher))\b"
+)
+PP_EN_DUP_NEGATION_RE = re.compile(
+    r"(?i)\b(?:not|never|won't|cannot|can't|did not|haven'?t|hasn'?t|no longer)\b"
+)
+PP_EN_DUP_ACK_NOTICE_RE = re.compile(
+    r"(?i)\b(?:duplicate|another(?: support)? ticket|other ticket|both tickets)\b"
+)
+PP_EN_DUP_ACK_CONTINUE_RE = re.compile(
+    r"(?i)\b(?:continu\w+|keep\w*|proceed\w*|handl\w+|work\w*|follow(?:ed)? up|progress\w*)\b"
+    r"[^.!?]{0,60}\b(?:this ticket|this request|here|with this|on this|your (?:media relay |relay |enablement )?(?:request|ticket))\b"
+)
+
+
+def duplicate_notice_body(duplicate_of_ticket_id: str) -> str:
+    """The 13819 incident customer message, verbatim modulo the referenced
+    ticket id (both the #id and the link target are substituted).
+
+    Fixture source: the incident comment as quoted in the planning thread
+    (2026-10-03 acceptance round). Re-verification against the source ticket
+    stays an extra pre-run check and never replaces this fixture.
+    """
+    return (
+        "Thank you, May. Please note that "
+        f"[#{duplicate_of_ticket_id}]"
+        f"(https://agoraio.zendesk.com/agent/tickets/{duplicate_of_ticket_id}) "
+        "is a duplicate of this request (submitted with higher priority). "
+        "Feel free to merge or close it."
+    )
+
+
+def _dup_ack_content_check(content: str) -> str | None:
+    """Option-1 acceptance check on the DELIVERED ack text.
+
+    Positive meaning must appear as an AFFIRMATIVE sub-clause: acknowledge
+    the duplicate notice AND confirm continuing with this ticket — a negated
+    promise ("we will not continue") is not a confirmation. Cross-ticket
+    action claims are checked per ACTION: a claim is excused only when a
+    negation governs THAT action, i.e. the negation sits in the same
+    verb-phrase segment (bounded by and/or/but/comma/semicolon) BEFORE the
+    claim. A negation attached to a DIFFERENT verb — before ("did not wait
+    and closed") or after ("closed it and will not ask") — never masks the
+    claim. Proximity in characters is never used as the criterion.
+    """
+    text = str(content or "").strip()
+    if not text:
+        return "ack content is empty"
+    clauses = [c.strip() for c in PP_EN_DUP_CLAUSE_SPLIT_RE.split(text) if c.strip()]
+    affirmative = [c for c in clauses if "?" not in c and not PP_EN_DUP_NEGATION_RE.search(c)]
+    if not any(PP_EN_DUP_ACK_NOTICE_RE.search(c) for c in affirmative):
+        return "ack does not affirmatively acknowledge the duplicate/other-ticket notice"
+    if not any(PP_EN_DUP_ACK_CONTINUE_RE.search(c) for c in affirmative):
+        return "ack does not affirmatively confirm continuing with this ticket"
+    for clause in clauses:
+        if not clause or "?" in clause:
+            continue
+        boundaries = [
+            m.end() for m in PP_EN_DUP_SEGMENT_SPLIT_RE.finditer(clause)
+            if m.end() <= len(clause)
+        ]
+        for claim in PP_EN_DUP_FORBIDDEN_CLAIM_RE.finditer(clause):
+            segment_start = max(
+                (b for b in boundaries if b <= claim.start()), default=0
+            )
+            segment_prefix = clause[segment_start:claim.start()]
+            if PP_EN_DUP_NEGATION_RE.search(segment_prefix):
+                continue  # the negation governs this very action
+            snippet = clause[max(0, claim.start() - 20):claim.end() + 20].strip()
+            return f"ack claims a cross-ticket action: {snippet!r}"
+    return None
+
+
+def _assert_preproduction_intake_base(api_base: str) -> str:
+    """The intake re-delivery POST is a write entrypoint: its target must be
+    the Preproduction API base. An inherited SUPPORTPORTAL_RELAY_API_BASE
+    pointing anywhere else (e.g. .../automation/production) must be refused
+    with zero sends.
+
+    The check is structural, not a string suffix: the URL is parsed and must
+    be https, carry no query or fragment, and have EXACTLY the
+    /automation/preproduction path — a production path smuggling
+    `?next=/automation/preproduction` or `#/automation/preproduction` is
+    refused like any other non-Preproduction target."""
+    from urllib.parse import urlsplit
+
+    raw = str(api_base or "").strip()
+    parts = urlsplit(raw)
+    if parts.scheme != "https" or not parts.netloc:
+        raise AutomationTestScenarioError(
+            "intake re-delivery target must be an https Preproduction API base; "
+            f"refusing {raw or '<empty>'!r}"
+        )
+    if parts.query or parts.fragment:
+        raise AutomationTestScenarioError(
+            "intake re-delivery target must not carry a query or fragment; "
+            f"refusing {raw!r}"
+        )
+    path = parts.path.rstrip("/")
+    if path != "/automation/preproduction":
+        raise AutomationTestScenarioError(
+            "intake re-delivery target must be the Preproduction API base path "
+            f"/automation/preproduction; refusing {raw!r}"
+        )
+    return f"https://{parts.netloc}{path}"
+
+
+def _wait_notice_intake(engine: Any, ctx: ScenarioContext, comment_id: str) -> dict:
+    """Wait for the intake event the posted comment actually produced —
+    bound via ``payload->comment_snapshot->trigger_comment_id``, so a turn
+    triggered by any OTHER comment cannot satisfy this chain."""
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT event_id, execution_id, payload, received_at "
+            "FROM automation_intake_events "
+            "WHERE payload->'comment_snapshot'->>'trigger_comment_id' = %s "
+            "ORDER BY received_at DESC LIMIT 1",
+            (comment_id,),
+        )
+        return rows[0] if rows else None
+
+    return engine.wait_for(
+        "notice intake event (bound to the posted comment)",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+
+
+def _wait_notice_turn(engine: Any, ctx: ScenarioContext, intake: dict) -> dict:
+    """Wait for the hermes turn bound to the intake execution (turn rows
+    carry execution_id/event_id). Only a SUCCESSFULLY COMPLETED automation
+    turn is a valid ack: human escalation, failed turns, and turns parked in
+    human_review are all explicit FAILs."""
+
+    execution_id = str(intake.get("execution_id") or "")
+    event_id = str(intake.get("event_id") or "")
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT turn_id, direction, status, error_code "
+            "FROM automation_hermes_agent_turns "
+            "WHERE execution_id = %s AND event_id = %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (execution_id, event_id),
+        )
+        row = rows[0] if rows else None
+        if row and str(row.get("status") or "") in {"completed", "failed", "human_review"}:
+            return row
+        return None
+
+    row = engine.wait_for(
+        "notice hermes turn (bound to the intake execution)",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+    if str(row.get("direction") or "") == "human":
+        engine.record(
+            ctx,
+            "notice handled without human escalation",
+            False,
+            f"direction=human (turn={row.get('turn_id')})",
+        )
+        raise AssertionError(
+            "duplicate notice escalated to human review direction; "
+            f"turn={row.get('turn_id')}"
+        )
+    status = str(row.get("status") or "")
+    if status != "completed":
+        engine.record(
+            ctx,
+            "notice turn completed successfully",
+            False,
+            f"status={status} (turn={row.get('turn_id')} error={row.get('error_code')})",
+        )
+        raise AssertionError(
+            f"duplicate notice turn did not complete: status={status} "
+            f"turn={row.get('turn_id')} error={row.get('error_code')}"
+        )
+    return row
+
+
+def _fresh_rag_fallback_jobs(engine: Any, ctx: ScenarioContext, baseline_job_ids: set) -> list:
+    rows = engine.db_query(
+        "SELECT job_id, status, payload->>'reply_intent' AS reply_intent "
+        "FROM support_account_reply_jobs "
+        "WHERE ticket_id = %s AND created_at >= %s "
+        "ORDER BY created_at DESC LIMIT 2",
+        (ctx.client_ticket_id, _since_iso(ctx)),
+    )
+    return [
+        row for row in rows
+        if str(row.get("job_id") or "") not in baseline_job_ids
+        and str(row.get("reply_intent") or "") in PP_EN_DUP_FALLBACK_INTENTS
+        and str(row.get("status") or "") in {"published", "failed", "manual_attention", "cancelled"}
+    ]
+
+
+def _wait_notice_ack(engine: Any, ctx: ScenarioContext, turn: dict, baseline_job_ids: set) -> dict:
+    """Wait for the turn's customer-visible ack on the Hermes draft path
+    (drafts bind to turn_id; ``queued`` means approved and handed to
+    delivery). Once a queued draft appears, the full acceptance set is
+    re-asserted: EXACTLY ONE queued draft for the turn and no RAG-fallback
+    reply in this turn's window — a first-match return alone proves
+    nothing about the rest of the turn's output."""
+
+    turn_id = str(turn.get("turn_id") or "")
+
+    def _drafts() -> list:
+        return engine.db_query(
+            "SELECT draft_id, status, content, delivery_message_id "
+            "FROM automation_hermes_case_drafts "
+            "WHERE turn_id = %s AND status NOT IN ('superseded','stale') "
+            "ORDER BY created_at DESC",
+            (turn_id,),
+        )
+
+    def probe():
+        if any(str(d.get("status") or "") == "queued" for d in _drafts()):
+            return {"__draft_ready__": True}
+        if _fresh_rag_fallback_jobs(engine, ctx, baseline_job_ids):
+            return {"__rag_fallback__": True}
+        return None
+
+    result = engine.wait_for(
+        "notice acknowledgment draft (bound to the turn) or RAG-fallback evidence",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+    rag_jobs = _fresh_rag_fallback_jobs(engine, ctx, baseline_job_ids)
+    if rag_jobs:
+        engine.record(
+            ctx,
+            "ack reply published without RAG fallback",
+            False,
+            f"rag_fallback job={rag_jobs[0].get('job_id')}",
+        )
+        raise AssertionError(
+            f"notice was answered by a RAG fallback reply: job={rag_jobs[0].get('job_id')}"
+        )
+    queued = [
+        d for d in _drafts() if str(d.get("status") or "") == "queued"
+    ]
+    exactly_one = len(queued) == 1
+    engine.record(
+        ctx, "exactly one acknowledgment draft for the notice turn", exactly_one,
+        f"queued_drafts={[str(d.get('draft_id')) for d in queued]}",
+    )
+    if not exactly_one:
+        raise AssertionError(
+            "expected exactly one queued acknowledgment draft for the turn, got "
+            f"{[str(d.get('draft_id')) for d in queued]}"
+        )
+    return queued[0]
+
+
+def _wait_notice_ack_delivery(engine: Any, ctx: ScenarioContext, ack: dict) -> dict:
+    """Wait for the ack's public Zendesk delivery, bound to the selected
+    draft via the delivery ledger's ``message_id = draft_id`` (the Hermes
+    delivery path writes exactly this identity), so the earlier
+    confirmation-comment delivery can never satisfy this wait."""
+
+    draft_id = str(ack.get("draft_id") or "")
+
+    def probe():
+        rows = engine.db_query(
+            "SELECT status, zendesk_comment_id, immutable_content "
+            "FROM support_account_zendesk_comment_deliveries "
+            "WHERE message_id = %s AND is_public = true",
+            (draft_id,),
+        )
+        row = rows[0] if rows else None
+        if row and str(row.get("status") or "") == "delivered":
+            return row
+        return None
+
+    return engine.wait_for(
+        "ack draft delivered to Zendesk (bound to the draft)",
+        probe,
+        engine.turn_timeout_min * 60,
+    )
+
+
+def _final_ack_recheck(
+    engine: Any, ctx: ScenarioContext, turn: dict, ack_draft_id: str, baseline_job_ids: set
+) -> None:
+    """Post-delivery re-assertion of the turn's output contract.
+
+    The exactly-one check before the delivery wait can be beaten by timing:
+    a second draft still ``preparing`` at that moment may reach ``queued``
+    while the first is being delivered. After the delivery completes, the
+    LIVE output set of the turn (every draft not superseded/stale) must
+    still be exactly the delivered ack — any extra live draft, queued or
+    still preparing, means a second customer reply is coming, and the run
+    must not report green. The RAG-fallback counter-evidence is re-checked
+    on the same final pass."""
+    turn_id = str(turn.get("turn_id") or "")
+    drafts = engine.db_query(
+        "SELECT draft_id, status FROM automation_hermes_case_drafts "
+        "WHERE turn_id = %s AND status NOT IN ('superseded','stale') "
+        "ORDER BY created_at DESC",
+        (turn_id,),
+    )
+    live_ids = [str(d.get("draft_id") or "") for d in drafts]
+    live_ok = live_ids == [ack_draft_id]
+    engine.record(
+        ctx, "final re-check: exactly one live acknowledgment output", live_ok,
+        f"live_drafts={live_ids}",
+    )
+    if not live_ok:
+        raise AssertionError(
+            "the notice turn has more than one live acknowledgment output "
+            f"(delivered={ack_draft_id}, live={live_ids}); a second customer "
+            "reply is still coming"
+        )
+    rag_jobs = _fresh_rag_fallback_jobs(engine, ctx, baseline_job_ids)
+    if rag_jobs:
+        engine.record(
+            ctx,
+            "ack reply published without RAG fallback",
+            False,
+            f"rag_fallback job={rag_jobs[0].get('job_id')}",
+        )
+        raise AssertionError(
+            f"notice was answered by a RAG fallback reply: job={rag_jobs[0].get('job_id')}"
+        )
+
+
+def _since_iso(ctx: ScenarioContext) -> str:
+    from datetime import timedelta
+
+    return (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+
+
+def _notice_case_state(engine: Any, ctx: ScenarioContext) -> dict:
+    rows = engine.db_query(
+        "SELECT automation_status, internal_email_send_status, "
+        "internal_email_send_reason, zendesk_ticket_status "
+        "FROM support_account_cases "
+        "WHERE account_case_id = %s",
+        (ctx.account_case_id,),
+    )
+    return rows[0] if rows else {}
+
+
+def _notice_requests(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT request_id, status, request_version FROM support_enablement_relay_requests "
+        "WHERE ticket_id = %s ORDER BY created_at",
+        (ctx.client_ticket_id,),
+    )
+
+
+def _notice_reply_job_ids(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT job_id FROM support_account_reply_jobs WHERE ticket_id = %s",
+        (ctx.client_ticket_id,),
+    )
+
+
+def _notice_turn_ids(engine: Any, ctx: ScenarioContext) -> list:
+    return engine.db_query(
+        "SELECT turn_id FROM automation_hermes_agent_turns WHERE zendesk_ticket_id = %s",
+        (ctx.zendesk_ticket_id,),
+    )
+
+
+def _verify_duplicate_reference_ticket(engine: Any, duplicate_of_ticket_id: str) -> dict:
+    """Fail-closed ownership check BEFORE anything is sent: the referenced
+    ticket must be a same-profile test ticket in the account-case mirror,
+    and its live Zendesk status/priority is snapshotted for the
+    before/after no-side-effect comparison."""
+
+    rows = engine.db_query(
+        "SELECT account_case_id, processing_profile "
+        "FROM support_account_cases "
+        "WHERE zendesk_ticket_id = %s ORDER BY created_at DESC LIMIT 1",
+        (duplicate_of_ticket_id,),
+    )
+    row = rows[0] if rows else None
+    if not row or str(row.get("processing_profile") or "") != str(engine.processing_profile):
+        raise AutomationTestScenarioError(
+            f"referenced ticket {duplicate_of_ticket_id} is not a "
+            f"{engine.processing_profile} test ticket; refusing to post the duplicate "
+            "notice (--duplicate-of-ticket must reference a test-scope ticket)"
+        )
+    ticket = engine._zendesk_request(f"/tickets/{duplicate_of_ticket_id}.json")
+    detail = ticket.get("ticket") if isinstance(ticket, dict) else None
+    status = str((detail or {}).get("status") or "")
+    if not status:
+        raise AutomationTestScenarioError(
+            f"referenced ticket {duplicate_of_ticket_id} status unreadable via Zendesk API"
+        )
+    return {
+        "account_case_id": str(row.get("account_case_id") or ""),
+        "status": status,
+        "priority": str((detail or {}).get("priority") or ""),
+    }
+
+
+def _zendesk_ticket_snapshot(engine: Any, ticket_id: str) -> dict:
+    ticket = engine._zendesk_request(f"/tickets/{ticket_id}.json")
+    detail = ticket.get("ticket") if isinstance(ticket, dict) else None
+    return {
+        "status": str((detail or {}).get("status") or ""),
+        "priority": str((detail or {}).get("priority") or ""),
+    }
+
+
+def _notice_side_effect_sets(engine: Any, ctx: ScenarioContext) -> dict:
+    """Identity sets for every entity class the duplicate re-delivery must
+    not extend — compared as SETS before/after the replay, so a swap
+    (one added, one removed) cannot pass a count-only check."""
+
+    jobs = {str(r.get("job_id") or "") for r in engine.db_query(
+        "SELECT job_id FROM support_account_reply_jobs WHERE ticket_id = %s",
+        (ctx.client_ticket_id,),
+    )}
+    requests = {str(r.get("request_id") or "") for r in engine.db_query(
+        "SELECT request_id FROM support_enablement_relay_requests WHERE ticket_id = %s",
+        (ctx.client_ticket_id,),
+    )}
+    executions = {str(r.get("execution_id") or "") for r in engine.db_query(
+        "SELECT execution_id FROM automation_executions WHERE zendesk_ticket_id = %s",
+        (ctx.zendesk_ticket_id,),
+    )}
+    drafts = {str(r.get("draft_id") or "") for r in engine.db_query(
+        "SELECT draft_id FROM automation_hermes_case_drafts WHERE zendesk_ticket_id = %s",
+        (ctx.zendesk_ticket_id,),
+    )}
+    intake_events = {str(r.get("event_id") or "") for r in engine.db_query(
+        "SELECT event_id FROM automation_intake_events "
+        "WHERE payload->'ticket'->>'id' = %s",
+        (ctx.zendesk_ticket_id,),
+    )}
+    return {
+        "jobs": jobs,
+        "requests": requests,
+        "executions": executions,
+        "drafts": drafts,
+        "intake_events": intake_events,
+    }
+
+
+def make_intake_replay_post(api_base: str, token: str, *, timeout_seconds: int = 30) -> Callable[..., dict]:
+    """Build the re-delivery adapter: POST the stored intake payload (same
+    event_id, byte-identical body) to the ECS intake endpoint with the
+    intake bearer token. The token is never logged.
+
+    Construction itself is fail-closed about the environment: the base must
+    be the Preproduction API base, so an inherited
+    SUPPORTPORTAL_RELAY_API_BASE pointing at Production can never produce a
+    single send from this adapter."""
+
+    normalized_base = _assert_preproduction_intake_base(api_base)
+
+    import urllib.request
+
+    def post(event_id: str, payload: dict) -> dict:
+        data = json.dumps(payload).encode()
+        request = urllib.request.Request(f"{normalized_base}/v1/intake", data=data, method="POST")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("Content-Type", "application/json")
+        with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            body = response.read()
+        return json.loads(body) if body else {}
+
+    return post
+
+
+def run_pp_en_duplicate_notice(
+    engine: Any,
+    *,
+    duplicate_of_ticket_id: str = "",
+    replay_post_json: Callable[..., dict] | None = None,
+    workdir: Path | None = None,
+) -> dict:
+    """PP-EN-DUP: duplicate-ticket notice follow-up (option-1 contract).
+
+    Success: the notice is acknowledged on the Hermes draft path — bound as
+    comment → intake(execution) → turn(event) → draft(turn) → delivery(draft)
+    — with valid ack content; the main ticket keeps automation ownership and
+    an open ticket status; the original relay request stays identity- AND
+    status-intact with zero new requests; the referenced ticket is verified
+    as test-scope up front and unchanged afterwards; and a byte-identical
+    re-delivery of the stored intake event returns an EXPLICIT idempotent
+    receipt for the SAME execution with all side-effect identity sets
+    unchanged. Without the replay adapter the report is marked incomplete.
+    """
+    if not str(duplicate_of_ticket_id or "").strip():
+        raise AutomationTestScenarioError(
+            "PP-EN-DUP requires --duplicate-of-ticket referencing a test-scope ticket "
+            "(no default; the 13819 incident ticket is Production data)"
+        )
+    if str(getattr(engine, "customer_turn_transport", "") or "") != "zendesk_api":
+        raise AutomationTestScenarioError(
+            "PP-EN-DUP requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api"
+        )
+    workdir = Path(workdir or tempfile.mkdtemp(prefix="pp-en-dup-"))
+    ctx = ScenarioContext("PP-EN-DUP")
+
+    referenced_before = _verify_duplicate_reference_ticket(engine, duplicate_of_ticket_id)
+    engine.record(
+        ctx, "referenced ticket verified as test-scope before the notice", True,
+        f"ticket={duplicate_of_ticket_id} case={referenced_before.get('account_case_id')} "
+        f"status={referenced_before.get('status')} priority={referenced_before.get('priority')}",
+    )
+
+    engine.start_ticket(
+        ctx,
+        "Enable media relay for our project",
+        "Hello Agora team,\n\n"
+        "Please enable Media Relay from your end for our project.\n\n"
+        f"App ID: {PP_APP_ID}\n\n"
+        "We are building a live event platform and need Media Relay to bridge presenters "
+        "between two channels. Thank you.",
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+    engine.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+    engine.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+    engine.wait_enablement_relay_request(ctx, "relay request created after confirmation")
+    wait_enablement_relay_dispatched(
+        engine=engine, ctx=ctx, step="relay request dispatched to the local client"
+    )
+
+    # Turn baseline: everything that existed BEFORE the notice turn; every
+    # notice-side wait must observe NEW entities only.
+    baseline_case = _notice_case_state(engine, ctx)
+    baseline_requests = _notice_requests(engine, ctx)
+    baseline_job_ids = {
+        str(row.get("job_id") or "") for row in _notice_reply_job_ids(engine, ctx)
+    }
+    baseline_turn_ids = {
+        str(row.get("turn_id") or "") for row in _notice_turn_ids(engine, ctx)
+    }
+    if len(baseline_requests) != 1:
+        raise AutomationTestScenarioError(
+            f"expected exactly one relay request before the notice, got {len(baseline_requests)}"
+        )
+    baseline_request = baseline_requests[0]
+    engine.record(
+        ctx, "turn baseline recorded", True,
+        f"request={baseline_request.get('request_id')}/v{baseline_request.get('request_version')} "
+        f"jobs={len(baseline_job_ids)} turns={len(baseline_turn_ids)}",
+    )
+
+    turn_info = engine.next_customer_turn(ctx, duplicate_notice_body(duplicate_of_ticket_id))
+    comment_id = str((turn_info or {}).get("comment_id") or "")
+    if not comment_id:
+        raise AutomationTestScenarioError(
+            "duplicate-notice comment id unavailable; turn binding cannot be verified"
+        )
+    engine.record(
+        ctx, "duplicate notice posted as requester comment", True,
+        f"comment_id={comment_id} references ticket {duplicate_of_ticket_id}",
+    )
+
+    intake = _wait_notice_intake(engine, ctx, comment_id)
+    engine.record(
+        ctx, "notice intake event bound to the posted comment", True,
+        f"event={intake.get('event_id')} execution={intake.get('execution_id')}",
+    )
+    turn = _wait_notice_turn(engine, ctx, intake)
+    engine.record(
+        ctx, "notice turn bound to the intake execution", True,
+        f"turn={turn.get('turn_id')} direction={turn.get('direction')} status={turn.get('status')}",
+    )
+    ack = _wait_notice_ack(engine, ctx, turn, baseline_job_ids)
+    ack_draft_id = str(ack.get("draft_id") or "")
+    engine.record(
+        ctx, "ack draft bound to the turn and queued for delivery", True,
+        f"draft={ack_draft_id} status=queued",
+    )
+    ack_delivery = _wait_notice_ack_delivery(engine, ctx, ack)
+    # The acceptance check runs on the DELIVERED text (immutable_content):
+    # the delivery pipeline may translate/prepare the draft, so the raw
+    # draft content is only reported as supporting evidence.
+    delivered_content = str(ack_delivery.get("immutable_content") or "")
+    content_failure = _dup_ack_content_check(delivered_content)
+    engine.record(
+        ctx, "delivered ack content acknowledges the notice without cross-ticket claims",
+        content_failure is None,
+        content_failure or "content check passed",
+    )
+    if content_failure:
+        raise AssertionError(content_failure)
+    # Final post-delivery re-check: a second draft that was still preparing
+    # during the exactly-one check may have reached queued by now — the
+    # turn's LIVE output set must still be exactly the delivered ack.
+    _final_ack_recheck(engine, ctx, turn, ack_draft_id, baseline_job_ids)
+
+    # State assertions: main ticket continues, request stays valid.
+    state = _notice_case_state(engine, ctx)
+    ownership_ok = str(state.get("automation_status") or "") == "automation"
+    engine.record(
+        ctx, "main ticket keeps automation ownership", ownership_ok,
+        f"automation_status={state.get('automation_status')!r}",
+    )
+    if not ownership_ok:
+        raise AssertionError(
+            f"duplicate notice lost automation ownership: {state.get('automation_status')!r}"
+        )
+    # The main ticket's open/closed state is decided by the REAL Zendesk
+    # readback; the case-mirror zendesk_ticket_status is only backfilled by
+    # the close transaction, so a still-open ticket may legitimately mirror
+    # NULL (mirror value is reported as supporting evidence, not a verdict).
+    main_zendesk_status = _zendesk_ticket_snapshot(engine, ctx.zendesk_ticket_id)
+    ticket_open_ok = str(main_zendesk_status.get("status") or "") not in {"solved", "closed", ""}
+    engine.record(
+        ctx, "main ticket not solved or closed by the notice (Zendesk readback)", ticket_open_ok,
+        f"zendesk_readback={main_zendesk_status.get('status')!r} "
+        f"mirror={state.get('zendesk_ticket_status')!r}",
+    )
+    if not ticket_open_ok:
+        raise AssertionError(
+            f"main ticket was solved/closed during the notice turn: "
+            f"zendesk_readback={main_zendesk_status.get('status')!r} "
+            f"mirror={state.get('zendesk_ticket_status')!r}"
+        )
+    requests_after = _notice_requests(engine, ctx)
+    request_ok = (
+        len(requests_after) == 1
+        and str(requests_after[0].get("request_id") or "") == str(baseline_request.get("request_id"))
+        and int(requests_after[0].get("request_version") or 0)
+        == int(baseline_request.get("request_version") or 0)
+        and str(requests_after[0].get("status") or "") in PP_EN_DUP_REQUEST_ACTIVE_STATUSES
+    )
+    engine.record(
+        ctx, "original relay request still active and unchanged", request_ok,
+        f"requests={[(r.get('request_id'), r.get('request_version'), r.get('status')) for r in requests_after]}",
+    )
+    if not request_ok:
+        raise AssertionError(
+            "relay request set or validity changed during the duplicate notice turn: "
+            f"{[(r.get('request_id'), r.get('request_version'), r.get('status')) for r in requests_after]}"
+        )
+    referenced_after = _zendesk_ticket_snapshot(engine, duplicate_of_ticket_id)
+    referenced_ok = referenced_after == {
+        "status": referenced_before.get("status"),
+        "priority": referenced_before.get("priority"),
+    }
+    engine.record(
+        ctx, "referenced ticket untouched (status and priority unchanged)", referenced_ok,
+        f"before={referenced_before.get('status')}/{referenced_before.get('priority')} "
+        f"after={referenced_after.get('status')}/{referenced_after.get('priority')}",
+    )
+    if not referenced_ok:
+        raise AssertionError(
+            "referenced ticket changed during the notice turn: "
+            f"{referenced_before} -> {referenced_after}"
+        )
+
+    # Idempotent re-delivery leg (REQUIRED for a complete pass): replay the
+    # stored intake payload byte-identically, demand an explicit idempotent
+    # receipt for the SAME execution, and compare identity sets before/after.
+    replay_report: dict[str, Any] = {"exercised": False}
+    complete = True
+    if replay_post_json is not None:
+        event_id = str(intake.get("event_id") or "")
+        execution_id = str(intake.get("execution_id") or "")
+        sets_before = _notice_side_effect_sets(engine, ctx)
+        replay_response = replay_post_json(
+            event_id=event_id, payload=intake.get("payload")
+        )
+        replay_ok = (
+            replay_response.get("idempotent_replay") is True
+            and str(replay_response.get("execution_id") or "") == execution_id
+        )
+        engine.record(
+            ctx, "duplicate intake re-delivery is idempotent (same execution)", replay_ok,
+            f"event_id={event_id} execution={execution_id} "
+            f"receipt_execution={replay_response.get('execution_id')} "
+            f"idempotent_replay={replay_response.get('idempotent_replay')}",
+        )
+        if not replay_ok:
+            raise AssertionError(
+                f"duplicate intake re-delivery was not confirmed idempotent for the "
+                f"same execution: {replay_response}"
+            )
+        sets_after = _notice_side_effect_sets(engine, ctx)
+        zero_effect = sets_before == sets_after
+        engine.record(
+            ctx, "re-delivery produced zero new side effects", zero_effect,
+            f"sets_unchanged={zero_effect}",
+        )
+        if not zero_effect:
+            raise AssertionError(
+                "duplicate re-delivery changed side-effect identity sets: "
+                f"{sets_before} -> {sets_after}"
+            )
+        replay_report = {
+            "exercised": True,
+            "event_id": event_id,
+            "execution_id": execution_id,
+        }
+    else:
+        complete = False
+        engine.info(
+            "replay adapter not provided: the idempotent re-delivery leg did NOT run; "
+            "this report is incomplete for the PP-EN-DUP contract"
+        )
+
+    return {
+        "scenario": ctx.scenario_id,
+        "complete": complete,
+        "zendesk_ticket_id": ctx.zendesk_ticket_id,
+        "account_case_id": ctx.account_case_id,
+        "notice_comment_id": comment_id,
+        "notice_intake_event_id": str(intake.get("event_id") or ""),
+        "notice_execution_id": str(intake.get("execution_id") or ""),
+        "notice_turn_id": str(turn.get("turn_id") or ""),
+        "ack_draft_id": ack_draft_id,
+        "ack_delivery_comment_id": str(ack_delivery.get("zendesk_comment_id") or ""),
+        "ack_delivery_content": str(ack_delivery.get("immutable_content") or ""),
+        "relay_request_id": str(baseline_request.get("request_id") or ""),
+        "relay_request_version": int(baseline_request.get("request_version") or 0),
+        "duplicate_of_ticket_id": duplicate_of_ticket_id,
+        "main_ticket_zendesk_status": main_zendesk_status,
+        "referenced_ticket_before": referenced_before,
+        "referenced_ticket_after": referenced_after,
+        "replay": replay_report,
+        "steps": [step.as_dict() for step in engine.steps],
+    }
+
+
 PP_SCENARIOS: dict[str, dict[str, Any]] = {
     "PP-EN-QUICK": {
         "label": "Media Relay quick enablement (preproduction)",
@@ -882,5 +1624,17 @@ PP_SCENARIOS: dict[str, dict[str, Any]] = {
             "→ completion reply → solved"
         ),
         "run": run_pp_en_quick,
+        "requires": {"relay": True, "pilot": True, "zendesk_api": False},
+    },
+    "PP-EN-DUP": {
+        "label": "Duplicate-ticket notice follow-up (preproduction)",
+        "description": (
+            "valid enablement main ticket → customer explains a duplicate ticket "
+            "(higher priority / merge or close it) → exactly one non-RAG ack reply "
+            "delivered, automation ownership and relay request unchanged, zero new "
+            "requests, and byte-identical intake re-delivery stays idempotent"
+        ),
+        "run": run_pp_en_duplicate_notice,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": True, "intake": True},
     },
 }

@@ -395,6 +395,63 @@ class RelayNotFoundReplyClaimGateTests(unittest.TestCase):
         self.assertNotEqual(job.get("status"), "cancelled")
         self.assertIsNone((job.get("payload") or {}).get("cancel_reason"))
 
+    def test_notfound_prepare_carries_customer_conversation_language(self) -> None:
+        """13837 regression: the App-ID-not-found correction keeps the
+        customer's language and never solves the ticket."""
+        import types as _types
+
+        ticket = self.repository.get_ticket("13751")
+        ticket["messages"] = [
+            {
+                "role": "customer",
+                "content": "Hola, no encuentro mi proyecto. ¿Pueden ayudarme a activar Media Relay?",
+                "created_at": "2026-09-29T04:53:00+00:00",
+                "message_id": "es-1",
+                "id": "es-1",
+            },
+            {
+                "role": "customer",
+                "content": "Any update? Could it be faster?",
+                "created_at": "2026-09-29T05:04:40+00:00",
+                "message_id": "es-2",
+                "id": "es-2",
+            },
+        ]
+        self.repository.save_ticket(ticket)
+        job = self._notfound_job(internal_resolution=True)
+        # The shared seed's literal pipeline value predates the canonical
+        # constant; the prepare stage rejects anything else.
+        job["payload"]["reply_pipeline"] = self.WORKER.ACCOUNT_REPLY_PERSONA_PIPELINE
+        job["status"] = self.WORKER.ACCOUNT_REPLY_PERSONA_V8_PREPARING
+        self.repository.save_account_reply_job(job)
+        rendered = _types.SimpleNamespace(
+            content=(
+                "Hola, no encontramos un proyecto que coincida con el App ID. "
+                "Verifícalo y envíanos el App ID correcto."
+            ),
+            model="test-model",
+            prompt_version=self.WORKER.AUTOMATION_PERSONA_PROMPT_VERSION,
+            generation_attempts=1,
+            safety_status="passed",
+            safety_issue_codes=(),
+            generation_diagnostics=(),
+        )
+        with patch.object(self.WORKER, "ticket_repository", self.repository), patch.object(
+            self.WORKER, "render_automation_reply", return_value=rendered
+        ) as render:
+            self.WORKER._prepare_account_reply_job(dict(job))
+        facts = render.call_args.kwargs["reply_facts"]
+        context = facts["conversation_context"]
+        self.assertEqual(context["version"], "automation-context-v1")
+        contents = "\n".join(m["content"] for m in context["conversation"])
+        self.assertIn("Hola, no encuentro mi proyecto", contents)
+        # The legacy English default is not treated as chosen-English evidence.
+        self.assertNotIn("customer_language", facts)
+        prepared = self.repository.get_account_reply_job(job["job_id"])
+        assert prepared is not None
+        self.assertEqual(prepared["status"], self.WORKER.ACCOUNT_REPLY_PERSONA_V8_SCHEDULED)
+        self.assertFalse(prepared["payload"].get("close_after_publish"))
+
 
 if __name__ == "__main__":
     unittest.main()

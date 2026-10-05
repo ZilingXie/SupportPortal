@@ -80,6 +80,8 @@ rtk proxy python -m pytest -q -rs backend/tests/test_automation_ecs_store_postgr
 
 [CLI](../../scripts/testing/production_ticket_scenarios.py) 与网页共用 [ScenarioEngine](../../backend/services/automation_test_scenarios.py)，会加载配置。`--list` 列举剧本，`--check` 连接 DB/SMTP/IMAP 但不发信；`--scenario` 会运行真实业务链路。现有 CLI 的显式选项为 `E1/E2/F1/S1/all`，引擎另有 `D1`；选取方式以当前 CLI 和网页实现为准。
 
+ECS Preproduction 的 PP 剧本（PP-EN-QUICK、PP-EN-DUP）不走上述 legacy 链路，而是独立 CLI `python -m scripts.testing.preproduction`（故意不注册进 `/automation/test` 控制台）；前置按场景分档（DUP 不需要 pilot/relay 客户端），命令与通过标准见同一 Runbook §9。
+
 运行前明确目标入口、测试数据和允许的外部动作。结果检查 reply intent、内部邮件状态、工作流状态、Zendesk readback 等结构化证据，人工批准或附件回复的等待点保留人工。模拟结果、连通检查、API 接受请求和业务完成是不同的验证结论。
 
 ## 自动执行与报告
