@@ -172,6 +172,7 @@ def handle_slack_hermes_message(
     *,
     expected_team_id: str,
     expected_channel_id: str,
+    repository: Any = None,
 ) -> dict[str, Any]:
     """An engineer's thread reply becomes reviewer feedback: re-investigate.
 
@@ -200,8 +201,13 @@ def handle_slack_hermes_message(
 
     # R17/P1-2: check for a knowledge review command BEFORE creating a
     # feedback turn. The engineer replies to a review notification with a
-    # decision instead of investigation feedback.
-    review_decision = _try_knowledge_review_command(store, ticket_id, text)
+    # decision instead of investigation feedback. The thread lineage rides
+    # along so standalone (native Hermes case) candidates — which have no
+    # client_ticket_id — still match this thread (R18/P1-2).
+    review_decision = _try_knowledge_review_command(
+        store, ticket_id, text,
+        channel_id=channel_id, thread_ts=thread_ts, repository=repository,
+    )
     if review_decision is not None:
         return review_decision
 
@@ -326,56 +332,151 @@ def handle_slack_adhoc_session(
 
 # ---------------------------------------------------------------------------
 # Knowledge review decision from Slack thread reply (governance plan WP3,
-# review round 17 / P1-2)
+# review round 17 / P1-2; round 18 hardening: zero-arg repository factory,
+# standalone-candidate lineage matching, generation guard, directed targets)
 # ---------------------------------------------------------------------------
 
 _KNOWLEDGE_APPROVE_PREFIX = "knowledge approve"
 _KNOWLEDGE_REJECT_PREFIX = "knowledge reject"
+_KNOWLEDGE_REVIEW_ACTIONS = frozenset({"new", "supplement", "replace", "merge"})
+_KNOWLEDGE_TARGETED_ACTIONS = frozenset({"supplement", "replace", "merge"})
+_KNOWLEDGE_APPROVE_USAGE = (
+    "knowledge approve <new|supplement|replace|merge> "
+    "[target=<object_id>] [base_version=<version>] <complete body>"
+)
+
+
+class _KnowledgeReviewUnavailable(Exception):
+    """The decision store is unreachable — distinct from "no candidates"."""
+
+
+def _resolve_knowledge_review_repository(repository: Any = None) -> Any:
+    if repository is not None:
+        return repository
+    import os
+
+    if not str(os.getenv("TICKET_DB_DSN") or "").strip():
+        raise _KnowledgeReviewUnavailable(
+            "knowledge review decisions require TICKET_DB_DSN; the decision store is unavailable"
+        )
+    from backend.repositories.ticket_repository import create_ticket_repository
+
+    try:
+        return create_ticket_repository()
+    except Exception as exc:  # noqa: BLE001 - construction failure must be visible
+        raise _KnowledgeReviewUnavailable(
+            f"the knowledge review decision store could not be initialized: {exc}"
+        ) from exc
 
 
 def _try_knowledge_review_command(
-    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
+    store: AutomationEcsStore,
+    ticket_id: str,
+    text: str,
+    *,
+    channel_id: str = "",
+    thread_ts: str = "",
+    repository: Any = None,
 ) -> dict[str, Any] | None:
-    """Route a Slack thread reply to the knowledge promotion decision API."""
+    """Route a Slack thread reply to the knowledge promotion decision contract."""
     normalized = text.strip()
     lower = normalized.lower()
-    if lower.startswith(_KNOWLEDGE_REJECT_PREFIX):
-        return _execute_knowledge_review_reject(store, ticket_id, normalized, repository=repository)
-    if lower.startswith(_KNOWLEDGE_APPROVE_PREFIX):
-        return _execute_knowledge_review_approve(store, ticket_id, normalized, repository=repository)
+    try:
+        if lower.startswith(_KNOWLEDGE_REJECT_PREFIX):
+            return _execute_knowledge_review_reject(
+                store, ticket_id, normalized, repository=repository,
+                channel_id=channel_id, thread_ts=thread_ts,
+            )
+        if lower.startswith(_KNOWLEDGE_APPROVE_PREFIX):
+            return _execute_knowledge_review_approve(
+                store, ticket_id, normalized, repository=repository,
+                channel_id=channel_id, thread_ts=thread_ts,
+            )
+    except _KnowledgeReviewUnavailable as exc:
+        return _invalid(str(exc), status_code=503)
     return None
 
 
 def _find_pending_knowledge_review(
-    store: AutomationEcsStore, ticket_id: str, *, repository: Any = None
+    store: AutomationEcsStore,
+    ticket_id: str,
+    *,
+    repository: Any = None,
+    channel_id: str = "",
+    thread_ts: str = "",
 ) -> list[dict[str, Any]]:
-    if repository is None:
-        import os
-        from backend.repositories.ticket_repository import create_ticket_repository
-        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
-        if not dsn:
-            return []
-        try:
-            repository = create_ticket_repository(dsn)
-        except Exception:  # noqa: BLE001
-            return []
+    """Human-review candidates for THIS thread's case.
+
+    Both lineage shapes match: case-bound promotions via ``client_ticket_id``
+    and standalone (native Hermes case) promotions via the Slack thread
+    lineage captured at queue time — a standalone row has an empty
+    ``client_ticket_id``, so the ticket filter alone can never find it.
+    """
+    repository = _resolve_knowledge_review_repository(repository)
     try:
         promotions = repository.list_weknora_promotions()
-    except Exception:  # noqa: BLE001
-        return []
-    pending = []
+    except _KnowledgeReviewUnavailable:
+        raise
+    except Exception as exc:  # noqa: BLE001 - a read failure is not "no candidates"
+        raise _KnowledgeReviewUnavailable(
+            f"knowledge review candidates could not be listed: {exc}"
+        ) from exc
+    pending: list[dict[str, Any]] = []
+    seen: set[str] = set()
     for row in promotions or []:
         if not isinstance(row, dict) or str(row.get("status") or "") != "human_review":
             continue
-        if str(row.get("client_ticket_id") or "").strip() == ticket_id:
+        ticket_match = bool(ticket_id) and str(row.get("client_ticket_id") or "").strip() == ticket_id
+        thread_match = bool(channel_id and thread_ts) and (
+            str(row.get("slack_channel_id") or "").strip() == channel_id
+            and str(row.get("slack_thread_ts") or "").strip() == thread_ts
+        )
+        if not (ticket_match or thread_match):
+            continue
+        key = str(row.get("promotion_id") or "")
+        if key and key not in seen:
+            seen.add(key)
             pending.append(row)
     return pending
 
 
+def _knowledge_review_generation_current(
+    store: AutomationEcsStore, repository: Any, promotion: dict[str, Any]
+) -> str | None:
+    """Same generation check as the decision API and the write boundary.
+
+    Returns None when current, or a caller-facing refusal detail when the
+    candidate's frozen inputs were superseded (newer source version, case
+    fingerprint drift, reopened native ticket).
+    """
+    from backend.services.hermes_knowledge_workflow import (
+        weknora_promotion_generation_current,
+    )
+
+    generation_ok, generation_reason = weknora_promotion_generation_current(
+        repository, promotion, native_state_store=store,
+    )
+    if generation_ok:
+        return None
+    return (
+        f"candidate generation superseded ({generation_reason}); "
+        "the decision was not applied"
+    )
+
+
 def _execute_knowledge_review_reject(
-    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
+    store: AutomationEcsStore,
+    ticket_id: str,
+    text: str,
+    *,
+    repository: Any = None,
+    channel_id: str = "",
+    thread_ts: str = "",
 ) -> dict[str, Any]:
-    pending = _find_pending_knowledge_review(store, ticket_id, repository=repository)
+    repository = _resolve_knowledge_review_repository(repository)
+    pending = _find_pending_knowledge_review(
+        store, ticket_id, repository=repository, channel_id=channel_id, thread_ts=thread_ts,
+    )
     if not pending:
         return _invalid("no knowledge review candidates are pending for this case")
     if len(pending) > 1:
@@ -383,10 +484,9 @@ def _execute_knowledge_review_reject(
             f"multiple knowledge review candidates pending ({len(pending)}); use the decision API to disambiguate"
         )
     promotion = pending[0]
-    if repository is None:
-        import os
-        from backend.repositories.ticket_repository import create_ticket_repository
-        repository = create_ticket_repository(str(os.getenv("TICKET_DB_DSN") or "").strip())
+    superseded = _knowledge_review_generation_current(store, repository, promotion)
+    if superseded:
+        return _invalid(superseded, status_code=409)
     result = repository.decide_weknora_promotion(
         str(promotion["promotion_id"]),
         decision="reject",
@@ -407,23 +507,51 @@ def _execute_knowledge_review_reject(
     }
 
 
-def _execute_knowledge_review_approve(
-    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
-) -> dict[str, Any]:
+def _parse_knowledge_approve(text: str) -> tuple[str | None, dict[str, str], str, str | None]:
+    """Split an approve reply into (action, overrides, body, usage_error)."""
+    import re
+
     remainder = text[len(_KNOWLEDGE_APPROVE_PREFIX):].strip()
-    parts = remainder.split(None, 1)
-    if len(parts) < 2:
-        return _invalid(
-            "knowledge approve requires: knowledge approve <new|supplement|replace|merge> <complete body>"
+    head = remainder.split(None, 1)
+    if not head or not head[0]:
+        return None, {}, "", f"knowledge approve requires: {_KNOWLEDGE_APPROVE_USAGE}"
+    action = head[0].strip().lower()
+    if action not in _KNOWLEDGE_REVIEW_ACTIONS:
+        return None, {}, "", (
+            f"unknown action '{action}'; expected new, supplement, replace, or merge. "
+            f"Usage: {_KNOWLEDGE_APPROVE_USAGE}"
         )
-    action = parts[0].strip().lower()
-    body = parts[1].strip()
-    if action not in {"new", "supplement", "replace", "merge"}:
-        return _invalid(f"unknown action '{action}'; expected new, supplement, replace, or merge")
+    tail = head[1] if len(head) > 1 else ""
+    overrides: dict[str, str] = {}
+    flag_pattern = re.compile(r"\s*(target|base_version)=(\S+)")
+    while True:
+        match = flag_pattern.match(tail)
+        if not match:
+            break
+        overrides[match.group(1)] = match.group(2)
+        tail = tail[match.end():]
+    return action, overrides, tail.strip(), None
+
+
+def _execute_knowledge_review_approve(
+    store: AutomationEcsStore,
+    ticket_id: str,
+    text: str,
+    *,
+    repository: Any = None,
+    channel_id: str = "",
+    thread_ts: str = "",
+) -> dict[str, Any]:
+    action, overrides, body, usage_error = _parse_knowledge_approve(text)
+    if usage_error:
+        return _invalid(usage_error)
     if not body:
         return _invalid("the approved body is empty")
 
-    pending = _find_pending_knowledge_review(store, ticket_id, repository=repository)
+    repository = _resolve_knowledge_review_repository(repository)
+    pending = _find_pending_knowledge_review(
+        store, ticket_id, repository=repository, channel_id=channel_id, thread_ts=thread_ts,
+    )
     if not pending:
         return _invalid("no knowledge review candidates are pending for this case")
     if len(pending) > 1:
@@ -432,25 +560,45 @@ def _execute_knowledge_review_approve(
         )
     promotion = pending[0]
     candidate = promotion.get("candidate_payload") if isinstance(promotion.get("candidate_payload"), dict) else {}
+
     resolution: dict[str, Any] = {"action": action, "content": body}
     if str(candidate.get("title") or "").strip():
         resolution["title"] = str(candidate["title"]).strip()
-    if str(candidate.get("target_object_id") or "").strip():
-        resolution["target_object_id"] = str(candidate["target_object_id"]).strip()
-        if str(candidate.get("base_version") or "").strip():
-            resolution["base_version"] = str(candidate["base_version"]).strip()
+    candidate_target = str(candidate.get("target_object_id") or "").strip()
+    candidate_base_version = str(candidate.get("base_version") or "").strip()
+    target = overrides.get("target") or candidate_target
+    base_version = overrides.get("base_version") or candidate_base_version
+    if target:
+        resolution["target_object_id"] = target
+    if base_version:
+        resolution["base_version"] = base_version
+    # Directed actions need a target AND the version the reviewed content was
+    # based on — the adapter refuses the write without both, so refuse the
+    # decision up front instead of reporting an approval that cannot execute.
+    if action in _KNOWLEDGE_TARGETED_ACTIONS:
+        if not target:
+            return _invalid(
+                f"action '{action}' requires a target object; add target=<object_id> to the command"
+            )
+        if not base_version:
+            return _invalid(
+                f"action '{action}' requires the base_version the reviewed content is based on; "
+                "add base_version=<version> to the command"
+            )
 
-    if repository is None:
-        import os
-        from backend.repositories.ticket_repository import create_ticket_repository
-        repository = create_ticket_repository(str(os.getenv("TICKET_DB_DSN") or "").strip())
-    result = repository.decide_weknora_promotion(
-        str(promotion["promotion_id"]),
-        decision="approve",
-        decided_by="slack-engineer",
-        decided_at=_now_iso_str(),
-        resolution=resolution,
-    )
+    superseded = _knowledge_review_generation_current(store, repository, promotion)
+    if superseded:
+        return _invalid(superseded, status_code=409)
+    try:
+        result = repository.decide_weknora_promotion(
+            str(promotion["promotion_id"]),
+            decision="approve",
+            decided_by="slack-engineer",
+            decided_at=_now_iso_str(),
+            resolution=resolution,
+        )
+    except ValueError as exc:
+        return _invalid(f"the approved resolution is incomplete: {exc}")
     if result is None:
         return _invalid("the candidate is no longer awaiting a decision")
     LOGGER.info(

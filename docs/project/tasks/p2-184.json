@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "第十四轮独立验收通过（R14-1/2/3 全闭合，SQLite up/down 实跑+代码核查）。执行 finalize 到 main 后按既有授权推进 Preproduction 部署。WeKnora fork 镜像构建与部署通道在实际部署前确定；n8n 发布协调、AgentMemory 退休、Production 晋级遵守各自授权边界。",
+  "next_action": "R18 六项修复已实施待定向复验：(1) create_ticket_repository 零参工厂修正+决策存储不可用显式 503（与无候选区分）；(2) standalone/native 候选按 Slack thread lineage 匹配（client_ticket_id 为空不再漏配）；(3) Slack 审批/拒绝与决策 API 同走 weknora_promotion_generation_current 代际守卫（409）；(4) approve 支持 target=/base_version= 定向覆盖+targeted 动作完整性前置校验；(5) memory recall 硬上限探测页修正（partial 标记真正触发，hermes-deploy 036c33e）；(6) overlay Docker build context 修正为构建上下文根目录。真实入口测试 test_hermes_slack_knowledge_review 七例（对 R17 代码六例必败）。先不要部署继续有效；待 R18 定向复验。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -44,6 +44,13 @@
       "label": "R14-2/3 验收测试",
       "command": "go test ./internal/application/service/ -run 'TestGenerationCleanup|TestSameBody' -count=1 -v",
       "result": "通过：持续清理失败 3 连执行均返回非 nil→故障解除→同任务完成清理+stale chunk 移除；同正文跨代际（version 3 body=version 1 body, knowledge=completed）→无条件代际清理触发→gen-1 chunk 删除+gen-3 chunk 保留"
+    },
+    {
+      "type": "test",
+      "label": "R18 真实入口 Slack 决策测试（7 例，对 R17 基线 6 例必败）",
+      "command": ".venv/bin/python -m pytest backend/tests/test_hermes_slack_knowledge_review.py -q",
+      "result": "7 passed（stash 复演：R17 代码下 6 failed/1 passed）",
+      "recorded_at": "2026-10-05T19:30:00Z"
     }
   ],
   "source_refs": [
@@ -57,7 +64,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-05T16:00:00Z",
+  "updated_at": "2026-10-05T19:30:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
