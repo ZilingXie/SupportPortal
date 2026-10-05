@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-03T17:48:49Z",
-  "source_base_commit": "10a8213cd39caef195dfef5f18482c171d1032e9",
-  "registry_digest": "e4c97fffb67e34150bb9fdea1fd53a08aeda13a4a882a0abb979bb8dcc489c1c",
+  "generated_at": "2026-10-05T06:33:08Z",
+  "source_base_commit": "1a132522163dec4e16735d71ac3e0bb07d24584a",
+  "registry_digest": "d712ff100aa55a0a624770b061e1a948e2babb5b2f5bfeeb99a3412b6e11bba6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1426,48 +1426,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
-          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
-          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
-        },
-        {
-          "type": "test",
-          "label": "r2 真实模型评测完整输出（gpt-6-astra，automation-persona-v32，2026-10-03，7 passed in 21.05s，全部 generation_attempts=1、safety passed，语义断言 enabled/close/App-ID 纠正全命中、跟进类无 completion 措辞）",
-          "command": "HTTPS_PROXY=http://127.0.0.1:1082 ENABLEMENT_REPLY_LANGUAGE_EVAL=1 /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py -q -s",
-          "result": "逐样本正文（greeting 由应用固定添加，正文为模型首轮输出）：[1] pt_completion_english_internal(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado — teremos prazer em ajudar.' [2] es_relay_success_english_internal(es)：'Gracias por tu paciencia. Te confirmo que Media Relay ya está habilitado en tu proyecto, así que todo está listo. / Voy a cerrar este caso. Si más adelante tienes alguna pregunta, puedes abrir un nuevo ticket y con gusto te ayudaremos.' [3] pt_bare_appid_last_message(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado.' [4] explicit_switch_to_english(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is now enabled on your project, and we've verified the configuration. / I'm closing this case now. If anything else comes up, feel free to open a new ticket and we'll be happy to help.' [5] en_only_conversation(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is enabled on your project, and the configuration has been verified. / I'm closing this case now. If anything else comes up, feel free to open a new ticket.' [6] zh_conversation(zh)：'感谢你的耐心等待！我已确认你的项目已开通 Media Relay，并通过配置核验确认了启用状态，可以使用了。/ 我现在会关闭此工单。如果之后还有其他问题，欢迎随时提交新工单，我们会继续为你提供帮助。' [7] es_internal_followup(es)：'Gracias por enviármelo. El App ID que compartiste no es correcto. ¿Podrías enviarme el App ID correcto de 32 caracteres para tu solicitud de activación de Media Relay?'（无 habilitado/结案措辞）。过程保留：r2 首跑 es close_claim 词干漏 'cier'（模型输出 'Cierro este caso' 为正确结案表述）出现一次断言假失败，补词干 'cierr|cerr|finaliz' 后全绿。"
-        },
-        {
-          "type": "document",
-          "label": "旧 job 冻结时点与幂等",
-          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
-          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
-        },
-        {
-          "type": "document",
-          "label": "r2 快照新鲜度（验收一轮阻塞项 1）",
-          "command": "test_worker.py::...::test_completion_job_uses_live_ticket_over_stale_case_snapshot / test_enablement_auto_relay.py::...::test_success_result_uses_live_ticket_over_stale_case_snapshot / test_completion_job_falls_back_to_case_snapshot_without_ticket",
-          "result": "case 快照落后于 ticket（缺少客户其后发送的语言要求消息）时，内部邮件与 Relay 两入口的完成 job 快照均包含该最新消息（葡语/西语样例各自验证）；ticket 不可读（空 dict）时回退 case 快照。"
-        },
-        {
-          "type": "document",
-          "label": "环境范围",
-          "command": "git log codex/enablement-reply-language --oneline",
-          "result": "代码+测试+文档改动仅进入任务分支（r1 bd6f384c + r2 提交）；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
-        },
-        {
-          "type": "deployment",
-          "label": "Preproduction 发布 r20261003-1c867cf 与部署后验证（2026-10-03/04）",
-          "command": "release_automation_ecs_pipeline.sh --release-commit 1c867cfd9ad0926376453e07f114538040dc5c77 --prompt-release-id pr-22d6c9be1773 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
-          "result": "全阶段 passed（evidence: .deployments/ecs-pipeline-r20261003-1c867cf/preproduction-deploy/evidence.json，checks 全 passed/prompt_sync+activation=active/rollback=not_started，SLO breach=true 如实记录）；公网 /health/live ok + /health/release：git_commit=1c867cfd、image_digest=sha256:71f9ed0eb22696bb22d73c7298efec49c63e1e3f1e3d76ace529f5f376064967、prompt_release_id=pr-22d6c9be1773、schema automation-ecs-012；worker td :100 archer/gpt-6-sol/disabled/APP_BUILD_REF=1c867cfd、digest expected=observed runtime_verified=true。真实模型检查（零投递）：gpt-6-sol+automation-persona-v32+preprod sid-bright v1 七场景语言与语义 ALL-PASS 全首轮。过程保留：首跑 prompt id 取自源库 active（pr-c47f99044ae0）而目标库已 superseded → sync 失败；另两次尝试分别遇 .env 静态 key 覆盖 SSO（SSM 取值失败）与 CodeBuild 并发上限（首次被杀本地进程后 AWS 侧构建完成）。未晋级 Production。"
-        },
-        {
-          "type": "test",
-          "label": "发布后验收补充：es resend_request 无重音词干（2026-10-04）",
-          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_reply_language_eval.py",
-          "result": "82 passed/89 subtests（新增 test_es_followup_resend_request_accepts_unaccented_enviar：验收报告原句全语义组命中、禁组不命中、无关正文不命中）+ eval 门控默认 7 skipped。纯评测断言修正，Preproduction r20261003-1c867cf 不受影响。"
-        },
-        {
-          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1573,8 +1531,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 41,
-      "done_count": 21,
+      "task_count": 40,
+      "done_count": 20,
       "blocked_count": 0
     },
     {
@@ -4895,13 +4853,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "RAG/KG 使用边界",
       "goal": "明确 Client AI 和 Engineer AI 的知识使用范围。",
       "acceptance_criteria": [],
-      "evidence": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "SupportPortal 回归确认（13 套件，本轮无 SP 代码增量）",
+          "command": ".venv/bin/python -m pytest -q",
+          "result": "216 passed, 11 skipped"
+        },
+        {
+          "type": "test",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 79c4b2a）",
+          "command": "go test ./internal/... -count=1",
+          "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（环境性）"
+        },
+        {
+          "type": "test",
+          "label": "R14-1 PG 迁移路径验证",
+          "command": "独立 PG 库：预建无 generation_version 的 chunks 表→执行 000116 up SQL→列存在+索引存在→幂等重执行→chunk 写入+按代际删除→down SQL 列消除",
+          "result": "全部通过"
+        },
+        {
+          "type": "test",
+          "label": "R14-2/3 验收测试",
+          "command": "go test ./internal/application/service/ -run 'TestGenerationCleanup|TestSameBody' -count=1 -v",
+          "result": "通过：持续清理失败 3 连执行均返回非 nil→故障解除→同任务完成清理+stale chunk 移除；同正文跨代际（version 3 body=version 1 body, knowledge=completed）→无条件代际清理触发→gen-1 chunk 删除+gen-3 chunk 保留"
+        }
+      ],
       "source_refs": [
         "docs/roadmap.html#lanes"
       ],
       "legacy_ids": [],
-      "status": "planned",
-      "task_count": 1,
+      "status": "active",
+      "task_count": 2,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -15552,66 +15535,132 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-184",
-      "title": "客户回复语言连续性修复：Enablement 完成通知按客户公开会话语言生成（仅 Preproduction）",
-      "status": "done",
+      "title": "Hermes-WeKnora 知识治理架构（验收修复）：来源/Summary/Review/WeKnora 写合同/会话读取",
+      "status": "review",
       "owner": "codex",
-      "phase_id": "phase-1",
-      "module_id": "account-automation",
-      "function_id": "automation-execution-loop",
-      "created_at": "2026-10-03",
-      "updated_at": "2026-10-04",
-      "summary": "计划名：客户回复语言连续性修复（实施计划，需要验收）。修复 13837 根因：内部邮件与 AgentRelay 触发的 Enablement 完成通知构造 reply job 时绕过 create_account_reply_job，reply_facts 缺少 conversation_context，加上 build_automation_reply_facts 把 customer_language 静默默认为 en，Persona 只看到英文内部结果而生成英文正文。r1 变更（bd6f384c）：(1) worker.py 三个内部触达入口（_queue_enablement_completion_reply_job、_apply_enablement_relay_success、_queue_internal_followup_reply_job，仅 handler=enablement）挂载脱敏公开会话快照 reply_facts.conversation_context；(2) automation_persona.py enablement 不再默认 en、语言优先级 Prompt、fail-closed 门 automation_persona_missing_customer_language、v31→v32 版本围栏；(3) prepare/publish 双路径旧 job 回填（冻结时点=job.created_at）。r2 修复（验收一轮三个阻塞项）：(a) 快照构造改为按完成 job 创建时点从 canonical ticket 的现行公开会话现建（build_automation_context+persona_context），case 级 automation_context.reply_conversation_context 仅在 ticket 不可读/无消息时回退——否则 case 快照可能落后于 reply-sync 刷新，漏掉客户最新语言要求；内部邮件与 Relay 两入口各补过期 case 快照回归测试。(b) 语言证据门升级 _customer_message_carries_language_signal：剔除脱敏占位符/URL/邮箱/≥16 位 hex/数字与裸确认词（ok/okay/yes/no/done/k）后须存在可辨语言内容，CJK 直接计信号；仅有无信号内容且无更早正文时停止生成转人工。(c) 评测文件补业务语义断言（enabled/close/correct-App-ID 正则组 + 跟进类禁 completion 措辞），任务登记提交逐样本完整正文与运行信息。基线 main@bcfe47b2。目标环境限定 Preproduction；Production 运行版本、Prompt active release 与真实客户工单不变，13837 仅作脱敏回归样本不重放不补发。 r3 修复（验收二轮 P1 阻塞）：语言证据门 r2 的拉丁字符白名单会整段删除俄语/阿拉伯语/泰语正常正文（误拦转人工、模型零调用），且 CJK 在剔除 URL 前提前放行使含中文路径的纯 URL 绕过排除——改为先剔除占位符/URL（含非 ASCII 路径）/邮箱/≥16 位 hex/数字，再以任意字系统 Unicode 字母（isalpha）判断剩余词，不做清理前放行；补测俄/阿拉伯/泰语正例（真实 render 入口、mock 模型、断言 invoke 恰一次）与含中文路径纯 URL 反例，保留葡语正文+末条纯 App ID 正例。快照新鲜度与模型评测证据两项已经二轮验收通过关闭。 r4 修复（验收三轮 P2 阻塞）：r3 改为 split() 全词匹配后未归一化词周标点，带标点简单确认（OK./yes!/[App ID] OK. 等）被重新当作语言依据放行生成——新增 _CONFIRMATION_PUNCTUATION 剥离集，词先 strip 标点再入确认词集合比较，Unicode 字母判断保留；补测句号/感叹号/逗号引号确认词与 [App ID] OK. 反例，正例改为葡语正文+末条 OK. 放行。非拉丁误拦与中文 URL 漏拦两项已经三轮验收确认修复。 2026-10-03/04 发布收口：r4 验收通过后 finalize（PR#1381 squash=main 1c867cfd，工作区/分支清理，CodeGraph+CodeSight 同步）；本地官方栈重启验证（lightweight/remote+RUNTIME_SCHEMA_MODE=check，/health ok，app_build.ref=1c867cfd9ad0，容器内 v32/标点剥离集/会话挂载三项 live 标记）；Preproduction 发布 r20261003-1c867cf 全阶段 passed（首跑误用源库 active prompt id pr-c47f99044ae0 在目标库已 superseded 致 sync 失败，改用目标库 active pr-22d6c9be1773 重建发布；全阶段 preflight/prompt_schema/route_worker_rollout 280.7s/heartbeat/api_rollout 179.7s/collector/activation/release_note 均 passed，SLO breach=true（含失败尝试耗时）；schema bootstrap skipped_current；terraform 零漂移×2）；部署后验证：公网 /health/live ok、/health/release provenance release_id=r20261003-1c867cf git_commit=1c867cfd image_digest=sha256:71f9ed0e… schema automation-ecs-012 prompt_release_id=pr-22d6c9be1773；worker task def :100（:99→:100）ENABLEMENT_WORKFLOW_MODE=archer AGENT_MODEL_ID=gpt-6-sol HERMES_CASE_WORKFLOW_MODE=disabled APP_BUILD_REF=1c867cfd、镜像 digest expected=observed runtime_verified；部署环境真实模型检查（不投递客户消息）：preprod 库真实 sid-bright v1 Persona + AGENT_MODEL_ID=gpt-6-sol + main 代码，七场景（pt/es/en/zh/纯 App ID/显式切换/西语跟进）语言与业务语义全过、全部 generation_attempts=1、safety passed、prompt_version=automation-persona-v32。未晋级 Production；13837 未重放未补发。 发布后验收补充（非阻塞误报修复）：评测断言 resend_request 词干表漏无重音 enviarme（真实输出 ¿podrías comprobarlo y enviarme el App ID correcto…? 为业务正确但被误判失败），已补 envia 词干并新增非门控单测钉住该表达（含禁 completion 措辞保持）；纯测试断言改动，无运行时变更，不触发部署。",
-      "next_action": "已收口。遗留观察项（不阻塞）：本地栈 worker 的 Redis BLPOP 空队列轮询每 5s 一条 dequeue 超时 WARNING 属既有噪声；并行线程 hermes-weknora-governance 分支的任务号 p2-184 与本任务撞号，其合并前需改号并解决 p2-184.json/projectoverview-data.js 冲突。",
+      "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
+      "next_action": "第十四轮独立验收通过（R14-1/2/3 全闭合，SQLite up/down 实跑+代码核查）。执行 finalize 到 main 后按既有授权推进 Preproduction 部署。WeKnora fork 镜像构建与部署通道在实际部署前确定；n8n 发布协调、AgentMemory 退休、Production 晋级遵守各自授权边界。",
       "acceptance_criteria": [
-        "内部邮件完成、AgentRelay 成功、内部跟进三个入口创建的 enablement reply job 均携带 conversation_context（角色/顺序/消息 ID 保留；私有备注/内部邮件/草稿排除；App ID/邮箱脱敏），快照按 job 创建时点从 canonical ticket 现行公开会话构造（case 快照仅回退），不漏客户最新语言要求；quota 等其他 handler 行为不变。",
-        "enablement facts 不再默认 customer_language=en；旧 job 中无来源的 en 按旧默认值对待，语言依据为客户公开会话。",
-        "客户明确语言要求 > 最近可判语言客户消息（纯 App ID/邮箱/链接/数字/裸确认延续更早语言，含非 ASCII 路径的纯 URL 同样不算依据）；内部结果语言不影响回复语言；剔除无语言载荷后无任何携带 Unicode 字母的正文（任意字系统）时停止生成并进入现有人工交接，正常非拉丁正文（俄/阿拉伯/泰语等）不得误拦。",
-        "旧未发布 job 按 job.created_at 冻结时点补齐快照并经 v32 围栏重新生成；已发布 job 复用原消息，重试/重复消费最多一条客户消息，幂等与结案顺序不变。",
-        "确定性测试（worker/relay/failure/persona/context-provider）与真实模型评测（pt/es/en/zh/纯 App ID/显式切换/英文内部结果七场景，全部首轮生成）通过；评测断言语言与业务语义（开通/结案/更正 App ID）双正确，逐样本完整正文与运行信息存于本登记 evidence。"
+        "普通 AgentRelay Task 的 handoff 行为不变。",
+        "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
+        "重复关闭/重复来源/晚到新资料：相同输入一份工作，新内容新版本，旧版本不覆盖新版本；已完成的代际重跑经恢复序对账后幂等返回原结果（不再误报版本冲突）。",
+        "空知识库允许新建；检索故障进人工；有效排查未确认保留未验证说明。",
+        "同幂等键重复、并发提交、响应丢失：对象提交一次，同键不同内容被拒绝（WeKnora 服务端合同：对象与回执同事务、版本校验在事务内行锁下先于写、receipt scope 来自 ResolveScope 租户+主体）。",
+        "两个更新使用相同目标版本：只有一个成功，另一个零修改。",
+        "目标记忆位于后续分页：找到原对象，额外创建次数为零；分页不可证明穷尽时显式 incomplete_listing 错误而非静默截断。",
+        "来源消费链：intake 先 link 后 queue，首请求指纹即含自身来源；close bundle v2 携带每个来源最新已接受版本正文。",
+        "人工审批闭环：GET /v1/knowledge/promotions 可观察 + POST /v1/knowledge/promotions/{id}/decision（approve 重新入队走完整写合同 / reject 终态 rejected；仅 human_review 可决策）。",
+        "reopen 失效覆盖全部非终态（含 human_review/failed/outcome_unknown）并阻断 requeue；晚到成功回执记录证据但不复活状态。",
+        "下一次 Hermes 会话能通过 weknora_tools 读取知识并召回记忆；读取失败显式报告（knowledge_id 而非 chunk id、status=active 过滤、异常结构显式错误）。"
       ],
       "blockers": [],
       "evidence": [
         {
           "type": "test",
-          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
-          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
-          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
+          "label": "SupportPortal 回归确认（13 套件，本轮无 SP 代码增量）",
+          "command": ".venv/bin/python -m pytest -q",
+          "result": "216 passed, 11 skipped"
         },
         {
           "type": "test",
-          "label": "r2 真实模型评测完整输出（gpt-6-astra，automation-persona-v32，2026-10-03，7 passed in 21.05s，全部 generation_attempts=1、safety passed，语义断言 enabled/close/App-ID 纠正全命中、跟进类无 completion 措辞）",
-          "command": "HTTPS_PROXY=http://127.0.0.1:1082 ENABLEMENT_REPLY_LANGUAGE_EVAL=1 /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py -q -s",
-          "result": "逐样本正文（greeting 由应用固定添加，正文为模型首轮输出）：[1] pt_completion_english_internal(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado — teremos prazer em ajudar.' [2] es_relay_success_english_internal(es)：'Gracias por tu paciencia. Te confirmo que Media Relay ya está habilitado en tu proyecto, así que todo está listo. / Voy a cerrar este caso. Si más adelante tienes alguna pregunta, puedes abrir un nuevo ticket y con gusto te ayudaremos.' [3] pt_bare_appid_last_message(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado.' [4] explicit_switch_to_english(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is now enabled on your project, and we've verified the configuration. / I'm closing this case now. If anything else comes up, feel free to open a new ticket and we'll be happy to help.' [5] en_only_conversation(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is enabled on your project, and the configuration has been verified. / I'm closing this case now. If anything else comes up, feel free to open a new ticket.' [6] zh_conversation(zh)：'感谢你的耐心等待！我已确认你的项目已开通 Media Relay，并通过配置核验确认了启用状态，可以使用了。/ 我现在会关闭此工单。如果之后还有其他问题，欢迎随时提交新工单，我们会继续为你提供帮助。' [7] es_internal_followup(es)：'Gracias por enviármelo. El App ID que compartiste no es correcto. ¿Podrías enviarme el App ID correcto de 32 caracteres para tu solicitud de activación de Media Relay?'（无 habilitado/结案措辞）。过程保留：r2 首跑 es close_claim 词干漏 'cier'（模型输出 'Cierro este caso' 为正确结案表述）出现一次断言假失败，补词干 'cierr|cerr|finaliz' 后全绿。"
-        },
-        {
-          "type": "document",
-          "label": "旧 job 冻结时点与幂等",
-          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
-          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
-        },
-        {
-          "type": "document",
-          "label": "r2 快照新鲜度（验收一轮阻塞项 1）",
-          "command": "test_worker.py::...::test_completion_job_uses_live_ticket_over_stale_case_snapshot / test_enablement_auto_relay.py::...::test_success_result_uses_live_ticket_over_stale_case_snapshot / test_completion_job_falls_back_to_case_snapshot_without_ticket",
-          "result": "case 快照落后于 ticket（缺少客户其后发送的语言要求消息）时，内部邮件与 Relay 两入口的完成 job 快照均包含该最新消息（葡语/西语样例各自验证）；ticket 不可读（空 dict）时回退 case 快照。"
-        },
-        {
-          "type": "document",
-          "label": "环境范围",
-          "command": "git log codex/enablement-reply-language --oneline",
-          "result": "代码+测试+文档改动仅进入任务分支（r1 bd6f384c + r2 提交）；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
-        },
-        {
-          "type": "deployment",
-          "label": "Preproduction 发布 r20261003-1c867cf 与部署后验证（2026-10-03/04）",
-          "command": "release_automation_ecs_pipeline.sh --release-commit 1c867cfd9ad0926376453e07f114538040dc5c77 --prompt-release-id pr-22d6c9be1773 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
-          "result": "全阶段 passed（evidence: .deployments/ecs-pipeline-r20261003-1c867cf/preproduction-deploy/evidence.json，checks 全 passed/prompt_sync+activation=active/rollback=not_started，SLO breach=true 如实记录）；公网 /health/live ok + /health/release：git_commit=1c867cfd、image_digest=sha256:71f9ed0eb22696bb22d73c7298efec49c63e1e3f1e3d76ace529f5f376064967、prompt_release_id=pr-22d6c9be1773、schema automation-ecs-012；worker td :100 archer/gpt-6-sol/disabled/APP_BUILD_REF=1c867cfd、digest expected=observed runtime_verified=true。真实模型检查（零投递）：gpt-6-sol+automation-persona-v32+preprod sid-bright v1 七场景语言与语义 ALL-PASS 全首轮。过程保留：首跑 prompt id 取自源库 active（pr-c47f99044ae0）而目标库已 superseded → sync 失败；另两次尝试分别遇 .env 静态 key 覆盖 SSO（SSM 取值失败）与 CodeBuild 并发上限（首次被杀本地进程后 AWS 侧构建完成）。未晋级 Production。"
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 79c4b2a）",
+          "command": "go test ./internal/... -count=1",
+          "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（环境性）"
         },
         {
           "type": "test",
-          "label": "发布后验收补充：es resend_request 无重音词干（2026-10-04）",
-          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_reply_language_eval.py",
-          "result": "82 passed/89 subtests（新增 test_es_followup_resend_request_accepts_unaccented_enviar：验收报告原句全语义组命中、禁组不命中、无关正文不命中）+ eval 门控默认 7 skipped。纯评测断言修正，Preproduction r20261003-1c867cf 不受影响。"
+          "label": "R14-1 PG 迁移路径验证",
+          "command": "独立 PG 库：预建无 generation_version 的 chunks 表→执行 000116 up SQL→列存在+索引存在→幂等重执行→chunk 写入+按代际删除→down SQL 列消除",
+          "result": "全部通过"
+        },
+        {
+          "type": "test",
+          "label": "R14-2/3 验收测试",
+          "command": "go test ./internal/application/service/ -run 'TestGenerationCleanup|TestSameBody' -count=1 -v",
+          "result": "通过：持续清理失败 3 连执行均返回非 nil→故障解除→同任务完成清理+stale chunk 移除；同正文跨代际（version 3 body=version 1 body, knowledge=completed）→无条件代际清理触发→gen-1 chunk 删除+gen-3 chunk 保留"
+        }
+      ],
+      "source_refs": [
+        "backend/services/knowledge_standalone_workflow.py",
+        "backend/repositories/standalone_knowledge_repository.py",
+        "backend/services/weknora_client.py",
+        "backend/services/weknora_promotion_adapter.py",
+        "backend/services/hermes_knowledge_workflow.py",
+        "backend/skills/knowledge-review/SKILL.md",
+        "backend/automation_ecs_api.py",
+        "backend/worker.py"
+      ],
+      "created_at": "2026-10-02T00:00:00Z",
+      "updated_at": "2026-10-05T16:00:00Z",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-scope-governance",
+      "legacy_ids": [],
+      "legacy_refs": [],
+      "history": [
+        {
+          "at": "2026-10-02T00:00:00Z",
+          "note": "实施完成：SP 三提交（c825602b Review v2+分页+队列面 / c36bba30 article+代际去重 / 独立 Summary 全链）+ WeKnora fork 两提交（8e130a1f memory 合同 / 5af45e79 knowledge 合同）+ hermes-deploy 一提交（6b724248 weknora_tools）。未实施：AgentMemory 退休终步、n8n 草稿发布、WeKnora fork 镜像构建部署、Preproduction 集成验证——均为验收后按授权继续的范围。"
+        },
+        {
+          "at": "2026-10-03T00:00:00Z",
+          "note": "验收修复轮（12 P1 + 合同缺口）：SP 三提交 4e773dba（P1-9）/61df4fa9（P1-4）+本轮（P1 决策闭环+lineage DTO+v19 增量修正）；WeKnora fork eb9439e+8bfb764（P1-1/2/3）；hermes-deploy 568dde9（P1-12）。隔离 PG 38 passed + v18→v19 增量路径实测。未实施：n8n 草稿发布、WeKnora fork 镜像部署、AgentMemory 退休终步。"
+        },
+        {
+          "at": "2026-10-03T12:00:00Z",
+          "note": "第二轮验收修复：SP 8 提交（1c6f4ba3..3bf93e08）；WeKnora 3 提交（6aa464d/25422e2/22e6fed，含 PG 契约测试与 char(64)→varchar(64) 修复）；hermes-deploy 无增量。Go PG 契约（键长/并发）与 SP PG 42 passed 为本轮新证据。"
+        },
+        {
+          "at": "2026-10-03T23:30:00Z",
+          "note": "第三轮验收修复：SP 5 提交（7d8495eb..cd5ceddb）；WeKnora 2 提交（32b529d/1c0bf0d）。新增 PG 证据：approve 正向 resolution 用例、memory 真实链路同事务/无死锁、outbox 三路径恢复。"
+        },
+        {
+          "at": "2026-10-04T00:30:00Z",
+          "note": "第四轮验收修复：SP 1 提交（4d60a2e2）；WeKnora 1 提交（d38212f）。Go 全套本轮零 FAIL（含此前环境性的 TestSkillPythonVerifier）。"
+        },
+        {
+          "at": "2026-10-04T02:00:00Z",
+          "note": "第五轮验收修复：SP 2 提交（0510de2f+本轮登记）；WeKnora 1 提交（98e1c0a）。R5-2 依据验收方 n8n 实读结论改用 case mirror（真实 [case]Sync Comments → /v1/intake 链）。"
+        },
+        {
+          "at": "2026-10-04T03:30:00Z",
+          "note": "第六轮验收修复：SP 1 提交（7f4fc1cc）；WeKnora 1 提交（e4f9f3a）。schema 011（automation_cases ticket_updated_at/last_nonclosed_at）。"
+        },
+        {
+          "at": "2026-10-04T05:00:00Z",
+          "note": "第七轮验收修复：SP 2 提交（f2efe1cf+登记）；WeKnora 1 提交（ec8cde4）。"
+        },
+        {
+          "at": "2026-10-04T07:00:00Z",
+          "note": "第八轮验收修复：WeKnora 1 提交（98e75c9）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T01:30:00Z",
+          "note": "第九轮验收修复：WeKnora 1 提交（7dc2875）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T03:00:00Z",
+          "note": "第十轮验收修复：WeKnora 1 提交（a14c12f）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T06:00:00Z",
+          "note": "第十一轮验收修复：WeKnora 1 提交（1b603ac）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T09:00:00Z",
+          "note": "第十二轮验收修复：WeKnora 1 提交（be1b252）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T12:30:00Z",
+          "note": "第十三轮验收修复：WeKnora 1 提交（4f62d34）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T15:00:00Z",
+          "note": "第十四轮验收修复：WeKnora 1 提交（79c4b2a）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T16:00:00Z",
+          "note": "第十四轮独立验收通过：R14-1（版本化迁移+PG 实库验证）、R14-2（清理错误传播+持续失败测试）、R14-3（无条件代际清理+同正文测试）全部闭合。释放 finalize 门禁。"
         }
       ]
     },

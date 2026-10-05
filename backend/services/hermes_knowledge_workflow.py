@@ -78,6 +78,32 @@ SUMMARY_CONTENT_FIELDS = (
     "evidence_references", "candidates",
 )
 
+
+def normalize_summary_output(parsed: Any) -> dict[str, Any]:
+    """Apply the Summary output content contract to a parsed run payload.
+
+    Shared by the case-bound and standalone Summary paths (review round 2,
+    R2-9): every narrative field passes the documented scalar-or-string-list
+    boundary and ``candidates`` is a list — a malformed payload fails the task
+    visibly instead of silently entering the pipeline.
+    """
+    if not isinstance(parsed, dict):
+        raise KnowledgeWorkflowError("output_contract_invalid", "summary output is not a JSON object")
+    content: dict[str, Any] = {}
+    for field in SUMMARY_CONTENT_FIELDS:
+        value = parsed.get(field)
+        if field in _SUMMARY_TEXT_FIELDS:
+            content[field] = _normalize_summary_text(value, field=field)
+        elif field == "candidates":
+            if not isinstance(value, list):
+                raise KnowledgeWorkflowError(
+                    "output_contract_invalid", "candidates must be a list"
+                )
+            content[field] = value
+        else:
+            content[field] = value
+    return content
+
 _JSON_BLOCK_RE = re.compile(r"```json\s*(.*?)\s*```", re.DOTALL)
 
 
@@ -106,15 +132,36 @@ def summary_task_id_for(engineer_case_id: str, episode: int) -> str:
     return f"hermes-summary-task:{engineer_case_id}:{episode}"
 
 
-def review_task_id_for(engineer_case_id: str, episode: int) -> str:
-    return f"hermes-review-task:{engineer_case_id}:{episode}"
+def review_task_id_for(
+    engineer_case_id: str, episode: int, *, generation: str = ""
+) -> str:
+    # The generation suffix (from the summary task id) flows through so a
+    # NEW Summary generation earns a NEW independent Review — reviewing the
+    # same (case, episode) with different frozen input must never reuse the
+    # first generation's review task/session/idempotency key (review P1-7).
+    suffix = f":{generation}" if generation else ""
+    return f"hermes-review-task:{engineer_case_id}:{episode}{suffix}"
 
 
-def review_session_id_for(engineer_case_id: str, episode: int) -> str:
+def review_session_id_for(
+    engineer_case_id: str, episode: int, *, generation: str = ""
+) -> str:
+    suffix = f":{generation}" if generation else ""
     return (
         "hermes-session:"
-        + str(uuid5(NAMESPACE_URL, f"supportportal:knowledge-review:{engineer_case_id}:{episode}"))
+        + str(uuid5(
+            NAMESPACE_URL,
+            f"supportportal:knowledge-review:{engineer_case_id}:{episode}{suffix}",
+        ))
     )
+
+
+def _summary_generation(summary_task_id: str) -> str:
+    """The :g<hash> generation suffix of a summary task id ('' for the base)."""
+    parts = str(summary_task_id or "").rsplit(":", 1)
+    if len(parts) == 2 and parts[1].startswith("g") and len(parts[1]) > 1:
+        return parts[1]
+    return ""
 
 
 def _pinned_agent_model() -> str | None:
@@ -126,14 +173,66 @@ def _pinned_agent_model() -> str | None:
 # --------------------------------------------------------------------- triggers
 
 
+def summary_input_fingerprint(
+    binding: dict[str, Any], *, source_versions: list[tuple[str, str, str]] | None = None
+) -> str:
+    """Deterministic fingerprint of the Summary's frozen input generation.
+
+    Covers the case lineage the Summary would consume (episode, ledger
+    revision, conversation version) plus every accepted knowledge-source
+    version linked to the case: a duplicate notification or an unchanged
+    ``solved -> closed`` transition reproduces the same fingerprint (task
+    reuse), while late-arriving or updated substantive material changes it
+    and earns a new Summary generation.
+    """
+    import hashlib
+
+    parts = [
+        f"episode={int(binding.get('episode') or 0)}",
+        f"ledger={int(binding.get('current_ledger_revision') or 0)}",
+        f"conversation={int(binding.get('conversation_version') or 0)}",
+    ]
+    for source_type, source_id, source_version in sorted(source_versions or []):
+        parts.append(f"src={source_type}:{source_id}:{source_version}")
+    return hashlib.sha256("|".join(parts).encode("utf-8")).hexdigest()
+
+
+def _linked_source_versions(repository: Any, engineer_case_id: str) -> list[tuple[str, str, str]]:
+    """Accepted knowledge-source versions linked to this case (best effort).
+
+    A repository without the linkage surface simply contributes no source
+    parts; lineage revisions still fingerprint the case-side input.
+    """
+    linker = getattr(repository, "list_knowledge_sources_for_case", None)
+    if not callable(linker):
+        return []
+    try:
+        rows = linker(engineer_case_id) or []
+    except Exception:  # noqa: BLE001 - fingerprint input is best-effort additive
+        return []
+    versions: list[tuple[str, str, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        versions.append((
+            str(row.get("source_type") or ""),
+            str(row.get("source_id") or ""),
+            str(row.get("source_updated_at") or row.get("source_updated_at_epoch") or ""),
+        ))
+    return versions
+
+
 def queue_hermes_summary_for_case(
     repository: Any, *, engineer_case_id: str, trigger: str,
     now_value: str | None = None,
 ) -> dict[str, Any] | None:
     """Create-or-reuse the episode's Summary task; returns None when inactive.
 
-    Idempotency is per (engineer_case_id, episode): duplicate or out-of-order
-    terminal events reuse the original task row instead of creating new ones.
+    Idempotency is per (engineer_case_id, episode, input_fingerprint):
+    duplicate or out-of-order terminal events with unchanged input reuse the
+    original task row; updated substantive material (a newer accepted source
+    version, an advanced ledger) produces a new Summary generation with a
+    versioned task id while the earlier generation keeps its own record.
     """
     if hermes_workflow_mode() != "real":
         return None
@@ -142,8 +241,22 @@ def queue_hermes_summary_for_case(
         return None
     now = now_value or _now_iso()
     episode = int(binding["episode"])
+    fingerprint = summary_input_fingerprint(
+        binding, source_versions=_linked_source_versions(repository, engineer_case_id)
+    )
+    latest = repository.latest_hermes_summary_task_for_case_episode(engineer_case_id, episode)
+    if isinstance(latest, dict) and str(latest.get("input_fingerprint") or "") == fingerprint:
+        # Identical frozen input (duplicate notification or solved->closed
+        # with unchanged content): reuse the existing generation.
+        return latest
+    task_id = summary_task_id_for(engineer_case_id, episode)
+    if isinstance(latest, dict):
+        # Changed input after an earlier generation: version the new task so
+        # both generations stay traceable; ensure() still collapses replays
+        # of THIS fingerprint.
+        task_id = f"{task_id}:g{str(fingerprint)[:12]}"
     payload = {
-        "summary_task_id": summary_task_id_for(engineer_case_id, episode),
+        "summary_task_id": task_id,
         "engineer_case_id": engineer_case_id,
         "client_ticket_id": str(binding["client_ticket_id"]),
         "investigation_id": str(binding["investigation_id"]),
@@ -152,10 +265,11 @@ def queue_hermes_summary_for_case(
         "conversation_version": int(binding["conversation_version"]),
         "hermes_session_id": str(binding.get("hermes_session_id") or ""),
         "trigger": trigger,
-        "idempotency_key": f"hmknow:{summary_task_id_for(engineer_case_id, episode)}",
+        "idempotency_key": f"hmknow:{task_id}",
         "prompt_version": KNOWLEDGE_SUMMARY_PROMPT_KEY,
         "agent_model": _pinned_agent_model(),
         "reasoning_effort": KNOWLEDGE_SUMMARY_REASONING_EFFORT,
+        "input_fingerprint": fingerprint,
         "created_at": now,
     }
     return repository.ensure_hermes_summary_task(payload)
@@ -262,8 +376,26 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
     current_output_id = str(binding.get("current_output_id") or "")
     current_output = repository.get_hermes_output(current_output_id) if current_output_id else None
     slack_thread = _case_slack_thread(repository, case_id)
+    # Linked source material is part of the Summary's frozen input (review
+    # round 1, P1-4): the same latest-version set that feeds the input
+    # fingerprint is delivered verbatim to the agent. A read failure here
+    # fails the Summary visibly rather than summarizing without material.
+    knowledge_sources = repository.list_knowledge_sources_for_case(case_id)
+    source_projection = [
+        {
+            "intake_id": str(row.get("intake_id") or ""),
+            "source_type": str(row.get("source_type") or ""),
+            "source_id": str(row.get("source_id") or ""),
+            "source_updated_at": str(row.get("source_updated_at") or ""),
+            "task_id": str(row.get("task_id") or ""),
+            "payload": row.get("payload") or {},
+            "references": row.get("references") or {},
+        }
+        for row in knowledge_sources
+        if isinstance(row, dict)
+    ]
     return {
-        "schema": "hermes-case-close-bundle-v1",
+        "schema": "hermes-case-close-bundle-v2",
         "lineage": {
             "engineer_case_id": case_id,
             "client_ticket_id": str(task["client_ticket_id"]),
@@ -294,6 +426,7 @@ def build_case_close_bundle(repository: Any, task: dict[str, Any]) -> dict[str, 
             "messages": engineer_case.get("messages") or [],
         },
         "slack_thread": slack_thread,
+        "knowledge_sources": source_projection,
         "current_investigation_output": current_output,
         "authority_events": repository.list_hermes_authority_events(case_id),
     }
@@ -326,6 +459,23 @@ def _require_current_lineage(repository: Any, task: dict[str, Any]) -> dict[str,
             "stale_case_lineage",
             "case revision advanced while the knowledge task was pending",
         )
+    # Frozen-input generation check (review round 2, R2-7): the task's
+    # fingerprint covers the linked source versions too, so a source that
+    # advanced between queueing and execution (or mid-run before the final
+    # re-check) must fail visibly instead of silently summarizing newer
+    # material under an older generation's identity. The queue side mints the
+    # new generation; this row fails and stays inspectable.
+    expected_fingerprint = str(task.get("input_fingerprint") or "").strip()
+    if expected_fingerprint:
+        current_fingerprint = summary_input_fingerprint(
+            binding,
+            source_versions=_linked_source_versions(repository, str(task["engineer_case_id"])),
+        )
+        if current_fingerprint != expected_fingerprint:
+            raise KnowledgeWorkflowError(
+                "source_input_diverged",
+                "linked knowledge sources advanced beyond the task's frozen input fingerprint",
+            )
     return binding
 
 
@@ -488,14 +638,7 @@ def run_hermes_summary_task(
                 f"summary run ended with {status.get('status')}",
             )
         parsed = _extract_run_json(status.get("output"))
-        content = {
-            field: (
-                _normalize_summary_text(parsed.get(field), field=field)
-                if field in _SUMMARY_TEXT_FIELDS
-                else parsed.get(field)
-            )
-            for field in SUMMARY_CONTENT_FIELDS
-        }
+        content = normalize_summary_output(parsed)
         packet_payload = {
             **content,
             "schema_version": "v1",
@@ -514,9 +657,10 @@ def run_hermes_summary_task(
         packet_payload["content_hash"] = summary_packet_content_hash(packet_payload)
         packet = HermesSummaryPacket.model_validate(packet_payload)
         _require_current_lineage(repository, task)
+        generation = _summary_generation(summary_task_id)
         review_payload = {
             "review_task_id": review_task_id_for(
-                str(task["engineer_case_id"]), int(task["episode"])
+                str(task["engineer_case_id"]), int(task["episode"]), generation=generation
             ),
             "summary_task_id": summary_task_id,
             "engineer_case_id": str(task["engineer_case_id"]),
@@ -525,11 +669,17 @@ def run_hermes_summary_task(
             "episode": int(task["episode"]),
             "ledger_revision": int(task["ledger_revision"]),
             "conversation_version": int(task["conversation_version"]),
+            # Review round 3, R3-6: the review carries its generation's frozen
+            # fingerprint so the same source-divergence check covers it.
+            "input_fingerprint": str(task.get("input_fingerprint") or ""),
             "review_session_id": review_session_id_for(
-                str(task["engineer_case_id"]), int(task["episode"])
+                str(task["engineer_case_id"]), int(task["episode"]), generation=generation
             ),
             "idempotency_key": (
-                "hmknow:" + review_task_id_for(str(task["engineer_case_id"]), int(task["episode"]))
+                "hmknow:"
+                + review_task_id_for(
+                    str(task["engineer_case_id"]), int(task["episode"]), generation=generation
+                )
             ),
             "prompt_version": KNOWLEDGE_REVIEW_PROMPT_KEY,
             "skill_version": HERMES_KNOWLEDGE_REVIEW_SKILL_VERSION,
@@ -593,12 +743,29 @@ def _collect_weknora_evidence(
         for candidate in candidates:
             knowledge_results[str(candidate.get("candidate_id") or "")] = []
     else:
+        read_full = getattr(weknora_client, "read", None)
         for candidate in candidates:
             candidate_id = str(candidate.get("candidate_id") or "")
             try:
-                knowledge_results[candidate_id] = weknora_client.search(
-                    str(candidate.get("statement") or "")
-                )
+                hits = weknora_client.search(str(candidate.get("statement") or ""))
+                # Review round 2, R2-6: a snippet alone cannot ground a
+                # supplement/merge/replace decision — every hit carries the
+                # target's FULL body and its content version (the manual
+                # metadata revision, not a chunk revision). A read failure
+                # marks the surface unavailable so writable decisions fail
+                # closed to human review.
+                if callable(read_full):
+                    enriched: list[dict[str, Any]] = []
+                    for hit in hits:
+                        entry = dict(hit)
+                        full = read_full(str(hit.get("object_id") or ""))
+                        entry["full_content"] = str(full.get("content") or "")
+                        entry["content_version"] = str(full.get("content_version") or "")
+                        entry["target_lineage"] = full.get("lineage") or {}
+                        enriched.append(entry)
+                    knowledge_results[candidate_id] = enriched
+                else:
+                    knowledge_results[candidate_id] = list(hits)
             except WeKnoraUnavailable as exc:
                 LOGGER.warning(
                     "weknora_search_unavailable candidate_id=%s error=%s", candidate_id, exc
@@ -629,8 +796,14 @@ def _collect_weknora_evidence(
             try:
                 if memory_read is memory_list:
                     # One listing covers every candidate (list endpoint).
+                    # Prefer the full pagination walk so evidence cannot miss
+                    # a duplicate on a later page (a partial listing would
+                    # let a `new` decision create a duplicate object).
                     if candidate_id == str((candidates[0] or {}).get("candidate_id") or ""):
-                        listed = list(memory_list())
+                        list_all = getattr(memory_client, "memory_list_all", None)
+                        listed = (
+                            list(list_all()) if callable(list_all) else list(memory_list())
+                        )
                         for other in candidates:
                             memory_results[str(other.get("candidate_id") or "")] = list(listed)
                 else:
@@ -742,6 +915,10 @@ def build_weknora_promotions_from_review_report(
         "slack_thread_ts": str(slack_thread_ts or ""),
         "source_type": "hermes_knowledge_review",
         "source_version": str(report.get("content_hash") or ""),
+        # Review round 3, R3-6: promotions remember the frozen-input
+        # generation they were produced from, so a human decision can be
+        # refused when the case's inputs have moved on.
+        "input_fingerprint": str(review_task.get("input_fingerprint") or ""),
     }
     tasks: list[dict[str, Any]] = []
     for decision in report.get("decisions") or []:
@@ -1003,6 +1180,114 @@ def _claimable(task: dict[str, Any], now_iso: str) -> bool:
     if status == "running":
         return str(task.get("lease_expires_at") or "") <= now_iso
     return False
+
+
+# Only a CLOSED ticket state may mint or approve closing knowledge work.
+CLOSED_TICKET_STATES = frozenset({"solved", "closed"})
+
+
+def native_ticket_state_blocks_knowledge(
+    native_state_store: Any, ticket_id: str, frozen_version: str = ""
+) -> tuple[bool, str]:
+    """Review round 6, R6-2/R6-3: the AUTHORITATIVE state is the case mirror
+    with its durable reopen fact.
+
+    A candidate is blocked when:
+      - the mirror is unreadable (fail-closed), or
+      - the CURRENT live status is not closed, or
+      - a reopen happened AFTER the candidate froze (``last_nonclosed_at``),
+        even if a later solved snapshot arrived — the old closing generation
+        never becomes valid again; only a NEWER snapshot (a new generation)
+        carries its own, later freeze time.
+
+    ``frozen_version`` is the candidate's source snapshot timestamp; the
+    comparison is between Zendesk-side timestamps on both ends.
+    """
+    try:
+        mirror = native_state_store.get_case_mirror(str(ticket_id))
+    except Exception:  # noqa: BLE001 - unverifiable state fails closed
+        return True, "native_state_unavailable"
+    if not isinstance(mirror, dict):
+        return True, "native_state_unavailable"
+    ticket = mirror.get("ticket")
+    ticket = ticket if isinstance(ticket, dict) else {}
+    status = str(ticket.get("status") or "").strip().lower()
+    if not status:
+        return True, "native_state_unavailable"
+    if status not in CLOSED_TICKET_STATES:
+        return True, "ticket_state_superseded"
+    if frozen_version:
+        try:
+            from datetime import datetime
+
+            frozen_at = datetime.fromisoformat(str(frozen_version).replace("Z", "+00:00"))
+            reopened_at = mirror.get("last_nonclosed_at")
+            if reopened_at:
+                reopened_at = datetime.fromisoformat(str(reopened_at).replace("Z", "+00:00"))
+                if reopened_at > frozen_at:
+                    return True, "ticket_state_superseded"
+        except Exception:  # noqa: BLE001 - unparseable times fail closed
+            return True, "native_state_unavailable"
+    return False, ""
+
+
+def weknora_promotion_generation_current(
+    repository: Any, promotion: dict[str, Any], *, native_state_store: Any = None
+) -> tuple[bool, str]:
+    """Review round 4, R4-2: the write boundary's generation check.
+
+    A promotion may only execute (or be human-approved) while its frozen
+    generation is still current:
+    - case-bound rows: the case's recomputed input fingerprint must equal the
+      row's recorded ``input_fingerprint``;
+    - standalone rows: the source's newest ACCEPTED version must equal the
+      row's recorded fingerprint, and (for native Zendesk tickets, when a
+    state store is provided) no ticket state change may have landed after
+      the frozen snapshot.
+
+    Returns ``(ok, reason)``; ``reason`` is a stable failure code for the
+    terminal record when not ok.
+    """
+    fingerprint = str(promotion.get("input_fingerprint") or "")
+    if not fingerprint:
+        return True, ""
+    source_type = str(promotion.get("source_type") or "")
+    if source_type == "hermes_knowledge_review" and str(promotion.get("engineer_case_id") or ""):
+        binding = repository.get_hermes_case_binding(str(promotion["engineer_case_id"]))
+        if not isinstance(binding, dict):
+            return False, "source_input_diverged"
+        current = summary_input_fingerprint(
+            binding,
+            source_versions=_linked_source_versions(repository, str(promotion["engineer_case_id"])),
+        )
+        if current != fingerprint:
+            return False, "source_input_diverged"
+        return True, ""
+    if source_type == "knowledge_source_review":
+        summary_task_id = str(promotion.get("source_id") or "").rsplit(":", 1)[0]
+        summary_row = repository.get_standalone_summary_task(summary_task_id)
+        if not isinstance(summary_row, dict):
+            return False, "source_input_diverged"
+        latest = repository.latest_knowledge_source_version(
+            str(summary_row.get("source_type") or ""), str(summary_row.get("source_id") or "")
+        )
+        if latest and latest != fingerprint:
+            return False, "source_input_diverged"
+        if (
+            str(summary_row.get("source_type") or "") == "zendesk_ticket"
+            and native_state_store is not None
+        ):
+            # False = the caller could not build a state store at all — an
+            # unverifiable ticket state fails closed (no approval, no write).
+            if native_state_store is False:
+                return False, "native_state_unavailable"
+            blocked, reason = native_ticket_state_blocks_knowledge(
+                native_state_store, str(summary_row.get("source_id") or ""), fingerprint
+            )
+            if blocked:
+                return False, reason
+        return True, ""
+    return True, ""
 
 
 def drain_hermes_knowledge_tasks(

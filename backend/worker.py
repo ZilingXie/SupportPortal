@@ -2931,7 +2931,12 @@ def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
 def _drain_weknora_promotions(*, limit: int = 20) -> int:
     if not weknora_promotion_enabled():
         return 0
+    from backend.services.hermes_knowledge_workflow import (
+        weknora_promotion_generation_current,
+    )
+
     adapter = WeKnoraPromotionAdapter(WeKnoraClient())
+    native_state_store: Any = None
     processed = 0
     for promotion in ticket_repository.list_weknora_promotions():
         now = datetime.now(timezone.utc)
@@ -2947,6 +2952,39 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
             lease_expires_at=(now + timedelta(seconds=120)).isoformat(),
         )
         if not claimed:
+            continue
+        # Review round 4, R4-2: the generation check sits at the WRITE
+        # boundary — a candidate whose frozen inputs were superseded (newer
+        # source version, case fingerprint drift, or a reopened native
+        # ticket) makes ZERO external calls.
+        if str(claimed.get("source_type") or "") == "knowledge_source_review" and native_state_store is None:
+            try:
+                from backend.services.automation_ecs_runtime import AutomationEcsSettings
+                from backend.services.automation_ecs_store import create_automation_ecs_store
+
+                native_state_store = create_automation_ecs_store(
+                    AutomationEcsSettings.from_env("worker")  # type: ignore[arg-type]
+                )
+            except Exception:  # noqa: BLE001 - absence fails closed in the check
+                native_state_store = False
+        # Review round 5, R5-1: False MEANS "could not build the store" and
+        # must stay False — `(x or None)` would silently turn it into "do not
+        # check" and let the write proceed.
+        generation_ok, generation_reason = weknora_promotion_generation_current(
+            ticket_repository, claimed,
+            native_state_store=native_state_store,
+        )
+        if not generation_ok:
+            ticket_repository.complete_weknora_promotion(
+                claimed["promotion_id"], owner_token=owner_token,
+                status="failed", failure_code=generation_reason,
+                failure_detail=(
+                    "promotion generation superseded before execution; "
+                    "zero external writes were made"
+                ),
+                completed_at=now_iso(),
+            )
+            processed += 1
             continue
         try:
             outcome = adapter.execute(claimed)
@@ -2992,6 +3030,33 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
         )
     except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure
         LOGGER.warning("hermes_knowledge_tasks_drain_failed", exc_info=True)
+        return 0
+
+
+def _drain_standalone_knowledge_tasks(*, limit: int = 5) -> int:
+    """Formal consumer for case-less source Summaries/Reviews (review P1-5).
+
+    Runs in the same poller pass right after the case-bound knowledge
+    drain: CSD/article sources accepted by the ingestion API are consumed
+    by the normal worker instead of relying on tests calling the drain."""
+    from backend.services.knowledge_standalone_workflow import (
+        drain_standalone_knowledge_tasks,
+        standalone_workflow_active,
+    )
+
+    if not standalone_workflow_active():
+        return 0
+    try:
+        outcome = drain_standalone_knowledge_tasks(
+            ticket_repository,
+            client=HERMES_KNOWLEDGE_AGENT_CLIENT,
+            weknora_client=HermesWeKnoraClient(),
+            memory_client=WeKnoraClient(),
+            limit=limit,
+        )
+        return int(outcome.get("executed") or 0)
+    except Exception:  # noqa: BLE001 - the poller must survive a drain failure
+        LOGGER.warning("standalone_knowledge_tasks_drain_failed", exc_info=True)
         return 0
 
 
@@ -3610,6 +3675,7 @@ def process_account_automation_once() -> None:
     # its completion transaction, so the promotion drain picks them up in the
     # same poller cycle.
     _drain_hermes_knowledge_tasks(limit=5)
+    _drain_standalone_knowledge_tasks(limit=5)
     _drain_weknora_promotions(limit=20)
 
 

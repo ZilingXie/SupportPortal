@@ -19,7 +19,7 @@ from psycopg import sql
 from psycopg.types.json import Json
 
 
-SOURCE_TYPES = frozenset({"zendesk_ticket", "csd_issue"})
+SOURCE_TYPES = frozenset({"zendesk_ticket", "csd_issue", "article"})
 
 
 def normalize_source_timestamp(value: Any) -> tuple[str, float]:
@@ -131,6 +131,50 @@ class InMemoryKnowledgeSourceRepositoryMixin:
             row = self._knowledge_source_intakes.get(str(intake_id))
             return copy.deepcopy(row) if row else None
 
+    def latest_knowledge_source_version(self, source_type: str, source_id: str) -> str | None:
+        """Newest ACCEPTED version of one logical source (review round 3, R3-6).
+
+        The standalone generation check compares a task's frozen source
+        version against this: a newer accepted version means the task's
+        generation is superseded.
+        """
+        best: tuple[str, float] | None = None
+        with self._assignment_lock:
+            for row in self._knowledge_source_intakes.values():
+                if (
+                    row["source_type"] == str(source_type)
+                    and row["source_id"] == str(source_id)
+                    and row["status"] == "accepted"
+                ):
+                    epoch = float(row["source_updated_at_epoch"])
+                    if best is None or epoch > best[1]:
+                        best = (str(row["source_updated_at"]), epoch)
+        return best[0] if best else None
+
+    def list_knowledge_sources_for_case(self, engineer_case_id: str) -> list[dict[str, Any]]:
+        """Accepted sources linked to the case, latest version per source.
+
+        This is the Summary's effective source input: the same set feeds the
+        input fingerprint (generation identity) and the close bundle, so a
+        newer accepted version changes both together. Superseded versions of
+        an already-linked source are not re-delivered.
+        """
+        case_id = str(engineer_case_id).strip()
+        if not case_id:
+            return []
+        latest: dict[tuple[str, str], dict[str, Any]] = {}
+        with self._assignment_lock:
+            for row in self._knowledge_source_intakes.values():
+                if row.get("engineer_case_id") != case_id or row.get("status") != "accepted":
+                    continue
+                key = (str(row["source_type"]), str(row["source_id"]))
+                current = latest.get(key)
+                if current is None or float(row["source_updated_at_epoch"]) > float(
+                    current["source_updated_at_epoch"]
+                ):
+                    latest[key] = row
+            return [copy.deepcopy(latest[key]) for key in sorted(latest)]
+
 
 class PostgresKnowledgeSourceRepositoryMixin:
     def _initialize_knowledge_source_schema(self, cur: psycopg.Cursor[Any]) -> None:
@@ -140,7 +184,7 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 """
                 CREATE TABLE IF NOT EXISTS {} (
                     intake_id TEXT PRIMARY KEY,
-                    source_type TEXT NOT NULL CHECK (source_type IN ('zendesk_ticket','csd_issue')),
+                    source_type TEXT NOT NULL CHECK (source_type IN ('zendesk_ticket','csd_issue','article')),
                     source_id TEXT NOT NULL,
                     source_updated_at TEXT NOT NULL,
                     source_updated_at_epoch DOUBLE PRECISION NOT NULL,
@@ -169,6 +213,20 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 "(source_type, source_id, source_updated_at_epoch DESC)"
             ).format(sql.Identifier("idx_knowledge_source_latest"), table)
         )
+        # Schema evolution: widen the source_type enum for article snapshots.
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}"
+        ).format(
+            table,
+            sql.Identifier("support_knowledge_source_intakes_source_type_check"),
+        ))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+            "(source_type IN ('zendesk_ticket','csd_issue','article'))"
+        ).format(
+            table,
+            sql.Identifier("support_knowledge_source_intakes_source_type_check"),
+        ))
 
     @staticmethod
     def _row_to_source(row: tuple[Any, ...] | None) -> dict[str, Any] | None:
@@ -297,3 +355,58 @@ class PostgresKnowledgeSourceRepositoryMixin:
                 return self._row_to_source(cur.fetchone())
 
         return self._run_with_connection_retry("get_knowledge_source", operation)
+
+    def latest_knowledge_source_version(self, source_type: str, source_id: str) -> str | None:
+        """PG twin of the newest-accepted-version query (review round 3, R3-6)."""
+        table = self._table("support_knowledge_source_intakes")
+
+        def operation(conn: psycopg.Connection[Any]) -> str | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT source_updated_at FROM {} "
+                        "WHERE source_type=%s AND source_id=%s AND status='accepted' "
+                        "ORDER BY source_updated_at_epoch DESC LIMIT 1"
+                    ).format(table),
+                    (str(source_type), str(source_id)),
+                )
+                row = cur.fetchone()
+                return str(row[0]) if row is not None else None
+
+        return self._run_with_connection_retry("latest_knowledge_source_version", operation)
+
+    def list_knowledge_sources_for_case(self, engineer_case_id: str) -> list[dict[str, Any]]:
+        """Accepted sources linked to the case, latest version per source.
+
+        Same contract as the in-memory twin: this set is the Summary's
+        effective source input for both the fingerprint and the close bundle.
+        """
+        case_id = str(engineer_case_id).strip()
+        if not case_id:
+            return []
+        table = self._table("support_knowledge_source_intakes")
+        fields = (
+            "intake_id", "source_type", "source_id", "source_updated_at",
+            "source_updated_at_epoch", "payload", "references_payload", "task_id",
+            "engineer_case_id", "summary_task_id", "status", "error_code",
+            "created_at", "updated_at",
+        )
+
+        def operation(conn: psycopg.Connection[Any]) -> list[dict[str, Any]]:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT DISTINCT ON (source_type, source_id) {} FROM {} "
+                        "WHERE engineer_case_id=%s AND status='accepted' "
+                        "ORDER BY source_type, source_id, source_updated_at_epoch DESC"
+                    ).format(
+                        sql.SQL(",").join(map(sql.Identifier, fields)), table
+                    ),
+                    (case_id,),
+                )
+                return [
+                    row for row in (self._row_to_source(record) for record in cur.fetchall())
+                    if row is not None
+                ]
+
+        return self._run_with_connection_retry("list_knowledge_sources_for_case", operation)

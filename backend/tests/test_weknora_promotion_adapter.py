@@ -287,10 +287,14 @@ def test_supplement_without_base_version_is_rejected() -> None:
     assert client.calls == []
 
 
-def test_supplement_with_confirmed_base_version_appends() -> None:
+def test_supplement_submits_the_complete_body_verbatim() -> None:
+    """Review round 1 P1-8: proposed_content is the COMPLETE post-operation
+    body; the adapter submits it verbatim — never prepends the stored body
+    (double concatenation when the review already integrated it)."""
     client = FakeWeKnoraStore(
         created_objects={"doc-7": {"title": "T", "content": "existing", "version": "5"}}
     )
+    full_body = "existing\n\nAdditional finding integrated by the review"
     outcome = WeKnoraPromotionAdapter(client).execute(
         _task(
             decision="supplement",
@@ -299,7 +303,7 @@ def test_supplement_with_confirmed_base_version_appends() -> None:
                 "candidate_type": "knowledge",
                 "decision": "supplement",
                 "title": "",
-                "content": "Additional finding",
+                "content": full_body,
                 "target_object_id": "doc-7",
                 "base_version": "5",
             },
@@ -308,7 +312,7 @@ def test_supplement_with_confirmed_base_version_appends() -> None:
     assert outcome.status == "accepted"
     update_kwargs = client.calls[1][1]
     assert update_kwargs["base_version"] == "5"
-    assert update_kwargs["content"] == "existing\n\nAdditional finding"
+    assert update_kwargs["content"] == full_body
 
 
 def test_targeted_update_without_conditional_update_support_goes_to_human_review() -> None:
@@ -383,6 +387,78 @@ def test_replace_version_conflict_never_overwrites() -> None:
     assert outcome.status == "human_review"
     assert outcome.failure_code == "target_version_conflict"
     assert client.calls == [("knowledge_read", {"object_id": "doc-7"})]
+
+
+# -- review round 1, P1-9: recovery precedes base_version validation --------
+
+
+def test_completed_targeted_task_reconciles_before_base_version_check() -> None:
+    # First execution updated doc-7 from v5 to v6 and recorded that result;
+    # the retry still carries the review's original base_version=5. Checking
+    # the base version before reconciling would misreport the completed
+    # write as target_version_conflict (the reviewer's exact repro shape).
+    client = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "New body", "version": "6"}}
+    )
+    outcome = WeKnoraPromotionAdapter(client).execute(
+        _task(
+            decision="replace",
+            payload={
+                "schema_version": "v1",
+                "candidate_type": "knowledge",
+                "decision": "replace",
+                "title": "T",
+                "content": "New body",
+                "target_object_id": "doc-7",
+                "base_version": "5",
+            },
+            weknora_object_id="doc-7",
+            weknora_version="6",
+        )
+    )
+    assert outcome.status == "accepted"
+    assert outcome.receipt == {
+        "operation": "reconciled_existing",
+        "object_id": "doc-7",
+        "version": "6",
+    }
+    # Reconciliation proved the earlier write landed: no second update.
+    assert [name for name, _ in client.calls] == ["knowledge_read"]
+
+
+# -- review round 1: the lineage DTO is a pinned contract -------------------
+
+
+def test_lineage_metadata_dto_is_pinned() -> None:
+    from backend.services.weknora_promotion_adapter import (
+        WEKNORA_LINEAGE_METADATA_FIELDS,
+    )
+
+    adapter = WeKnoraPromotionAdapter(FakeWeKnoraStore())
+    case_bound = adapter._lineage_metadata({
+        "promotion_id": "weknora:hermes_case_promotion:123-1:1:knowledge:0f0e0d",
+        "engineer_case_id": "123-1", "client_ticket_id": "123",
+        "investigation_id": "INV-1", "summary_session_id": "s", "summary_run_id": "sr",
+        "review_session_id": "r", "review_run_id": "rr",
+        "slack_channel_id": "C1", "slack_thread_ts": "123.456",
+        "source_type": "hermes_case_promotion", "source_id": "123-1:1", "source_version": "1",
+        "candidate_type": "knowledge", "decision": "new",
+    })
+    assert set(case_bound) == set(WEKNORA_LINEAGE_METADATA_FIELDS) | {
+        "promotion_id", "candidate_type", "decision",
+    }
+
+    standalone = adapter._lineage_metadata({
+        "promotion_id": "weknora:knowledge_source_review:src:v2:memory:0f0e0d",
+        "engineer_case_id": None, "client_ticket_id": None,
+        "source_type": "knowledge_source_review", "source_id": "src", "source_version": "v2",
+        "candidate_type": "memory", "decision": "new",
+    })
+    # Standalone lineage: absent case fields are omitted, never empty strings.
+    assert "engineer_case_id" not in standalone
+    assert "client_ticket_id" not in standalone
+    assert standalone["source_type"] == "knowledge_source_review"
+    assert standalone["candidate_type"] == "memory"
 
 
 # -- review-acceptance defect 2: readback must prove the write --------------

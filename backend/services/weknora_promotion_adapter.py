@@ -28,6 +28,26 @@ from backend.services.weknora_client import WeKnoraClient, WeKnoraError
 WRITE_DECISIONS = frozenset({"new", "supplement", "replace", "merge"})
 TARGETED_DECISIONS = frozenset({"supplement", "replace", "merge"})
 
+# The pinned lineage DTO (review round 1 contract gap): the exact task fields
+# that travel as WeKnora write metadata, so a stored object traces back to the
+# case, ticket, summary/review runs, and Slack thread that produced it. The
+# client's pinned body template decides whether the destination API actually
+# receives them; adding a field here is a contract change.
+WEKNORA_LINEAGE_METADATA_FIELDS = (
+    "engineer_case_id",
+    "client_ticket_id",
+    "investigation_id",
+    "summary_session_id",
+    "summary_run_id",
+    "review_session_id",
+    "review_run_id",
+    "slack_channel_id",
+    "slack_thread_ts",
+    "source_type",
+    "source_id",
+    "source_version",
+)
+
 
 @dataclass(frozen=True)
 class WeKnoraPromotionOutcome:
@@ -52,7 +72,17 @@ class WeKnoraPromotionAdapter:
         candidate = task.get("candidate_payload") if isinstance(task.get("candidate_payload"), dict) else {}
         decision = str(task.get("decision") or "").strip()
         candidate_type = str(task.get("candidate_type") or "").strip()
+        # Review round 4, R4-4: a HUMAN-APPROVED revision is a NEW operation,
+        # not a retry of the original one. The original key may already hold
+        # a successful receipt (a write whose readback timed out), which
+        # would 409 the different approved request forever. The approved
+        # revision therefore carries its own retryable identity, keyed by the
+        # decision timestamp: retries of THIS approval replay it, and the
+        # original receipt stays untouched for audit.
         idempotency_key = str(task.get("promotion_id") or "").strip()
+        decided_at = str(task.get("human_decided_at") or "").strip()
+        if str(task.get("human_decision") or "") == "approved" and decided_at:
+            idempotency_key = f"{idempotency_key}:h{decided_at}"
 
         if decision == "no_change":
             return WeKnoraPromotionOutcome(
@@ -114,6 +144,26 @@ class WeKnoraPromotionAdapter:
             )
 
         target_object_id = str(candidate.get("target_object_id") or "").strip()
+
+        # Recovery precedes validation (review round 1, P1-9): a retried task
+        # that already recorded a WeKnora object must reconcile against that
+        # recorded write BEFORE the base_version check — its own earlier
+        # execution legitimately advanced the target past the review's
+        # base_version, and comparing first would misreport the completed
+        # write as target_version_conflict.
+        known_object_id = str(task.get("weknora_object_id") or "").strip()
+        if known_object_id:
+            reconciliation = self._reconcile_known_object(
+                candidate_type=candidate_type,
+                decision=decision,
+                known_object_id=known_object_id,
+                known_version=str(task.get("weknora_version") or "").strip(),
+                expected_content=content,
+                target_object_id=target_object_id,
+            )
+            if reconciliation is not None:
+                return reconciliation
+
         if decision in TARGETED_DECISIONS:
             if not target_object_id:
                 return WeKnoraPromotionOutcome(
@@ -151,39 +201,17 @@ class WeKnoraPromotionAdapter:
                     weknora_object_id=target_object_id,
                     weknora_version=current_version or None,
                 )
-            if not current_version:
-                return WeKnoraPromotionOutcome(
-                    status="human_review", failure_code="target_version_unknown",
-                    failure_detail="target current version is not readable; refusing to overwrite",
-                    weknora_object_id=target_object_id,
-                )
-            if decision == "supplement":
-                current_content = str(current.get("content") or "").strip()
-                resolved_content = (
-                    f"{current_content}\n\n{content}" if current_content else content
-                )
-            else:
-                resolved_content = content
+            # proposed_content is the COMPLETE post-operation body (review
+            # manual v2): the adapter submits it verbatim. Never prepend the
+            # stored body — that double-concatenates when the review already
+            # integrated the existing text (review round 1, P1-8).
+            resolved_content = content
             resolved_title = title or str(current.get("title") or "")
             resolved_base_version = current_version
         else:
             resolved_content = content
             resolved_title = title
             resolved_base_version = ""
-
-        known_object_id = str(task.get("weknora_object_id") or "").strip()
-        if known_object_id:
-            reconciliation = self._reconcile_known_object(
-                candidate_type=candidate_type,
-                decision=decision,
-                known_object_id=known_object_id,
-                known_version=str(task.get("weknora_version") or "").strip(),
-                expected_content=resolved_content,
-                supplement_content=content if decision == "supplement" else "",
-                target_object_id=target_object_id,
-            )
-            if reconciliation is not None:
-                return reconciliation
 
         return self._write_and_readback(
             candidate_type=candidate_type,
@@ -205,23 +233,9 @@ class WeKnoraPromotionAdapter:
         stored object traces back to the case, ticket, summary/review runs,
         and Slack thread that produced it. The client's pinned body template
         decides whether the destination API actually receives it."""
-        keys = (
-            "engineer_case_id",
-            "client_ticket_id",
-            "investigation_id",
-            "summary_session_id",
-            "summary_run_id",
-            "review_session_id",
-            "review_run_id",
-            "slack_channel_id",
-            "slack_thread_ts",
-            "source_type",
-            "source_id",
-            "source_version",
-        )
         metadata = {
             key: str(task.get(key) or "").strip()
-            for key in keys
+            for key in WEKNORA_LINEAGE_METADATA_FIELDS
             if str(task.get(key) or "").strip()
         }
         metadata["promotion_id"] = str(task.get("promotion_id") or "")
@@ -235,12 +249,20 @@ class WeKnoraPromotionAdapter:
         return str(candidate.get("content") or "").strip()
 
     def _read_object(self, candidate_type: str, object_id: str) -> dict[str, Any]:
-        """Read one object; raises WeKnoraError (not_found when absent)."""
+        """Read one object; raises WeKnoraError (not_found when absent).
+
+        Memory uses the official list endpoint: the walk covers EVERY page so
+        an object on a later page is found (zero extra creates). A read
+        failure on any page propagates as its own failure kind — an
+        incomplete read is never treated as absence.
+        """
         if candidate_type == "knowledge":
             return self._client.knowledge_read(object_id=object_id)
-        # The official memory API is a list endpoint: fetch the items the
-        # identity owns and match by object id.
-        for item in self._client.memory_list():
+        list_all = getattr(self._client, "memory_list_all", None)
+        items = (
+            list_all() if callable(list_all) else list(self._client.memory_list())
+        )
+        for item in items:
             if _item_object_id(item) == object_id:
                 return {
                     "object_id": object_id,
@@ -280,7 +302,6 @@ class WeKnoraPromotionAdapter:
         known_object_id: str,
         known_version: str,
         expected_content: str,
-        supplement_content: str,
         target_object_id: str,
     ) -> WeKnoraPromotionOutcome | None:
         """A retried task that already recorded a WeKnora object must prove the
@@ -311,10 +332,9 @@ class WeKnoraPromotionAdapter:
             )
 
         read_content = str(read.get("content") or "").strip()
-        if decision == "supplement" and supplement_content:
-            content_matches = read_content.endswith(supplement_content)
-        else:
-            content_matches = read_content == expected_content
+        # Full-body comparison for every decision: proposed_content carries
+        # the complete post-operation body, so the readback must equal it.
+        content_matches = read_content == expected_content
         read_version = str(read.get("version") or "").strip()
         version_matches = not known_version or not read_version or known_version == read_version
         if content_matches and version_matches:

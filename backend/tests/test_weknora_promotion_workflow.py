@@ -267,6 +267,454 @@ def test_reopen_invalidates_unexecuted_weknora_promotions() -> None:
     assert rows[0]["status"] == "invalidated"
 
 
+def test_reopen_invalidates_parked_promotions_and_blocks_requeue() -> None:
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    reopen_hermes_case(
+        repository, engineer_case_id="123-1", input_text="reopened", now_value="2026-09-05T08:06:30Z"
+    )
+    rows = repository.list_weknora_promotions()
+    assert rows[0]["status"] == "invalidated"
+    # Parked promotions of the superseded episode are not requeueable
+    # (review round 1, P1-9).
+    assert repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:07:00Z", reason="ops retry"
+    ) is None
+
+
+def test_late_receipt_after_reopen_records_evidence_without_resurrecting() -> None:
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # The adapter's external write lands; before the worker completes, the
+    # case reopens and invalidates the claimed row (review round 1, P1-9).
+    reopen_hermes_case(
+        repository, engineer_case_id="123-1", input_text="reopened", now_value="2026-09-05T08:05:30Z"
+    )
+    result = repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="accepted",
+        weknora_object_id="doc-9", weknora_version="101",
+        receipt={"ok": True}, completed_at="2026-09-05T08:06:00Z",
+    )
+    assert result["late_receipt_recorded"] is True
+    row = repository.list_weknora_promotions()[0]
+    # The reopen decision is never resurrected by a late write.
+    assert row["status"] == "invalidated"
+    assert row["weknora_object_id"] == "doc-9"
+    assert row["weknora_version"] == "101"
+    assert row["operation_receipt"] == {"ok": True}
+    # A different owner still cannot attach evidence to the row.
+    with pytest.raises(RuntimeError, match="stale"):
+        repository.complete_weknora_promotion(
+            promotion_id, owner_token="someone-else", status="accepted",
+            completed_at="2026-09-05T08:06:30Z",
+        )
+
+
+def test_approved_resolution_after_saved_conflict_outcome_completes() -> None:
+    """Review round 3, R3-4: the real worker saves the parked attempt's
+    weknora_object_id/version. Approval must CLEAR them — otherwise the
+    recovery reconcile compares the OLD stored body against the
+    human-approved body and parks again (reconcile_content_mismatch)."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # First attempt parked on a version conflict AND recorded the object
+    # identity — exactly what the real worker persists.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict",
+        weknora_object_id="doc-7", weknora_version="6",
+        completed_at="2026-09-05T08:06:00Z",
+    )
+
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "old stored body", "version": "6"}}
+    )
+    decided = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "replace",
+            "content": "Human-approved new body.",
+            "title": "T",
+            "target_object_id": "doc-7",
+            "base_version": "6",
+        },
+    )
+    assert decided["status"] == "queued"
+    # The parked object identity is cleared with the decision.
+    assert decided["weknora_object_id"] is None
+    assert decided["weknora_version"] is None
+
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "accepted"
+    assert store.objects["doc-7"]["content"] == "Human-approved new body."
+
+
+def test_approved_merge_resolution_reads_the_approved_body() -> None:
+    """Review round 3, R3-4: merge reads merged_content; an approval whose
+    body lands only in `content` would submit an empty (or stale unapproved)
+    merge body."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "merge",
+            "content": "Human-approved merged body.",
+            "target_object_id": "doc-7",
+            "base_version": "6",
+        },
+    )
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "existing", "version": "6"}}
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "accepted"
+    assert store.objects["doc-7"]["content"] == "Human-approved merged body."
+
+
+def test_human_approval_after_unreadable_receipt_writes_as_new_operation() -> None:
+    """Review round 4, R4-4 — the reviewer's exact reproduction chain:
+    write lands but the readback times out (outcome_unknown, receipt EXISTS
+    at WeKnora), the target then moves, the retry reconciles to
+    human_review, and the human approves a NEW body and base_version. The
+    approved revision must write under its OWN idempotency identity — the
+    original key would 409 the different request forever."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    # Step 1 (state constructed; the real path writes then times out on the
+    # readback): the WeKnora side holds a SUCCESSFUL receipt for the original
+    # key and the object at v6 with the pre-approval body.
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "pre-approval body", "version": "6"}}
+    )
+
+    # Step 2: the target moves underneath (another operation lands).
+    store.objects["doc-7"] = {"title": "T", "content": "someone else's edit", "version": "9"}
+
+    # Step 3: the retry reconciles against the recorded object → human_review.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="outcome_unknown",
+        failure_code="readback_failed",
+        weknora_object_id="doc-7", weknora_version="6",
+        completed_at="2026-09-05T08:06:00Z",
+    )
+    repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:06:30Z", reason="readback verified later"
+    )
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:00Z",
+        lease_expires_at="2026-09-05T08:09:00Z",
+    )
+    retry = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert retry.status == "human_review"
+    assert retry.failure_code == "reconcile_content_mismatch"
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code=retry.failure_code, failure_detail=retry.failure_detail,
+        weknora_object_id="doc-7", weknora_version="9",
+        completed_at="2026-09-05T08:08:00Z",
+    )
+
+    # Step 4: the human approves the NEW body pinned to the CURRENT version.
+    decided = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:10:00Z",
+        resolution={
+            "action": "replace", "content": "human-corrected body",
+            "title": "T", "target_object_id": "doc-7", "base_version": "9",
+        },
+    )
+    assert decided["status"] == "queued"
+    approved = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w3", claimed_at="2026-09-05T08:10:30Z",
+        lease_expires_at="2026-09-05T08:12:30Z",
+    )
+    final = WeKnoraPromotionAdapter(store).execute(approved)
+    # The OLD contract 409'd here (same key, different request). The approved
+    # revision writes under its own identity and completes.
+    assert final.status == "accepted", (final.status, final.failure_detail)
+    assert store.objects["doc-7"]["content"] == "human-corrected body"
+    update_keys = [kw.get("key") for name, kw in store.calls if name == "knowledge_update"]
+    assert f"{promotion_id}:h2026-09-05T08:10:00Z" in update_keys
+    # Retries of THIS approval replay through the WeKnora server-side key
+    # replay (same key + same request → original result); this fake has no
+    # replay surface, so the version guard parking a re-run is the correct
+    # zero-modification behavior here.
+
+
+def test_human_decision_approve_requeues_and_reject_is_terminal() -> None:
+    """Review round 1 contract gap: the human-review queue needs an exit.
+    Approve re-queues under the full write contract; reject is terminal and
+    not claimable, requeueable, or decidable again."""
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    approved = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        note="verified against the live object", decided_at="2026-09-05T08:08:00Z",
+        # Review round 2, R2-5: an approval carries the human-determined
+        # action; a bare re-queue would park again on decision=human_review.
+        resolution={"action": "new", "content": "Human-approved body.", "title": "T"},
+    )
+    assert approved["status"] == "queued"
+    assert approved["decision"] == "new"
+    assert approved["human_decision"] == "approved"
+    assert approved["human_decision_detail"] == "ops:ziling: verified against the live object"
+    assert approved["human_decided_at"] == "2026-09-05T08:08:00Z"
+    # The approved row re-enters the worker contract.
+    reclaimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:08:30Z",
+        lease_expires_at="2026-09-05T08:10:30Z",
+    )
+    assert reclaimed is not None and reclaimed["status"] == "active"
+    # A queued/active row is not decidable.
+    assert repository.decide_weknora_promotion(
+        promotion_id, decision="reject", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:09:00Z",
+    ) is None
+
+    # The write parks again; this time the human rejects terminally.
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:10:00Z",
+    )
+    rejected = repository.decide_weknora_promotion(
+        promotion_id, decision="reject", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:11:00Z",
+    )
+    assert rejected["status"] == "rejected"
+    assert rejected["human_decision"] == "rejected"
+    assert repository.claim_weknora_promotion(
+        promotion_id, owner_token="w3", claimed_at="2026-09-05T08:11:30Z",
+        lease_expires_at="2026-09-05T08:13:30Z",
+    ) is None
+    assert repository.requeue_weknora_promotion(
+        promotion_id, requeued_at="2026-09-05T08:12:00Z", reason="ops retry"
+    ) is None
+    assert repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:12:30Z",
+    ) is None
+
+    with pytest.raises(ValueError, match="approve or reject"):
+        repository.decide_weknora_promotion(
+            promotion_id, decision="maybe", decided_by="ops:ziling",
+            decided_at="2026-09-05T08:13:00Z",
+        )
+
+
+def test_approved_resolution_completes_the_write_under_contract() -> None:
+    """Review round 2, R2-5: approving a parked human_review candidate with a
+    human-determined action must COMPLETE the write — a bare re-queue would
+    park again on decision="human_review". A stale target version re-parks
+    (version protection still guards the approved write)."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    # The target moved to v6 while parked; the human pins the CURRENT
+    # version and the complete post-operation body.
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "old", "version": "6"}}
+    )
+    decided = repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "replace",
+            "content": "Human-approved complete body.",
+            "title": "T",
+            "target_object_id": "doc-7",
+            "base_version": "6",
+        },
+    )
+    assert decided["status"] == "queued"
+    assert decided["decision"] == "replace"
+
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "accepted"
+    assert store.objects["doc-7"]["content"] == "Human-approved complete body."
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status=outcome.status,
+        weknora_object_id=outcome.weknora_object_id,
+        weknora_version=outcome.weknora_version,
+        receipt=outcome.receipt, completed_at="2026-09-05T08:08:00Z",
+    )
+    assert repository.list_weknora_promotions()[0]["status"] == "accepted"
+
+
+def test_approved_resolution_with_stale_target_version_reparks() -> None:
+    """Review round 2, R2-5: version protection still guards the approved
+    write — a human action pinned to an out-of-date base_version makes zero
+    modification and re-parks for the next human decision."""
+    from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+    from backend.tests.test_weknora_promotion_adapter import FakeWeKnoraStore
+
+    repository = _repository()
+    _driven_to_close(repository)
+    binding = _binding(repository)
+    tasks = build_weknora_promotion_tasks(
+        sanitized_payload=_sanitized_payload(), binding=binding
+    )
+    repository.enqueue_weknora_promotions(tasks, now_value="2026-09-05T08:04:00Z")
+    promotion_id = repository.list_weknora_promotions()[0]["promotion_id"]
+    repository.claim_weknora_promotion(
+        promotion_id, owner_token="w1", claimed_at="2026-09-05T08:05:00Z",
+        lease_expires_at="2026-09-05T08:07:00Z",
+    )
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w1", status="human_review",
+        failure_code="target_version_conflict", completed_at="2026-09-05T08:06:00Z",
+    )
+
+    store = FakeWeKnoraStore(
+        created_objects={"doc-7": {"title": "T", "content": "current v6", "version": "6"}}
+    )
+    repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:07:00Z",
+        resolution={
+            "action": "replace",
+            "content": "Approved against a stale version.",
+            "target_object_id": "doc-7",
+            "base_version": "5",  # stale: the object moved to 6
+        },
+    )
+    claimed = repository.claim_weknora_promotion(
+        promotion_id, owner_token="w2", claimed_at="2026-09-05T08:07:30Z",
+        lease_expires_at="2026-09-05T08:09:30Z",
+    )
+    outcome = WeKnoraPromotionAdapter(store).execute(claimed)
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "target_version_conflict"
+    # Zero modification: the object still holds its pre-decision body.
+    assert store.objects["doc-7"]["content"] == "current v6"
+    repository.complete_weknora_promotion(
+        promotion_id, owner_token="w2", status="human_review",
+        failure_code=outcome.failure_code, failure_detail=outcome.failure_detail,
+        completed_at="2026-09-05T08:08:00Z",
+    )
+    # The re-parked row is decidable again (the loop stays closed).
+    again = repository.decide_weknora_promotion(
+        promotion_id, decision="reject", decided_by="ops:ziling",
+        decided_at="2026-09-05T08:09:00Z",
+    )
+    assert again["status"] == "rejected"
+
+
 def test_task_state_machine_claim_complete_requeue() -> None:
     repository = _repository()
     _driven_to_close(repository)

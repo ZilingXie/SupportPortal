@@ -19,6 +19,7 @@ from backend.services.hermes_case_workflow import (
     start_hermes_case,
 )
 from backend.services.hermes_knowledge_workflow import (
+    build_case_close_bundle,
     drain_hermes_knowledge_tasks,
     knowledge_workflow_active,
     queue_hermes_summary_for_case,
@@ -276,6 +277,297 @@ def test_n8n_source_trigger_queues_summary_task(monkeypatch) -> None:
     assert task is not None
     assert task["trigger"] == "n8n_source"
     assert task["summary_task_id"] == summary_task_id_for("123-1", 1)
+
+
+def test_duplicate_trigger_with_unchanged_input_reuses_task(monkeypatch) -> None:
+    """solved -> closed with unchanged content reuses the Summary task."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+
+    assert first is not None and second is not None
+    assert first["summary_task_id"] == second["summary_task_id"]
+    assert first["input_fingerprint"] == second["input_fingerprint"]
+    assert len(repository.list_hermes_summary_tasks()) == 1
+
+
+def test_updated_input_creates_new_summary_generation(monkeypatch) -> None:
+    """Late-arriving substantive material earns a NEW Summary version while
+    the earlier generation keeps its own record (never overwritten)."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+
+    # Advance the case lineage in the STORE (the binding getter returns a
+    # copy): a ledger revision bump is substantive new frozen input.
+    stored = repository._hermes_case_bindings["123-1"]
+    stored["current_ledger_revision"] = int(stored["current_ledger_revision"]) + 1
+
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second is not None
+    assert second["summary_task_id"] != first["summary_task_id"]
+    assert ":g" in second["summary_task_id"]
+    assert second["input_fingerprint"] != first["input_fingerprint"]
+    # Replay of the NEW generation with unchanged input reuses it.
+    third = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert third["summary_task_id"] == second["summary_task_id"]
+    assert len(repository.list_hermes_summary_tasks()) == 2
+
+
+def test_newer_source_version_changes_fingerprint(monkeypatch) -> None:
+    """A newer accepted source version is substantive new material."""
+    from backend.services.hermes_knowledge_workflow import summary_input_fingerprint
+
+    binding = {
+        "episode": 1, "current_ledger_revision": 3, "conversation_version": 5,
+    }
+    before = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v1")])
+    same = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v1")])
+    after = summary_input_fingerprint(binding, source_versions=[("zendesk_ticket", "T1", "v2")])
+    assert before == same
+    assert before != after
+
+
+def test_linked_source_versions_reach_fingerprint_and_bundle(monkeypatch) -> None:
+    """Review round 1 P1-4: the repository-level consumption chain. A newer
+    accepted linked source version (1) changes the queue-time fingerprint and
+    mints a new Summary generation, and (2) the close bundle delivers the
+    LATEST accepted source payload verbatim — superseded versions are not
+    re-delivered."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    def _accept(source_updated_at: str, body: str) -> dict:
+        return repository.accept_knowledge_source(
+            {
+                "source_type": "zendesk_ticket",
+                "source_id": "123",
+                "source_updated_at": source_updated_at,
+                "payload": {"body": body},
+                "references": {},
+            },
+            now_value=source_updated_at,
+        )
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+
+    intake_v1 = _accept("2026-09-05T08:01:00Z", "v1 body")
+    assert intake_v1["receipt_status"] == "accepted"
+    repository.link_knowledge_source_summary(
+        intake_v1["intake_id"], engineer_case_id="123-1",
+        summary_task_id=first["summary_task_id"], now_value="2026-09-05T08:01:30Z",
+    )
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second["summary_task_id"] != first["summary_task_id"]
+    assert second["input_fingerprint"] != first["input_fingerprint"]
+
+    intake_v2 = _accept("2026-09-05T08:05:00Z", "v2 body")
+    repository.link_knowledge_source_summary(
+        intake_v2["intake_id"], engineer_case_id="123-1",
+        summary_task_id=second["summary_task_id"], now_value="2026-09-05T08:05:30Z",
+    )
+    third = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert third["summary_task_id"] != second["summary_task_id"]
+
+    bundle = build_case_close_bundle(repository, third)
+    assert bundle["schema"] == "hermes-case-close-bundle-v2"
+    assert [row["intake_id"] for row in bundle["knowledge_sources"]] == [intake_v2["intake_id"]]
+    assert bundle["knowledge_sources"][0]["payload"] == {"body": "v2 body"}
+
+
+def _accept_and_link_source(repository, *, source_updated_at: str, body: str, task_id) -> None:
+    intake = repository.accept_knowledge_source(
+        {
+            "source_type": "zendesk_ticket",
+            "source_id": "123",
+            "source_updated_at": source_updated_at,
+            "payload": {"body": body},
+            "references": {},
+        },
+        now_value=source_updated_at,
+    )
+    repository.link_knowledge_source_summary(
+        intake["intake_id"], engineer_case_id="123-1",
+        summary_task_id=task_id, now_value=source_updated_at,
+    )
+
+
+def test_source_advancing_before_execution_fails_the_stale_generation(monkeypatch) -> None:
+    """Review round 2, R2-7: the task's fingerprint freezes its linked-source
+    input. A source accepted between queueing and execution must fail the
+    stale generation visibly (never silently summarize newer material), and
+    the queue side mints the new generation."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+    assert str(first.get("input_fingerprint") or "") != ""
+
+    # Newer source material lands and links to the case BEFORE execution.
+    _accept_and_link_source(
+        repository, source_updated_at="2026-09-05T09:00:00Z",
+        body="late-breaking correction", task_id=first["summary_task_id"],
+    )
+
+    drain_hermes_knowledge_tasks(
+        repository,
+        client=FakeHermesAgentClient(
+            summary_output=_summary_output(), review_output=_review_output([])
+        ),
+        limit=5, sleeper=lambda _s: None,
+    )
+    stored = repository.get_hermes_summary_task(first["summary_task_id"])
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert stored["error_code"] == "source_input_diverged"
+
+    # Re-queueing after the divergence mints the new generation with the
+    # newer fingerprint; the stale row keeps its own failed record.
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second["summary_task_id"] != first["summary_task_id"]
+    assert second["input_fingerprint"] != first["input_fingerprint"]
+
+
+def test_source_advancing_mid_run_fails_before_completion(monkeypatch) -> None:
+    """Review round 2, R2-7: a source accepted WHILE the run executes is
+    caught by the pre-completion fingerprint re-check — the task never
+    completes on material its fingerprint does not cover."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+
+    class _MidRunSourceInjection:
+        """Gateway double that accepts + links a newer source version while
+        the summary run is in flight (between start and get_run)."""
+
+        class settings:
+            turn_timeout_seconds = 5.0
+            poll_interval_seconds = 0.0
+
+        def __init__(self, repository, summary_output):
+            self.repository = repository
+            self.summary_output = summary_output
+
+        def start_run(self, **kwargs):
+            return {"run_id": "r1", "status": "started"}
+
+        def get_run(self, run_id):
+            _accept_and_link_source(
+                self.repository, source_updated_at="2026-09-05T09:30:00Z",
+                body="mid-run correction", task_id=first["summary_task_id"],
+            )
+            return {
+                "run_id": run_id, "status": "completed",
+                "output": f"```json\n{json.dumps(self.summary_output)}\n```",
+            }
+
+        def stop_run(self, run_id):
+            return {"run_id": run_id, "status": "stopping"}
+
+    summary_payload = {
+        "problem_description": "p", "timeline": ["t"], "investigation_process": ["i"],
+        "confirmed_facts": ["f"], "root_cause_and_solution": "rc",
+        "verification_results": ["v"], "limitations_and_unconfirmed": ["lim"],
+        "evidence_references": ["e"], "candidates": [],
+    }
+    drain_hermes_knowledge_tasks(
+        repository,
+        client=_MidRunSourceInjection(repository, summary_payload),
+        limit=5, sleeper=lambda _s: None,
+    )
+    stored = repository.get_hermes_summary_task(first["summary_task_id"])
+    assert stored is not None
+    assert stored["status"] == "failed"
+    assert stored["error_code"] == "source_input_diverged"
+    # No review task was created from the failed generation.
+    assert repository.list_hermes_review_tasks() == []
+
+
+def test_new_generation_gets_its_own_review(monkeypatch) -> None:
+    """Review round 1 P1-7: a second Summary generation must produce a NEW
+    review task, session, and idempotency key — never reuse the first
+    generation's review."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+
+    import json as _json
+
+    summary_output = {
+        "problem_description": "p",
+        "timeline": ["t"],
+        "investigation_process": ["i"],
+        "confirmed_facts": ["f"],
+        "root_cause_and_solution": "rc",
+        "verification_results": ["v"],
+        "limitations_and_unconfirmed": ["lim"],
+        "evidence_references": ["e"],
+        "candidates": [
+            {"candidate_id": "c1", "statement": "s", "context": "c",
+             "evidence_references": ["e"]},
+        ],
+    }
+
+    class _SummaryOnlyClient:
+        class settings:
+            turn_timeout_seconds = 5.0
+            poll_interval_seconds = 0.0
+
+        def start_run(self, **kwargs):
+            return {"run_id": "r1", "status": "started"}
+
+        def get_run(self, run_id):
+            return {
+                "run_id": run_id,
+                "status": "completed",
+                "output": f"```json\n{_json.dumps(summary_output)}\n```",
+            }
+
+        def stop_run(self, run_id):
+            return {"run_id": run_id, "status": "stopping"}
+
+    from backend.services.hermes_knowledge_workflow import drain_hermes_knowledge_tasks
+
+    first = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert first is not None
+    # Generation 1 completes at its own lineage revision.
+    drain_hermes_knowledge_tasks(
+        repository, client=_SummaryOnlyClient(), limit=5, sleeper=lambda _s: None,
+    )
+    # Late-arriving material advances the ledger; closed earns generation 2.
+    stored = repository._hermes_case_bindings["123-1"]
+    stored["current_ledger_revision"] = int(stored["current_ledger_revision"]) + 1
+    second = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="closed")
+    assert second is not None
+    assert second["summary_task_id"] != first["summary_task_id"]
+    drain_hermes_knowledge_tasks(
+        repository, client=_SummaryOnlyClient(), limit=5, sleeper=lambda _s: None,
+    )
+
+
+    reviews = repository.list_hermes_review_tasks()
+    assert len(reviews) == 2, [r["review_task_id"] for r in reviews]
+    review_ids = {r["review_task_id"] for r in reviews}
+    review_sessions = {r["review_session_id"] for r in reviews}
+    assert len(review_sessions) == 2
+    # Each review points at its OWN summary generation.
+    by_summary = {r["summary_task_id"] for r in reviews}
+    assert by_summary == {first["summary_task_id"], second["summary_task_id"]}
+    # The generation suffix is present on the second review id.
+    assert any(":g" in rid for rid in review_ids)
 
 
 def test_n8n_source_summary_normalizes_string_lists(monkeypatch) -> None:

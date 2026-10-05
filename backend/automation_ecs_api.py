@@ -76,7 +76,7 @@ class KnowledgeSourceSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: str = Field(pattern=r"^knowledge-source-v1$")
-    source_type: str = Field(pattern=r"^(zendesk_ticket|csd_issue)$")
+    source_type: str = Field(pattern=r"^(zendesk_ticket|csd_issue|article)$")
     source_id: str = Field(min_length=1, max_length=256)
     source_updated_at: str = Field(min_length=1, max_length=128)
     payload: dict[str, Any]
@@ -296,6 +296,46 @@ def _require_hermes_callback_token(
 
 
 
+def _normalize_raw_zendesk_ticket(raw: dict[str, Any]) -> dict[str, Any]:
+    """Project a raw Zendesk ticket response onto the internal snapshot shape.
+
+    Review round 7, R7-6: raw responses carry numeric ids, array
+    ``custom_fields``, and extra keys (``requester_id``, ``url``, ...) that
+    the internal ``ZendeskTicketSnapshot`` contract forbids.
+    """
+    custom_fields: dict[str, Any] = {}
+    raw_fields = raw.get("custom_fields")
+    if isinstance(raw_fields, dict):
+        custom_fields = dict(raw_fields)
+    elif isinstance(raw_fields, list):
+        for field in raw_fields:
+            if isinstance(field, dict) and field.get("id") is not None:
+                custom_fields[str(field["id"])] = field.get("value")
+
+    requester = raw.get("requester")
+    if not isinstance(requester, dict):
+        requester = {}
+    organization = raw.get("organization")
+    if not isinstance(organization, dict):
+        organization = None
+
+    return {
+        "id": str(raw.get("id") or ""),
+        "status": str(raw.get("status") or ""),
+        "subject": str(raw.get("subject") or ""),
+        "description": str(raw.get("description") or ""),
+        "requester": {
+            key: requester.get(key)
+            for key in ("email", "name")
+            if requester.get(key) is not None
+        },
+        "organization": organization,
+        "tags": [str(tag) for tag in raw.get("tags") or []],
+        "custom_fields": custom_fields,
+        "updated_at": raw.get("updated_at"),
+    }
+
+
 def create_app(    *,
     settings: AutomationEcsSettings | None = None,
     store: AutomationEcsStore | None = None,
@@ -456,6 +496,11 @@ def create_app(    *,
                 detail={"code": "event_payload_conflict", "execution_id": exc.execution_id},
             ) from exc
 
+    # Review round 4, R4-5: hard cap for freezing a native case's
+    # conversation — reaching it is an explicit refusal, never a silent
+    # truncation of the earliest engineer turns.
+    _NATIVE_CONTEXT_TURN_LIMIT = 500
+
     @app.post(f"{base}/v1/knowledge/sources", status_code=202)
     async def knowledge_source(snapshot: KnowledgeSourceSnapshot) -> JSONResponse:
         """Accept one raw n8n source and start Summary for a known Zendesk case.
@@ -483,6 +528,37 @@ def create_app(    *,
         summary_task_id = str(receipt.get("summary_task_id") or "").strip() or None
         engineer_case_id = str(receipt.get("engineer_case_id") or "").strip() or None
 
+        # Case-less sources (CSD issues, article snapshots) enter the SAME
+        # governance pipeline through the standalone Summary path: a fresh
+        # Summary session per accepted source version (governance plan WP1).
+        if snapshot.source_type in {"csd_issue", "article"} and intake_id:
+            try:
+                from backend.services.knowledge_standalone_workflow import (
+                    queue_standalone_summary_for_source,
+                )
+
+                record = await asyncio.to_thread(
+                    repository.get_knowledge_source,
+                    str(receipt.get("task_id") or intake_id),
+                )
+                if isinstance(record, dict):
+                    queued_standalone = await asyncio.to_thread(
+                        queue_standalone_summary_for_source,
+                        repository,
+                        intake=record,
+                        now_value=now,
+                    )
+                    if isinstance(queued_standalone, dict):
+                        summary_task_id = (
+                            str(queued_standalone.get("summary_task_id") or "").strip()
+                            or summary_task_id
+                        )
+            except Exception as exc:  # noqa: BLE001 - receipt must expose acceptance
+                raise HTTPException(
+                    status_code=503,
+                    detail="source accepted but the standalone Hermes Summary could not be queued",
+                ) from exc
+
         # A duplicate is still allowed to repair a missing case/task link from
         # an earlier accepted request; the repository-level task id remains
         # idempotent, so this never creates a second Summary task.
@@ -505,6 +581,19 @@ def create_app(    *,
                 )
                 if candidates:
                     engineer_case_id = str(candidates[0]["engineer_case_id"])
+                    # Link the source BEFORE queueing (review round 1, P1-4):
+                    # the Summary fingerprint freezes the linked-source set, so
+                    # queue-then-link would freeze the first request WITHOUT
+                    # its own source and mint a new generation on every replay.
+                    # The receipt's task id is preserved so a failed replay
+                    # keeps the earlier linkage intact.
+                    await asyncio.to_thread(
+                        repository.link_knowledge_source_summary,
+                        intake_id,
+                        engineer_case_id=engineer_case_id,
+                        summary_task_id=summary_task_id,
+                        now_value=now,
+                    )
                     queued = await asyncio.to_thread(
                         queue_hermes_summary_for_case,
                         repository,
@@ -521,6 +610,167 @@ def create_app(    *,
                             summary_task_id=summary_task_id,
                             now_value=now,
                         )
+                else:
+                    # Review round 2, R2-4: a Zendesk ticket owned by a NATIVE
+                    # Hermes case (automation binding, no legacy engineer
+                    # case) must not be silently accepted without a Summary —
+                    # it enters the SAME governance pipeline through the
+                    # standalone Summary path.
+                    binding = coordination_store.get_hermes_case_binding(snapshot.source_id)
+                    if (
+                        isinstance(binding, dict)
+                        and str(binding.get("session_kind") or "case") == "case"
+                    ):
+                        record = await asyncio.to_thread(
+                            repository.get_knowledge_source,
+                            str(receipt.get("task_id") or intake_id),
+                        )
+                        # Review round 4, R4-3: only a CLOSED ticket snapshot
+                        # starts a closing Summary — an open/new state (a
+                        # reopen sync) is accepted as a source record but
+                        # must not mint summary work.
+                        payload = record.get("payload") if isinstance(record, dict) else None
+                        ticket = payload.get("ticket") if isinstance(payload, dict) else {}
+                        ticket_state = str(
+                            (ticket or {}).get("status") or ""
+                        ).strip().lower() if isinstance(ticket, dict) else ""
+                        # Review round 5, R5-2: ONLY a closed state mints a
+                        # closing Summary — open/new/pending/hold and any
+                        # missing/unknown state are all refused.
+                        from backend.services.hermes_knowledge_workflow import (
+                            CLOSED_TICKET_STATES,
+                        )
+
+                        if ticket_state not in CLOSED_TICKET_STATES:
+                            return JSONResponse(
+                                content={
+                                    "status": receipt_status,
+                                    "task_id": str(receipt.get("task_id") or intake_id),
+                                    "summary_skipped_reason": "ticket_not_closed",
+                                },
+                                status_code=202,
+                            )
+                        if isinstance(record, dict):
+                            from backend.services.knowledge_standalone_workflow import (
+                                queue_standalone_summary_for_source,
+                            )
+
+                            # Review round 6, R6-3: the accepted CLOSED snapshot
+                            # refreshes the case mirror — the mirror guards
+                            # approvals and writes, so a re-close must clear
+                            # the open state through THIS chain (no other
+                            # status delivery to ECS is guaranteed).
+                            if isinstance(ticket, dict) and ticket.get("status") is not None:
+                                try:
+                                    # Review round 7, R7-6: the mirror speaks the
+                                    # INTERNAL ZendeskTicketSnapshot contract
+                                    # (string ids, dict custom_fields, no extra
+                                    # fields) — raw Zendesk responses must be
+                                    # normalized BEFORE syncing, or later Hermes
+                                    # turn creation reading the mirror fails
+                                    # validation.
+                                    from backend.services.automation_ecs_contracts import (
+                                        ZendeskTicketSnapshot,
+                                    )
+
+                                    normalized = ZendeskTicketSnapshot.model_validate(
+                                        _normalize_raw_zendesk_ticket(ticket)
+                                    ).model_dump(mode="json")
+                                    coordination_store.sync_case_ticket_from_snapshot(
+                                        snapshot.source_id,
+                                        normalized,
+                                        occurred_at=str(
+                                            (record or {}).get("source_updated_at") or ""
+                                        ) or None,
+                                    )
+                                except Exception:  # noqa: BLE001 - mirror sync is best-effort
+                                    import logging
+
+                                    logging.getLogger(__name__).warning(
+                                        "native_case_mirror_sync_failed ticket=%s",
+                                        snapshot.source_id,
+                                        exc_info=True,
+                                    )
+
+                            # Review round 4, R4-5: the investigation context
+                            # must be COMPLETE — a conversation at the read cap
+                            # cannot be frozen as full material, so the source
+                            # is refused with an explicit reason instead of
+                            # silently truncating the earliest turns.
+                            visible_turns = coordination_store.list_hermes_case_turns(
+                                snapshot.source_id, limit=_NATIVE_CONTEXT_TURN_LIMIT
+                            )
+                            if len(visible_turns or []) >= _NATIVE_CONTEXT_TURN_LIMIT:
+                                raise HTTPException(
+                                    status_code=422,
+                                    detail=(
+                                        "native case conversation exceeds the frozen-context "
+                                        f"budget ({_NATIVE_CONTEXT_TURN_LIMIT} turns); "
+                                        "refusing a truncated summary input"
+                                    ),
+                                )
+                            # Review round 3, R3-5: freeze the native case's
+                            # investigation context (binding lineage, engineer
+                            # Hermes turns, timeline) with the task so the
+                            # Summary sees the engineer conversation and the
+                            # promotion lineage keeps the Slack thread.
+                            case_context = {
+                                "binding": {
+                                    key: binding.get(key)
+                                    for key in (
+                                        "hermes_session_id", "slack_channel_id",
+                                        "slack_thread_ts", "status", "conversation_version",
+                                        "created_at",
+                                    )
+                                    if binding.get(key) is not None
+                                },
+                                "turns": [
+                                    {
+                                        key: turn.get(key)
+                                        for key in (
+                                            "turn_id", "turn_kind", "phase", "direction",
+                                            "direction_reason", "work_result", "result",
+                                            "status", "created_at",
+                                        )
+                                    }
+                                    for turn in visible_turns
+                                    if isinstance(turn, dict)
+                                ],
+                                "timeline": [
+                                    {
+                                        "event_type": str(event.get("event_type") or ""),
+                                        "payload": event.get("payload") or {},
+                                        "created_at": str(event.get("created_at") or ""),
+                                    }
+                                    for event in coordination_store.list_case_timeline(
+                                        snapshot.source_id
+                                    )
+                                    if isinstance(event, dict)
+                                ],
+                            }
+                            queued_standalone = await asyncio.to_thread(
+                                queue_standalone_summary_for_source,
+                                repository,
+                                intake=record,
+                                now_value=now,
+                                case_context=case_context,
+                            )
+                            if isinstance(queued_standalone, dict):
+                                summary_task_id = (
+                                    str(queued_standalone.get("summary_task_id") or "").strip()
+                                    or None
+                                )
+                                await asyncio.to_thread(
+                                    repository.link_knowledge_source_summary,
+                                    intake_id,
+                                    engineer_case_id=None,
+                                    summary_task_id=summary_task_id,
+                                    now_value=now,
+                                )
+            except HTTPException:
+                # Deliberate refusals (e.g. the truncated-context guard) pass
+                # through with their own status and reason.
+                raise
             except Exception as exc:  # noqa: BLE001 - receipt must expose source acceptance
                 # Keep the durable source receipt, but make the missing async
                 # linkage visible to the caller and logs for retry/repair.
@@ -547,6 +797,144 @@ def create_app(    *,
         record.pop("payload", None)
         record.pop("references", None)
         return JSONResponse(content=jsonable_encoder(record), headers={"Cache-Control": "no-store"})
+
+    @app.get(f"{base}/v1/knowledge/promotions")
+    async def knowledge_promotions(status: str | None = None) -> JSONResponse:
+        """Observable promotion queue (governance plan WP3).
+
+        Lists WeKnora promotion tasks — by default only the actionable
+        human_review population (the pending human queue). `candidate_payload`
+        is redacted to its digest fields; full lineage and failure reasons are
+        preserved so a human can decide and the `requeue` flow can act.
+        """
+        allowed = {"human_review", "queued", "active", "accepted", "failed", "outcome_unknown", "invalidated", "rejected"}
+        normalized = str(status or "human_review").strip() or "human_review"
+        if normalized not in allowed:
+            raise HTTPException(status_code=422, detail=f"status must be one of {sorted(allowed)}")
+        repository = _engineer_ticket_repository()
+        rows = await asyncio.to_thread(repository.list_weknora_promotions)
+        projections = []
+        for row in rows or []:
+            if not isinstance(row, dict) or str(row.get("status") or "") != normalized:
+                continue
+            candidate = row.get("candidate_payload") if isinstance(row.get("candidate_payload"), dict) else {}
+            projections.append(
+                {
+                    "promotion_id": row.get("promotion_id"),
+                    "status": row.get("status"),
+                    "failure_code": row.get("failure_code"),
+                    "failure_detail": row.get("failure_detail"),
+                    "decision": candidate.get("decision"),
+                    "candidate_type": candidate.get("candidate_type"),
+                    "candidate_id": candidate.get("candidate_id"),
+                    "statement": str(candidate.get("statement") or "")[:200],
+                    "source_type": row.get("source_type"),
+                    "source_id": row.get("source_id"),
+                    "source_version": row.get("source_version"),
+                    "engineer_case_id": row.get("engineer_case_id"),
+                    "client_ticket_id": row.get("client_ticket_id"),
+                    "weknora_object_id": row.get("weknora_object_id"),
+                    "weknora_version": row.get("weknora_version"),
+                    "operation_receipt": row.get("operation_receipt"),
+                    "human_decision": row.get("human_decision"),
+                    "human_decision_detail": row.get("human_decision_detail"),
+                    "human_decided_at": row.get("human_decided_at"),
+                    "created_at": row.get("created_at"),
+                    "updated_at": row.get("updated_at"),
+                }
+            )
+        return JSONResponse(
+            content={"status": normalized, "count": len(projections), "items": projections},
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.post(f"{base}/v1/knowledge/promotions/{{promotion_id}}/decision", status_code=200)
+    async def knowledge_promotion_decision(promotion_id: str, decision: dict[str, Any]) -> JSONResponse:
+        """Close the human-review loop (governance plan WP3, review round 2).
+
+        ``approve`` requires the human-determined write action
+        (``resolution.action`` + the complete post-operation ``content``); the
+        promotion re-queues and the write re-enters the full external contract
+        (idempotency key, version protection), never a bypass. ``reject``
+        parks it terminally. ``expected_content_hash`` guards against
+        approving a candidate that a newer generation has already superseded.
+        Only rows actually in ``human_review`` are decidable.
+        """
+        resolved = str(decision.get("decision") or "").strip()
+        operator = str(decision.get("operator") or "").strip()
+        note = str(decision.get("note") or "").strip()
+        resolution = decision.get("resolution")
+        expected_hash = str(decision.get("expected_content_hash") or "").strip()
+        if resolved not in {"approve", "reject"}:
+            raise HTTPException(status_code=422, detail="decision must be approve or reject")
+        if not operator:
+            raise HTTPException(status_code=422, detail="operator is required")
+        if resolved == "approve" and not isinstance(resolution, dict):
+            raise HTTPException(
+                status_code=422,
+                detail="approve requires a resolution object with the human-determined action",
+            )
+        repository = _engineer_ticket_repository()
+        rows = await asyncio.to_thread(repository.list_weknora_promotions)
+        current = next(
+            (row for row in rows or [] if isinstance(row, dict)
+             and str(row.get("promotion_id") or "") == str(promotion_id)),
+            None,
+        )
+        if current is None:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        if str(current.get("status") or "") != "human_review":
+            raise HTTPException(
+                status_code=409, detail="promotion is not awaiting a human decision",
+            )
+        # Review round 4, R4-2/R4-3: the SAME generation check that guards the
+        # worker's write boundary guards the human decision — newer source
+        # version, case fingerprint drift, or a reopened native ticket (state
+        # changes after the frozen snapshot) all refuse the decision.
+        # expected_content_hash stays an optional extra.
+        from backend.services.hermes_knowledge_workflow import (
+            weknora_promotion_generation_current,
+        )
+
+        generation_ok, generation_reason = weknora_promotion_generation_current(
+            repository, current, native_state_store=coordination_store
+        )
+        if not generation_ok:
+            raise HTTPException(
+                status_code=409,
+                detail=f"candidate generation superseded ({generation_reason})",
+            )
+        if expected_hash and str(current.get("content_hash") or "") != expected_hash:
+            raise HTTPException(
+                status_code=409,
+                detail="candidate content is stale: a newer generation supersedes it",
+            )
+        try:
+            resolved_row = await asyncio.to_thread(
+                repository.decide_weknora_promotion,
+                str(promotion_id),
+                decision=resolved,
+                decided_by=operator,
+                note=note,
+                decided_at=datetime.now(timezone.utc).isoformat(),
+                resolution=resolution if resolved == "approve" else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if resolved_row is None:
+            raise HTTPException(
+                status_code=409,
+                detail="promotion is not awaiting a human decision",
+            )
+        return JSONResponse(
+            content={
+                "promotion_id": promotion_id,
+                "decision": resolved,
+                "status": resolved_row.get("status"),
+                "candidate_decision": resolved_row.get("decision"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get(f"{base}/v1/executions/{{execution_id}}")
     async def execution(execution_id: str) -> dict[str, Any]:

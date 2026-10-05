@@ -438,6 +438,9 @@ class WeKnoraClient:
         entry = self._operation(operation)
         return bool(isinstance(entry, dict) and entry.get("conditional_update") is True)
 
+    MEMORY_PAGE_SIZE = 200
+    MEMORY_PAGE_HARD_CAP = 5000
+
     def memory_list(self, *, top_k: int | None = None) -> list[dict[str, Any]]:
         """List memory items (the official memory API is a list endpoint)."""
         payload = self._request(
@@ -454,6 +457,100 @@ class WeKnoraClient:
                 payload=payload,
             )
         return [item for item in results if isinstance(item, dict)]
+
+    def memory_list_page(self, *, limit: int, offset: int) -> tuple[list[dict[str, Any]], int | None]:
+        """One explicit page of the official memory list (limit/offset query).
+
+        Returns (items, total) where total is the server-reported item count
+        when present (the official API reports it; None means unknown). The
+        paging params are appended to whatever the pinned contract renders:
+        the official list endpoint accepts ``limit`` and ``offset`` query
+        parameters natively.
+        """
+        payload = self._request(
+            "memory_list",
+            json_body=self._memory_semantics({}),
+            query={"limit": int(limit), "offset": int(offset)},
+        )
+        results = _extract(payload, self._field("results_key", "results"))
+        if results is None:
+            results = payload.get("data") if isinstance(payload.get("data"), list) else None
+        if results is not None and not isinstance(results, list):
+            raise WeKnoraError(
+                "WeKnora memory list response is missing the results list",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        items = [item for item in (results or []) if isinstance(item, dict)]
+        total = _extract(payload, self._field("total_key", "total"))
+        try:
+            total_value = int(total) if total is not None else None
+        except (TypeError, ValueError):
+            total_value = None
+        return items, total_value
+
+    def memory_list_all(self, *, hard_cap: int | None = None) -> list[dict[str, Any]]:
+        """Walk EVERY page of the memory list until exhaustion is PROVEN.
+
+        Exhaustion is proven only by (a) an empty/short page consistent with
+        the walk position, or (b) reaching the server-reported total. Any
+        other stop (server ignored the offset, a mid-walk inconsistency, or
+        the hard cap reached with more data reported) raises
+        WeKnoraError(incomplete_listing): a partial listing must be treated
+        as an unavailable surface, never as evidence an object is absent
+        (review round 1, P1-11).
+        """
+        cap = int(hard_cap if hard_cap is not None else self.MEMORY_PAGE_HARD_CAP)
+        page_size = min(self.MEMORY_PAGE_SIZE, max(1, cap))
+        collected: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
+        offset = 0
+        while offset < cap:
+            items, total = self.memory_list_page(limit=page_size, offset=offset)
+            if not items:
+                if total is not None and len(collected) < total:
+                    # A declared total larger than what was readable through
+                    # an empty page: the listing is incomplete.
+                    raise WeKnoraError(
+                        "WeKnora memory listing ended before the reported total",
+                        failure_kind="incomplete_listing",
+                        payload={"collected": len(collected), "total": total},
+                    )
+                break
+            for item in items:
+                item_id = str(
+                    item.get(self._field("object_id_key", "object_id"))
+                    or item.get("id")
+                    or ""
+                )
+                if item_id and item_id in seen_ids:
+                    raise WeKnoraError(
+                        "WeKnora memory listing repeated a page (offset ignored)",
+                        failure_kind="incomplete_listing",
+                        payload={"collected": len(collected), "offset": offset},
+                    )
+                if item_id:
+                    seen_ids.add(item_id)
+                collected.append(item)
+            if total is not None and len(collected) >= total:
+                break
+            if len(items) < page_size:
+                if total is not None and len(collected) < total:
+                    raise WeKnoraError(
+                        "WeKnora memory listing short page before the reported total",
+                        failure_kind="incomplete_listing",
+                        payload={"collected": len(collected), "total": total},
+                    )
+                break
+            offset += page_size
+        else:
+            # The hard cap was reached with more data remaining.
+            raise WeKnoraError(
+                "WeKnora memory listing hit the hard cap before exhaustion",
+                failure_kind="incomplete_listing",
+                payload={"collected": len(collected), "hard_cap": cap},
+            )
+        return collected
 
     def memory_create(
         self,

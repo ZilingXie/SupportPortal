@@ -700,8 +700,9 @@ CREATE TABLE IF NOT EXISTS support_hermes_case_promotions (
 
 CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     promotion_id TEXT PRIMARY KEY,
-    engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
-    client_ticket_id TEXT NOT NULL,
+    -- Standalone (case-less) sources carry NULL case lineage (v19).
+    engineer_case_id TEXT REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,
+    client_ticket_id TEXT,
     investigation_id TEXT,
     summary_session_id TEXT,
     summary_run_id TEXT,
@@ -719,7 +720,8 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     )),
     candidate_payload JSONB NOT NULL,
     status TEXT NOT NULL CHECK (status IN (
-        'queued', 'active', 'accepted', 'failed', 'outcome_unknown', 'human_review', 'invalidated'
+        'queued', 'active', 'accepted', 'failed', 'outcome_unknown', 'human_review',
+        'invalidated', 'rejected'
     )),
     owner_token TEXT,
     claimed_at TIMESTAMPTZ,
@@ -730,6 +732,10 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     operation_receipt JSONB,
     failure_code TEXT,
     failure_detail TEXT,
+    human_decision TEXT,
+    human_decision_detail TEXT,
+    human_decided_at TIMESTAMPTZ,
+    input_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
@@ -788,6 +794,7 @@ CREATE TABLE IF NOT EXISTS support_hermes_review_tasks (
     ledger_revision INTEGER NOT NULL,
     conversation_version INTEGER NOT NULL,
     review_session_id TEXT NOT NULL,
+    input_fingerprint TEXT,
     status TEXT NOT NULL CHECK (status IN ('pending', 'running', 'completed', 'failed', 'invalidated')),
     idempotency_key TEXT NOT NULL,
     run_id TEXT,

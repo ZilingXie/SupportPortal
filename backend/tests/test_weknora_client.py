@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import unittest
+
 import io
 import json
 import socket
@@ -365,3 +367,122 @@ def test_conditional_update_support_requires_explicit_declaration() -> None:
     assert declared.supports_conditional_update("memory") is True
     # Unpinned operations never claim support.
     assert _client(contract={}).supports_conditional_update("knowledge") is False
+
+
+class MemoryPaginationTests(unittest.TestCase):
+    """Full-walk pagination contract (p2 governance plan WP2)."""
+
+    OFFICIAL_CONTRACT = {
+        "health": {"method": "GET", "path": "/health"},
+        "memory_list": {
+            "method": "GET",
+            "path": "/api/v1/memory/items",
+            "query_params": {"identity": {"$": "identity"}},
+        },
+    }
+
+    def _paging_client(self):
+        return _client(
+            contract=self.OFFICIAL_CONTRACT,
+            memory_identity="hermes-shared",
+        )
+
+    def test_memory_list_all_walks_every_page_until_short_page(self) -> None:
+        client = self._paging_client()
+        pages = [
+            [{"id": f"m{i}"} for i in range(200)],
+            [{"id": f"m{i}"} for i in range(200, 350)],
+            [],
+        ]
+        offsets = []
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            offsets.append((query or {}).get("offset"))
+            return {"data": pages.pop(0)}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            items = client.memory_list_all()
+        self.assertEqual(len(items), 350)
+        # The short second page (150 < 200) ends the walk without a third call.
+        self.assertEqual(offsets, [0, 200])
+
+    def test_memory_list_all_stops_on_reported_total(self) -> None:
+        client = self._paging_client()
+        pages = [
+            ({"id": f"m{i}"} for i in range(0, 200)),
+        ]
+        # total=250 reported on the first full page
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            page = [{"id": f"m{i}"} for i in range(0, 200)]
+            # second call would return 50 more
+            if (query or {}).get("offset", 0) > 0:
+                return {"data": [{"id": f"m{i}"} for i in range(200, 250)], "total": 250}
+            return {"data": page, "total": 250}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            items = client.memory_list_all()
+        self.assertEqual(len(items), 250)
+
+    def test_memory_list_page_failure_propagates(self) -> None:
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            raise WeKnoraError("transport down", failure_kind="transport")
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all()
+        # An incomplete read must NOT be reported as absence.
+        self.assertEqual(ctx.exception.failure_kind, "transport")
+
+    def test_memory_list_page_sends_limit_and_offset(self) -> None:
+        client = self._paging_client()
+        captured = {}
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            captured.update(query or {})
+            return {"data": [], "total": 0}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            client.memory_list_page(limit=50, offset=100)
+        self.assertEqual(captured.get("limit"), 50)
+        self.assertEqual(captured.get("offset"), 100)
+
+
+    def test_short_page_below_declared_total_raises_incomplete(self) -> None:
+        """P1-11: a declared total of 201 with only 50 readable items is an
+        unavailable surface, never a complete listing."""
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"data": [{"id": f"m{i}"} for i in range(50)], "total": 201}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all()
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")
+
+    def test_hard_cap_reached_with_more_data_raises_incomplete(self) -> None:
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            return {"data": [{"id": f"m{i}"} for i in range(200)]}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all(hard_cap=300)
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")
+
+    def test_memory_list_all_defends_against_ignored_offset(self) -> None:
+        """A server that ignores the offset is an incomplete listing (never
+        silently truncated)."""
+        client = self._paging_client()
+
+        def fake_request(operation, *, json_body=None, query=None, timeout_seconds=None):
+            # Full pages of the SAME items: the server ignored the offset.
+            return {"data": [{"id": f"m{i % 50}"} for i in range(200)]}
+
+        with patch.object(client, "_request", side_effect=fake_request):
+            with self.assertRaises(WeKnoraError) as ctx:
+                client.memory_list_all()
+        self.assertEqual(ctx.exception.failure_kind, "incomplete_listing")

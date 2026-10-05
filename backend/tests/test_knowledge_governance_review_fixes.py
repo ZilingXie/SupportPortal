@@ -23,6 +23,7 @@ from backend.services.hermes_case_workflow import (
     start_hermes_case,
 )
 from backend.services.hermes_knowledge_workflow import (
+    _collect_weknora_evidence,
     _downgrade_decisions_without_evidence,
     build_case_close_bundle,
     drain_hermes_knowledge_tasks,
@@ -256,6 +257,107 @@ class TestSkillDecisionBoundary:
 
 
 # ------------------------------------------------------- evidence downgrade
+
+
+class TestSearchEvidenceContract:
+    """Review round 2, R2-6: error responses never read as empty matches, and
+    hits carry the target's full body + content version via read()."""
+
+    def _packet(self) -> dict:
+        return {"candidates": [{"candidate_id": "cand-1", "statement": "join failures"}]}
+
+    def test_error_search_response_marks_surface_unavailable(self) -> None:
+        from backend.services.hermes_weknora import HermesWeKnoraClient, WeKnoraUnavailable
+
+        client = HermesWeKnoraClient()
+        client.search = lambda query, **kwargs: (_ for _ in ()).throw(
+            WeKnoraUnavailable("weknora search response missing data list")
+        )
+        # The client itself must classify {"success": false} (no data list)
+        # as unavailable rather than an empty match.
+        with pytest.raises(WeKnoraUnavailable):
+            import json as _json
+            from unittest.mock import patch
+
+            with patch.object(HermesWeKnoraClient, "configured", return_value=True), patch(
+                "urllib.request.urlopen"
+            ) as fake_open:
+                fake_open.return_value.__enter__.return_value.read.return_value = (
+                    _json.dumps({"success": False, "error": "boom"}).encode("utf-8")
+                )
+                HermesWeKnoraClient(
+                    base_url="https://weknora.test", api_token="k",
+                    knowledge_base_id="kb",
+                ).search("join failures")
+
+    def test_unavailable_surface_downgrades_writable_decisions(self) -> None:
+        from backend.services.hermes_weknora import WeKnoraUnavailable
+
+        class _BrokenSearch:
+            def configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **kwargs) -> list[dict]:
+                raise WeKnoraUnavailable("weknora search response missing data list")
+
+        knowledge_results, _memory, knowledge_ok, _mok = _collect_weknora_evidence(
+            _BrokenSearch(), self._packet(), memory_client=None
+        )
+        assert knowledge_ok is False
+        assert knowledge_results == {"cand-1": []}
+        adjusted, downgraded = _downgrade_decisions_without_evidence(
+            [_decision("knowledge", "new")], knowledge_available=False, memory_available=False
+        )
+        assert downgraded == ["cand-1"]
+        assert adjusted[0]["decision"] == "human_review"
+
+    def test_hits_carry_full_body_and_content_version(self) -> None:
+        class _ReadableSearch:
+            def configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **kwargs) -> list[dict]:
+                return [
+                    {"object_id": "weknora:kb:join-failures", "title": "Join failures",
+                     "snippet": "Existing entry.", "score": 0.9}
+                ]
+
+            def read(self, object_id: str) -> dict:
+                assert object_id == "weknora:kb:join-failures"
+                return {
+                    "object_id": object_id, "title": "Join failures",
+                    "content": "The complete stored body of the target entry.",
+                    "content_version": "3",
+                    "lineage": {"engineer_case_id": "123-1"},
+                }
+
+        knowledge_results, _memory, knowledge_ok, _mok = _collect_weknora_evidence(
+            _ReadableSearch(), self._packet(), memory_client=None
+        )
+        assert knowledge_ok is True
+        hit = knowledge_results["cand-1"][0]
+        assert hit["full_content"] == "The complete stored body of the target entry."
+        assert hit["content_version"] == "3"
+        assert hit["target_lineage"] == {"engineer_case_id": "123-1"}
+
+    def test_read_failure_fails_the_surface_closed(self) -> None:
+        from backend.services.hermes_weknora import WeKnoraUnavailable
+
+        class _UnreadableTarget:
+            def configured(self) -> bool:
+                return True
+
+            def search(self, query: str, **kwargs) -> list[dict]:
+                return [{"object_id": "weknora:kb:gone", "snippet": "partial", "score": 0.9}]
+
+            def read(self, object_id: str) -> dict:
+                raise WeKnoraUnavailable(f"weknora object {object_id} vanished")
+
+        knowledge_results, _memory, knowledge_ok, _mok = _collect_weknora_evidence(
+            _UnreadableTarget(), self._packet(), memory_client=None
+        )
+        assert knowledge_ok is False
+        assert knowledge_results == {"cand-1": []}
 
 
 class TestEvidenceDowngrade:

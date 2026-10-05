@@ -68,6 +68,10 @@ from backend.repositories.knowledge_source_repository import (
     InMemoryKnowledgeSourceRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
 )
+from backend.repositories.standalone_knowledge_repository import (
+    InMemoryStandaloneKnowledgeRepositoryMixin,
+    PostgresStandaloneKnowledgeRepositoryMixin,
+)
 try:
     from psycopg_pool import ConnectionPool, PoolTimeout
 except ImportError:  # pragma: no cover - exercised in environments without pool support
@@ -1280,12 +1284,19 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # backend/sql/ticket_storage.sql. Forgetting the bump means already-migrated
 # databases never apply the change on restart; TICKET_SCHEMA_FORCE_MIGRATE=1
 # reruns the full bootstrap as an escape hatch.
+# v19 adds the governance-plan schema: standalone knowledge-source
+# Summary/Review tables, the Summary input_fingerprint generation column
+# (episode unique index widened to (case, episode, fingerprint)), the
+# article source type on the source intake CHECK, and standalone
+# (case-less) lineage on WeKnora promotions (engineer_case_id /
+# client_ticket_id nullable for the knowledge_source_review source type).
 # v18 adds the n8n knowledge-source trigger to the Hermes Summary task check.
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v18-n8n-summary-trigger"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v19-governance-pipeline"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v18-n8n-summary-trigger",
     "2026-single-ai-managed-v17-knowledge-source-intake",
     "2026-single-ai-managed-v16-weknora-skill-candidate-key",
     "2026-single-ai-managed-v11-delivery-cancelled",
@@ -3118,6 +3129,7 @@ class InMemoryTicketRepository(
     InMemoryEnablementRelayRepositoryMixin,
     InMemoryWeKnoraPromotionRepositoryMixin,
     InMemoryKnowledgeSourceRepositoryMixin,
+    InMemoryStandaloneKnowledgeRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -4257,6 +4269,7 @@ class InMemoryTicketRepository(
         self._initialize_hermes_state()
         self._initialize_enablement_relay_state()
         self._initialize_knowledge_source_state()
+        self._initialize_standalone_knowledge_state()
         self._seed_account_persona_presets()
 
     def _seed_account_persona_presets(self) -> None:
@@ -8287,6 +8300,7 @@ class PostgresTicketRepository(
     PostgresEnablementRelayRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
+    PostgresStandaloneKnowledgeRepositoryMixin,
 ):
     def save_account_case(self, account_case: dict[str, Any]) -> None:
         self.save_billing_ticket(account_case)
@@ -12719,6 +12733,7 @@ class PostgresTicketRepository(
                 self._initialize_enablement_relay_schema(cur)
                 self._initialize_weknora_schema(cur)
                 self._initialize_knowledge_source_schema(cur)
+                self._initialize_standalone_knowledge_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
                 self._ensure_account_persona_presets(cur)
                 if runtime_role:
