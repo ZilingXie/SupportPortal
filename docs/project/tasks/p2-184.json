@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "第十一轮修复完成未 finalize：R11-1（排水返回错误+>10 条不确认+持续失败重试）、R11-2（post-index 错误化+RecoverPendingChunkCompensations 恢复器+supersedeE fail-closed）、R11-3（SavePendingOp 失败→error_message 两层持久化）、R11-4（向量失败分支真实 DB+断言），等待第十二轮定向复验。",
+  "next_action": "第十二轮修复完成未 finalize：合同重写为单存储（task_pending_ops 独立行，无共享字段 fallback），3×内部重试，全部错误链传播（含真实入口返回值），独立恢复器验证，等待第十三轮定向复验。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -29,15 +29,15 @@
     },
     {
       "type": "test",
-      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 1b603ac）",
+      "label": "WeKnora fork 全量（分支 supportportal-write-contract @ be1b252）",
       "command": "go test ./internal/... -count=1",
-      "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（stash 后基线同败=环境性）"
+      "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（环境性）"
     },
     {
       "type": "test",
-      "label": "R11 验收交错（错误链全覆盖）",
-      "command": "go test ./internal/application/service/ -run 'TestDrainPersistent|TestCompensationSaveFailure|TestPostIndexCompensation|TestVectorStale|TestCompensationSurvives' -count=1 -v",
-      "result": "全过：持续排水失败 3 连执行均返回可重试错误+义务保留→独立恢复器消费→chunk 清除；义务保存失败→error_message fallback→下次排水解析并清除；post-index 补偿失败→错误返回+义务落库；向量失败分支真实 DB 写入+恢复器清理+v2 chunk 存活"
+      "label": "R12 验收测试（真实入口+独立恢复器+并发义务）",
+      "command": "go test ./internal/application/service/ -run 'TestPostIndexCompensationFailureThrough|TestObligationSaveFailure|TestDrainPersistent|TestCompensationSurvives|TestVectorStale' -count=1 -v",
+      "result": "全过：post-index 补偿失败→ProcessManualUpdate 返回非 nil→义务落库→独立恢复器消费→v2 完整；3×保存重试全败→错误含 IDs→恢复后并发义务独立两行共存→排水两批全部消费；持续排水失败 3 连执行均返回可重试错误"
     }
   ],
   "source_refs": [
@@ -51,7 +51,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-05T06:00:00Z",
+  "updated_at": "2026-10-05T09:00:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
@@ -105,6 +105,10 @@
     {
       "at": "2026-10-05T06:00:00Z",
       "note": "第十一轮验收修复：WeKnora 1 提交（1b603ac）；SP 无代码增量（回归确认 216 过）。"
+    },
+    {
+      "at": "2026-10-05T09:00:00Z",
+      "note": "第十二轮验收修复：WeKnora 1 提交（be1b252）；SP 无代码增量（回归确认 216 过）。"
     }
   ]
 }
