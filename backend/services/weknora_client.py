@@ -103,6 +103,48 @@ def _extract(payload: Any, path: str) -> Any:
     return node
 
 
+def _memory_page_results(payload: Any, field: Any) -> Any:
+    """Locate the memory list in a response WITHOUT defaulting to empty.
+
+    R20/P1: the contract-configured results key comes first; the official
+    API aliases (``data`` as a list, or ``data.items``/``data.results``
+    when ``data`` is an object) follow. Returns None when no recognizable
+    list exists — the caller must treat that as an explicit error, never
+    as an empty listing.
+    """
+    results = _extract(payload, field("results_key", "results"))
+    if results is not None:
+        return results
+    if isinstance(payload, dict):
+        data = payload.get("data")
+        if isinstance(data, list):
+            return data
+        if isinstance(data, dict):
+            for key in ("items", "results"):
+                if isinstance(data.get(key), list):
+                    return data[key]
+    return None
+
+
+def _memory_page_items(results: list[Any], payload: Any) -> list[dict[str, Any]]:
+    """Validate every page entry; a malformed entry is an explicit error.
+
+    Silently dropping non-object entries (``{"data": [null]}``) would shrink
+    the listing the same way a missing list does — the dedup check would run
+    against an incomplete memory surface.
+    """
+    items: list[dict[str, Any]] = []
+    for item in results:
+        if not isinstance(item, dict):
+            raise WeKnoraError(
+                "WeKnora memory list response contains a malformed item",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        items.append(item)
+    return items
+
+
 class WeKnoraClient:
     def __init__(
         self,
@@ -442,21 +484,26 @@ class WeKnoraClient:
     MEMORY_PAGE_HARD_CAP = 5000
 
     def memory_list(self, *, top_k: int | None = None) -> list[dict[str, Any]]:
-        """List memory items (the official memory API is a list endpoint)."""
+        """List memory items (the official memory API is a list endpoint).
+
+        R20/P1: a response without a recognizable results list is an explicit
+        ``invalid_response`` error, never an empty success — an error body
+        (``{"success": false}``, ``{}``, ``{"data": null}``) reaching here as
+        an empty listing would let a Review skip the memory dedup check and
+        auto-approve a duplicate ``new`` candidate.
+        """
         payload = self._request(
             "memory_list",
             json_body=self._memory_semantics({"top_k": top_k}),
         )
-        results = _extract(payload, self._field("results_key", "results"))
-        if results is None:
-            return []
+        results = _memory_page_results(payload, self._field)
         if not isinstance(results, list):
             raise WeKnoraError(
                 "WeKnora memory list response is missing the results list",
                 failure_kind="invalid_response",
                 payload=payload,
             )
-        return [item for item in results if isinstance(item, dict)]
+        return _memory_page_items(results, payload)
 
     def memory_list_page(self, *, limit: int, offset: int) -> tuple[list[dict[str, Any]], int | None]:
         """One explicit page of the official memory list (limit/offset query).
@@ -466,22 +513,29 @@ class WeKnoraClient:
         paging params are appended to whatever the pinned contract renders:
         the official list endpoint accepts ``limit`` and ``offset`` query
         parameters natively.
+
+        R20/P1: a response without a recognizable results list — an error
+        body such as ``{"success": false, ...}`` or ``{}``, or ``data: null``
+        — raises ``invalid_response``; a page containing a malformed
+        (non-object) entry raises too. Only a well-formed list (possibly
+        empty) is a legal page: a legal empty page still ends the walk, an
+        unreadable one must surface as an unavailable memory surface so the
+        Review downgrades to human_review instead of trusting a silent
+        "no memories".
         """
         payload = self._request(
             "memory_list",
             json_body=self._memory_semantics({}),
             query={"limit": int(limit), "offset": int(offset)},
         )
-        results = _extract(payload, self._field("results_key", "results"))
-        if results is None:
-            results = payload.get("data") if isinstance(payload.get("data"), list) else None
-        if results is not None and not isinstance(results, list):
+        results = _memory_page_results(payload, self._field)
+        if not isinstance(results, list):
             raise WeKnoraError(
                 "WeKnora memory list response is missing the results list",
                 failure_kind="invalid_response",
                 payload=payload,
             )
-        items = [item for item in (results or []) if isinstance(item, dict)]
+        items = _memory_page_items(results, payload)
         total = _extract(payload, self._field("total_key", "total"))
         try:
             total_value = int(total) if total is not None else None

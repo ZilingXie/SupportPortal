@@ -397,5 +397,170 @@ class StandaloneWorkflowTests(unittest.TestCase):
         self.assertEqual(self.repository.list_weknora_promotions(), [])
 
 
+class _SearchOkKnowledge:
+    """Knowledge surface that answers legally (empty search is legal)."""
+
+    def configured(self):
+        return True
+
+    def search(self, query):
+        return []
+
+
+class _MemoryReviewOutput:
+    """A review that proposes a MEMORY `new` write."""
+
+    OUTPUT = {
+        "decisions": [
+            {
+                "candidate_id": "c1",
+                "candidate_type": "memory",
+                "decision": "new",
+                "confidence": 0.9,
+                "rationale": "no similar memory exists",
+                "proposed_content": "Region EU join failures were fixed upstream.",
+                "kind": "fact",
+                "target_object": None,
+                "target_version": None,
+            }
+        ],
+    }
+
+
+class MalformedMemoryEvidenceDrainTests(unittest.TestCase):
+    """R20/P1 (review round 20): a malformed memory response reaching the
+    REAL standalone Summary → Review drain must surface as unavailable
+    evidence — the candidate parks at human_review — never as a silent
+    empty listing that lets `memory / new / queued` skip the dedup check.
+
+    Only Hermes and the external HTTP boundary are scripted; the memory
+    client is the real contract-pinned WeKnoraClient.
+    """
+
+    MALFORMED_FIRST_PAGES = [
+        {"success": False, "error": "backend unavailable"},
+        {},
+        {"data": None},
+        {"data": [None]},
+    ]
+
+    def setUp(self) -> None:
+        self.patcher = _enable_real_mode({})
+        self.addCleanup(self.patcher.stop)
+
+    def _drain_with_memory_pages(self, pages):
+        import io
+        import urllib.request
+
+        from backend.services.weknora_client import WeKnoraClient
+
+        repository = InMemoryTicketRepository()
+        repository.accept_knowledge_source(
+            {
+                "schema_version": "knowledge-source-v1",
+                "source_type": CSD_INTAKE["source_type"],
+                "source_id": CSD_INTAKE["source_id"],
+                "source_updated_at": CSD_INTAKE["source_updated_at"],
+                "payload": CSD_INTAKE["payload"],
+                "references": {},
+            },
+            now_value="2026-10-02T00:00:01+00:00",
+        )
+        stored = next(
+            row for row in repository._knowledge_source_intakes.values()
+            if row["source_type"] == "csd_issue"
+        )
+        queue_standalone_summary_for_source(
+            repository, intake=dict(stored), now_value="2026-10-02T00:01:00+00:00"
+        )
+
+        memory_client = WeKnoraClient(
+            base_url="http://weknora.test",
+            api_token="synthetic-token",
+            contract={
+                "health": {"method": "GET", "path": "/health"},
+                "memory_list": {
+                    "method": "GET",
+                    "path": "/api/v1/memory/items",
+                    "query_params": {"identity": {"$": "identity"}},
+                },
+            },
+            memory_identity="hermes-shared",
+        )
+        remaining = list(pages)
+
+        class _Resp(io.BytesIO):
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(request, timeout=None):
+            payload = remaining.pop(0) if remaining else {"data": []}
+            return _Resp(json.dumps(payload).encode("utf-8"))
+
+        patcher = unittest.mock.patch.object(
+            urllib.request, "urlopen", side_effect=fake_urlopen
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+        hermes = _ScriptedHermes(SUMMARY_OUTPUT, _MemoryReviewOutput.OUTPUT)
+        result = drain_standalone_knowledge_tasks(
+            repository,
+            client=hermes,
+            weknora_client=_SearchOkKnowledge(),
+            memory_client=memory_client,
+            limit=5,
+        )
+        # The review INPUT bundle (run 2) carries the memory_available flag
+        # the Hermes Review actually saw.
+        review_bundle = json.loads(hermes.runs[1]["input_text"])
+        return result, repository, review_bundle
+
+    def test_malformed_first_page_parks_at_human_review(self) -> None:
+        for malformed in self.MALFORMED_FIRST_PAGES:
+            with self.subTest(malformed=malformed):
+                result, repository, review_bundle = self._drain_with_memory_pages([malformed])
+                # The drain itself succeeds: the failure is EVIDENCE
+                # unavailability, not a task error.
+                self.assertEqual(result, {"executed": 2, "failed": 0})
+                self.assertFalse(review_bundle["weknora"]["memory_available"])
+                promotions = repository.list_weknora_promotions()
+                self.assertEqual(len(promotions), 1)
+                self.assertEqual(promotions[0]["candidate_type"], "memory")
+                # The auto-write decision is gone: human_review, never
+                # memory/new/queued.
+                self.assertEqual(promotions[0]["decision"], "human_review")
+                self.assertIn(
+                    "[downgraded from new:", promotions[0]["candidate_payload"]["note"]
+                )
+
+    def test_malformed_mid_pagination_page_parks_at_human_review(self) -> None:
+        pages = [
+            {"data": [{"id": f"m{i}"} for i in range(200)]},
+            {"success": False, "error": "backend unavailable"},
+        ]
+        result, repository, review_bundle = self._drain_with_memory_pages(pages)
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        self.assertFalse(review_bundle["weknora"]["memory_available"])
+        promotions = repository.list_weknora_promotions()
+        self.assertEqual(len(promotions), 1)
+        self.assertEqual(promotions[0]["decision"], "human_review")
+
+    def test_legal_empty_memory_still_allows_new(self) -> None:
+        result, repository, review_bundle = self._drain_with_memory_pages([{"data": []}])
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        self.assertTrue(review_bundle["weknora"]["memory_available"])
+        promotions = repository.list_weknora_promotions()
+        self.assertEqual(len(promotions), 1)
+        self.assertEqual(promotions[0]["candidate_type"], "memory")
+        self.assertEqual(promotions[0]["decision"], "new")
+        self.assertEqual(promotions[0]["status"], "queued")
+
+
 if __name__ == "__main__":
     unittest.main()

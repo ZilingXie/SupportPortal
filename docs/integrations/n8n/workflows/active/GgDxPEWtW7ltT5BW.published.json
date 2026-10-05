@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-01T08:00:06.677Z",
+  "capturedAt": "2026-10-05T15:15:45.921581+00:00",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD",
     "snapshotKind": "published",
-    "versionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
-    "draftVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
-    "publishedVersionId": "544bdb70-cebe-497c-8e28-eac0c87e0501",
-    "updatedAt": "2026-10-01T03:11:36.375Z",
+    "versionId": "ae44bc1b-1201-4892-ab94-b8801f5b6ec0",
+    "draftVersionId": "ae44bc1b-1201-4892-ab94-b8801f5b6ec0",
+    "publishedVersionId": "ae44bc1b-1201-4892-ab94-b8801f5b6ec0",
+    "updatedAt": "2026-10-05T15:11:08.245Z",
     "parentFolderId": "SLMnELm0z3huA2Cr"
   },
   "workflow": {
     "name": "[kb]Build|CSD",
-    "description": "定时扫描近期已解决的 CSD Bug（保留现有 JQL 作为来源范围），取得完整 issue 快照（fields=*,comment）后投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；移除 AI 前置筛选、本地先写去重与旧 Memory Wiki 直写；Zendesk KB 草稿节点保留但已断开禁用，待 Review 输出链对接。",
+    "description": "定时扫描近期已解决的 CSD Bug，取得完整 issue 快照（fields 用具名列表，该 Jira 端点不展开 *）后投递至 SupportPortal 治理来源接收接口（Preproduction knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；Zendesk KB 草稿节点断开禁用待 Review 输出链对接。",
     "nodes": [
       {
         "parameters": {
@@ -178,7 +178,7 @@
             "parameters": [
               {
                 "name": "fields",
-                "value": "*,comment"
+                "value": "summary,description,updated,created,status,resolution,comment"
               }
             ]
           },
@@ -705,7 +705,7 @@
     "tags": []
   },
   "restoreNotes": {
-    "activeAtCapture": false,
+    "activeAtCapture": true,
     "redactedValues": [
       {
         "nodeName": "get_access_token",
