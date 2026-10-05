@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T06:33:08Z",
-  "source_base_commit": "1a132522163dec4e16735d71ac3e0bb07d24584a",
-  "registry_digest": "d712ff100aa55a0a624770b061e1a948e2babb5b2f5bfeeb99a3412b6e11bba6",
+  "generated_at": "2026-10-05T07:44:02Z",
+  "source_base_commit": "7aa5797b05b609dc470da73507a5944d77f34296",
+  "registry_digest": "d68711d2fe5c364b3dc835ff057cb6cadbbea3c099d990f3f765c9568aac8566",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -15596,8 +15596,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
       "legacy_ids": [],
-      "legacy_refs": [],
+      "legacy_refs": [
+        "p2-184 (language-continuity thread, closed 2026-10-04, PR#1381)"
+      ],
       "history": [
+        {
+          "at": "2026-10-03",
+          "note": "同一任务号 p2-184 先前由「客户回复语言连续性修复」使用并已收口 done（PR#1381=main 1c867cfd，r20261003-1c867cf 已部署 Preproduction，七场景全过）。本治理线程合并时 p2-184.json add/add 冲突以治理线记录覆盖，此条目保留语言连续性线程的关闭痕迹。"
+        },
         {
           "at": "2026-10-02T00:00:00Z",
           "note": "实施完成：SP 三提交（c825602b Review v2+分页+队列面 / c36bba30 article+代际去重 / 独立 Summary 全链）+ WeKnora fork 两提交（8e130a1f memory 合同 / 5af45e79 knowledge 合同）+ hermes-deploy 一提交（6b724248 weknora_tools）。未实施：AgentMemory 退休终步、n8n 草稿发布、WeKnora fork 镜像构建部署、Preproduction 集成验证——均为验收后按授权继续的范围。"

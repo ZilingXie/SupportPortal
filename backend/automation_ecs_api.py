@@ -828,11 +828,26 @@ def create_app(    *,
                     "candidate_type": candidate.get("candidate_type"),
                     "candidate_id": candidate.get("candidate_id"),
                     "statement": str(candidate.get("statement") or "")[:200],
+                    # R15/P1-3: the FULL review output travels with the
+                    # queue item — the reviewer needs the complete proposed
+                    # content, the target it modifies, the base version it
+                    # was pinned to, and the rationale, not a truncated
+                    # statement.
+                    "proposed_content": str(candidate.get("content") or ""),
+                    "merged_content": str(candidate.get("merged_content") or ""),
+                    "target_object_id": str(candidate.get("target_object_id") or ""),
+                    "base_version": str(candidate.get("base_version") or ""),
+                    "title": str(candidate.get("title") or ""),
+                    "note": str(candidate.get("note") or ""),
+                    "kind": str(candidate.get("kind") or ""),
+                    "importance": candidate.get("importance"),
                     "source_type": row.get("source_type"),
                     "source_id": row.get("source_id"),
                     "source_version": row.get("source_version"),
                     "engineer_case_id": row.get("engineer_case_id"),
                     "client_ticket_id": row.get("client_ticket_id"),
+                    "slack_channel_id": row.get("slack_channel_id"),
+                    "slack_thread_ts": row.get("slack_thread_ts"),
                     "weknora_object_id": row.get("weknora_object_id"),
                     "weknora_version": row.get("weknora_version"),
                     "operation_receipt": row.get("operation_receipt"),
