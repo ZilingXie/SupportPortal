@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T03:00:05Z",
-  "source_base_commit": "21f36f6bca1a482ade3d60e180e78a1ac0f20c3c",
-  "registry_digest": "951a3f7212c6ad5acad16a1558c90b1197c1cd13c5a8b1c0c4e4611268e19df1",
+  "generated_at": "2026-10-05T04:20:02Z",
+  "source_base_commit": "ad872a1392b5b1f489292eb1cbd3ba8e227fe553",
+  "registry_digest": "1e0378f4faf0a6ec985614c76e22fe80f96962c542731373d51d3252adb9d1bf",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4862,15 +4862,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ be1b252）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 4f62d34）",
           "command": "go test ./internal/... -count=1",
           "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（环境性）"
         },
         {
           "type": "test",
-          "label": "R12 验收测试（真实入口+独立恢复器+并发义务）",
-          "command": "go test ./internal/application/service/ -run 'TestPostIndexCompensationFailureThrough|TestObligationSaveFailure|TestDrainPersistent|TestCompensationSurvives|TestVectorStale' -count=1 -v",
-          "result": "全过：post-index 补偿失败→ProcessManualUpdate 返回非 nil→义务落库→独立恢复器消费→v2 完整；3×保存重试全败→错误含 IDs→恢复后并发义务独立两行共存→排水两批全部消费；持续排水失败 3 连执行均返回可重试错误"
+          "label": "R13-1 验收：原始任务重试自恢复（不由测试供 IDs）",
+          "command": "go test ./internal/application/service/ -run TestOriginalTaskRetryRecoversFromTransientSaveFailure -count=1 -v",
+          "result": "通过：首次 v1 chunk 写入→v2 完成→by-ID 删除失败+3×SavePendingOp 失败（义务丢失）→DB 恢复→同一原始任务重试→content-mismatch 路径检测→按 generation_version\u003c当前版本 删除 stale chunks→v2 chunk 完整、仅 1 行、v2 状态保持 completed"
         }
       ],
       "source_refs": [
@@ -15533,7 +15533,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "第十二轮修复完成未 finalize：合同重写为单存储（task_pending_ops 独立行，无共享字段 fallback），3×内部重试，全部错误链传播（含真实入口返回值），独立恢复器验证，等待第十三轮定向复验。",
+      "next_action": "第十三轮修复完成未 finalize：generation_version 列标记 chunk 所属代际，mismatch 快路径按代际删除（不依赖时间戳或预记录 IDs），等待第十四轮定向复验。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15557,15 +15557,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ be1b252）",
+          "label": "WeKnora fork 全量（分支 supportportal-write-contract @ 4f62d34）",
           "command": "go test ./internal/... -count=1",
           "result": "119 packages ok；唯一 FAIL=TestSkillPythonVerifier（环境性）"
         },
         {
           "type": "test",
-          "label": "R12 验收测试（真实入口+独立恢复器+并发义务）",
-          "command": "go test ./internal/application/service/ -run 'TestPostIndexCompensationFailureThrough|TestObligationSaveFailure|TestDrainPersistent|TestCompensationSurvives|TestVectorStale' -count=1 -v",
-          "result": "全过：post-index 补偿失败→ProcessManualUpdate 返回非 nil→义务落库→独立恢复器消费→v2 完整；3×保存重试全败→错误含 IDs→恢复后并发义务独立两行共存→排水两批全部消费；持续排水失败 3 连执行均返回可重试错误"
+          "label": "R13-1 验收：原始任务重试自恢复（不由测试供 IDs）",
+          "command": "go test ./internal/application/service/ -run TestOriginalTaskRetryRecoversFromTransientSaveFailure -count=1 -v",
+          "result": "通过：首次 v1 chunk 写入→v2 完成→by-ID 删除失败+3×SavePendingOp 失败（义务丢失）→DB 恢复→同一原始任务重试→content-mismatch 路径检测→按 generation_version\u003c当前版本 删除 stale chunks→v2 chunk 完整、仅 1 行、v2 状态保持 completed"
         }
       ],
       "source_refs": [
@@ -15579,7 +15579,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-05T09:00:00Z",
+      "updated_at": "2026-10-05T12:30:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
@@ -15637,6 +15637,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-10-05T09:00:00Z",
           "note": "第十二轮验收修复：WeKnora 1 提交（be1b252）；SP 无代码增量（回归确认 216 过）。"
+        },
+        {
+          "at": "2026-10-05T12:30:00Z",
+          "note": "第十三轮验收修复：WeKnora 1 提交（4f62d34）；SP 无代码增量（回归确认 216 过）。"
         }
       ]
     },
