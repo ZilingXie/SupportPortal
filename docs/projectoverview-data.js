@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T16:06:07Z",
-  "source_base_commit": "a1ed4bf2835fedb2d98deb3d536da271c5be9400",
-  "registry_digest": "ef2f7316d909ccdb36261b6a713e8a7a68df097ff30ec57364e8755f4f04c91c",
+  "generated_at": "2026-10-05T16:17:13Z",
+  "source_base_commit": "a74031a1a1f7a561a0744ddab0ade73363357667",
+  "registry_digest": "99a39e4e2161a415f7492d835a5cabf87fdfcb8281616f96a17a219764f4512d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4961,6 +4961,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "n8n 临时只读工作流 GET /automation/preproduction/v1/knowledge/sources/{task_id} ×18（执行 186738）",
           "result": "18/18 status=accepted、summary_task_id=null：证明 intake 链接未回填，不能判断独立 Summary 任务是否存在（R22 反例确认 POST 返回的任务 ID 不回写 intake 行）；表级核对待只读通道",
           "recorded_at": "2026-10-06T10:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R22 表级只读核对（18 intake 对独立 Summary 排队的最终判定）",
+          "command": "SSM 取 preprod DSN → psql 只读：18 intake 行核对 + information_schema 查表 + support_ticket_schema_meta 读版本",
+          "result": "18/18 intake accepted；support_knowledge_source_summaries 不存在；部署 schema=v18（独立管线表属未部署 v19/013）→ 排队未发生",
+          "recorded_at": "2026-10-06T11:30:00Z"
         }
       ],
       "source_refs": [
@@ -15623,7 +15630,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R20 完整计划验收未通过后已实施两项阻断修复，待定向复验：(1) SP memory 客户端 P1——memory_list_page/memory_list 把 {\"success\":false}/{} /data:null /data:[null] 当空列表（R20 复现：畸形响应经真实 standalone 排水产生 memory/new/queued 自动写入）。修复=_memory_page_results/_memory_page_items 具名校验：缺失/畸形列表与非对象条目显式 invalid_response；data.items/data.results 包装形态可读。测试=客户端 3 例（四畸形/合法空+包装/非分页）+真实排水 3 例（四畸形首页/中途畸形页/合法空，memory 候选停 human_review 而非 new；stash 复演对未修复代码 11 例必败）。(2) CSD n8n 断点——[kb]Build|CSD Get_CSD_Detail fields=*,comment 的 * 不被该 Jira 端点展开（执行 186451 证据只返回 comment）。改为具名列表 summary,description,updated,created,status,resolution,comment，manual 执行 186715 全链 success：Get_CSD_Detail 实际返回全部具名字段，18 个来源投递 Preproduction 全部 accepted。【R21 回读+R22 口径收窄】accepted 回执的 knowledge-source task_id 只证明来源接收；R21 临时只读工作流（n8n P3b0YKYeQDnI7Z1a，执行 186738，已归档）经 GET /v1/knowledge/sources/{task_id} 回读全部 18 个 intake：均为 accepted 且 summary_task_id=null。该结果证明 intake 链接未回填（排队代码只在 POST 响应返回任务 ID，不回写 intake 行），不能据此判断独立 Summary 任务是否存在；排队状态尚未验证，待取得只读通道后按 intake_id 或来源身份及版本查询 support_knowledge_source_summaries，补齐任务 ID、来源版本与状态证据。已发布 ae44bc1b，快照+manifest 回读刷新，校验器通过。先不要部署继续有效；完整计划未闭合：AgentMemory 迁移/退休、WeKnora fork 镜像/部署通道、Prompt/插件镜像/profile 发布、Preproduction 全链端到端（含 bot id 一致性+真实 Slack E2E 两项部署核对）。",
+      "next_action": "R20 完整计划验收未通过后已实施两项阻断修复，待定向复验：(1) SP memory 客户端 P1——memory_list_page/memory_list 把 {\"success\":false}/{} /data:null /data:[null] 当空列表（R20 复现：畸形响应经真实 standalone 排水产生 memory/new/queued 自动写入）。修复=_memory_page_results/_memory_page_items 具名校验：缺失/畸形列表与非对象条目显式 invalid_response；data.items/data.results 包装形态可读。测试=客户端 3 例（四畸形/合法空+包装/非分页）+真实排水 3 例（四畸形首页/中途畸形页/合法空，memory 候选停 human_review 而非 new；stash 复演对未修复代码 11 例必败）。(2) CSD n8n 断点——[kb]Build|CSD Get_CSD_Detail fields=*,comment 的 * 不被该 Jira 端点展开（执行 186451 证据只返回 comment）。改为具名列表 summary,description,updated,created,status,resolution,comment，manual 执行 186715 全链 success：Get_CSD_Detail 实际返回全部具名字段，18 个来源投递 Preproduction 全部 accepted。【R21 回读+R22 口径收窄】accepted 回执的 knowledge-source task_id 只证明来源接收；R21 临时只读工作流（n8n P3b0YKYeQDnI7Z1a，执行 186738，已归档）经 GET /v1/knowledge/sources/{task_id} 回读全部 18 个 intake：均为 accepted 且 summary_task_id=null。该结果证明 intake 链接未回填（排队代码只在 POST 响应返回任务 ID，不回写 intake 行），不能据此判断独立 Summary 任务是否存在。【R22 表级补证 2026-10-06，SSM 只读通道】按 intake_id 直查 preprod 库：18/18 intake 行存在且 accepted；support_knowledge_source_summaries 表不存在（information_schema 核对）；部署 schema 版本=v18（support_ticket_schema_meta=2026-single-ai-managed-v18-n8n-summary-trigger，2026-10-02 更新），独立 Summary/Review 管线表属未部署的 v19/ECS-013 面——**18 个来源的独立 Summary 排队未发生（表级证据）**。排队段闭合条件=部署 v19/013 后经重放或自然调度触发，再按表核对任务 ID、来源版本与状态。已发布 ae44bc1b，快照+manifest 回读刷新，校验器通过。先不要部署继续有效；完整计划未闭合：AgentMemory 迁移/退休、WeKnora fork 镜像/部署通道、Prompt/插件镜像/profile 发布、Preproduction 全链端到端（含 bot id 一致性+真实 Slack E2E 两项部署核对）。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15704,6 +15711,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "n8n 临时只读工作流 GET /automation/preproduction/v1/knowledge/sources/{task_id} ×18（执行 186738）",
           "result": "18/18 status=accepted、summary_task_id=null：证明 intake 链接未回填，不能判断独立 Summary 任务是否存在（R22 反例确认 POST 返回的任务 ID 不回写 intake 行）；表级核对待只读通道",
           "recorded_at": "2026-10-06T10:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R22 表级只读核对（18 intake 对独立 Summary 排队的最终判定）",
+          "command": "SSM 取 preprod DSN → psql 只读：18 intake 行核对 + information_schema 查表 + support_ticket_schema_meta 读版本",
+          "result": "18/18 intake accepted；support_knowledge_source_summaries 不存在；部署 schema=v18（独立管线表属未部署 v19/013）→ 排队未发生",
+          "recorded_at": "2026-10-06T11:30:00Z"
         }
       ],
       "source_refs": [
@@ -15717,7 +15731,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-06T10:30:00Z",
+      "updated_at": "2026-10-06T11:30:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
