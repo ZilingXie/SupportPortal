@@ -197,6 +197,14 @@ def handle_slack_hermes_message(
         return _invalid("feedback text is required")
     if len(text) > 4000:
         return _invalid("feedback text exceeds 4000 characters")
+
+    # R17/P1-2: check for a knowledge review command BEFORE creating a
+    # feedback turn. The engineer replies to a review notification with a
+    # decision instead of investigation feedback.
+    review_decision = _try_knowledge_review_command(store, ticket_id, text)
+    if review_decision is not None:
+        return review_decision
+
     review = store.get_hermes_case_review(ticket_id) or {}
     for turn in review.get("turns") or []:
         if (
@@ -314,3 +322,150 @@ def handle_slack_adhoc_session(
         "zendesk_ticket_id": created.get("zendesk_ticket_id"),
         "turn_id": created.get("turn_id"),
     }
+
+
+# ---------------------------------------------------------------------------
+# Knowledge review decision from Slack thread reply (governance plan WP3,
+# review round 17 / P1-2)
+# ---------------------------------------------------------------------------
+
+_KNOWLEDGE_APPROVE_PREFIX = "knowledge approve"
+_KNOWLEDGE_REJECT_PREFIX = "knowledge reject"
+
+
+def _try_knowledge_review_command(
+    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
+) -> dict[str, Any] | None:
+    """Route a Slack thread reply to the knowledge promotion decision API."""
+    normalized = text.strip()
+    lower = normalized.lower()
+    if lower.startswith(_KNOWLEDGE_REJECT_PREFIX):
+        return _execute_knowledge_review_reject(store, ticket_id, normalized, repository=repository)
+    if lower.startswith(_KNOWLEDGE_APPROVE_PREFIX):
+        return _execute_knowledge_review_approve(store, ticket_id, normalized, repository=repository)
+    return None
+
+
+def _find_pending_knowledge_review(
+    store: AutomationEcsStore, ticket_id: str, *, repository: Any = None
+) -> list[dict[str, Any]]:
+    if repository is None:
+        import os
+        from backend.repositories.ticket_repository import create_ticket_repository
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        if not dsn:
+            return []
+        try:
+            repository = create_ticket_repository(dsn)
+        except Exception:  # noqa: BLE001
+            return []
+    try:
+        promotions = repository.list_weknora_promotions()
+    except Exception:  # noqa: BLE001
+        return []
+    pending = []
+    for row in promotions or []:
+        if not isinstance(row, dict) or str(row.get("status") or "") != "human_review":
+            continue
+        if str(row.get("client_ticket_id") or "").strip() == ticket_id:
+            pending.append(row)
+    return pending
+
+
+def _execute_knowledge_review_reject(
+    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
+) -> dict[str, Any]:
+    pending = _find_pending_knowledge_review(store, ticket_id, repository=repository)
+    if not pending:
+        return _invalid("no knowledge review candidates are pending for this case")
+    if len(pending) > 1:
+        return _invalid(
+            f"multiple knowledge review candidates pending ({len(pending)}); use the decision API to disambiguate"
+        )
+    promotion = pending[0]
+    if repository is None:
+        import os
+        from backend.repositories.ticket_repository import create_ticket_repository
+        repository = create_ticket_repository(str(os.getenv("TICKET_DB_DSN") or "").strip())
+    result = repository.decide_weknora_promotion(
+        str(promotion["promotion_id"]),
+        decision="reject",
+        decided_by="slack-engineer",
+        decided_at=_now_iso_str(),
+    )
+    if result is None:
+        return _invalid("the candidate is no longer awaiting a decision")
+    LOGGER.info(
+        "knowledge_review_slack_reject ticket=%s promotion=%s",
+        ticket_id, promotion["promotion_id"],
+    )
+    return {
+        "ok": True,
+        "status": "knowledge_review_rejected",
+        "zendesk_ticket_id": ticket_id,
+        "promotion_id": promotion["promotion_id"],
+    }
+
+
+def _execute_knowledge_review_approve(
+    store: AutomationEcsStore, ticket_id: str, text: str, *, repository: Any = None
+) -> dict[str, Any]:
+    remainder = text[len(_KNOWLEDGE_APPROVE_PREFIX):].strip()
+    parts = remainder.split(None, 1)
+    if len(parts) < 2:
+        return _invalid(
+            "knowledge approve requires: knowledge approve <new|supplement|replace|merge> <complete body>"
+        )
+    action = parts[0].strip().lower()
+    body = parts[1].strip()
+    if action not in {"new", "supplement", "replace", "merge"}:
+        return _invalid(f"unknown action '{action}'; expected new, supplement, replace, or merge")
+    if not body:
+        return _invalid("the approved body is empty")
+
+    pending = _find_pending_knowledge_review(store, ticket_id, repository=repository)
+    if not pending:
+        return _invalid("no knowledge review candidates are pending for this case")
+    if len(pending) > 1:
+        return _invalid(
+            f"multiple knowledge review candidates pending ({len(pending)}); use the decision API to disambiguate"
+        )
+    promotion = pending[0]
+    candidate = promotion.get("candidate_payload") if isinstance(promotion.get("candidate_payload"), dict) else {}
+    resolution: dict[str, Any] = {"action": action, "content": body}
+    if str(candidate.get("title") or "").strip():
+        resolution["title"] = str(candidate["title"]).strip()
+    if str(candidate.get("target_object_id") or "").strip():
+        resolution["target_object_id"] = str(candidate["target_object_id"]).strip()
+        if str(candidate.get("base_version") or "").strip():
+            resolution["base_version"] = str(candidate["base_version"]).strip()
+
+    if repository is None:
+        import os
+        from backend.repositories.ticket_repository import create_ticket_repository
+        repository = create_ticket_repository(str(os.getenv("TICKET_DB_DSN") or "").strip())
+    result = repository.decide_weknora_promotion(
+        str(promotion["promotion_id"]),
+        decision="approve",
+        decided_by="slack-engineer",
+        decided_at=_now_iso_str(),
+        resolution=resolution,
+    )
+    if result is None:
+        return _invalid("the candidate is no longer awaiting a decision")
+    LOGGER.info(
+        "knowledge_review_slack_approve ticket=%s promotion=%s action=%s",
+        ticket_id, promotion["promotion_id"], action,
+    )
+    return {
+        "ok": True,
+        "status": "knowledge_review_approved",
+        "zendesk_ticket_id": ticket_id,
+        "promotion_id": promotion["promotion_id"],
+        "action": action,
+    }
+
+
+def _now_iso_str() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
