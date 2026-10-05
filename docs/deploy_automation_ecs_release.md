@@ -33,6 +33,15 @@ PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
   --hermes-persona-enabled
 ```
 
+`--hermes-agent-enabled` 控制是否把 Hermes agent gateway 配置
+（SSM `hermes-agent-base-url` / `hermes-api-server-key`）挂到 task definition。
+渲染器对这两个 secret 先删后按条件加回：pipeline 始终显式传
+`--automation-case-engine`，因此未开 agent 的发布会把克隆定义里的这两项移除
+（r20261005-a4dcc29 因此丢失 worker 侧配置，知识治理独立 Summary 排队门随之关闭）。
+治理管线（`--hermes-case-workflow-mode real`）的 Preproduction 发布必须同时传
+`--hermes-agent-enabled`；2026-10-06 起 api 与 worker 两个角色都会挂载——
+knowledge-source 接收端点在 API 角色上排队独立 Summary，排队门读取 API 自身环境。
+
 pipeline依次执行冻结commit、CodeBuild、Preproduction preflight、deploy、统一collector；
 每个阶段的attempt与耗时追加到绑定commit、Prompt Release和模式参数的release-scoped checkpoint，最终 `timings.json` 分开报告
 可控耗时与Route/Worker/API ECS等待耗时。`--through production`仍要求调用者单独设置
