@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T08:10:59Z",
-  "source_base_commit": "6765b7bc4ee77b0eb21633d9088204d930f8c587",
-  "registry_digest": "d68711d2fe5c364b3dc835ff057cb6cadbbea3c099d990f3f765c9568aac8566",
+  "generated_at": "2026-10-05T08:43:37Z",
+  "source_base_commit": "565102bdd21b9489aeafb46f62e50a5beedfd063",
+  "registry_digest": "5fb01113244ab37c1b1cb5a5a31993628e7589fff3b5afa39322baf0e7e8bf76",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1426,6 +1426,48 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
+          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
+        },
+        {
+          "type": "test",
+          "label": "r2 真实模型评测完整输出（gpt-6-astra，automation-persona-v32，2026-10-03，7 passed in 21.05s，全部 generation_attempts=1、safety passed，语义断言 enabled/close/App-ID 纠正全命中、跟进类无 completion 措辞）",
+          "command": "HTTPS_PROXY=http://127.0.0.1:1082 ENABLEMENT_REPLY_LANGUAGE_EVAL=1 /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py -q -s",
+          "result": "逐样本正文（greeting 由应用固定添加，正文为模型首轮输出）：[1] pt_completion_english_internal(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado — teremos prazer em ajudar.' [2] es_relay_success_english_internal(es)：'Gracias por tu paciencia. Te confirmo que Media Relay ya está habilitado en tu proyecto, así que todo está listo. / Voy a cerrar este caso. Si más adelante tienes alguna pregunta, puedes abrir un nuevo ticket y con gusto te ayudaremos.' [3] pt_bare_appid_last_message(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado.' [4] explicit_switch_to_english(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is now enabled on your project, and we've verified the configuration. / I'm closing this case now. If anything else comes up, feel free to open a new ticket and we'll be happy to help.' [5] en_only_conversation(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is enabled on your project, and the configuration has been verified. / I'm closing this case now. If anything else comes up, feel free to open a new ticket.' [6] zh_conversation(zh)：'感谢你的耐心等待！我已确认你的项目已开通 Media Relay，并通过配置核验确认了启用状态，可以使用了。/ 我现在会关闭此工单。如果之后还有其他问题，欢迎随时提交新工单，我们会继续为你提供帮助。' [7] es_internal_followup(es)：'Gracias por enviármelo. El App ID que compartiste no es correcto. ¿Podrías enviarme el App ID correcto de 32 caracteres para tu solicitud de activación de Media Relay?'（无 habilitado/结案措辞）。过程保留：r2 首跑 es close_claim 词干漏 'cier'（模型输出 'Cierro este caso' 为正确结案表述）出现一次断言假失败，补词干 'cierr|cerr|finaliz' 后全绿。"
+        },
+        {
+          "type": "document",
+          "label": "旧 job 冻结时点与幂等",
+          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
+          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
+        },
+        {
+          "type": "document",
+          "label": "r2 快照新鲜度（验收一轮阻塞项 1）",
+          "command": "test_worker.py::...::test_completion_job_uses_live_ticket_over_stale_case_snapshot / test_enablement_auto_relay.py::...::test_success_result_uses_live_ticket_over_stale_case_snapshot / test_completion_job_falls_back_to_case_snapshot_without_ticket",
+          "result": "case 快照落后于 ticket（缺少客户其后发送的语言要求消息）时，内部邮件与 Relay 两入口的完成 job 快照均包含该最新消息（葡语/西语样例各自验证）；ticket 不可读（空 dict）时回退 case 快照。"
+        },
+        {
+          "type": "document",
+          "label": "环境范围",
+          "command": "git log codex/enablement-reply-language --oneline",
+          "result": "代码+测试+文档改动仅进入任务分支（r1 bd6f384c + r2 提交）；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20261003-1c867cf 与部署后验证（2026-10-03/04）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 1c867cfd9ad0926376453e07f114538040dc5c77 --prompt-release-id pr-22d6c9be1773 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "result": "全阶段 passed（evidence: .deployments/ecs-pipeline-r20261003-1c867cf/preproduction-deploy/evidence.json，checks 全 passed/prompt_sync+activation=active/rollback=not_started，SLO breach=true 如实记录）；公网 /health/live ok + /health/release：git_commit=1c867cfd、image_digest=sha256:71f9ed0eb22696bb22d73c7298efec49c63e1e3f1e3d76ace529f5f376064967、prompt_release_id=pr-22d6c9be1773、schema automation-ecs-012；worker td :100 archer/gpt-6-sol/disabled/APP_BUILD_REF=1c867cfd、digest expected=observed runtime_verified=true。真实模型检查（零投递）：gpt-6-sol+automation-persona-v32+preprod sid-bright v1 七场景语言与语义 ALL-PASS 全首轮。过程保留：首跑 prompt id 取自源库 active（pr-c47f99044ae0）而目标库已 superseded → sync 失败；另两次尝试分别遇 .env 静态 key 覆盖 SSO（SSM 取值失败）与 CodeBuild 并发上限（首次被杀本地进程后 AWS 侧构建完成）。未晋级 Production。"
+        },
+        {
+          "type": "test",
+          "label": "发布后验收补充：es resend_request 无重音词干（2026-10-04）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_reply_language_eval.py",
+          "result": "82 passed/89 subtests（新增 test_es_followup_resend_request_accepts_unaccented_enviar：验收报告原句全语义组命中、禁组不命中、无关正文不命中）+ eval 门控默认 7 skipped。纯评测断言修正，Preproduction r20261003-1c867cf 不受影响。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1531,8 +1573,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 40,
-      "done_count": 20,
+      "task_count": 41,
+      "done_count": 21,
       "blocked_count": 0
     },
     {
@@ -15597,12 +15639,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "rag-scope-governance",
       "legacy_ids": [],
       "legacy_refs": [
-        "p2-184 (language-continuity thread, closed 2026-10-04, PR#1381)"
+        "p2-185 (客户回复语言连续性修复, closed 2026-10-04, PR#1381/PR#1383)"
       ],
       "history": [
         {
           "at": "2026-10-03",
-          "note": "同一任务号 p2-184 先前由「客户回复语言连续性修复」使用并已收口 done（PR#1381=main 1c867cfd，r20261003-1c867cf 已部署 Preproduction，七场景全过）。本治理线程合并时 p2-184.json add/add 冲突以治理线记录覆盖，此条目保留语言连续性线程的关闭痕迹。"
+          "note": "同一任务号 p2-184 先前由「客户回复语言连续性修复」使用并已收口 done（PR#1381=main 1c867cfd，r20261003-1c867cf 已部署 Preproduction，七场景全过）。本治理线程合并时 p2-184.json add/add 冲突以治理线记录覆盖，此条目保留语言连续性线程的关闭痕迹。 完整独立登记已恢复为 docs/project/tasks/p2-185.json。"
         },
         {
           "at": "2026-10-02T00:00:00Z",
@@ -15668,6 +15710,75 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-05T16:00:00Z",
           "note": "第十四轮独立验收通过：R14-1（版本化迁移+PG 实库验证）、R14-2（清理错误传播+持续失败测试）、R14-3（无条件代际清理+同正文测试）全部闭合。释放 finalize 门禁。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-185",
+      "title": "客户回复语言连续性修复（已收口）",
+      "status": "done",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-03",
+      "updated_at": "2026-10-04",
+      "summary": "计划名：客户回复语言连续性修复（实施计划，需要验收）。修复 13837 根因：内部邮件与 AgentRelay 触发的 Enablement 完成通知构造 reply job 时绕过 create_account_reply_job，reply_facts 缺少 conversation_context，加上 build_automation_reply_facts 把 customer_language 静默默认为 en，Persona 只看到英文内部结果而生成英文正文。r1 变更（bd6f384c）：(1) worker.py 三个内部触达入口（_queue_enablement_completion_reply_job、_apply_enablement_relay_success、_queue_internal_followup_reply_job，仅 handler=enablement）挂载脱敏公开会话快照 reply_facts.conversation_context；(2) automation_persona.py enablement 不再默认 en、语言优先级 Prompt、fail-closed 门 automation_persona_missing_customer_language、v31→v32 版本围栏；(3) prepare/publish 双路径旧 job 回填（冻结时点=job.created_at）。r2 修复（验收一轮三个阻塞项）：(a) 快照构造改为按完成 job 创建时点从 canonical ticket 的现行公开会话现建（build_automation_context+persona_context），case 级 automation_context.reply_conversation_context 仅在 ticket 不可读/无消息时回退——否则 case 快照可能落后于 reply-sync 刷新，漏掉客户最新语言要求；内部邮件与 Relay 两入口各补过期 case 快照回归测试。(b) 语言证据门升级 _customer_message_carries_language_signal：剔除脱敏占位符/URL/邮箱/≥16 位 hex/数字与裸确认词（ok/okay/yes/no/done/k）后须存在可辨语言内容，CJK 直接计信号；仅有无信号内容且无更早正文时停止生成转人工。(c) 评测文件补业务语义断言（enabled/close/correct-App-ID 正则组 + 跟进类禁 completion 措辞），任务登记提交逐样本完整正文与运行信息。基线 main@bcfe47b2。目标环境限定 Preproduction；Production 运行版本、Prompt active release 与真实客户工单不变，13837 仅作脱敏回归样本不重放不补发。 r3 修复（验收二轮 P1 阻塞）：语言证据门 r2 的拉丁字符白名单会整段删除俄语/阿拉伯语/泰语正常正文（误拦转人工、模型零调用），且 CJK 在剔除 URL 前提前放行使含中文路径的纯 URL 绕过排除——改为先剔除占位符/URL（含非 ASCII 路径）/邮箱/≥16 位 hex/数字，再以任意字系统 Unicode 字母（isalpha）判断剩余词，不做清理前放行；补测俄/阿拉伯/泰语正例（真实 render 入口、mock 模型、断言 invoke 恰一次）与含中文路径纯 URL 反例，保留葡语正文+末条纯 App ID 正例。快照新鲜度与模型评测证据两项已经二轮验收通过关闭。 r4 修复（验收三轮 P2 阻塞）：r3 改为 split() 全词匹配后未归一化词周标点，带标点简单确认（OK./yes!/[App ID] OK. 等）被重新当作语言依据放行生成——新增 _CONFIRMATION_PUNCTUATION 剥离集，词先 strip 标点再入确认词集合比较，Unicode 字母判断保留；补测句号/感叹号/逗号引号确认词与 [App ID] OK. 反例，正例改为葡语正文+末条 OK. 放行。非拉丁误拦与中文 URL 漏拦两项已经三轮验收确认修复。 2026-10-03/04 发布收口：r4 验收通过后 finalize（PR#1381 squash=main 1c867cfd，工作区/分支清理，CodeGraph+CodeSight 同步）；本地官方栈重启验证（lightweight/remote+RUNTIME_SCHEMA_MODE=check，/health ok，app_build.ref=1c867cfd9ad0，容器内 v32/标点剥离集/会话挂载三项 live 标记）；Preproduction 发布 r20261003-1c867cf 全阶段 passed（首跑误用源库 active prompt id pr-c47f99044ae0 在目标库已 superseded 致 sync 失败，改用目标库 active pr-22d6c9be1773 重建发布；全阶段 preflight/prompt_schema/route_worker_rollout 280.7s/heartbeat/api_rollout 179.7s/collector/activation/release_note 均 passed，SLO breach=true（含失败尝试耗时）；schema bootstrap skipped_current；terraform 零漂移×2）；部署后验证：公网 /health/live ok、/health/release provenance release_id=r20261003-1c867cf git_commit=1c867cfd image_digest=sha256:71f9ed0e… schema automation-ecs-012 prompt_release_id=pr-22d6c9be1773；worker task def :100（:99→:100）ENABLEMENT_WORKFLOW_MODE=archer AGENT_MODEL_ID=gpt-6-sol HERMES_CASE_WORKFLOW_MODE=disabled APP_BUILD_REF=1c867cfd、镜像 digest expected=observed runtime_verified；部署环境真实模型检查（不投递客户消息）：preprod 库真实 sid-bright v1 Persona + AGENT_MODEL_ID=gpt-6-sol + main 代码，七场景（pt/es/en/zh/纯 App ID/显式切换/西语跟进）语言与业务语义全过、全部 generation_attempts=1、safety passed、prompt_version=automation-persona-v32。未晋级 Production；13837 未重放未补发。 发布后验收补充（非阻塞误报修复）：评测断言 resend_request 词干表漏无重音 enviarme（真实输出 ¿podrías comprobarlo y enviarme el App ID correcto…? 为业务正确但被误判失败），已补 envia 词干并新增非门控单测钉住该表达（含禁 completion 措辞保持）；纯测试断言改动，无运行时变更，不触发部署。",
+      "next_action": "已收口。遗留观察项（不阻塞）：本地栈 worker 的 Redis BLPOP 空队列轮询每 5s 一条 dequeue 超时 WARNING 属既有噪声；并行线程 hermes-weknora-governance 分支的任务号 p2-184 与本任务撞号，其合并前需改号并解决 p2-184.json/projectoverview-data.js 冲突。",
+      "acceptance_criteria": [
+        "内部邮件完成、AgentRelay 成功、内部跟进三个入口创建的 enablement reply job 均携带 conversation_context（角色/顺序/消息 ID 保留；私有备注/内部邮件/草稿排除；App ID/邮箱脱敏），快照按 job 创建时点从 canonical ticket 现行公开会话构造（case 快照仅回退），不漏客户最新语言要求；quota 等其他 handler 行为不变。",
+        "enablement facts 不再默认 customer_language=en；旧 job 中无来源的 en 按旧默认值对待，语言依据为客户公开会话。",
+        "客户明确语言要求 > 最近可判语言客户消息（纯 App ID/邮箱/链接/数字/裸确认延续更早语言，含非 ASCII 路径的纯 URL 同样不算依据）；内部结果语言不影响回复语言；剔除无语言载荷后无任何携带 Unicode 字母的正文（任意字系统）时停止生成并进入现有人工交接，正常非拉丁正文（俄/阿拉伯/泰语等）不得误拦。",
+        "旧未发布 job 按 job.created_at 冻结时点补齐快照并经 v32 围栏重新生成；已发布 job 复用原消息，重试/重复消费最多一条客户消息，幂等与结案顺序不变。",
+        "确定性测试（worker/relay/failure/persona/context-provider）与真实模型评测（pt/es/en/zh/纯 App ID/显式切换/英文内部结果七场景，全部首轮生成）通过；评测断言语言与业务语义（开通/结案/更正 App ID）双正确，逐样本完整正文与运行信息存于本登记 evidence。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "r4 确定性测试（新增 24 项 + 存量回归）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_automation_context_provider.py backend/tests/test_account_intake.py",
+          "result": "r4 全绿：persona 81 passed/89 subtests（含 OK./yes!/'done',/[App ID] OK. 四个带标点确认反例与非拉丁正例）；relay 35 passed；auto_failure 12 passed；context_provider 39 passed+32 skipped（门控）；intake 177 passed；worker 语言连续性类 10 项全过（正例末条为 OK.）。test_worker.py 整体 14 个预存失败与 main@bcfe47b2 基线完全一致（investigation 族，与本变更无关，stash 双跑 diff 为空）。真实模型评测按三轮验收结论不重复（证据沿用 r2 已登记输出）。"
+        },
+        {
+          "type": "test",
+          "label": "r2 真实模型评测完整输出（gpt-6-astra，automation-persona-v32，2026-10-03，7 passed in 21.05s，全部 generation_attempts=1、safety passed，语义断言 enabled/close/App-ID 纠正全命中、跟进类无 completion 措辞）",
+          "command": "HTTPS_PROXY=http://127.0.0.1:1082 ENABLEMENT_REPLY_LANGUAGE_EVAL=1 /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_enablement_reply_language_eval.py -q -s",
+          "result": "逐样本正文（greeting 由应用固定添加，正文为模型首轮输出）：[1] pt_completion_english_internal(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado — teremos prazer em ajudar.' [2] es_relay_success_english_internal(es)：'Gracias por tu paciencia. Te confirmo que Media Relay ya está habilitado en tu proyecto, así que todo está listo. / Voy a cerrar este caso. Si más adelante tienes alguna pregunta, puedes abrir un nuevo ticket y con gusto te ayudaremos.' [3] pt_bare_appid_last_message(pt)：'Obrigado pela paciência! Confirmo que o Media Relay já está ativado no seu projeto, e a verificação da configuração confirmou esse estado. / Estou encerrando este chamado agora. Se surgir qualquer outra dúvida, fique à vontade para abrir um novo chamado.' [4] explicit_switch_to_english(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is now enabled on your project, and we've verified the configuration. / I'm closing this case now. If anything else comes up, feel free to open a new ticket and we'll be happy to help.' [5] en_only_conversation(en)：'Thanks for your patience — I'm happy to confirm that Media Relay is enabled on your project, and the configuration has been verified. / I'm closing this case now. If anything else comes up, feel free to open a new ticket.' [6] zh_conversation(zh)：'感谢你的耐心等待！我已确认你的项目已开通 Media Relay，并通过配置核验确认了启用状态，可以使用了。/ 我现在会关闭此工单。如果之后还有其他问题，欢迎随时提交新工单，我们会继续为你提供帮助。' [7] es_internal_followup(es)：'Gracias por enviármelo. El App ID que compartiste no es correcto. ¿Podrías enviarme el App ID correcto de 32 caracteres para tu solicitud de activación de Media Relay?'（无 habilitado/结案措辞）。过程保留：r2 首跑 es close_claim 词干漏 'cier'（模型输出 'Cierro este caso' 为正确结案表述）出现一次断言假失败，补词干 'cierr|cerr|finaliz' 后全绿。"
+        },
+        {
+          "type": "document",
+          "label": "旧 job 冻结时点与幂等",
+          "command": "test_worker.py::EnablementReplyLanguageContinuityTests::test_old_pending_job_backfill_freezes_at_creation_time / test_published_job_with_existing_message_is_not_regenerated",
+          "result": "job.created_at=10:30 的旧 job 回填快照仅含 10:30 前消息（11:00 App ID 消息与 13:00 后续消息均排除）；重试复用同一持久化快照；已有交付消息的 job render 零调用、消息数与内容不变。"
+        },
+        {
+          "type": "document",
+          "label": "r2 快照新鲜度（验收一轮阻塞项 1）",
+          "command": "test_worker.py::...::test_completion_job_uses_live_ticket_over_stale_case_snapshot / test_enablement_auto_relay.py::...::test_success_result_uses_live_ticket_over_stale_case_snapshot / test_completion_job_falls_back_to_case_snapshot_without_ticket",
+          "result": "case 快照落后于 ticket（缺少客户其后发送的语言要求消息）时，内部邮件与 Relay 两入口的完成 job 快照均包含该最新消息（葡语/西语样例各自验证）；ticket 不可读（空 dict）时回退 case 快照。"
+        },
+        {
+          "type": "document",
+          "label": "环境范围",
+          "command": "git log codex/enablement-reply-language --oneline",
+          "result": "代码+测试+文档改动仅进入任务分支（r1 bd6f384c + r2 提交）；未部署任何环境；Production 与 Preproduction 运行版本不变，等待验收后按授权发布 Preproduction。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20261003-1c867cf 与部署后验证（2026-10-03/04）",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 1c867cfd9ad0926376453e07f114538040dc5c77 --prompt-release-id pr-22d6c9be1773 --through preproduction --bootstrap-account-schema --automation-case-engine hermes --hermes-agent-enabled --hermes-case-workflow-mode disabled --enablement-workflow-mode archer",
+          "result": "全阶段 passed（evidence: .deployments/ecs-pipeline-r20261003-1c867cf/preproduction-deploy/evidence.json，checks 全 passed/prompt_sync+activation=active/rollback=not_started，SLO breach=true 如实记录）；公网 /health/live ok + /health/release：git_commit=1c867cfd、image_digest=sha256:71f9ed0eb22696bb22d73c7298efec49c63e1e3f1e3d76ace529f5f376064967、prompt_release_id=pr-22d6c9be1773、schema automation-ecs-012；worker td :100 archer/gpt-6-sol/disabled/APP_BUILD_REF=1c867cfd、digest expected=observed runtime_verified=true。真实模型检查（零投递）：gpt-6-sol+automation-persona-v32+preprod sid-bright v1 七场景语言与语义 ALL-PASS 全首轮。过程保留：首跑 prompt id 取自源库 active（pr-c47f99044ae0）而目标库已 superseded → sync 失败；另两次尝试分别遇 .env 静态 key 覆盖 SSO（SSM 取值失败）与 CodeBuild 并发上限（首次被杀本地进程后 AWS 侧构建完成）。未晋级 Production。"
+        },
+        {
+          "type": "test",
+          "label": "发布后验收补充：es resend_request 无重音词干（2026-10-04）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_reply_language_eval.py",
+          "result": "82 passed/89 subtests（新增 test_es_followup_resend_request_accepts_unaccented_enviar：验收报告原句全语义组命中、禁组不命中、无关正文不命中）+ eval 门控默认 7 skipped。纯评测断言修正，Preproduction r20261003-1c867cf 不受影响。"
+        }
+      ],
+      "legacy_ids": [
+        "p2-184"
       ]
     },
     {
@@ -21126,7 +21237,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     }
   ],
   "migration": {
-    "source_count": 151,
+    "source_count": 152,
     "generated_from": [
       "docs/roadmap.html",
       "docs/roadmap/meetings.html",
@@ -22191,6 +22302,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "target_type": "function",
         "target_id": "account-controlled-rollout",
         "disposition": "moved-to-phase-2"
+      },
+      {
+        "source_ref": "docs/project/tasks/p2-185.json",
+        "legacy_id": "p2-184",
+        "target_type": "task",
+        "target_id": "p2-185",
+        "disposition": "split-from-shared-id"
       }
     ],
     "aliases": {
@@ -22797,6 +22915,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "p1-23": {
         "target_type": "function",
         "target_id": "account-controlled-rollout"
+      },
+      "p2-184": {
+        "target_type": "task",
+        "target_id": "p2-185"
       }
     }
   }

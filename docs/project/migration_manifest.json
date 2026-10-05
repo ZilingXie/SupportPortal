@@ -1064,6 +1064,13 @@
       "target_type": "function",
       "target_id": "account-controlled-rollout",
       "disposition": "moved-to-phase-2"
+    },
+    {
+      "source_ref": "docs/project/tasks/p2-185.json",
+      "legacy_id": "p2-184",
+      "target_type": "task",
+      "target_id": "p2-185",
+      "disposition": "split-from-shared-id"
     }
   ]
 }
