@@ -3010,23 +3010,46 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
             failure_detail=outcome.failure_detail,
             completed_at=now_iso(),
         )
-        # R15/P1-3: a candidate parking at human_review notifies the case's
-        # Slack thread so the reviewing engineer sees the full proposal. Best
-        # effort — the queue API remains the primary decision surface.
-        if outcome.status == "human_review" and str(claimed.get("engineer_case_id") or "").strip():
+        # R15/P1-3 + R16-3: a candidate parking at human_review notifies the
+        # case's Slack thread so the reviewing engineer sees the full
+        # proposal. Covers BOTH lineage shapes: legacy EngineerCase (has
+        # engineer_case_id) AND standalone/native Hermes cases (case-less,
+        # but the promotion row carries the Slack thread lineage). Sources
+        # with neither surface (bare CSD/article without a case binding)
+        # have no thread to notify — the queue API is their review surface.
+        if outcome.status == "human_review" and (
+            str(claimed.get("engineer_case_id") or "").strip()
+            or str(claimed.get("slack_thread_ts") or "").strip()
+        ):
             _notify_knowledge_review(claimed)
         processed += 1
     return processed
 
 
 def _notify_knowledge_review(claimed: dict) -> None:
-    """Post a human-review candidate to the case's Slack thread (R15/P1-3)."""
+    """Post a human-review candidate to the case's Slack thread (R15/P1-3).
+
+    R16-3: standalone (native Hermes case) promotions have no legacy
+    engineer_case_id, but the promotion row carries the Slack thread
+    lineage captured at queue time. The builder requires a case identity
+    for the event schema — use the ticket id from the source lineage when
+    the legacy case id is absent.
+    """
     try:
         from backend.services.engineer_slack import notify_knowledge_review_candidate
 
+        case_id = str(claimed.get("engineer_case_id") or "").strip()
+        if not case_id:
+            # Standalone promotion: derive a stable identity from the
+            # source lineage (source_id carries the summary task id which
+            # encodes the ticket/source identity).
+            case_id = str(claimed.get("client_ticket_id") or "").strip()
+            if not case_id:
+                case_id = str(claimed.get("source_id") or "").split(":")[0]
+
         candidate = claimed.get("candidate_payload") if isinstance(claimed.get("candidate_payload"), dict) else {}
         notify_knowledge_review_candidate(
-            engineer_case_id=str(claimed.get("engineer_case_id") or "").strip(),
+            engineer_case_id=case_id,
             promotion_id=str(claimed.get("promotion_id") or ""),
             candidate={
                 **candidate,

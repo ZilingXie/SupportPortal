@@ -53,6 +53,7 @@ _SLACK_ACTIONS = frozenset({
     "stop_investigation",
     "prepare_draft",
     "approve_draft",
+    "knowledge_review",
 })
 _HERMES_SLACK_ACTIONS = frozenset({"prepare_draft", "approve_draft"})
 
@@ -865,12 +866,14 @@ def build_knowledge_review_event(
     ])
     message_text = "\n".join(lines)
 
+    # No action field: this is an informational notification (R16-2), not
+    # an interactive Slack action button — the _action_blocks else-clause
+    # would reject it for lacking investigation/episode fields.
     return build_engineer_case_thread_event(
         event_id=event_id,
         event_type="knowledge_review_required",
         engineer_case_id=normalized_case,
         message_text=message_text,
-        action="knowledge_review",
     )
 
 

@@ -206,3 +206,127 @@ def test_drain_fails_closed_when_native_state_store_unavailable() -> None:
     kwargs = repository.complete_weknora_promotion.call_args.kwargs
     assert kwargs["status"] == "failed"
     assert kwargs["failure_code"] == "native_state_unavailable"
+
+
+# R16-2: the knowledge_review action is in the Slack whitelist and the
+# notification actually builds a valid payload and issues an HTTP call.
+def test_slack_notification_builds_and_delivers(monkeypatch) -> None:
+    from backend.services.engineer_slack import (
+        build_knowledge_review_event,
+        notify_knowledge_review_candidate,
+        _SLACK_ACTIONS,
+    )
+
+    assert "knowledge_review" in _SLACK_ACTIONS
+
+    event = build_knowledge_review_event(
+        event_id="evt-1",
+        engineer_case_id="123-1",
+        promotion_id="weknora:test:1",
+        candidate_type="knowledge",
+        decision="replace",
+        statement="Region EU join failures",
+        proposed_content="Full proposed body for review",
+        target_object_id="doc-7",
+        base_version="5",
+        rationale="evidence gap",
+    )
+    assert event["event_type"] == "knowledge_review_required"
+    assert "Full proposed body" in event["message_text"]
+    assert "doc-7" in event["message_text"]
+
+    # Mock the HTTP boundary; verify the call is actually issued.
+    import urllib.request
+    from unittest.mock import patch as mock_patch
+
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append({"url": request.full_url, "data": request.data})
+        return type("R", (), {
+            "__enter__": lambda s: type("r", (), {"read": lambda: b'{"ok":true,"ts":"123.456","channel":"C1"}'}),
+            "__exit__": lambda s, *a: False,
+        })()
+
+    with mock_patch.dict(os.environ, {
+        "ENGINEER_SLACK_ACCESS_TOKEN": "xoxb-test",
+        "ENGINEER_SLACK_TEAM_ID": "T1",
+        "ENGINEER_SLACK_CHANNEL_ID": "C1",
+    }, clear=False), mock_patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
+        result = notify_knowledge_review_candidate(
+            engineer_case_id="123-1",
+            promotion_id="weknora:test:1",
+            candidate={"candidate_type": "knowledge", "decision": "replace",
+                       "statement": "test", "content": "body"},
+            slack_thread_ts="123.456",
+        )
+    assert result is not None, "the notification must deliver (not silently None)"
+    assert len(calls) == 1, "exactly one Slack HTTP call"
+    assert b"Knowledge review required" in calls[0]["data"]
+
+
+# R16-3: standalone promotions (native Hermes case, no legacy EngineerCase)
+# with Slack thread lineage also trigger the notification.
+def test_standalone_promotion_with_slack_thread_notifies(monkeypatch) -> None:
+    standalone = {
+        **TASK,
+        "promotion_id": "weknora:knowledge_source_review:src:c1:knowledge:h",
+        "source_type": "knowledge_source_review",
+        "engineer_case_id": None,  # native case: no legacy id
+        "client_ticket_id": "13801",
+        "slack_channel_id": "C-NATIVE",
+        "slack_thread_ts": "1696900000.000100",  # lineage IS present
+    }
+    repository = Mock()
+    repository.list_weknora_promotions.return_value = [standalone]
+    repository.claim_weknora_promotion.return_value = {**standalone, "status": "active"}
+    repository.get_standalone_summary_task.return_value = {
+        "source_type": "zendesk_ticket", "source_id": "13801", "source_version": "v1",
+    }
+    repository.latest_knowledge_source_version.return_value = "v1"
+    notify_calls = []
+
+    with patch.dict(os.environ, ENABLED_ENV, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ), patch.object(worker, "WeKnoraClient", FakeAdapterClient), patch.object(
+        worker.WeKnoraPromotionAdapter, "execute",
+        return_value=WeKnoraPromotionOutcome(status="human_review", failure_code="review_requested_human_review"),
+    ), patch.object(
+        worker, "_notify_knowledge_review", side_effect=lambda c: notify_calls.append(c),
+    ):
+        assert worker._drain_weknora_promotions(limit=20) == 1
+    assert len(notify_calls) == 1, "standalone promotion with Slack thread must notify"
+    assert notify_calls[0].get("slack_thread_ts") == "1696900000.000100"
+
+
+# R16-3: sources with neither case id nor Slack thread (bare CSD/article
+# without a case binding) do NOT attempt notification.
+def test_threadless_source_does_not_notify(monkeypatch) -> None:
+    threadless = {
+        **TASK,
+        "promotion_id": "weknora:knowledge_source_review:bare:c1:knowledge:h",
+        "source_type": "knowledge_source_review",
+        "engineer_case_id": None,
+        "client_ticket_id": None,
+        "slack_channel_id": None,
+        "slack_thread_ts": None,  # no lineage
+    }
+    repository = Mock()
+    repository.list_weknora_promotions.return_value = [threadless]
+    repository.claim_weknora_promotion.return_value = {**threadless, "status": "active"}
+    repository.get_standalone_summary_task.return_value = {
+        "source_type": "csd_issue", "source_id": "CSD-77", "source_version": "v1",
+    }
+    repository.latest_knowledge_source_version.return_value = "v1"
+    notify_calls = []
+
+    with patch.dict(os.environ, ENABLED_ENV, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ), patch.object(worker, "WeKnoraClient", FakeAdapterClient), patch.object(
+        worker.WeKnoraPromotionAdapter, "execute",
+        return_value=WeKnoraPromotionOutcome(status="human_review", failure_code="review_requested_human_review"),
+    ), patch.object(
+        worker, "_notify_knowledge_review", side_effect=lambda c: notify_calls.append(c),
+    ):
+        assert worker._drain_weknora_promotions(limit=20) == 1
+    assert len(notify_calls) == 0, "no notification surface — queue API is the review path"
