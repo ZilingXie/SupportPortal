@@ -120,6 +120,7 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.delenv("AGENT_MODEL_ID", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_BASE_URL", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_API_TOKEN", raising=False)

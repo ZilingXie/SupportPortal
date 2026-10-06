@@ -901,6 +901,22 @@ def create_app(    *,
                 status_code=422,
                 detail="approve requires a resolution object with the human-determined action",
             )
+        # Fail-closed on the governance master switch: while governance is
+        # disabled the backlog must stay untouched — an approve would re-queue
+        # a promotion into the external write contract (the one path that
+        # bypasses the queue/drain gates), and even a reject mutates the
+        # preserved audit record.
+        from backend.services.hermes_knowledge_workflow import knowledge_governance_enabled
+
+        if not knowledge_governance_enabled():
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "knowledge governance is disabled "
+                    "(HERMES_KNOWLEDGE_WORKFLOW_ENABLED); backlog promotions "
+                    "are preserved untouched"
+                ),
+            )
         repository = _engineer_ticket_repository()
         rows = await asyncio.to_thread(repository.list_weknora_promotions)
         current = next(

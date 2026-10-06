@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "R29 线上补充回读证据已由执行方补齐（AWS 会话恢复，只读取证 2026-10-06，待验收方复验）：(1) 管道全景——99 intakes（csd 36=18 源×2 日投版本 / zendesk 63）；36/36 Summary completed、36/36 Review completed、0 failed；64 promotions（knowledge 63+skill 1）全部 human_review、原因=review_requested_human_review、0 条已决策；63 zendesk intakes 零 Summary 为既定架构语义（无 case 绑定不派生 Summary，automation_ecs_api R2-4/R4-3），供验收方定性；(2) ECS 配置——SP api:103/route:102/worker:103 均 r20261006-b648a65（digest 三镜像各自 pinned）、PROMPT_RELEASE_ID=pr-0a07d038eef8（DB active 同值）、agent secrets 在 api+worker、worker real 模式；(3) Hermes 服务 def:35——hermes 容器 env 零 weknora 键（插件未发布=b5b6614 未上线，预期态）、memory-core 容器仍在（AgentMemory 未退休，预期态）；(4) schema=v20。剩余门禁不变：写入链（fork 目标 A/B 决策+限定授权）/AgentMemory 迁移退休/插件镜像发布+新会话读取实证。",
+  "next_action": "【用户决策 2026-10-06：转向 AgentMemory 恢复，WeKnora 治理路线暂停】R29 完整验收未通过的后续不再推进修复轮；由 p2-186（AgentMemory 恢复计划/计划二）实施治理停用：HERMES_KNOWLEDGE_WORKFLOW_ENABLED 缺省关闭 + 双渲染路径剥除 WeKnora 引用，Preproduction 恢复 AgentMemory/Wiki 使用链，本任务的 33 条 human_review 积压、intake/Summary/Review/promotion 审计记录原样保留不审批不重放；WeKnora 服务删除（计划一）在 p2-186 交接条件满足后另行执行。此前待办（fork 发布目标选择/aws login/授权验收窗口）随路线转向失效。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -148,7 +148,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-06T17:30:00Z",
+  "updated_at": "2026-10-06T18:00:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
