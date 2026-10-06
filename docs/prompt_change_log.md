@@ -5037,3 +5037,10 @@ For each new entry, record:
 - 七个叙述字段钉死类型（plain string/flat string array，禁对象数组）+ evidence_references 钉为数组字符串——修复 18/18 CSD Summary 因 timeline 对象数组确定性失败（R25）。
 - 同 release 代码侧归一器同步放宽：叙述形状容忍（对象/对象数组→确定性 JSON 文本），结构契约（candidates/candidate 字段/HermesSummaryPacket）仍 fail-closed。
 - 实测：18/18 Summary+Review completed，33 promotions fail-closed 停 human_review。
+
+## 2026-10-06 - 调查/Ad-hoc 手册 v4 恢复 AgentMemory 工具合同（p2-186 AgentMemory 恢复计划）
+
+- hermes-investigation-manual v4、hermes-adhoc-investigation-manual v4：WeKnora 三件套（weknora_search/weknora_read_knowledge/weknora_recall_memory）指引恢复为 AgentMemory 合同（memory_tencentdb_memory_search 蒸馏知识 + memory_tencentdb_conversation_search 原始对话）；调查手册"治理管线零知识写入"bullet 恢复为"整理后结论经稳定 knowledge id 持久化为共享知识"（对应实际注册的 memory_tencentdb_write_knowledge 显式写入合同，raw capture 保持关闭）。
+- 版本直接跳 v4 而非 v3：线上已激活 release（pr-89c354c051b7/pr-0a07d038eef8）的 v3 是 DB 侧 draft 内容（WeKnora 只读三件套），从未进过仓库——同 (key, version) 异内容会撞内容哈希。
+- hermes-case-summary-manual v2 的字段类型契约精化保留不动（治理手册随总开关停用，不回退已验证修复）。
+- 部署注意：本变更经正式 release pipeline 的 prompt prepare/activate 生效（SP 侧）；Hermes 侧 profile 工具集恢复在同一发布窗口对齐。

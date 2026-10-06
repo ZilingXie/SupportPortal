@@ -8,7 +8,7 @@
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
   "created_at": "2026-10-06T00:00:00Z",
-  "updated_at": "2026-10-06T00:00:00Z",
+  "updated_at": "2026-10-06T19:00:00Z",
   "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
   "next_action": "代码与测试已在 codex/agentmemory-restore 完成（A/B 合同 + 236 项定向测试过，test_worker 与 main 基线一致）。待办：finalize 到 main 后执行 Preproduction 发布部署（CodeBuild/release/双角色 td 渲染回读），部署窗口完成 Hermes td raw capture 关闭、profile 显式升级、Prompt Release 恢复、n8n 治理投递断开与旧 Wiki 链恢复，再按 D 节六项真实入口验收（含残留 promotion=1 窗口零新增断言）并回读证据。已知无关预存失败：test_repository_configuration test_case_llm_usage_source_migration_is_versioned_and_mirrored 在 main 即失败（v20/v18 版本串失同步），不属于本任务范围。",
   "acceptance_criteria": [
@@ -32,6 +32,12 @@
       "label": "外围回归与基线对照",
       "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py",
       "result": "test_worker.py 失败集与根区 main@332d24df 完全一致（预存 investigation 族，diff 为空）；test_account_intake 全过。PG 门禁套件（hermes_knowledge_workflow/standalone_knowledge/weknora_promotion _postgres）本地无 PostgreSQL 跳过 14 项，SQL 层无改动，线上验证在部署窗口补。test_repository_configuration 单项失败为 main 预存（版本串 v20-standalone-retry vs v18-n8n-summary-trigger 失同步），与本任务无关。"
+    },
+    {
+      "type": "decision",
+      "label": "Prompt 恢复轮：Investigation/Ad-hoc 手册 v4 恢复 AgentMemory 工具合同（codex/agentmemory-prompt-restore）",
+      "command": "restore + version bump in backend/services/prompts/hermes_support_agent.py",
+      "result": "Investigation/Ad-hoc 手册恢复 AgentMemory 工具合同（memory_tencentdb_memory_search/conversation_search + 恢复整理后知识写入 bullet），版本升 v4（跳过线上已占用的 v3 draft）；import 级验证无 weknora 残留、memory 工具指引在位。"
     }
   ]
 }
