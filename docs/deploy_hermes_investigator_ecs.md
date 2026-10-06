@@ -218,6 +218,15 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - 已知残留:td:23 期间一条验证消息落在逻辑名命名空间(agora-support/investigator,panel 不可见,无害);curated 知识写入通道(`memory_tencentdb_write_knowledge`)未变。
 - 回滚:`update-service --task-definition :22`。
 
+## 2026-10-06 Raw capture 显式关闭(td:37,p2-186 AgentMemory 恢复)
+
+验收轮 2 发现上述 2026-09-15 td env 的 `MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=true` 仍在运行(此前一轮误读 `containerDefinitions[0]`——那是 memory-core 容器;hermes 容器为第二容器,镜像 digest `8e28d4d9…`)。本次变更:
+
+- **td :37**(从 :35 逐字段克隆,仅翻转一处):hermes 容器 `MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=false`;租户三值(真实 ID)、模型、profile(`/opt/data/config.yaml`,`_config_version: 41`、`memory.provider: memory_tencentdb`)与其余 14 项 env 全部保留。
+- **发布来源同步**:hermes-deploy `ecs/hermes_ecs.py` `SUPPORT_AGENT_ENVIRONMENT` 对齐运行态(真实租户 ID + 显式 `RAW_CAPTURE_ENABLED=false` + dashboard 两项),分支 `codex/p2-186-raw-capture-off`(commit c444224)。
+- **回读**:service 稳定(running=1,task 84f52c07);ECS Exec 容器内 `printenv`=`false`;`/v1/health` 200。
+- **回滚**:`update-service --task-definition :35`。
+
 ## 2026-09-14 Preproduction Hermes 接入 Argus Call Search API(td:25)
 
 目的:补 p2-154 遗留的「调查证据源=LLM 训练知识」缺口——Hermes 调查回合可直接检索 Agora Argus 通话数据(通话会话/用户会话/counter/event/VoQA),作为第一块可验证检索源。API:`https://argus.agoralab.co/argus-service`,`apikey` header 鉴权(key 找 fuyang@agora.io 申请);CloudFront 公网可达(AWS us-east-1 直连实测,无 key 302→OAuth),Fargate 可直连无需代理。
