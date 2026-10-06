@@ -59,12 +59,12 @@
 
 **n8n description（当前 active）**
 
-> 定时扫描近期已解决的 CSD Bug（保留现有 JQL 作为来源范围），取得完整 issue 快照（fields=*,comment）后投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；移除 AI 前置筛选、本地先写去重与旧 Memory Wiki 直写；Zendesk KB 草稿节点保留但已断开禁用，待 Review 输出链对接。
+> 【p2-186 AgentMemory 恢复，2026-10-06】定时扫描近期已解决的 CSD Bug，具名字段取完整 issue 快照（含 customfield_10700/13915），PostgreSQL csd 去重，AI 判定原因/方案清晰后生成英文 KB，经 AgentMemory Wiki create→raw/write→ingest 入库（Preproduction memory-core）；治理来源投递链已移除，Zendesk KB/2_rag 不恢复。
 
-- **active 主路径（版本 `544bdb70`，2026-10-01 发布）**：Schedule Trigger → OAuth → Jira JQL（原扫描条件不变，仅作来源范围）→ 逐条 Get_CSD_Detail（`fields=*,comment`，Jira `jira_zac` basic credential）→ Build Source Snapshot（组装 `knowledge-source-v1` 契约体含 `schema_version`；缺 key/fields/updated、**comment 结构缺失或异常（对象/数组/数值型 total 任一不满足）或 Jira 评论不完整（`comments.length` < `total`）均显式失败（fail-closed）**）→ 投递 `/automation/preproduction/v1/knowledge/sources`（Bearer credential 复用 intake，节点级重试 3 次）→ 回执 status 三态校验 → **非空 `task_id` 门禁（Check Receipt Task）** → 记录回执 → 循环下一条。任一校验不过走 Raise Delivery Error 显式失败。
-- **已移除**：AI 筛选（Message a model1/If）、评论重组与 KB 生成链、PostgreSQL `csd` 先写去重（Update_DB1/If1）、SupportPortal Memory 直写四节点。Zendesk 草稿节点保留但断开禁用，且已改用 `zendeskApi` credential 引用（`Zendesk account 3`，与 `[case]Intake|ECS Route` 相同），不再保存 inline Authorization/Cookie。
-- **与项目的关系**：投递目标为 SupportPortal Preproduction 来源接收接口；契约见[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)。回执异常（非 2xx/超时/意外 status）使执行失败并触发 `[ops]Error Alert`。
-- **已发布版本（`544bdb70`，当前 active）**：来源快照只进入 SupportPortal source intake；Review 与 WeKnora 写入由 Hermes/worker 异步完成。SupportPortal 仅在存在对应 Hermes case 时自动排队 Summary。
+- **active 主路径（版本 `b5cf6d6b`，2026-10-06 p2-186 恢复发布）**：Schedule Trigger → OAuth → Jira JQL（原扫描条件不变，仅作来源范围）→ 逐条 Get_CSD_Detail（**具名字段列表** `summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915`，Jira `jira_zac` basic credential，保留 R20 具名字段修复并扩展 OS/Category 自定义字段）→ Structure_comment 评论重组 → PostgreSQL `csd` 先写去重（Update_DB1/If1）→ AI 清晰度判定（Message a model1/If：原因或方案明确才继续）→ structure → KB 正文/标题生成 → Convert_HTML → AgentMemory Wiki 链（`wiki/create` → `Edit Fields` → `raw/write` → `ingest`，Preproduction memory-core，凭证 `X-Tdai-User-Key` 为节点内 inline header）→ Execution Data2 记录 → 循环下一条；If1[1]/If[1] 拒绝或已处理直接回环。
+- **已移除（p2-186）**：治理来源投递链（Build Source Snapshot/Deliver Source Snapshot/Check Delivery Receipt/Check Receipt Task/Record Delivery Receipt/Raise Delivery Error）。Zendesk KB 发布（HTTP_Create_KB）与 2_rag 保留为断开禁用死节点，不参与执行。
+- **与项目的关系**：知识写入目标恢复为 AgentMemory（TencentDB Agent Memory）Wiki 四步 API；WeKnora 治理链已停用（p2-186）。回执异常使执行失败并触发 `[ops]Error Alert`。
+- **已发布版本（`b5cf6d6b`，当前 active）**：CSD issue 经去重与 AI 筛选后由本工作流直接写入 AgentMemory Wiki；治理 source intake 投递与 WeKnora 链路已停用（p2-186）。
 
 <a id="w-dV5vNA6l1MbDMHZt"></a>
 
@@ -226,15 +226,14 @@
 
 **n8n description（当前 active）**
 
-> 接收 Zendesk SOLVED 事件，取得完整 ticket 与全部分页评论并校验完整性后，将原始快照投递至 SupportPortal 治理来源接收接口（Preproduction 提案契约 knowledge-source-v1），以回执 accepted/already_exists/stale_ignored 为准；不再本地预判知识价值，不直写旧 Memory Wiki，Zendesk KB 草稿与 Google Sheets 输出节点保留但已断开禁用，待 Review 通过后的输出链对接。
+> 【p2-186 AgentMemory 恢复，2026-10-06】接收 Zendesk SOLVED 事件，PostgreSQL solved 去重后取得完整 ticket 与全部分页评论（comment_count 校验），逐条脱敏聚合，经 AI 审批筛选（含 Media Relay 排除）生成英文 KB，经 AgentMemory Wiki create→raw/write→ingest 入库（Preproduction memory-core）；治理来源投递链已移除，Zendesk KB/Sheets/2_rag 不恢复。
 
-- **active 主路径（版本 `743bba31`，2026-10-01 发布）**：Webhook（不变）→ 仅 SOLVED → Get Ticket Snapshot（完整 ticket）→ Get All Comments（`per_page=100`，`responseContainsNextURL` 跟随 `next_page` 自动分页）→ Validate Snapshot Completeness（`next_page` 非空、评论数少于 `ticket.comment_count`、ticket 缺失均显式失败，不投半份快照）→ 投递 `/automation/preproduction/v1/knowledge/sources`（`zendesk_ticket` 契约体，原始未脱敏内容，Bearer credential 复用 intake，节点级重试 3 次）→ 回执 status 三态校验 → **非空 `task_id` 门禁（Check Receipt Task）** → 记录回执。任一校验不过走 Raise Delivery Error 显式失败。
-- **已移除**：前置 AI 筛选（AI_Approval/AI_Filter 及 Media Relay 排除规则——该职责移交 Review 链）、评论脱敏与对话组装链、KB 标题/正文/HTML 生成链、PostgreSQL `ticket(solved_ticket)` 先写去重、Tencent Memory 直写四节点，以及 Sheets 尾链的两个孤儿转换节点（Code in JavaScript/Code in JavaScript1，其 Append row in sheet→…→2_rag 三条连接已全部消除）。
-- **凭据结构**：Get Ticket Snapshot、Get All Comments 与禁用的 HTTP_Create_KB 均使用 `zendeskApi` credential 引用（`Zendesk account 3`，与 `[case]Intake|ECS Route` 相同），不再保存 inline Authorization/Cookie。
-- **保留待 Review 链**：Zendesk KB 草稿（HTTP_Create_KB）、Google Sheets 及其辅助节点断开并禁用，参数仍引用已删除节点（`Get_Case_Comment`/`If1`/`Generate_KB_Title` 等），对接 Review 输出链时必须一并更新这些表达式引用。
-- **与项目的关系**：重复/乱序事件由回执 `already_exists`/`stale_ignored` 吸收，n8n 不再写去重表；超时或失败可整轮重跑，无需删除任何去重记录。回执异常触发 `[ops]Error Alert`。契约见[来源接收契约](../../integrations/n8n/knowledge_source_ingestion_contract.md)。
-- **已发布版本（`743bba31`，当前 active）**：来源快照进入 SupportPortal source intake；若该 Zendesk ticket 已有 Hermes case，接收端幂等排队 Summary，再由 Review/Promotion worker 继续处理。
-- **发布记录**：2026-09-17 从基线 `05c7588b-bba0-40b0-ab67-14e9b12820e6` 更新并发布 `de3c1ca8-d5fb-4a5c-aba0-3b6d0caf3991`，最终仅修改 `AI_Approval` 规则和 description；保留此前禁用的 `2_rag`、Tencent 节点参数、全部连接、settings 与凭据引用。MCP 回读 draft/active 一致，未重放历史 execution；等待后续自然 SOLVED 事件验证分类结果。2026-09-16 的 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`。2026-09-30 保存来源迁移草稿（p2-183，36→14 节点），2026-10-01 按两轮验收意见修复：首轮 `33b22cd2`（三个 Zendesk 节点改 credential 引用、新增非空 task_id 门禁），二轮 `743bba31-73c1-43ae-a1b1-2e5d79110123`（13 节点：Sheets 尾链连接全部消除并删除两个孤儿转换节点），未发布；MCP 回读确认 active 仍为 `de3c1ca8`、连接/credential/门禁与设计一致，草稿快照见 `workflows/drafts/`。
+- **active 主路径（版本 `1f544830`，2026-10-06 p2-186 恢复发布）**：Webhook（不变）→ 仅 SOLVED → PostgreSQL `ticket(solved_ticket)` 先写去重（Execution Data → Update_DB1 → If1：冲突即止）→ Get Ticket Snapshot（完整 ticket）→ Get All Comments（`per_page=100`，`responseContainsNextURL` 自动分页）→ Validate Snapshot Completeness（`next_page` 非空、评论数少于 `ticket.comment_count` 均显式失败——p2-186 保留该完整评论修复）→ restructure1 → 逐条取作者邮箱（HTTP Request，`zendeskApi` credential）→ Mask1 脱敏（≥5 位数字词打码）→ Conversation 组装 agent/Customer 对话 → Aggregate/Remove_blank → AI_Approval/AI_Filter 审批筛选（**含 Media Relay/账单/删号/开通等排除规则**）→ KB 标题/正文/HTML 生成 → AgentMemory Wiki 链（`wiki/create` → `Edit Fields` → `raw/write` → `ingest`，Preproduction memory-core）。拒绝路径记 Execution Data2 后结束。
+- **已移除（p2-186）**：治理来源投递链（Deliver Source Snapshot/Check Delivery Receipt/Check Receipt Task/Record Delivery Receipt/Raise Delivery Error）。Zendesk KB 发布（HTTP_Create_KB）、Google Sheets（Append row in sheet）与 2_rag 保留为断开禁用死节点，不参与执行。
+- **凭据结构**：Get Ticket Snapshot、Get All Comments、HTTP Request 与禁用的 HTTP_Create_KB 均使用 `zendeskApi` credential 引用（`Zendesk account 3`）；OpenAI 节点用 `Zac_Openai`；Wiki 链用节点内 inline `X-Tdai-User-Key` header（值=SSM `/supportportal/preproduction/hermes-tdai-admin-key`，快照中脱敏）。
+- **与项目的关系**：去重回到本工作流的 PostgreSQL 先写（`ON CONFLICT DO NOTHING`），重复 SOLVED 事件不再投递；知识写入目标恢复为 AgentMemory（TencentDB Agent Memory）Wiki 四步 API。WeKnora 治理链已停用（p2-186）。失败触发 `[ops]Error Alert`。
+- **已发布版本（`1f544830`，当前 active）**：Solved ticket 经脱敏、AI 筛选后由本工作流直接写入 AgentMemory Wiki；治理 source intake 投递与 WeKnora 链路已停用（p2-186）。
+- **发布记录**：2026-09-17 发布 `de3c1ca8`；2026-10-01 迁移到治理投递链（`743bba31`）；2026-10-06 p2-186 恢复 AgentMemory 链并发布 `1f544830-fc6d-4212-bbca-bd4b84d936c1`（29 节点）。历史细节：2026-09-16 Tencent Memory 链路发布版为 `f27caeb2-c8e6-4b4d-a63a-0cd8c38fcf83`；2026-09-30 来源迁移草稿（p2-183，36→14 节点），2026-10-01 两轮修复 `33b22cd2`/`743bba31`。
 
 <a id="configuration-findings"></a>
 
