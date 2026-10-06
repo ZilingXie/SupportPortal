@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-06T17:08:44Z",
-  "source_base_commit": "84ae189575e55b607708eb4f6ad7674f66bfb576",
-  "registry_digest": "ebec0441f498a351348a19424b97c7478c543be95146a9ca3902a865f57ae677",
+  "generated_at": "2026-10-06T17:29:15Z",
+  "source_base_commit": "44a5269972af796bb544abe5075ad46738880645",
+  "registry_digest": "7d9369107d1b986e7e8aeabc3d3a8a37d8a8c7f3d71579a83fd2fa60f5dafe0e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5065,6 +5065,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复 B/C：Slack 决策入口与 promotion drain 总开关（codex/agentmemory-gate-fixes）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_hermes_zendesk_agent.py -q",
           "result": "全绿（test_hermes_slack_knowledge_review 13 过含 2 新关闭态用例：approve/reject 双命令 409 且 human_review 行 status/决策字段/payload 不变、非命令回复在开关关闭时仍开 investigation_feedback turn；test_weknora_promotion_worker 9 过含新用例：总开关关闭+残留 promotion=1+已配置客户端+queued 候选→领取/完成/外写全零）。test_worker 14 失败与根区 main 基线 diff 为空（预存）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮发布 r20261006-84ae189 + 部署后关闭态合同回读",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 84ae189575e55b607708eb4f6ad7674f66bfb576 --prompt-release-id pr-d9166ff58459（同前 flags+--bootstrap-account-schema）+ curl/psql 线上回读",
+          "result": "全阶段 passed（codebuild 153s/deploy 1057s，SLO breach=true 非阻断）；/health/release=r20261006-84ae189+84ae1895+pr-d9166ff58459；worker/api :106=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0+worker WEKNORA_PROMOTION_ENABLED 0+WeKnora secret 零残留+HERMES_AGENT_* 保留+APP_BUILD_REF=84ae1895；真实 decision POST（approve+完整 resolution）→409 显式拒绝，目标 human_review 行前后零变化；旧任务退出（running=1/pending=0 各角色单任务）。"
         }
       ],
       "source_refs": [
@@ -16035,9 +16041,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
       "created_at": "2026-10-06T00:00:00Z",
-      "updated_at": "2026-10-06T13:30:00Z",
+      "updated_at": "2026-10-06T18:30:00Z",
       "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
-      "next_action": "验收轮 3（修复轮验收）=通过，门禁释放。回滚说明已按交接纠正（:35 非合规回滚目标）。待执行：finalize gate-fixes(b0734dc3+doc 修正) → CodeBuild/release → Preprod 部署 → 运行态回读（新任务生效/旧任务退出/decision 端点线上关闭态 409/drain 结构性证据）。完整计划保留的实链验收项（真实 Agent 新会话读取、n8n 自然样本入库）继续等自然流量。",
+      "next_action": "验收轮 3 通过后已完成发布：r20261006-84ae189（PR#1408=84ae1895，全阶段 passed，prompt 复用 pr-d9166ff58459）。部署后回读：/health/release 一致；worker/api :106 双开关=0、WeKnora 零残留、agent 配置保留；decision 端点线上关闭态实测=409 显式拒绝且 human_review 行（CSD-80108 目标）status/决策字段/updated_at 零变化；drain 关闭=三重结构性证据（总开关 0+promotion 0+凭据移除）。hermes :37 raw capture=false 持续运行。剩余保留项（等自然流量）：真实 Agent 新会话经工具入口读取既有知识、restored n8n Solved/CSD 链自然样本入库核对。Production 未触碰；WeKnora 服务删除（计划一）待其独立验收的清理脚本与无在途调用核对。",
       "acceptance_criteria": [
         "治理总开关关闭（缺省）且 Hermes=real 时：solved/closed/本地 resolved 零新增 Summary/Review 行；standalone/CSD/article intake 与同版本重投零创建零复活；排水不领取既有任务、零 Hermes 知识治理会话、零 WeKnora 调用；残留 WEKNORA_PROMOTION_ENABLED=1 时 close 默认分支零候选；普通调查与回复不受影响。",
         "/v1/knowledge/promotions/{id}/decision 在治理关闭时对 approve/reject 显式 409 拒绝，积压 human_review 行内容不变。",
@@ -16095,6 +16101,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复 B/C：Slack 决策入口与 promotion drain 总开关（codex/agentmemory-gate-fixes）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_hermes_zendesk_agent.py -q",
           "result": "全绿（test_hermes_slack_knowledge_review 13 过含 2 新关闭态用例：approve/reject 双命令 409 且 human_review 行 status/决策字段/payload 不变、非命令回复在开关关闭时仍开 investigation_feedback turn；test_weknora_promotion_worker 9 过含新用例：总开关关闭+残留 promotion=1+已配置客户端+queued 候选→领取/完成/外写全零）。test_worker 14 失败与根区 main 基线 diff 为空（预存）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮发布 r20261006-84ae189 + 部署后关闭态合同回读",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 84ae189575e55b607708eb4f6ad7674f66bfb576 --prompt-release-id pr-d9166ff58459（同前 flags+--bootstrap-account-schema）+ curl/psql 线上回读",
+          "result": "全阶段 passed（codebuild 153s/deploy 1057s，SLO breach=true 非阻断）；/health/release=r20261006-84ae189+84ae1895+pr-d9166ff58459；worker/api :106=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0+worker WEKNORA_PROMOTION_ENABLED 0+WeKnora secret 零残留+HERMES_AGENT_* 保留+APP_BUILD_REF=84ae1895；真实 decision POST（approve+完整 resolution）→409 显式拒绝，目标 human_review 行前后零变化；旧任务退出（running=1/pending=0 各角色单任务）。"
         }
       ]
     },
