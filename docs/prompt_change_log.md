@@ -5031,3 +5031,10 @@ For each new entry, record:
 
 - r20261005-a4dcc29 / r20261005-91e3a63 两次发布将 prompt release pr-89c354c051b7（41 items）同步并激活：hermes-investigation-manual v3、hermes-adhoc-investigation-manual v3、hermes-knowledge-review-manual v3（调查只读 WeKnora 三件套、调查阶段零知识写入）首次上线生效。
 - 同窗口实测发现：hermes-case-summary-manual v1 未钉死 `timeline` 字段类型，CSD 来源的独立 Summary 18/18 确定性失败于 `_normalize_summary_text`（timeline must be a string or an array of strings）——待 v4 修订（见 p2-184 登记）。
+
+## 2026-10-06 - hermes-case-summary-manual v2（pr-0a07d038eef8，r20261006-b648a65 激活）
+
+- 七个叙述字段钉死类型（plain string/flat string array，禁对象数组）+ evidence_references 钉为数组字符串——修复 18/18 CSD Summary 因 timeline 对象数组确定性失败（R25）。
+- 同 release 代码侧归一器同步放宽：叙述形状容忍（对象/对象数组→确定性 JSON 文本），结构契约（candidates/candidate 字段/HermesSummaryPacket）仍 fail-closed。
+- 实测：18/18 Summary+Review completed，33 promotions fail-closed 停 human_review。
+
