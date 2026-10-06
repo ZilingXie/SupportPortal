@@ -21,6 +21,7 @@ from backend.services.hermes_case_workflow import (
 from backend.services.hermes_knowledge_workflow import (
     build_case_close_bundle,
     drain_hermes_knowledge_tasks,
+    knowledge_governance_enabled,
     knowledge_workflow_active,
     queue_hermes_summary_for_case,
     queue_hermes_summary_for_locally_resolved_ticket,
@@ -83,6 +84,7 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.delenv("AGENT_MODEL_ID", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_BASE_URL", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_API_TOKEN", raising=False)
@@ -681,6 +683,70 @@ def test_summary_task_is_not_created_outside_real_mode(monkeypatch) -> None:
     assert queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved") is None
     assert repository.list_hermes_summary_tasks() == []
     assert knowledge_workflow_active() is False
+
+
+def test_master_switch_off_stops_queueing_even_in_real_mode(monkeypatch) -> None:
+    """AgentMemory recovery: the governance master switch gates queueing
+    itself — real mode plus a configured gateway must not create Summary
+    rows while HERMES_KNOWLEDGE_WORKFLOW_ENABLED is unset. This covers every
+    queueing caller (Zendesk solved/closed sync, local resolved, API-side
+    triggers) because the check lives in the queue function itself."""
+    _enable_real_mode(monkeypatch)
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+    repository = _repository()
+    _start(repository)
+
+    assert knowledge_governance_enabled() is False
+    assert knowledge_workflow_active() is False
+    assert queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved") is None
+    assert queue_hermes_summary_for_locally_resolved_ticket(repository, client_ticket_id="123") is None
+
+    ticket = repository.get_ticket("123")
+    ticket["status"] = "resolved"
+    repository.save_ticket(ticket)
+    assert queue_hermes_summary_for_locally_resolved_ticket(repository, client_ticket_id="123") is None
+    assert repository.list_hermes_summary_tasks() == []
+
+
+def test_master_switch_off_stops_the_drain_and_leaves_backlog_untouched(monkeypatch) -> None:
+    """Pre-existing governance rows must stay unclaimed once the master
+    switch is off: no Hermes knowledge session is started, no WeKnora
+    surface is consulted, and the pending task keeps its status."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queued = queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")
+    assert queued is not None
+
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+    client = FakeHermesAgentClient(summary_output="{}", review_output="{}")
+    assert (
+        drain_hermes_knowledge_tasks(
+            repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+        )
+        == 0
+    )
+    assert repository.list_hermes_summary_tasks()[0]["status"] == "pending"
+
+
+def test_master_switch_off_keeps_default_close_producer_gate_closed(monkeypatch) -> None:
+    """The default WeKnora candidate producer in the close transaction
+    (automation_account_reply_sync) is gated on knowledge_governance_enabled()
+    first: a stale task definition still carrying
+    WEKNORA_PROMOTION_ENABLED=1 must not revive the producer once governance
+    is disabled."""
+    from backend.services.weknora_client import weknora_promotion_enabled
+
+    _enable_real_mode(monkeypatch)
+    monkeypatch.setenv("WEKNORA_PROMOTION_ENABLED", "1")
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+
+    assert knowledge_governance_enabled() is False
+    assert not (
+        knowledge_governance_enabled()
+        and weknora_promotion_enabled()
+        and not knowledge_workflow_active()
+    )
 
 
 def test_locally_resolved_ticket_queues_summary_only_when_resolved(monkeypatch) -> None:

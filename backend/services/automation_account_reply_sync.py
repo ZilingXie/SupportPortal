@@ -1467,7 +1467,10 @@ async def sync_account_case_ticket_status(
             record_case_solved,
             reopen_hermes_case,
         )
-        from backend.services.hermes_knowledge_workflow import knowledge_workflow_active
+        from backend.services.hermes_knowledge_workflow import (
+            knowledge_governance_enabled,
+            knowledge_workflow_active,
+        )
         from backend.services.weknora_client import weknora_promotion_enabled
 
         hermes_case_id = str(hermes_binding["engineer_case_id"])
@@ -1520,10 +1523,18 @@ async def sync_account_case_ticket_status(
             try:
                 sanitized_payload = build_mock_sanitized_case_knowledge(ledger)
                 weknora_promotions = None
-                # When the p2-181 knowledge Summary/Review pipeline owns candidate
-                # production, this default-candidate path stands down: one producer
-                # per case close, no duplicate WeKnora objects.
-                if weknora_promotion_enabled() and not knowledge_workflow_active():
+                # The governance master switch gates this default-candidate
+                # producer explicitly: with governance disabled there is no
+                # producer at all, even if a stale task definition still
+                # carries WEKNORA_PROMOTION_ENABLED=1. When the p2-181
+                # knowledge Summary/Review pipeline owns candidate production,
+                # this path stands down: one producer per case close, no
+                # duplicate WeKnora objects.
+                if (
+                    knowledge_governance_enabled()
+                    and weknora_promotion_enabled()
+                    and not knowledge_workflow_active()
+                ):
                     slack_channel_id, slack_thread_ts = _latest_hermes_slack_thread(
                         repository, hermes_case_id
                     )

@@ -2,6 +2,14 @@
 
 源码核对日期：2026-10-01（任务 p2-182，Preproduction 实链收口）。本页描述配置契约与探针流程；线上是否启用以目标环境 SSM/env 只读回读为准。
 
+> **状态（2026-10-06，p2-186 AgentMemory 恢复计划）：停用中。** 用户决策停止 WeKnora 知识治理路线：
+> 新增治理总开关 `HERMES_KNOWLEDGE_WORKFLOW_ENABLED`（缺省关闭）后，知识治理的排队、排水、
+> promotion 消费与人工决策端点全部停用；Preproduction 渲染不再注入 WeKnora secret/env
+> （`WEKNORA_PROMOTION_ENABLED` 显式 `0`，不再由 Hermes real 模式推导），旧定义继承引用在每次
+> 渲染时剥除。本页其余内容保留为该适配层的历史契约参考；既有任务/审计记录（含 human_review 积压）
+> 原样保留，不审批、不重放。WeKnora 服务与 SSM 参数实体的删除由退役计划（计划一）在 p2-186
+> 交接条件满足后执行。
+
 ## 定位
 
 SupportPortal 是 WeKnora 知识与记忆的**唯一写入方**：Hermes Summary/Review 产出结构化候选（`knowledge`/`memory`/`skill`），由 SupportPortal 的 WeKnora Adapter 校验后写入、回读并记录版本。Review Agent 不直接写 WeKnora；Skill 候选自消费桥（p2-181/p2-182）起作为**仅人工复核**的 promotion 记录进入本管线（`candidate_type='skill'`，decision 只允许 `no_change`/`human_review`，适配器对其零读写），原始终终决策保留在 `candidate_payload` 供技能维护者审计。旧 Hermes `/v1/promotions` 投递与 n8n 直写 Tencent Memory 的迁移是后续独立步骤，不在本页范围。

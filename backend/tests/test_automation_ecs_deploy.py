@@ -13,6 +13,7 @@ import pytest
 from backend.scripts.automation_ecs_deploy import (
     HERMES_OUTBOUND_SECRET_NAMES,
     PREPRODUCTION_LLM_ENV_OVERRIDES,
+    WEKNORA_SECRET_SUFFIXES,
     render_initial_task_definition,
     render_production_hermes_disabled_task_definition,
     render_schema_bootstrap_task_definition,
@@ -926,7 +927,13 @@ def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Pa
     }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
 
 
-def test_initial_preproduction_worker_injects_weknora_contract(tmp_path: Path) -> None:
+def test_initial_preproduction_worker_retires_weknora_and_pins_governance_off(
+    tmp_path: Path,
+) -> None:
+    """AgentMemory recovery contract: initial Preproduction worker renders
+    carry no WeKnora credential or auth config, keep the promotion flag
+    explicitly off (never derived from the Hermes workflow mode), and pin the
+    knowledge-governance master switch off even with mode=real."""
     rendered = render_initial_task_definition(
         role="worker",
         manifest_path=_manifest(tmp_path),
@@ -948,19 +955,100 @@ def test_initial_preproduction_worker_injects_weknora_contract(tmp_path: Path) -
     )
     container = rendered["containerDefinitions"][0]
     values = {item["name"]: item["value"] for item in container["environment"]}
-    assert values["WEKNORA_AUTH_HEADER_NAME"] == "X-API-Key"
-    assert values["WEKNORA_AUTH_SCHEME"] == ""
-    assert values["WEKNORA_PROMOTION_ENABLED"] == "1"
-    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
-    assert secrets["WEKNORA_API_TOKEN"].endswith(
-        "/supportportal/preproduction/weknora-api-token"
+    assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "0"
+    assert values["WEKNORA_PROMOTION_ENABLED"] == "0"
+    assert "WEKNORA_AUTH_HEADER_NAME" not in values
+    assert "WEKNORA_AUTH_SCHEME" not in values
+    secret_names = {item["name"] for item in container["secrets"]}
+    assert not (set(WEKNORA_SECRET_SUFFIXES) & secret_names)
+
+
+def test_render_task_definition_strips_inherited_weknora_and_pins_governance_off(
+    tmp_path: Path,
+) -> None:
+    """AgentMemory recovery: rendering from an observed Preproduction worker
+    definition that still carries WeKnora secrets, auth env, and the stale
+    mode-derived promotion flag strips every reference, pins promotion and
+    the governance master switch off, and re-rendering the first output
+    changes nothing (repeat renders never resurrect retired references)."""
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    payload = json.loads(current.read_text(encoding="utf-8"))
+    container = payload["taskDefinition"]["containerDefinitions"][0]
+    prefix = "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/preproduction"
+    container["secrets"].extend(
+        [
+            {"name": name, "valueFrom": f"{prefix}/{suffix}"}
+            for name, suffix in WEKNORA_SECRET_SUFFIXES.items()
+        ]
     )
-    assert secrets["WEKNORA_API_CONTRACT_JSON"].endswith(
-        "/supportportal/preproduction/weknora-api-contract-json"
+    container["environment"].extend(
+        [
+            {"name": "WEKNORA_AUTH_HEADER_NAME", "value": "X-API-Key"},
+            {"name": "WEKNORA_AUTH_SCHEME", "value": ""},
+            {"name": "WEKNORA_PROMOTION_ENABLED", "value": "1"},
+            {"name": "HERMES_CASE_WORKFLOW_MODE", "value": "real"},
+        ]
     )
-    assert secrets["HERMES_WEKNORA_KNOWLEDGE_BASE_ID"].endswith(
-        "/supportportal/preproduction/weknora-knowledge-base-id"
+    current.write_text(json.dumps(payload))
+
+    def _render(source: Path) -> dict:
+        return render_task_definition(
+            role="worker",
+            current_path=source,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            hermes_case_workflow_mode="real",
+        )
+
+    def _assert_contract(rendered: dict) -> None:
+        container = rendered["containerDefinitions"][0]
+        values = {item["name"]: item["value"] for item in container["environment"]}
+        secret_names = {item["name"] for item in container["secrets"]}
+        assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "0"
+        assert values["WEKNORA_PROMOTION_ENABLED"] == "0"
+        assert "WEKNORA_AUTH_HEADER_NAME" not in values
+        assert "WEKNORA_AUTH_SCHEME" not in values
+        assert not (set(WEKNORA_SECRET_SUFFIXES) & secret_names)
+
+    rendered = _render(current)
+    _assert_contract(rendered)
+
+    second_source = tmp_path / "second-render.json"
+    second_source.write_text(json.dumps(rendered), encoding="utf-8")
+    _assert_contract(_render(second_source))
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+def test_render_task_definition_pins_governance_switch_off_both_roles(
+    tmp_path: Path, role: str
+) -> None:
+    """The governance master switch is pinned off on BOTH queueing roles of
+    every rendered Preproduction revision — the API role queues standalone
+    Summary tasks too, so a worker-only pin would leave half the entry
+    surface governed by runtime readiness alone (r20261005-a4dcc29 lesson)."""
+    current = _task_definition(tmp_path, role)
+    _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
     )
+    values = {
+        item["name"]: item["value"]
+        for item in rendered["containerDefinitions"][0]["environment"]
+    }
+    assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "0"
 
 
 def test_render_schema_bootstrap_uses_api_image_and_secret_references(

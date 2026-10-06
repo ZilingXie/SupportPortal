@@ -139,10 +139,10 @@ AGENTRELAY_SECRET_SUFFIXES = {
     "AGENTRELAY_USERNAME": "agentrelay-username",
     "AGENTRELAY_TOKEN": "agentrelay-token",
 }
-# WeKnora is a Preproduction-only dependency until the real write path has
-# passed its contract and end-to-end gates.  The same API key is exposed under
-# the write-side and Hermes read-side names because both clients are isolated
-# by their operation surface, while the actual value remains in SSM.
+# WeKnora is retired from Preproduction renders (AgentMemory recovery): the
+# map is kept only so formal upgrades can STRIP these inherited references
+# from observed definitions.  The SSM parameter entities themselves are
+# deleted separately by the WeKnora service decommission plan.
 WEKNORA_SECRET_SUFFIXES = {
     "WEKNORA_BASE_URL": "weknora-base-url",
     "WEKNORA_API_TOKEN": "weknora-api-token",
@@ -465,20 +465,15 @@ def _base_environment(
                 "ENABLEMENT_WORKFLOW_MODE": enablement_workflow_mode,
             }
         )
-    if role == "worker" and environment == "preproduction":
-        # Keep the official WeKnora auth shape explicit in the task definition
-        # while the token, contract, KB and shared memory identity stay in SSM.
-        # Promotion writes remain disabled until the caller selects the real
-        # Hermes workflow mode and the live contract probe has passed.
-        values.update(
-            {
-                "WEKNORA_AUTH_HEADER_NAME": "X-API-Key",
-                "WEKNORA_AUTH_SCHEME": "",
-                "WEKNORA_PROMOTION_ENABLED": (
-                    "1" if hermes_case_workflow_mode == "real" else "0"
-                ),
-            }
-        )
+    if role in {"api", "worker"} and environment == "preproduction":
+        # Knowledge governance master switch (AgentMemory recovery): explicit
+        # OFF on both queueing roles — runtime readiness (real Hermes mode +
+        # configured gateway) alone never re-enables governance.
+        values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] = "0"
+        if role == "worker":
+            # The retired promotion path stays explicitly off, never derived
+            # from the Hermes workflow mode.
+            values["WEKNORA_PROMOTION_ENABLED"] = "0"
     if role in {"route", "worker"}:
         values.update(
             {
@@ -650,8 +645,6 @@ def render_initial_task_definition(
         )
     if role == "worker":
         secret_names[role].update(AGENTRELAY_SECRET_SUFFIXES)
-        if environment == "preproduction":
-            secret_names[role].update(WEKNORA_SECRET_SUFFIXES)
     container: dict[str, Any] = {
         "name": role,
         "image": (
@@ -985,26 +978,28 @@ def render_task_definition(
                 _set_secret_reference(
                     container, name, _parameter_arn(relay_prefix_arn, suffix)
                 )
-        if environment == "preproduction" and relay_prefix_arn:
-            # Carry the WeKnora read/write contract onto every Preproduction
-            # worker revision. Production never receives these credentials.
-            for name, suffix in sorted(WEKNORA_SECRET_SUFFIXES.items()):
-                _set_secret_reference(
-                    container, name, _parameter_arn(relay_prefix_arn, suffix)
-                )
-            _set_environment_value(container, "WEKNORA_AUTH_HEADER_NAME", "X-API-Key")
-            _set_environment_value(container, "WEKNORA_AUTH_SCHEME", "")
-            if hermes_case_workflow_mode is not None:
-                _set_environment_value(
-                    container,
-                    "WEKNORA_PROMOTION_ENABLED",
-                    "1" if hermes_case_workflow_mode == "real" else "0",
-                )
+        if environment == "preproduction":
+            # WeKnora promotion retired from Preproduction (AgentMemory
+            # recovery): strip every inherited secret reference and config
+            # env from observed definitions so repeat renders never
+            # resurrect the credential or the mode-derived enable flag; the
+            # promotion flag itself stays explicitly off.
+            _remove_secret_references(container, set(WEKNORA_SECRET_SUFFIXES))
+            _remove_environment_values(
+                container,
+                {"WEKNORA_AUTH_HEADER_NAME", "WEKNORA_AUTH_SCHEME"},
+            )
+            _set_environment_value(container, "WEKNORA_PROMOTION_ENABLED", "0")
     if role in {"api", "worker"}:
         # Ensure the Zendesk side-effects gate is enabled on every rendered
         # api/worker revision (p2-163, ticket 13567): the hermes engine's
         # business tools must never be silently blocked.
         _set_environment_value(container, "AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED", "1")
+    if role in {"api", "worker"} and environment == "preproduction":
+        # Knowledge governance master switch (AgentMemory recovery): explicit
+        # OFF on every rendered Preproduction api/worker revision regardless
+        # of what the observed definition carried.
+        _set_environment_value(container, "HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "0")
     if role in {"api", "worker"}:
         # Ensure the outbound Slack kill switch reflects the target environment
         # on every rendered revision (p2-150): off in Production, on in
