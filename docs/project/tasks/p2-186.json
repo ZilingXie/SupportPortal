@@ -8,9 +8,9 @@
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
   "created_at": "2026-10-06T00:00:00Z",
-  "updated_at": "2026-10-06T19:00:00Z",
+  "updated_at": "2026-10-06T10:30:00Z",
   "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
-  "next_action": "代码与测试已在 codex/agentmemory-restore 完成（A/B 合同 + 236 项定向测试过，test_worker 与 main 基线一致）。待办：finalize 到 main 后执行 Preproduction 发布部署（CodeBuild/release/双角色 td 渲染回读），部署窗口完成 Hermes td raw capture 关闭、profile 显式升级、Prompt Release 恢复、n8n 治理投递断开与旧 Wiki 链恢复，再按 D 节六项真实入口验收（含残留 promotion=1 窗口零新增断言）并回读证据。已知无关预存失败：test_repository_configuration test_case_llm_usage_source_migration_is_versioned_and_mirrored 在 main 即失败（v20/v18 版本串失同步），不属于本任务范围。",
+  "next_action": "代码（PR#1405/#1406=main c17ea45f）与 Preproduction 发布部署已完成：r20261006-c17ea45 全阶段 passed（route/worker/api td :105，prompt pr-d9166ff58459 激活，manuals v4），D4 回读=双角色 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0、WeKnora secret/env 零残留、HERMES_AGENT_* 保留、mode=real；n8n Solved=1f544830（29 节点）/CSD=b5cf6d6b（26 节点）恢复 AgentMemory Wiki 链并发布回读。D1/D2/D3 验证过：治理表部署边界后零新增（36/36 summaries+reviews completed 不变、64 promotions 全 human_review 零领取，2 条新 zendesk intake 无 case 绑定零任务）、CSD-79603 同版本重投 already_exists 零复活；D6 Wiki 四步 API 受控实链验证通过（create→raw/write→ingest→ready→search 命中→delete 清理，wiki-nldc09qd）；hermes 侧经 ECR 镜像世系证明未被 WeKnora 切换（运行 memory-core-e4c0f4e6/2026-09-01，b5b6614 未部署），profile 无需变更、raw capture 无 env 默认关。剩余：新会话经真实工具入口读取既有知识（待自然流量/ad-hoc 会话）与 restored n8n 链的自然 SOLVED/CSD 样本落库观察；Production 未触碰。",
   "acceptance_criteria": [
     "治理总开关关闭（缺省）且 Hermes=real 时：solved/closed/本地 resolved 零新增 Summary/Review 行；standalone/CSD/article intake 与同版本重投零创建零复活；排水不领取既有任务、零 Hermes 知识治理会话、零 WeKnora 调用；残留 WEKNORA_PROMOTION_ENABLED=1 时 close 默认分支零候选；普通调查与回复不受影响。",
     "/v1/knowledge/promotions/{id}/decision 在治理关闭时对 approve/reject 显式 409 拒绝，积压 human_review 行内容不变。",
@@ -38,6 +38,24 @@
       "label": "Prompt 恢复轮：Investigation/Ad-hoc 手册 v4 恢复 AgentMemory 工具合同（codex/agentmemory-prompt-restore）",
       "command": "restore + version bump in backend/services/prompts/hermes_support_agent.py",
       "result": "Investigation/Ad-hoc 手册恢复 AgentMemory 工具合同（memory_tencentdb_memory_search/conversation_search + 恢复整理后知识写入 bullet），版本升 v4（跳过线上已占用的 v3 draft）；import 级验证无 weknora 残留、memory 工具指引在位。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction 发布 r20261006-c17ea45（p2-186 停用+恢复部署）",
+      "command": "deployment/release_automation_ecs_pipeline.sh --release-commit c17ea45f95a763a3646b6b0a24b6b02a92645759 --prompt-release-id pr-d9166ff58459 --through preproduction --hermes-case-workflow-mode real --hermes-agent-enabled --hermes-persona-enabled --bootstrap-account-schema",
+      "result": "全阶段 passed（codebuild 142s/preflight 140s/deploy 1130s：prompt_schema/route_worker_rollout 282s/heartbeat/api_rollout 190s/collector/activation/release_note）；SLO breach=true（1413s>900s 目标，非阻断，含首次因缺 --bootstrap-account-schema 失败重跑）。/health/release 回读=r20261006-c17ea45+c17ea45f+pr-d9166ff58459；worker/api td :105=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0/WEKNORA_PROMOTION_ENABLED 0（worker）/WeKnora secret+AUTH env 零残留/HERMES_AGENT_* 保留/mode=real。首次运行 preflight 失败（Hermes real 需 --bootstrap-account-schema），清状态目录后带 flag 重跑成功。"
+    },
+    {
+      "type": "deployment",
+      "label": "n8n AgentMemory 链恢复（Solved 1f544830 / CSD b5cf6d6b）",
+      "command": "n8n MCP update_workflow + publish（快照规程：变更前刷新 Solved 快照至 ab3563f8+校验，变更后重建快照并脱敏校验 15 published/53 redacted）",
+      "result": "Solved Cases 移除治理投递 5 节点、恢复 21 节点（PG solved 去重→完整分页评论校验→脱敏聚合→AI 审批筛选含 Media Relay 排除→KB 生成→Wiki create/raw-write/ingest），29 节点发布 1f544830；CSD 移除治理 6 节点、恢复 13 节点（csd 去重→AI 清晰度判定→KB→Wiki 链），Get_CSD_Detail 具名字段扩展 customfield_10700/13915，26 节点发布 b5cf6d6b；Zendesk KB/Sheets/2_rag 保留为断开死节点。中途两个修复：Solved splitInBatches batchSize 表达式格式、CSD Get_CSD_Detail 参数被 replace 误清后全量恢复。快照按 pre+ops 程序化重建，Tdai key 脱敏并记录 SSM 回绑路径。"
+    },
+    {
+      "type": "test",
+      "label": "D 节真实入口回归（p2-186 部署后）",
+      "command": "psql 只读（migration DSN）+ curl 真实 intake 端点 + Wiki 四步 API 受控样本",
+      "result": "D1/D3：standalone summaries 36/reviews 36 全 completed、promotions 64 全 human_review 零 queued/active，部署边界（09:42）后零新增零领取（最后更新 04:12=R25 时代）；2 条部署前窗口新 zendesk intake（13871/13873）无 case 绑定零任务（既定语义）。D2：CSD-79603 同版本重投→already_exists+既有 task_id，36 行计数与 max(updated_at) 不变（零复活）。D6：Wiki 四步 API 受控实链=create wiki-nldc09qd→raw/write ok→ingest ok→processing→ready→search 语义命中（snippet 为 ingest 蒸馏内容）→delete 清理；hermes raw capture=td :35 无 env+插件默认关（ECR 镜像世系 memory-core-e4c0f4e6 未被 WeKnora 切换）。未验证项：新会话经真实 agent 工具入口读取既有知识、restored n8n 链自然样本落库——待自然流量。"
     }
   ]
 }
