@@ -527,6 +527,7 @@ def create_app(    *,
         intake_id = str(receipt.get("intake_id") or "")
         summary_task_id = str(receipt.get("summary_task_id") or "").strip() or None
         engineer_case_id = str(receipt.get("engineer_case_id") or "").strip() or None
+        summary_task_status: str | None = None
 
         # Case-less sources (CSD issues, article snapshots) enter the SAME
         # governance pipeline through the standalone Summary path: a fresh
@@ -552,6 +553,12 @@ def create_app(    *,
                         summary_task_id = (
                             str(queued_standalone.get("summary_task_id") or "").strip()
                             or summary_task_id
+                        )
+                        # R25 (p2-184): the receipt exposes the task state so a
+                        # redelivery that could NOT revive a failed task (or
+                        # did) is visible to the deliverer, not DB-only.
+                        summary_task_status = (
+                            str(queued_standalone.get("status") or "").strip() or None
                         )
             except Exception as exc:  # noqa: BLE001 - receipt must expose acceptance
                 raise HTTPException(
@@ -760,6 +767,9 @@ def create_app(    *,
                                     str(queued_standalone.get("summary_task_id") or "").strip()
                                     or None
                                 )
+                                summary_task_status = (
+                                    str(queued_standalone.get("status") or "").strip() or None
+                                )
                                 await asyncio.to_thread(
                                     repository.link_knowledge_source_summary,
                                     intake_id,
@@ -787,6 +797,8 @@ def create_app(    *,
             body["engineer_case_id"] = engineer_case_id
         if summary_task_id:
             body["summary_task_id"] = summary_task_id
+        if summary_task_status:
+            body["summary_task_status"] = summary_task_status
         return JSONResponse(content=body, status_code=202)
 
     @app.get(f"{base}/v1/knowledge/sources/{{task_id}}")

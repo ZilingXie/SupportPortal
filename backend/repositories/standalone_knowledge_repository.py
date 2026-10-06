@@ -20,6 +20,9 @@ from psycopg.types.json import Json
 STANDALONE_SUMMARY_STATUSES = ("pending", "running", "completed", "failed", "invalidated")
 STANDALONE_REVIEW_STATUSES = ("pending", "running", "completed", "failed", "invalidated")
 STANDALONE_LEASE_SECONDS = 900
+# R25 (p2-184): redelivery-driven retries for failed standalone tasks are
+# bounded; at or above this attempt count a failed row stays terminal.
+MAX_STANDALONE_RETRY_ATTEMPTS = 5
 
 
 class StandaloneTaskConflict(RuntimeError):
@@ -50,6 +53,12 @@ class StandaloneKnowledgeRepositoryMixin:
     def fail_standalone_review_task(
         self, review_task_id: str, *, error: str, owner_token: str = ""
     ) -> None: ...
+    def requeue_standalone_summary_task(
+        self, summary_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None: ...
+    def requeue_standalone_review_task(
+        self, review_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None: ...
 
 
 def _lease_expiry(now_value: str) -> str:
@@ -81,6 +90,7 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 "status": "pending", "run_id": None, "packet": None, "packet_hash": None,
                 "error": None, "owner_token": None, "claimed_at": None,
                 "lease_expires_at": None, "updated_at": payload["created_at"],
+                "attempt_count": 0,
             }
             self._standalone_summary_tasks[row["summary_task_id"]] = row
             return copy.deepcopy(row)
@@ -238,6 +248,52 @@ class InMemoryStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                     updated_at=datetime.now(timezone.utc).isoformat(),
                 )
 
+    def _requeue_standalone_row(
+        self, state: dict[str, dict[str, Any]], key: str, *, requeued_at: str,
+        reason: str, session_field: str,
+    ) -> dict[str, Any] | None:
+        """R25 (p2-184): redelivery-driven failed->pending revive, bounded by
+        MAX_STANDALONE_RETRY_ATTEMPTS. The session id is attempt-suffixed so
+        the re-run gets a FRESH Hermes run instead of an idempotency replay
+        of the failed one."""
+        with self._standalone_lock:
+            row = state.get(str(key))
+            if row is None or str(row.get("status") or "") != "failed":
+                return None
+            attempt = int(row.get("attempt_count") or 0)
+            if attempt >= MAX_STANDALONE_RETRY_ATTEMPTS:
+                return None
+            new_attempt = attempt + 1
+            prior_error = str(row.get("error") or "")
+            note = f"requeued: {reason}"
+            row[session_field] = f"{row.get(session_field) or ''}:a{new_attempt}"
+            row.update(
+                status="pending",
+                attempt_count=new_attempt,
+                owner_token=None, claimed_at=None, lease_expires_at=None,
+                error=(prior_error + " | " + note if prior_error else note)[:500],
+                updated_at=requeued_at,
+            )
+            return copy.deepcopy(row)
+
+    def requeue_standalone_summary_task(
+        self, summary_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None:
+        return self._requeue_standalone_row(
+            self._standalone_summary_tasks, summary_task_id,
+            requeued_at=requeued_at, reason=reason,
+            session_field="summary_session_id",
+        )
+
+    def requeue_standalone_review_task(
+        self, review_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None:
+        return self._requeue_standalone_row(
+            self._standalone_review_tasks, review_task_id,
+            requeued_at=requeued_at, reason=reason,
+            session_field="review_session_id",
+        )
+
 
 def json_dumps_sorted(payload: dict[str, Any]) -> str:
     import json
@@ -253,7 +309,7 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
     _STANDALONE_SUMMARY_FIELDS = (
         "summary_task_id", "intake_id", "source_type", "source_id", "source_version",
         "summary_session_id", "status", "idempotency_key", "run_id", "prompt_version",
-        "context_snapshot",
+        "context_snapshot", "attempt_count",
         "packet", "packet_hash", "error", "owner_token", "claimed_at", "lease_expires_at",
         "created_at", "updated_at",
     )
@@ -261,7 +317,7 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
         "review_task_id", "summary_task_id", "source_type", "source_id", "source_version",
         "review_session_id", "status", "idempotency_key", "run_id", "prompt_version",
         "report", "report_hash", "error", "owner_token", "claimed_at", "lease_expires_at",
-        "created_at", "updated_at",
+        "attempt_count", "created_at", "updated_at",
     )
 
     def _initialize_standalone_knowledge_schema(self, cur) -> None:
@@ -303,6 +359,14 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                 created_at TIMESTAMPTZ NOT NULL, updated_at TIMESTAMPTZ NOT NULL
             )
         """).format(reviews, summaries))
+        # R25 (p2-184): bounded redelivery-driven retries need durable
+        # attempt counts on both standalone task tables.
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0"
+        ).format(summaries))
+        cur.execute(sql.SQL(
+            "ALTER TABLE {} ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0"
+        ).format(reviews))
         cur.execute(sql.SQL(
             "CREATE INDEX IF NOT EXISTS {} ON {} (status, created_at)"
         ).format(sql.Identifier("idx_standalone_summaries_claim"), summaries))
@@ -490,6 +554,56 @@ class PostgresStandaloneKnowledgeRepositoryMixin(StandaloneKnowledgeRepositoryMi
                     "WHERE review_task_id=%s AND status='running' AND (%s = '' OR owner_token = %s)"
                 ).format(self._table("support_knowledge_source_reviews")), (str(error)[:500], review_task_id, owner_token, owner_token))
         self._run_with_connection_retry("fail_standalone_review_task", operation)
+
+    def _requeue_standalone_row_pg(
+        self, *, table: str, id_column: str, fields: tuple[str, ...],
+        row_id: str, requeued_at: str, reason: str, session_column: str,
+    ) -> dict[str, Any] | None:
+        """R25 (p2-184): Postgres twin of the in-memory failed->pending
+        revive — bounded attempts, attempt-suffixed session id, lease
+        cleared, requeue note appended to the persisted error."""
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("""
+                    UPDATE {table}
+                    SET status='pending',
+                        attempt_count = attempt_count + 1,
+                        {session_column} = {session_column} || ':a' || (attempt_count + 1),
+                        owner_token=NULL, claimed_at=NULL, lease_expires_at=NULL,
+                        error = left(COALESCE(error, '') || ' | requeued: ' || %s, 500),
+                        updated_at=%s
+                    WHERE {id_column}=%s AND status='failed'
+                        AND attempt_count < %s
+                    RETURNING {fields}
+                """).format(
+                    table=self._table(table),
+                    id_column=sql.Identifier(id_column),
+                    session_column=sql.Identifier(session_column),
+                    fields=sql.SQL(",").join(map(sql.Identifier, fields)),
+                ), (str(reason)[:200], requeued_at, row_id, MAX_STANDALONE_RETRY_ATTEMPTS))
+                row = cur.fetchone()
+                return dict(zip(fields, row)) if row else None
+        return self._run_with_connection_retry("requeue_standalone_row", operation)
+
+    def requeue_standalone_summary_task(
+        self, summary_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None:
+        return self._requeue_standalone_row_pg(
+            table="support_knowledge_source_summaries", id_column="summary_task_id",
+            fields=self._STANDALONE_SUMMARY_FIELDS, row_id=str(summary_task_id),
+            requeued_at=requeued_at, reason=reason,
+            session_column="summary_session_id",
+        )
+
+    def requeue_standalone_review_task(
+        self, review_task_id: str, *, requeued_at: str, reason: str
+    ) -> dict[str, Any] | None:
+        return self._requeue_standalone_row_pg(
+            table="support_knowledge_source_reviews", id_column="review_task_id",
+            fields=self._STANDALONE_REVIEW_FIELDS, row_id=str(review_task_id),
+            requeued_at=requeued_at, reason=reason,
+            session_column="review_session_id",
+        )
 
 
 def _now_pg() -> str:

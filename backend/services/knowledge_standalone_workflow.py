@@ -119,7 +119,26 @@ def queue_standalone_summary_for_source(
         "created_at": now,
         "updated_at": now,
     }
-    return repository.ensure_standalone_summary_task(payload)
+    record = repository.ensure_standalone_summary_task(payload)
+    # R25 (p2-184): redelivery is the retry trigger for failed standalone
+    # work. A failed Summary for THIS version is revived (bounded, fresh run
+    # identity via the requeue's attempt-suffixed session id); a completed
+    # Summary whose independent Review failed gets the REVIEW revived.
+    if str(record.get("status") or "") == "failed":
+        revived = repository.requeue_standalone_summary_task(
+            str(record["summary_task_id"]), requeued_at=now, reason="source redelivered",
+        )
+        if revived is not None:
+            record = revived
+    elif str(record.get("status") or "") == "completed":
+        review = repository.get_standalone_review_task(
+            f"{record['summary_task_id']}:review"
+        )
+        if review is not None and str(review.get("status") or "") == "failed":
+            repository.requeue_standalone_review_task(
+                str(review["review_task_id"]), requeued_at=now, reason="source redelivered",
+            )
+    return record
 
 
 def build_standalone_bundle(
@@ -247,12 +266,19 @@ def run_standalone_summary_task(
     rendered = json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True, default=str)
     if len(rendered) > STANDALONE_BUNDLE_MAX_CHARS:
         raise StandaloneKnowledgeError("bundle_too_large", "source snapshot exceeds budget")
+    # R25 (p2-184): attempt 0 keeps the historical run identity; retries
+    # carry an attempt suffix so the Hermes gateway starts a FRESH run
+    # instead of replaying the failed one by idempotency key.
+    attempt = int(task.get("attempt_count") or 0)
     outcome = _run_session(
         client,
         session_id=str(task["summary_session_id"]),
         instructions=_instructions(STANDALONE_SUMMARY_PROMPT_KEY, core=True),
         input_text=rendered,
-        idempotency_key=f"{task['idempotency_key']}:run",
+        idempotency_key=(
+            f"{task['idempotency_key']}:run" if attempt == 0
+            else f"{task['idempotency_key']}:run:a{attempt}"
+        ),
         workspace_key=f"supportportal_knowledge_standalone_{task['source_id']}".lower()[:128],
         toolsets=STANDALONE_SUMMARY_TOOLSETS,
     )
@@ -345,12 +371,19 @@ def run_standalone_review_task(
             "memory_available": memory_ok,
         },
     }
+    # R25 (p2-184): attempt-suffixed run identity for retried reviews (same
+    # replay-avoidance as the Summary runner; attempt 0 keeps the historical
+    # identity).
+    review_attempt = int(task.get("attempt_count") or 0)
     outcome = _run_session(
         client,
         session_id=str(task["review_session_id"]),
         instructions=_instructions(STANDALONE_REVIEW_PROMPT_KEY, core=False),
         input_text=json.dumps(bundle, ensure_ascii=False, indent=2, sort_keys=True, default=str),
-        idempotency_key=f"{task['idempotency_key']}:run",
+        idempotency_key=(
+            f"{task['idempotency_key']}:run" if review_attempt == 0
+            else f"{task['idempotency_key']}:run:a{review_attempt}"
+        ),
         workspace_key=f"supportportal_knowledge_standalone_review_{task['source_id']}".lower()[:128],
         toolsets=STANDALONE_REVIEW_TOOLSETS,
     )

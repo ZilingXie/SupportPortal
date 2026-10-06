@@ -607,7 +607,11 @@ def test_n8n_source_summary_normalizes_string_lists(monkeypatch) -> None:
     assert repository.list_hermes_review_tasks()[0]["status"] == "completed"
 
 
-def test_summary_rejects_non_string_narrative_values(monkeypatch) -> None:
+def test_summary_serializes_non_string_narrative_values(monkeypatch) -> None:
+    """R25 (p2-184): narrative SHAPE is tolerated. The 18/18 CSD Summary
+    failures on Preproduction came from the model returning timeline as an
+    array of objects; the normalizer now serializes such shapes into
+    deterministic JSON text instead of failing the whole Summary."""
     _enable_real_mode(monkeypatch)
     repository = _repository()
     _start(repository)
@@ -618,7 +622,43 @@ def test_summary_rejects_non_string_narrative_values(monkeypatch) -> None:
     payload = json.loads(
         _summary_output().split("```json\n", 1)[1].rsplit("\n```", 1)[0]
     )
-    payload["timeline"] = {"step": "opened"}
+    payload["timeline"] = [
+        {"time": "2026-10-05", "event": "opened"},
+        {"time": "2026-10-05", "event": "resolved"},
+    ]
+    payload["confirmed_facts"] = {"fact": "reproduced"}
+    client = FakeHermesAgentClient(
+        summary_output=json.dumps(payload),
+        review_output=_review_output([]),
+    )
+    drain_hermes_knowledge_tasks(
+        repository, client=client, weknora_client=None, limit=5, sleeper=lambda _: None
+    )
+
+    summary_task = repository.list_hermes_summary_tasks()[0]
+    assert summary_task["status"] == "completed"
+    packet = summary_task["packet"]
+    assert packet["timeline"] == "\n".join([
+        '{"event": "opened", "time": "2026-10-05"}',
+        '{"event": "resolved", "time": "2026-10-05"}',
+    ])
+    assert packet["confirmed_facts"] == '{"fact": "reproduced"}'
+
+
+def test_summary_still_fails_closed_on_structural_output_contracts(monkeypatch) -> None:
+    """R25 boundary: narrative shapes are tolerated, but STRUCTURAL output
+    contracts stay fail-closed — candidates must be a list."""
+    _enable_real_mode(monkeypatch)
+    repository = _repository()
+    _start(repository)
+    queue_hermes_summary_for_case(
+        repository, engineer_case_id="123-1", trigger="n8n_source",
+    )
+
+    payload = json.loads(
+        _summary_output().split("```json\n", 1)[1].rsplit("\n```", 1)[0]
+    )
+    payload["candidates"] = {"not": "a list"}
     client = FakeHermesAgentClient(
         summary_output=json.dumps(payload),
         review_output=_review_output([]),

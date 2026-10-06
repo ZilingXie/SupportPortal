@@ -1294,8 +1294,9 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v19-governance-pipeline"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v20-standalone-retry"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v19-governance-pipeline",
     "2026-single-ai-managed-v18-n8n-summary-trigger",
     "2026-single-ai-managed-v17-knowledge-source-intake",
     "2026-single-ai-managed-v16-weknora-skill-candidate-key",

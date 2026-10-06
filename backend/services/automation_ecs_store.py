@@ -2484,6 +2484,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-010",
             "automation-ecs-011",
             "automation-ecs-012",
+            "automation-ecs-013",
         }
     )
 
