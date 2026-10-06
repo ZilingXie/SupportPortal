@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-05T18:35:05Z",
-  "source_base_commit": "91e3a63f2d21813c8d41783f43c0414cb09c5e47",
-  "registry_digest": "ffa0b12626a0c3c46fc71af6315b8de220bab6dc7a2946f2faf80b6231023b3b",
+  "generated_at": "2026-10-06T02:34:16Z",
+  "source_base_commit": "2e8b3542e4849cc716c0a8699a0302e582dd26d3",
+  "registry_digest": "983b8f2101b2a63c2192b183123a9598594b0af571ee22b8cf62d843d536096f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4982,6 +4982,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "release pipeline ×2（r20261005-a4dcc29→r20261005-91e3a63, --hermes-agent-enabled --bootstrap-account-schema real）+ 18×POST 同版本重投 + psql 表级回读",
           "result": "v19/013 上线；prompt pr-89c354c051b7 激活；18/18 already_exists+summary_task_id；表回读 18 行/18 唯一 ID/版本一致；排水后 18/18 failed=timeline 契约（新缺陷已登记）",
           "recorded_at": "2026-10-06T03:40:00Z"
+        },
+        {
+          "type": "test",
+          "label": "R25 重试与契约兼容（受影响套件+PG twin+隔离升级证据）",
+          "command": ".venv/bin/python -m pytest backend/tests/test_knowledge_standalone_workflow.py test_hermes_knowledge_workflow.py test_knowledge_source_repository.py 等 8 套件；RUN_POSTGRES_INTEGRATION=1 两 PG 套件；v19→v20 隔离升级脚本",
+          "result": "139+6 subtests passed；PG 14 passed（含新 standalone retry twin 4）；升级证据=列存在/默认0/幂等；stash 复演未修复代码下重试测试必败",
+          "recorded_at": "2026-10-06T06:30:00Z"
         }
       ],
       "source_refs": [
@@ -15644,7 +15651,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R24 部署窗口（用户授权\"开启部署\"）闭环完成：(1) r20261005-a4dcc29 部署 main a4dcc29c——v19 治理管线 schema+ECS 013 bootstrap 成功、独立管线表已建、prompt pr-89c354c051b7（3 个手册 v3）同步激活、全检查 passed；(2) 发现并修复部署回归 PR#1397=91e3a63f：渲染器 worker-only 门控+未传 --hermes-agent-enabled 丢失 HERMES_AGENT_* secrets、API 排队门关闭——渲染器已改 api+worker 双角色+回归测试+runbook 更新；(3) r20261005-91e3a63 重部署（agent-enabled），api:102/worker:102 均带 agent 配置；(4) 18 源按 backfill_intakes 清单显式补投：18/18 already_exists+summary_task_id；(5) 表级回读闭合 R23 条件：18 行/18 唯一任务 ID/版本=intake 冻结时间戳。★R23 排队段关闭。★新缺陷（排水实测，非本次授权范围）：独立 Summary 18/18 确定性失败于 timeline 契约（hermes-case-summary-manual v1 未钉死 timeline 类型→模型返回对象数组被 _normalize_summary_text 拒绝）且 failed 任务无重试路径（ensure 不复活 failed 行）——两个 bounded 修复待下轮：prompt v4 钉死字段类型+失败重试语义。Production 未触碰；WeKnora fork 通道/AgentMemory 迁移退休/全链 E2E 仍待。",
+      "next_action": "R25 修复实施中（独立 Summary/Review 契约与重试修复计划，用户批准）：(1) 归一器兼容——_normalize_summary_text 容忍任意叙述形状（对象/对象数组→确定性 JSON 文本），结构契约仍 fail-closed；(2) prompt hermes-case-summary-manual v2 钉死七叙述字段与 evidence_references 类型；(3) 重投驱动重试——两表 attempt_count（DEFAULT 0）+ requeue（仅 failed、上限 5、session 追加 :a{n}、清租约、error 注记）；重投路径对 failed Summary 复位、对 completed Summary 的 failed Review 复位；回执新增 summary_task_status；(4) 运行身份防重放——attempt≥1 用 :run:a{N} 幂等键+已后缀 session，attempt=0 保持现行 id；(5) schema v20/ECS-014/白名单+013。验证：受影响 8 套件 139 passed；PG twin 4 passed；隔离 v19→v20 升级证据通过（列+默认+幂等）；stash 复演重试测试对未修复代码必败。待：PR→部署（--hermes-agent-enabled）→18 源重投→排水观察→表级回读。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15746,6 +15753,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "release pipeline ×2（r20261005-a4dcc29→r20261005-91e3a63, --hermes-agent-enabled --bootstrap-account-schema real）+ 18×POST 同版本重投 + psql 表级回读",
           "result": "v19/013 上线；prompt pr-89c354c051b7 激活；18/18 already_exists+summary_task_id；表回读 18 行/18 唯一 ID/版本一致；排水后 18/18 failed=timeline 契约（新缺陷已登记）",
           "recorded_at": "2026-10-06T03:40:00Z"
+        },
+        {
+          "type": "test",
+          "label": "R25 重试与契约兼容（受影响套件+PG twin+隔离升级证据）",
+          "command": ".venv/bin/python -m pytest backend/tests/test_knowledge_standalone_workflow.py test_hermes_knowledge_workflow.py test_knowledge_source_repository.py 等 8 套件；RUN_POSTGRES_INTEGRATION=1 两 PG 套件；v19→v20 隔离升级脚本",
+          "result": "139+6 subtests passed；PG 14 passed（含新 standalone retry twin 4）；升级证据=列存在/默认0/幂等；stash 复演未修复代码下重试测试必败",
+          "recorded_at": "2026-10-06T06:30:00Z"
         }
       ],
       "source_refs": [
@@ -15759,7 +15773,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-06T03:40:00Z",
+      "updated_at": "2026-10-06T06:30:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",

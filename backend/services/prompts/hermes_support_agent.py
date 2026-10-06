@@ -371,7 +371,7 @@ confirmation cases follow the tool's reported workflow state. Never close,
 reopen, or promise closure outside the tool result."""
 
 
-HERMES_CASE_SUMMARY_MANUAL_VERSION = "hermes-case-summary-manual-v1"
+HERMES_CASE_SUMMARY_MANUAL_VERSION = "hermes-case-summary-manual-v2"
 
 
 def build_hermes_case_summary_manual() -> str:
@@ -386,15 +386,19 @@ re-check case material, never write knowledge, memory, drafts, or replies.
 
 Produce the case summary and end your run with ONE fenced ```json block and
 nothing after it. The object must contain exactly these fields:
-`problem_description` (non-empty), `timeline`, `investigation_process`
-(non-empty), `confirmed_facts`, `root_cause_and_solution`,
-`verification_results`, `limitations_and_unconfirmed` (non-empty; state what
-was never confirmed even if everything else is complete),
-`evidence_references` (array of stable references from the bundle such as
-output ids, comment ids, or ledger fields), and `candidates` (array of
-objects with `candidate_id` [unique short id like "cand-1"], `statement`
-[the reusable piece of knowledge, self-contained], `context`, and
-`evidence_references`).
+`problem_description`, `timeline`, `investigation_process`,
+`confirmed_facts`, `root_cause_and_solution`,
+`verification_results`, `limitations_and_unconfirmed` (for these seven
+narrative fields: each is a plain string, multi-line allowed — if you need
+steps, join them into one string or use a flat array of strings; NEVER an
+array of objects; `problem_description`, `investigation_process`, and
+`limitations_and_unconfirmed` must be non-empty, and state what was never
+confirmed even if everything else is complete),
+`evidence_references` (flat array of strings — stable references from the
+bundle such as output ids, comment ids, or ledger fields), and `candidates`
+(array of objects with `candidate_id` [unique short id like "cand-1"],
+`statement` [the reusable piece of knowledge, self-contained], `context`,
+and `evidence_references`).
 
 Rules:
 - Every statement must trace to bundle material or tool results; never invent

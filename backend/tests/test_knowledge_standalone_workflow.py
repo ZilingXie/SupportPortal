@@ -216,6 +216,47 @@ class StandaloneWorkflowTests(unittest.TestCase):
         self.assertEqual(len(client.runs), 2)
         self.assertEqual(len(self.repository.list_weknora_promotions()), 1)
 
+    def test_object_array_timeline_completes_and_queues_review(self) -> None:
+        """R25 (p2-184): the 18/18 Preproduction CSD Summary failures came
+        from the model returning timeline as an array of objects. The
+        tolerant normalizer must complete the Summary and enqueue the
+        independent Review instead of failing the task."""
+        queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
+        )
+        object_timeline_output = {
+            "problem_description": "join failures in region eu",
+            "timeline": [
+                {"time": "2026-10-01", "event": "reported"},
+                {"time": "2026-10-02", "event": "resolved upstream"},
+            ],
+            "investigation_process": "checked region routing",
+            "candidates": [
+                {
+                    "candidate_id": "c1",
+                    "statement": "Region EU join failures were fixed upstream.",
+                    "context": "CSD issue CSD-77",
+                    "evidence_references": ["payload.resolution"],
+                }
+            ],
+        }
+        result = drain_standalone_knowledge_tasks(
+            self.repository,
+            client=_ScriptedHermes(object_timeline_output, REVIEW_OUTPUT),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        summary = self.repository.list_standalone_summary_tasks()[0]
+        self.assertEqual(summary["status"], "completed")
+        self.assertEqual(
+            summary["packet"]["timeline"],
+            '{"event": "reported", "time": "2026-10-01"}\n'
+            '{"event": "resolved upstream", "time": "2026-10-02"}',
+        )
+        reviews = list(self.repository._standalone_review_tasks.values())
+        self.assertEqual(len(reviews), 1)
+        self.assertEqual(reviews[0]["status"], "completed")
+
     def test_article_source_queues_standalone_summary(self) -> None:
         task = queue_standalone_summary_for_source(
             self.repository, intake=dict(ARTICLE_INTAKE), now_value="2026-10-02T00:01:00+00:00"
@@ -395,6 +436,134 @@ class StandaloneWorkflowTests(unittest.TestCase):
         # No review, no promotion from the stale generation.
         self.assertEqual(list(self.repository._standalone_review_tasks.values()), [])
         self.assertEqual(self.repository.list_weknora_promotions(), [])
+
+
+class RedeliveryRetryTests(unittest.TestCase):
+    """R25 (p2-184): redelivery-driven bounded retry for failed standalone
+    Summary and Review tasks, with a FRESH Hermes run identity per attempt
+    (attempt-suffixed session id + idempotency key)."""
+
+    def setUp(self) -> None:
+        self.patcher = _enable_real_mode({})
+        self.addCleanup(self.patcher.stop)
+        self.repository = InMemoryTicketRepository()
+        self.repository.accept_knowledge_source(
+            {
+                "schema_version": "knowledge-source-v1",
+                "source_type": CSD_INTAKE["source_type"],
+                "source_id": CSD_INTAKE["source_id"],
+                "source_updated_at": CSD_INTAKE["source_updated_at"],
+                "payload": CSD_INTAKE["payload"],
+                "references": {},
+            },
+            now_value="2026-10-02T00:00:01+00:00",
+        )
+        stored = next(
+            row for row in self.repository._knowledge_source_intakes.values()
+            if row["source_type"] == "csd_issue"
+        )
+        self.intake = dict(stored)
+        self.now = "2026-10-06T00:00:00+00:00"
+
+    def _queue(self):
+        return queue_standalone_summary_for_source(
+            self.repository, intake=dict(self.intake), now_value=self.now,
+        )
+
+    def _fail_running_summary(self, error="timeline must be a string or an array of strings"):
+        claimed = self.repository.claim_standalone_summary_tasks(limit=1, now_value=self.now)
+        assert claimed
+        self.repository.fail_standalone_summary_task(
+            claimed[0]["summary_task_id"], error=error,
+            owner_token=claimed[0]["owner_token"],
+        )
+        return claimed[0]["summary_task_id"]
+
+    def test_redelivery_revives_failed_summary_with_fresh_run_identity(self) -> None:
+        task_id = self._queue()["summary_task_id"]
+        self._fail_running_summary()
+
+        revived = self._queue()
+        self.assertEqual(revived["status"], "pending")
+        self.assertEqual(revived["attempt_count"], 1)
+        self.assertTrue(revived["summary_session_id"].endswith(":a1"))
+        self.assertIn("requeued: source redelivered", str(revived["error"]))
+
+        client = _ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT)
+        result = drain_standalone_knowledge_tasks(
+            self.repository, client=client,
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        # B5: the retried run used an attempt-suffixed idempotency key, so the
+        # gateway starts a fresh run instead of replaying the failed one.
+        self.assertTrue(client.runs[0]["idempotency_key"].endswith(":run:a1"))
+        summary = self.repository.get_standalone_summary_task(task_id)
+        self.assertEqual(summary["status"], "completed")
+        self.assertTrue(summary["summary_session_id"].endswith(":a1"))
+
+    def test_first_attempt_keeps_historical_run_identity(self) -> None:
+        self._queue()
+        client = _ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT)
+        drain_standalone_knowledge_tasks(
+            self.repository, client=client,
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertTrue(client.runs[0]["idempotency_key"].endswith(":run"))
+        self.assertFalse(client.runs[0]["idempotency_key"].endswith(":run:a0"))
+
+    def test_redelivery_attempt_cap_keeps_failed(self) -> None:
+        task_id = self._queue()["summary_task_id"]
+        for _ in range(5):
+            self._fail_running_summary()
+            revived = self._queue()
+        # 6th redelivery on a failed row at the cap: no revive.
+        self._fail_running_summary()
+        capped = self._queue()
+        self.assertEqual(capped["status"], "failed")
+        self.assertEqual(capped["attempt_count"], 5)
+
+    def test_redelivery_is_noop_on_pending(self) -> None:
+        first = self._queue()
+        second = self._queue()
+        self.assertEqual(first["summary_task_id"], second["summary_task_id"])
+        self.assertEqual(second["status"], "pending")
+        self.assertEqual(second.get("attempt_count"), 0)
+        self.assertEqual(len(self.repository.list_standalone_summary_tasks()), 1)
+
+    def test_redelivery_revives_failed_review_of_completed_summary(self) -> None:
+        bad_review = {
+            "decisions": [
+                {
+                    "candidate_id": "c1", "candidate_type": "knowledge",
+                    "decision": "no_change", "confidence": 0.9,
+                    "rationale": "duplicate without a target",
+                    "proposed_content": "", "target_object": None, "target_version": None,
+                }
+            ]
+        }
+        self._queue()
+        result = drain_standalone_knowledge_tasks(
+            self.repository, client=_ScriptedHermes(SUMMARY_OUTPUT, bad_review),
+            weknora_client=_NoWeKnora(), memory_client=_NoMemory(), limit=5,
+        )
+        self.assertEqual(result, {"executed": 1, "failed": 1})
+        summary_id = self.repository.list_standalone_summary_tasks()[0]["summary_task_id"]
+        review_id = f"{summary_id}:review"
+        self.assertEqual(
+            self.repository.get_standalone_summary_task(summary_id)["status"], "completed"
+        )
+        self.assertEqual(
+            self.repository.get_standalone_review_task(review_id)["status"], "failed"
+        )
+
+        revived_summary = self._queue()
+        self.assertEqual(revived_summary["status"], "completed")
+        review = self.repository.get_standalone_review_task(review_id)
+        self.assertEqual(review["status"], "pending")
+        self.assertEqual(review["attempt_count"], 1)
+        self.assertTrue(review["review_session_id"].endswith(":a1"))
+        self.assertIn("requeued: source redelivered", str(review["error"]))
 
 
 class _SearchOkKnowledge:

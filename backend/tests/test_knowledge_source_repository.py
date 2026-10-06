@@ -171,6 +171,30 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     assert body["status"] == "accepted"
     assert body["summary_task_id"], body
     assert body["summary_task_id"].startswith("knowledge-source-summary:zendesk_ticket:13801:")
+    # R25 (p2-184): the receipt exposes the standalone task state so a
+    # redelivery that revived (or could not revive) a failed task is visible
+    # to the deliverer.
+    assert body["summary_task_status"] == "pending"
+
+    # A redelivery over the FAILED standalone task revives it and the receipt
+    # reports the revived state.
+    claimed = repository.claim_standalone_summary_tasks(
+        limit=1, now_value="2026-10-02T02:00:00Z"
+    )
+    assert claimed
+    repository.fail_standalone_summary_task(
+        claimed[0]["summary_task_id"], error="timeline must be a string",
+        owner_token=claimed[0]["owner_token"],
+    )
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        revived = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot_for("13801", "2026-10-02T01:00:00Z"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert revived.status_code == 202
+    assert revived.json()["status"] == "already_exists"
+    assert revived.json()["summary_task_status"] == "pending"
     # The intake is linked to the standalone task with NULL case lineage.
     intake = repository.get_knowledge_source(body["task_id"])
     assert intake["summary_task_id"] == body["summary_task_id"]

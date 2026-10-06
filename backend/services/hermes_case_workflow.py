@@ -316,22 +316,30 @@ _SUMMARY_TEXT_FIELDS = (
 
 
 def _normalize_summary_text(value: Any, *, field: str) -> str:
-    """Normalize Hermes' scalar-or-string-list narrative values.
+    """Normalize a Hermes narrative field into its persisted scalar text.
 
-    Hermes real runs occasionally return concise narrative sections as arrays
-    of strings even though the persisted Summary packet is intentionally
-    scalar.  Accept only that documented boundary variation; all other types
-    remain contract errors so malformed model output cannot be silently stored.
+    R25 decision (p2-184): narrative SHAPE is tolerated — string, string
+    list, list of objects (each serialized as deterministic JSON), or any
+    scalar — because model runs demonstrably return object arrays for
+    ``timeline`` on CSD sources and that must not fail the whole Summary.
+    STRUCTURAL contracts elsewhere (candidates must be a list, candidate
+    field validation, HermesSummaryPacket) stay fail-closed; this function
+    no longer raises.
     """
     if value is None:
         return ""
     if isinstance(value, str):
         return value
     if isinstance(value, (list, tuple)):
-        if any(not isinstance(item, str) for item in value):
-            raise ValueError(f"{field} must be a string or an array of strings")
-        return "\n".join(value)
-    raise ValueError(f"{field} must be a string or an array of strings")
+        parts = [
+            item if isinstance(item, str)
+            else json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+            for item in value
+        ]
+        return "\n".join(parts)
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return str(value)
 
 
 def _summary_packet_content(payload: dict[str, Any]) -> dict[str, Any]:
