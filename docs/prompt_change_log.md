@@ -5037,4 +5037,3 @@ For each new entry, record:
 - 七个叙述字段钉死类型（plain string/flat string array，禁对象数组）+ evidence_references 钉为数组字符串——修复 18/18 CSD Summary 因 timeline 对象数组确定性失败（R25）。
 - 同 release 代码侧归一器同步放宽：叙述形状容忍（对象/对象数组→确定性 JSON 文本），结构契约（candidates/candidate 字段/HermesSummaryPacket）仍 fail-closed。
 - 实测：18/18 Summary+Review completed，33 promotions fail-closed 停 human_review。
-
