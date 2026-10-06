@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-06T06:21:04Z",
-  "source_base_commit": "013a7881ee2d1d0539e92ec9adb0a3dc59256f76",
-  "registry_digest": "272136f5aea18b472693886b5463db4a2182f8cd752cedbc7e77057442eebcf6",
+  "generated_at": "2026-10-06T06:41:54Z",
+  "source_base_commit": "5c6497bdfe2284819c2fed90e196c3777d9e4fd2",
+  "registry_digest": "03d78a321447c84ec6544d23aa5b28b2fd9356453ad6357d4ace1a02b3ec4eff",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5003,6 +5003,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "验收方独立复验：插件 18 passed+注册入口 5/5+旧提交内存加载复演 4 failed/1 passed+格式与登记校验",
           "result": "通过（范围=R27 插件修复与文档修正）；完整计划门禁保留，未授权部署/审批写入",
           "recorded_at": "2026-10-06T14:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R29 线上补充回读（执行方取证，待验收方复验）",
+          "command": "SSM 只读通道：psql 管道全景+promotions 明细；ecs describe 三角色+hermes 服务 task def；DB active prompt release",
+          "result": "36/36+36/36 completed；64 promotions 全 human_review(review_requested_human_review)；SP=r20261006-b648a65+pr-0a07d038eef8；hermes def35 无 weknora 键+memory-core 在；v20",
+          "recorded_at": "2026-10-06T17:30:00Z"
         }
       ],
       "source_refs": [
@@ -15665,7 +15672,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R29 完整验收未通过（无新代码缺陷；三交付环节待闭合）。执行方已完成可自行推进项：(a) 遗留 worktree r28-close-2 已清理（验收方指出的收口偏差）；(b) 线上补充回读双侧 AWS 会话均过期（执行方+验收方），33 promotions 明细/ECS 配置/插件 profile/prompt release 待可用只读通道（需用户 aws login）；(c) fork+插件发布目标决策材料已备：当前 SP 读/写与 Hermes 读全部指向官方实例 https://knowledge.convoai.club/weknora（X-API-Key），fork（79c4b2a，含 PG 115/116+SQLite 34/35 迁移与写合同）未部署——写入链闭合的前置=fork 成为 SP 写入目标（选项 A：fork 独立部署新实例+切 SSM WEKNORA_BASE_URL；选项 B：替换现有 convoai 实例——该实例归属/可替换性仅用户可答）；插件 b5b6614 经 overlay 镜像随 Preproduction Hermes 任务定义发布（build sync 脚本+digest 构建流程就绪，未执行）。AgentMemory 迁移准备同样被 AWS 阻塞（旧存储管理面凭证在 SSM）。待用户：aws login 恢复读证据 / fork 发布目标决策 / 限定授权集成验收窗口。",
+      "next_action": "R29 线上补充回读证据已由执行方补齐（AWS 会话恢复，只读取证 2026-10-06，待验收方复验）：(1) 管道全景——99 intakes（csd 36=18 源×2 日投版本 / zendesk 63）；36/36 Summary completed、36/36 Review completed、0 failed；64 promotions（knowledge 63+skill 1）全部 human_review、原因=review_requested_human_review、0 条已决策；63 zendesk intakes 零 Summary 为既定架构语义（无 case 绑定不派生 Summary，automation_ecs_api R2-4/R4-3），供验收方定性；(2) ECS 配置——SP api:103/route:102/worker:103 均 r20261006-b648a65（digest 三镜像各自 pinned）、PROMPT_RELEASE_ID=pr-0a07d038eef8（DB active 同值）、agent secrets 在 api+worker、worker real 模式；(3) Hermes 服务 def:35——hermes 容器 env 零 weknora 键（插件未发布=b5b6614 未上线，预期态）、memory-core 容器仍在（AgentMemory 未退休，预期态）；(4) schema=v20。剩余门禁不变：写入链（fork 目标 A/B 决策+限定授权）/AgentMemory 迁移退休/插件镜像发布+新会话读取实证。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15788,6 +15795,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "验收方独立复验：插件 18 passed+注册入口 5/5+旧提交内存加载复演 4 failed/1 passed+格式与登记校验",
           "result": "通过（范围=R27 插件修复与文档修正）；完整计划门禁保留，未授权部署/审批写入",
           "recorded_at": "2026-10-06T14:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R29 线上补充回读（执行方取证，待验收方复验）",
+          "command": "SSM 只读通道：psql 管道全景+promotions 明细；ecs describe 三角色+hermes 服务 task def；DB active prompt release",
+          "result": "36/36+36/36 completed；64 promotions 全 human_review(review_requested_human_review)；SP=r20261006-b648a65+pr-0a07d038eef8；hermes def35 无 weknora 键+memory-core 在；v20",
+          "recorded_at": "2026-10-06T17:30:00Z"
         }
       ],
       "source_refs": [
@@ -15801,7 +15815,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-06T16:00:00Z",
+      "updated_at": "2026-10-06T17:30:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
