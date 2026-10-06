@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-  "next_action": "R25 修复已实施并上线验证（PR#1399=b648a659→release r20261006-b648a65，prompt pr-0a07d038eef8 含 summary-manual v2 激活）：①归一器兼容（叙述形状容忍、结构 fail-closed）②prompt v2 钉类型 ③重投驱动重试（attempt_count/requeue/上限5/session:an）④回执 summary_task_status ⑤:run:a{N} 防重放 ⑥v20/ECS-014。部署后实测：18 源第四次重投全部复位 pending→排水→**18/18 Summary completed+18/18 Review completed+33 promotions 全部 fail-closed 停 human_review**（knowledge 32+skill 1，证据面语义正确）；attempt_count=1 全体；timeline 兼容序列化产出真实文本。待：R25 定向复验；human_review 队列的人工决策面（决策 API/Slack 通知对 CSD 无线程=队列 API 面）；WeKnora fork 通道/AgentMemory 迁移退休/全链端到端验收（回读+新会话读取）仍为完整计划门禁。",
+  "next_action": "R28 定向验收通过：R27 P1（插件畸形条目 fail-closed，hermes-deploy codex/weknora-tools@b5b6614）标记关闭；prompt 日志尾空行修正（PR#1401=main 393453ea）同过。完整计划门禁继续保留，剩余三环节：(1) 写入与复用链——fork 镜像及部署通道（待用户决策）→线上写合同核对→获授权的真实 approve/reject（33 条 human_review promotion 为当前决策面）→写后回读→新 Hermes 会话读取实证；(2) AgentMemory 迁移与退休——迁移清单/新旧对账/新读取验证/旧通道退休（provider:none 不替代）；(3) 线上补充独立回读——33 promotions 明细/ECS 当前配置/实际加载插件与 profile/prompt release（验收方 AWS 会话两轮过期未完成，需可用只读通道）。目标环境 Preproduction；本轮为本地代码验收，未部署。",
   "acceptance_criteria": [
     "普通 AgentRelay Task 的 handoff 行为不变。",
     "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -121,6 +121,13 @@
       "command": "pipeline r20261006-b648a65（v20/014、prompt pr-0a07d038eef8）→18×同版本重投→排水观察→psql 回读",
       "result": "18/18 复位 pending（回执 summary_task_status=pending）→18/18 Summary completed+18/18 Review completed+33 promotions（knowledge 32+skill 1）全部 human_review fail-closed；attempt_count=1×18",
       "recorded_at": "2026-10-06T09:00:00Z"
+    },
+    {
+      "type": "decision",
+      "label": "R28 定向验收通过（R27 插件 P1 关闭）",
+      "command": "验收方独立复验：插件 18 passed+注册入口 5/5+旧提交内存加载复演 4 failed/1 passed+格式与登记校验",
+      "result": "通过（范围=R27 插件修复与文档修正）；完整计划门禁保留，未授权部署/审批写入",
+      "recorded_at": "2026-10-06T14:30:00Z"
     }
   ],
   "source_refs": [
@@ -134,7 +141,7 @@
     "backend/worker.py"
   ],
   "created_at": "2026-10-02T00:00:00Z",
-  "updated_at": "2026-10-06T09:00:00Z",
+  "updated_at": "2026-10-06T14:30:00Z",
   "phase_id": "phase-2",
   "module_id": "rag-knowledge",
   "function_id": "rag-scope-governance",
