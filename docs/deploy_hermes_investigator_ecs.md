@@ -225,7 +225,7 @@ ssh zacbot 'cd ~/agent-infra-build/TencentDB-Agent-Memory/MemoryPanel && \
 - **td :37**(从 :35 逐字段克隆,仅翻转一处):hermes 容器 `MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=false`;租户三值(真实 ID)、模型、profile(`/opt/data/config.yaml`,`_config_version: 41`、`memory.provider: memory_tencentdb`)与其余 14 项 env 全部保留。
 - **发布来源同步**:hermes-deploy `ecs/hermes_ecs.py` `SUPPORT_AGENT_ENVIRONMENT` 对齐运行态(真实租户 ID + 显式 `RAW_CAPTURE_ENABLED=false` + dashboard 两项),分支 `codex/p2-186-raw-capture-off`(commit c444224)。
 - **回读**:service 稳定(running=1,task 84f52c07);ECS Exec 容器内 `printenv`=`false`;`/v1/health` 200。
-- **回滚**:`update-service --task-definition :35`。
+- **回滚约束**:`:35` **不是**符合当前合同的回滚目标——它携带 `MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=true`,直接回滚会重新开启原始对话采集。若 `:37` 需要回退其他配置,必须从 `:37` 逐字段克隆注册新 revision 并保留 raw capture 显式 `false`;任何后续 Hermes td 变更都不得重新引入该 flag 的 `true` 值。
 
 ## 2026-09-14 Preproduction Hermes 接入 Argus Call Search API(td:25)
 
