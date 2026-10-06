@@ -381,6 +381,24 @@ def _try_knowledge_review_command(
     """Route a Slack thread reply to the knowledge promotion decision contract."""
     normalized = text.strip()
     lower = normalized.lower()
+    if not (
+        lower.startswith(_KNOWLEDGE_REJECT_PREFIX)
+        or lower.startswith(_KNOWLEDGE_APPROVE_PREFIX)
+    ):
+        return None
+    # The SAME fail-closed master switch as the API decision endpoint: while
+    # governance is disabled the backlog must stay untouched — a Slack
+    # approve/reject performs the identical persisted mutation the endpoint
+    # refuses, and must not resolve (let alone write to) the decision store.
+    from backend.services.hermes_knowledge_workflow import knowledge_governance_enabled
+
+    if not knowledge_governance_enabled():
+        return _invalid(
+            "knowledge governance is disabled "
+            "(HERMES_KNOWLEDGE_WORKFLOW_ENABLED); backlog promotions are "
+            "preserved untouched",
+            status_code=409,
+        )
     try:
         if lower.startswith(_KNOWLEDGE_REJECT_PREFIX):
             return _execute_knowledge_review_reject(

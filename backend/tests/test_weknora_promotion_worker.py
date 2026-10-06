@@ -12,6 +12,7 @@ from backend.services.weknora_client import WeKnoraError  # noqa: E402
 from backend.services.weknora_promotion_adapter import WeKnoraPromotionOutcome
 
 ENABLED_ENV = {
+    "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
     "WEKNORA_PROMOTION_ENABLED": "1",
     "WEKNORA_BASE_URL": "http://weknora.test",
     "WEKNORA_API_TOKEN": "synthetic-token",
@@ -84,6 +85,27 @@ def test_drain_completes_accepted_promotion() -> None:
     assert kwargs["status"] == "accepted"
     assert kwargs["weknora_object_id"] == "doc-1"
     assert kwargs["failure_code"] is None
+
+
+def test_drain_is_disabled_when_governance_master_switch_off() -> None:
+    """p2-186 acceptance round 2: the governance master switch gates promotion
+    CONSUMPTION, not only production. With the switch off but a RESIDUAL
+    WEKNORA_PROMOTION_ENABLED=1 and a configured client facing a queued
+    candidate, the drain claims nothing and touches no external boundary."""
+    repository = _repository()
+    with patch.dict(os.environ, ENABLED_ENV, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ), patch.object(worker, "WeKnoraClient", FakeAdapterClient):
+        import os as _os
+
+        _os.environ.pop("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", None)
+        try:
+            assert worker._drain_weknora_promotions(limit=20) == 0
+        finally:
+            _os.environ["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] = "1"
+    repository.list_weknora_promotions.assert_not_called()
+    repository.claim_weknora_promotion.assert_not_called()
+    repository.complete_weknora_promotion.assert_not_called()
 
 
 class _ExplodingAdapter:
