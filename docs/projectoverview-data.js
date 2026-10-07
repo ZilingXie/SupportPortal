@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T08:54:58Z",
-  "source_base_commit": "3ad7a1016320e6b8c9618b557643bfd9d1367d5d",
-  "registry_digest": "c0d85c43794fa73f77fb477e855a03f114b98eb82db7bea2cd3f6ad5bfb01220",
+  "generated_at": "2026-10-07T10:54:58Z",
+  "source_base_commit": "ab0d1a0e0130056ec845de3a60913162800f4ba8",
+  "registry_digest": "c572cd2b336f54b6ed809f1bf3d4666151758f18cc3e5aa8ab764df572c6a5cb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4376,6 +4376,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Console fixes live retest (deploy 24122e6)",
           "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
+          "type": "test",
+          "label": "I4 投递缺陷修复：批准草稿投递前经 gate 重取归属（worktree auto-agent-ownfix，待独立验收）",
+          "command": "定向套件：test_account_automation_ownership(26)+test_worker 新增 2 项+test_hermes_zendesk_agent+test_automation_ecs_api+test_hermes_tool_failure_handoff+test_account_reply_version_fence；stash 双跑对照",
+          "result": "根因（13892 实证）：worker._deliver_hermes_zendesk_comment 的 verify 门对 human_review_required（调查案常态）fail-close 返回 zendesk_ownership_released_to_queue，且 account_automation_ownership.py 336-349 对两种模式都 fail-close。修复：(1) ensure_production_automation_ownership 新增 allow_reclaim_from_human_review 旗标（仅 gate+preproduction/production 案件生效；跳过 human-review fail-close 但保留完整 快照→90s 路由窗→422 退避→assignment→verify 链，人工主动接管仍在 gate 内拦截；默认行为不变，26 项 ownership 测试全过）；(2) worker 投递前对 human_review/released 案件先以 gate+旗标重取：成功→automation_status 归还 automation+save_account_case（镜像 _claim_automation_ownership_before_work）→verify 通过→投递；gate fail_closed→提前终止并落账 gate 精确失败码（人工接管码直达 ledger）。新增测试：重取成功（human_review 案件→gate→case 归还→评论发出→delivered）与重取失败（mock human_reassigned→零写入→failed+精确码+案件保持 human_review）。stash 双跑证明 test_worker 其余 14 个 investigation 族失败为 main 预存（与本变更无关）。边界：不新增 failed-ledger replay；13892 重驱动走 prepare_draft+用户再批。验证后置：合入+Preprod 发布后以 13892 实测（prepare_draft→批准→投递→回读）收 I4 闭环。"
         },
         {
           "type": "test",
@@ -16339,6 +16345,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "I4 投递缺陷修复：批准草稿投递前经 gate 重取归属（worktree auto-agent-ownfix，待独立验收）",
+          "command": "定向套件：test_account_automation_ownership(26)+test_worker 新增 2 项+test_hermes_zendesk_agent+test_automation_ecs_api+test_hermes_tool_failure_handoff+test_account_reply_version_fence；stash 双跑对照",
+          "result": "根因（13892 实证）：worker._deliver_hermes_zendesk_comment 的 verify 门对 human_review_required（调查案常态）fail-close 返回 zendesk_ownership_released_to_queue，且 account_automation_ownership.py 336-349 对两种模式都 fail-close。修复：(1) ensure_production_automation_ownership 新增 allow_reclaim_from_human_review 旗标（仅 gate+preproduction/production 案件生效；跳过 human-review fail-close 但保留完整 快照→90s 路由窗→422 退避→assignment→verify 链，人工主动接管仍在 gate 内拦截；默认行为不变，26 项 ownership 测试全过）；(2) worker 投递前对 human_review/released 案件先以 gate+旗标重取：成功→automation_status 归还 automation+save_account_case（镜像 _claim_automation_ownership_before_work）→verify 通过→投递；gate fail_closed→提前终止并落账 gate 精确失败码（人工接管码直达 ledger）。新增测试：重取成功（human_review 案件→gate→case 归还→评论发出→delivered）与重取失败（mock human_reassigned→零写入→failed+精确码+案件保持 human_review）。stash 双跑证明 test_worker 其余 14 个 investigation 族失败为 main 预存（与本变更无关）。边界：不新增 failed-ledger replay；13892 重驱动走 prepare_draft+用户再批。验证后置：合入+Preprod 发布后以 13892 实测（prepare_draft→批准→投递→回读）收 I4 闭环。"
+        },
         {
           "type": "test",
           "label": "R18 修复：工具集合改为插件注册的原生名（组合 158 passed，等待定向复验）",

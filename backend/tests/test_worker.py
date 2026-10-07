@@ -1437,6 +1437,95 @@ class WorkerResilienceTests(unittest.TestCase):
             ticket_status=ticket_status,
         )
 
+    def test_approved_draft_reclaims_ownership_from_human_review(self) -> None:
+        """13892 contract: an approved (queued) hermes draft on a case sitting
+        in human_review_required reclaims ownership via the gate (snapshot ->
+        assignment PUT -> verify), returns the case to automation ownership,
+        and delivers the customer comment."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_automation_delivery(repository)
+        # The investigation常态 state that previously fail-closed delivery.
+        repository._billing_tickets["AC-AUTO"]["automation_status"] = (
+            "human_review_required"
+        )
+        snapshot = self._ownership_snapshot(
+            ticket_status="open", assignee_id="48557297720084"
+        )
+        ownership_globals = worker.ensure_production_automation_ownership.__globals__
+        with patch.object(worker, "ticket_repository", repository), patch.dict(
+            ownership_globals, {"read_ticket_ownership_snapshot": lambda **_kw: snapshot}
+        ), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot", return_value=snapshot
+        ), patch.object(
+            worker, "add_ticket_comment", return_value=_SN(comment_id="zc-reclaim-1")
+        ) as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+            )
+        self.assertEqual(add_comment.call_count, 1)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+        self.assertEqual(delivery["status"], "delivered")
+        # The approval returned the case to automation ownership (persisted).
+        self.assertEqual(
+            repository._billing_tickets["AC-AUTO"]["automation_status"], "automation"
+        )
+
+    def test_approved_draft_reclaim_failure_keeps_fail_closed(self) -> None:
+        """A human who actively holds the ticket still blocks the delivery:
+        the reclaim gate fail-closes (human_reassigned) and the ledger row
+        terminates failed with the takeover code — never a public write."""
+        from backend.services.account_automation_ownership import OwnershipGateResult
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_automation_delivery(repository)
+        repository._billing_tickets["AC-AUTO"]["automation_status"] = (
+            "human_review_required"
+        )
+        takeover = OwnershipGateResult(
+            eligible=True,
+            state="human_reassigned",
+            assignee_id="31116509485716",
+            failure_code="zendesk_ownership_human_reassigned",
+            failure_category="policy",
+            updated_at="2026-10-07T00:00:00+00:00",
+            ticket_status="open",
+        )
+        snapshot = self._ownership_snapshot(
+            ticket_status="open", assignee_id="31116509485716"
+        )
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker,
+            "ensure_production_automation_ownership",
+            return_value=takeover,
+        ), patch.object(
+            worker, "read_ticket_ownership_snapshot",
+            return_value=_SN(comments_revision="rev-auto", ticket_status="open"),
+        ), patch.object(worker, "add_ticket_comment") as add_comment:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+            )
+        self.assertEqual(add_comment.call_count, 0)
+        delivery = repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+        self.assertEqual(delivery["status"], "failed")
+        self.assertEqual(
+            delivery["failure_code"], "zendesk_ownership_human_reassigned"
+        )
+        # The case stays in human review — no ownership was stolen.
+        self.assertEqual(
+            repository._billing_tickets["AC-AUTO"]["automation_status"],
+            "human_review_required",
+        )
+
     def test_automation_delivery_with_valid_ownership_sends(self) -> None:
         """Automation case, AI-owned open ticket: the eligible ownership path
         is unaffected by the new ineligible branch (real helper, only the
