@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T07:40:41Z",
-  "source_base_commit": "8811d91a2aabf9d5274eaf04b821f3c9c2a0f759",
-  "registry_digest": "679ba93ac826d1753f4ee5c9eb43414c8f359b4807e2b1cd067460a48e3f624e",
+  "generated_at": "2026-10-07T08:09:29Z",
+  "source_base_commit": "5bc7effa4384dac5e562cbf34648e09d0be4a349",
+  "registry_digest": "d8fbf95354bbbbd075b716d7c31e02294f7a16c7e3e150db80cd676220da67f6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5233,6 +5233,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复轮二（2026-10-07，R4 评审后）：conversation_search/write_knowledge 解析修复 + 发布源同步 + td:39",
           "command": "agent-infra 插件两消费点修复（data.items→data.messages）→ zacBot amd64 overlay 镜像（FROM 部署 digest 8e28d4d9，e473e5ed）→ td:39（:38 克隆+换镜像+恢复 runtimePlatform）→ 部署 8a00a3af + 三件套 handler 回归探针 + hermes-deploy 源提交",
           "result": "证据：①非空命中——conversation_search 'media relay' 返回 3 条真实消息（enablement 对话原文，与面板/直连一致；run_3d02db62）；②合法空——不存在词正确返回 No conversations found；③写入去重——write_knowledge 同 knowledge_id 两次调用返回 written→already_written，窗口 core 日志 conversation/add 仅 1 次请求（07:38:43，START+END 成对）即第二次零新增写调用（修复前该分支会重复写入）；回归——memory_search（CSD-79846 真实条目）与 wiki_search（wiki-xr1oantr）通过；raw capture 保持 false、探针外零采集写入；测试知识行已 layer-delete 清理。修复内容与披露：插件 __init__.py 980/1036 两处 data.items→data.messages（网关契约经直连只读探针实证：code=0, data.keys=[messages]）；write_knowledge 去重失效为已证实行为（评审离线复现二次调用 conversation_add×1）但线上未见重复数据；hermes-deploy@codex/p2-186-raw-capture-off 新增 PORT env 提交（发布链可复现 :38+）；:38 注册遗漏 runtimePlatform 已在 :39 恢复（:38 存续期内未观察运行异常）；agent-infra 修改未提交（沿用既定模式，本地与部署基线一致）。镜像 e473e5ed 仅替换插件目录（其余层继承 8e28d4d9）。"
+        },
+        {
+          "type": "test",
+          "label": "R5 后续（2026-10-07）：插件源码固化 + CSD 链手工触发尝试",
+          "command": "TencentDB-Agent-Memory 提交 1dbe1d2（__init__.py/client.py 按部署态，SHA-256 243eed48/7d651595 对应镜像 e473e5ed）+ n8n MCP execute_workflow（production，Schedule Trigger）",
+          "result": "①源码固化：codex/hermes-zendesk-agent@1dbe1d2，两插件文件与运行容器逐字节一致，提交信息含镜像 digest/td/task 对应；MemoryPanel 两个无关未提交文件未动。②CSD 手工触发执行 187833（mode=trigger，08:07:58→08:08:12，14.3s，success）：与 04:00 自然执行 187702 同形态——JQL 扫描后全部命中 csd 去重回环，4 小时窗口内无新增合格 issue，本轮未产生正向入库样本；链按需执行与去重幂等再次确认。正向入库样本继续等待：CSD 下一自然窗口 2026-10-08 12:00（北京）或新增已解决且原因/方案清晰的 CSD issue；Solved 待自然合格工单或用户授权受控 Zendesk 通道（本轮评审明示不扩展业务重放授权）。"
         }
       ],
       "source_refs": [
@@ -16203,9 +16209,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
       "created_at": "2026-10-06T00:00:00Z",
-      "updated_at": "2026-10-07T08:20:00Z",
+      "updated_at": "2026-10-07T08:30:00Z",
       "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
-      "next_action": "第四轮评审（未通过）后修复轮完成（2026-10-07）：①conversation_search/write_knowledge 响应解析缺陷已修——根因为插件读取 data.items 而网关 /v3/conversation/search 实际返回 data.messages（直连实证 item 键 content/id/role/score/timestamp），两消费点（检索展示 980 行、write_knowledge 去重 1036 行）一并修复，插件 overlay 镜像 e473e5ed（FROM 8e28d4d9 仅换插件目录）经 td:39 部署（含 :37 runtimePlatform X86_64/LINUX 恢复——:38 注册时该项被遗漏，:39 已恢复）；handler 回归三件套实证：非空命中（conversation_search 'media relay' 3 条真实消息）、合法空（不存在词正确报 No conversations found）、重复写入零新增（同 knowledge_id 二次调用 already_written，窗口 conversation/add 仅 1 次请求）+ memory_search/wiki 回归通过 + raw capture 保持 false。②发布来源已同步：hermes-deploy codex/p2-186-raw-capture-off 新提交将 MEMORY_TENCENTDB_GATEWAY_PORT=8420 加入 SUPPORT_AGENT_ENVIRONMENT（import 校验 8 项 env 含 PORT）。③agent-infra 工作树插件修改未提交（沿用 9 月补丁的既定模式，本地=部署基线）。剩余：两 n8n 链（Solved/CSD）工作流内 approve→生成→create→raw/write→ingest 正向入库样本仍缺（CSD 每日 12:00 北京自然触发可观察、Solved 待自然合格工单或授权受控通道）；测试知识行已清理（layer-delete deleted_count=1）。p2-186 保持 active，门禁未释放。",
+      "next_action": "第四轮评审（未通过）后修复轮完成（2026-10-07）：①conversation_search/write_knowledge 响应解析缺陷已修——根因为插件读取 data.items 而网关 /v3/conversation/search 实际返回 data.messages（直连实证 item 键 content/id/role/score/timestamp），两消费点（检索展示 980 行、write_knowledge 去重 1036 行）一并修复，插件 overlay 镜像 e473e5ed（FROM 8e28d4d9 仅换插件目录）经 td:39 部署（含 :37 runtimePlatform X86_64/LINUX 恢复——:38 注册时该项被遗漏，:39 已恢复）；handler 回归三件套实证：非空命中（conversation_search 'media relay' 3 条真实消息）、合法空（不存在词正确报 No conversations found）、重复写入零新增（同 knowledge_id 二次调用 already_written，窗口 conversation/add 仅 1 次请求）+ memory_search/wiki 回归通过 + raw capture 保持 false。②发布来源已同步：hermes-deploy codex/p2-186-raw-capture-off 新提交将 MEMORY_TENCENTDB_GATEWAY_PORT=8420 加入 SUPPORT_AGENT_ENVIRONMENT（import 校验 8 项 env 含 PORT）。③插件源码已固化（2026-10-07 R5 后续）：TencentDB-Agent-Memory@codex/hermes-zendesk-agent 提交 1dbe1d2 将两个插件文件按部署态入库（2026-09 网关钳制 + R4 解析修复），提交信息记录源码↔镜像 digest（e473e5ed，td:39/task 8a00a3af）对应，从 HEAD 重建不再带回旧解析缺陷（评审 R5 反例已闭）。剩余：两 n8n 链（Solved/CSD）工作流内 approve→生成→create→raw/write→ingest 正向入库样本仍缺（CSD 每日 12:00 北京自然触发可观察、Solved 待自然合格工单或授权受控通道）；测试知识行已清理（layer-delete deleted_count=1）。p2-186 保持 active，门禁未释放。",
       "acceptance_criteria": [
         "治理总开关关闭（缺省）且 Hermes=real 时：solved/closed/本地 resolved 零新增 Summary/Review 行；standalone/CSD/article intake 与同版本重投零创建零复活；排水不领取既有任务、零 Hermes 知识治理会话、零 WeKnora 调用；残留 WEKNORA_PROMOTION_ENABLED=1 时 close 默认分支零候选；普通调查与回复不受影响。",
         "/v1/knowledge/promotions/{id}/decision 在治理关闭时对 approve/reject 显式 409 拒绝，积压 human_review 行内容不变。",
@@ -16299,6 +16305,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复轮二（2026-10-07，R4 评审后）：conversation_search/write_knowledge 解析修复 + 发布源同步 + td:39",
           "command": "agent-infra 插件两消费点修复（data.items→data.messages）→ zacBot amd64 overlay 镜像（FROM 部署 digest 8e28d4d9，e473e5ed）→ td:39（:38 克隆+换镜像+恢复 runtimePlatform）→ 部署 8a00a3af + 三件套 handler 回归探针 + hermes-deploy 源提交",
           "result": "证据：①非空命中——conversation_search 'media relay' 返回 3 条真实消息（enablement 对话原文，与面板/直连一致；run_3d02db62）；②合法空——不存在词正确返回 No conversations found；③写入去重——write_knowledge 同 knowledge_id 两次调用返回 written→already_written，窗口 core 日志 conversation/add 仅 1 次请求（07:38:43，START+END 成对）即第二次零新增写调用（修复前该分支会重复写入）；回归——memory_search（CSD-79846 真实条目）与 wiki_search（wiki-xr1oantr）通过；raw capture 保持 false、探针外零采集写入；测试知识行已 layer-delete 清理。修复内容与披露：插件 __init__.py 980/1036 两处 data.items→data.messages（网关契约经直连只读探针实证：code=0, data.keys=[messages]）；write_knowledge 去重失效为已证实行为（评审离线复现二次调用 conversation_add×1）但线上未见重复数据；hermes-deploy@codex/p2-186-raw-capture-off 新增 PORT env 提交（发布链可复现 :38+）；:38 注册遗漏 runtimePlatform 已在 :39 恢复（:38 存续期内未观察运行异常）；agent-infra 修改未提交（沿用既定模式，本地与部署基线一致）。镜像 e473e5ed 仅替换插件目录（其余层继承 8e28d4d9）。"
+        },
+        {
+          "type": "test",
+          "label": "R5 后续（2026-10-07）：插件源码固化 + CSD 链手工触发尝试",
+          "command": "TencentDB-Agent-Memory 提交 1dbe1d2（__init__.py/client.py 按部署态，SHA-256 243eed48/7d651595 对应镜像 e473e5ed）+ n8n MCP execute_workflow（production，Schedule Trigger）",
+          "result": "①源码固化：codex/hermes-zendesk-agent@1dbe1d2，两插件文件与运行容器逐字节一致，提交信息含镜像 digest/td/task 对应；MemoryPanel 两个无关未提交文件未动。②CSD 手工触发执行 187833（mode=trigger，08:07:58→08:08:12，14.3s，success）：与 04:00 自然执行 187702 同形态——JQL 扫描后全部命中 csd 去重回环，4 小时窗口内无新增合格 issue，本轮未产生正向入库样本；链按需执行与去重幂等再次确认。正向入库样本继续等待：CSD 下一自然窗口 2026-10-08 12:00（北京）或新增已解决且原因/方案清晰的 CSD issue；Solved 待自然合格工单或用户授权受控 Zendesk 通道（本轮评审明示不扩展业务重放授权）。"
         }
       ]
     },
