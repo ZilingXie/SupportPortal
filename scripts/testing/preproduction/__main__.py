@@ -332,7 +332,27 @@ def main() -> int:
     parser.add_argument("--scenario", choices=sorted(_scenario_ids()))
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--check", action="store_true", help="preflight only; no ticket is created")
+    parser.add_argument(
+        "--approval-evidence-file",
+        default=None,
+        help="PP-A1 full mode only (optional): JSON file with operator-side TWO-stage "
+        "approval evidence per the SKILL contract: {precheck: {request_id, "
+        "request_version, method: human, approver, approved_at, action: approve_execution, "
+        "report_digest}, execution_result: {request_id, request_version, method: human, "
+        "approver, approved_at, decision: approved, result_digest, result_payload "
+        "(the approved enablement-relay-result-v1 payload; must hash to result_digest "
+        "and match the server outcome), relay_message_id}}. Without it a full run stays "
+        "complete=false: the server-side approval_ref cannot prove two HUMAN approvals.",
+    )
     parser.add_argument("--relay-timeout-min", type=int, default=None)
+    parser.add_argument(
+        "--stop-after",
+        choices=("progress", "full"),
+        default=None,
+        help="PP-A1 only: stop after the conversational contract (default progress); "
+        "'full' additionally waits for the Mac relay execution window, completion "
+        "reply, delivery, and solved status",
+    )
     parser.add_argument("--report-file", default=None, help="write the redacted JSON run report here")
     parser.add_argument("--pilot-bin", default=None)
     parser.add_argument(
@@ -414,6 +434,13 @@ def main() -> int:
                 )
                 exit_code = 2
         else:
+            runner_kwargs = {}
+            if args.scenario == "PP-A1":
+                runner_kwargs["stop_after"] = args.stop_after or "progress"
+                if args.approval_evidence_file:
+                    runner_kwargs["approval_evidence"] = json.loads(
+                        Path(args.approval_evidence_file).read_text(encoding="utf-8")
+                    )
             report = runner(
                 engine,
                 skill_script=_default_skill(),
@@ -421,7 +448,17 @@ def main() -> int:
                 relay_base=relay_base,
                 relay_token=relay_token,
                 ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
+                **runner_kwargs,
             )
+        if report.get("complete") is False:
+            # PP-A1 progress mode (and any future partial mode): a run that
+            # skipped its completion leg is never a full pass, regardless of
+            # how many steps passed.
+            log(
+                f"scenario {args.scenario} report is INCOMPLETE: "
+                f"{report.get('incomplete_reason') or 'completion leg did not run'}"
+            )
+            exit_code = 2
         report["redacted"] = {
             "app_id": pp.redact_app_id(pp.PP_APP_ID),
             "sender": pp.redact_email(engine.sender),

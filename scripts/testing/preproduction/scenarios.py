@@ -18,19 +18,24 @@ the ECS worker can apply the result.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
 
 from backend.services.automation_test_scenarios import (
     AutomationTestScenarioError,
     ScenarioContext,
+    _ask_appid_content_check,
     _enablement_enabled_content_check,
+    _progress_answer_content_check,
+    _submission_confirmation_content_check,
 )
 
 # Quick and Full share the same enableable App ID. Fixture history:
@@ -1615,7 +1620,526 @@ def run_pp_en_duplicate_notice(
     }
 
 
+# -- PP-A1 (plan scenario A1): enablement conversational lifecycle ---------
+
+# 31 chars: valid-looking hex but the wrong length, so worker-side format
+# validation rejects it before any relay application exists.
+A1_INVALID_APPID = "8cb7aea984c4457daad802e6960e247"
+
+
+_A1_ASK_BACK_RE = re.compile(
+    r"(?i)\b(?:could|can|would|will)\s+you\s+(?:please\s+)?(?:share|provide|send|give)\b"
+    r"[^.\n!?]{0,40}\bapp\s*id\b"
+    r"|\bplease\s+(?:share|provide|send|give)\b[^.\n!?]{0,40}\bapp\s*id\b"
+)
+_A1_INVALID_NOTICE_RE = re.compile(
+    r"(?i)\bapp\s*id\b[^.\n]{0,60}\b(?:is\s+)?(?:invalid|incorrect|wrong|not\s+valid)\b"
+    r"|\b(?:invalid|incorrect|wrong)\s+app\s*id\b"
+)
+_A1_DEFINITION_RE = re.compile(
+    r"(?i)\b(?:32[- ]character|unique|identifier|project\s*id|project\s+identifier)\b"
+)
+_A1_LOCATION_RE = re.compile(
+    r"(?i)\b(?:console|dashboard|project\s+list|projects?\s+page|settings|agora\s+console)\b"
+)
+_A1_DEGRADE_CANNOT_RE = re.compile(
+    r"(?i)\b(?:cannot|can't|could not|couldn't|not\s+able\s+to|unable\s+to|don't\s+have|do\s+not\s+have)\b"
+)
+_A1_DEGRADE_KNOWLEDGE_RE = re.compile(
+    r"(?i)\b(?:documentation|docs|reliably|confirm|verified|up[- ]to[- ]date)\b"
+)
+_A1_NEXT_STEP_RE = re.compile(
+    r"(?i)\b(?:contact|support|follow\s+up|open\s+a\s+(?:new\s+)?ticket|reach\s+out|provide|share)\b"
+)
+
+
+def _a1_meaning_answer_content_check(content: str) -> str | None:
+    """Acceptance check (PP-A1 turn 2): the delivered reply must actually
+    ANSWER "what is the App ID / where do I find it".
+
+    Passes only on (a) a real explanation — App ID described (32-char unique
+    project identifier or equivalent) and/or where to find it (console /
+    project list / dashboard), or (b) an explicit knowledge degradation that
+    says it cannot reliably answer AND gives a next step. Asking the customer
+    to provide the App ID and rejecting an invalid App ID are explicit
+    counterexamples: they contain the keyword but answer nothing.
+    """
+    text = str(content or "").strip()
+    if len(text) < 20:
+        return "delivered answer too short to be a real reply"
+    lowered = text.casefold()
+    if "app id" not in lowered and "appid" not in lowered.replace(" ", ""):
+        return "delivered answer does not address the App ID question"
+    # Counterexample gates come FIRST and carry no exemption: a reply that
+    # rejects an invalid App ID or asks the customer to provide it does not
+    # answer the question, no matter which console/dashboard words follow.
+    if _A1_INVALID_NOTICE_RE.search(text):
+        return "reply rejects an invalid App ID instead of answering"
+    if _A1_ASK_BACK_RE.search(text):
+        return "reply asks the customer to provide the App ID instead of answering"
+    if _A1_DEFINITION_RE.search(text) or _A1_LOCATION_RE.search(text):
+        return None
+    if (
+        _A1_DEGRADE_CANNOT_RE.search(text)
+        and _A1_DEGRADE_KNOWLEDGE_RE.search(text)
+        and _A1_NEXT_STEP_RE.search(text)
+    ):
+        return None
+    return (
+        "reply neither explains what/where the App ID is nor explicitly states "
+        "it cannot reliably answer with a next step"
+    )
+
+
+def _json_projection_equal(left: Any, right: Any) -> bool:
+    """JSON-type-preserving structural equality.
+
+    Booleans only match booleans (Python bool is an int subclass, so
+    False == 0 / True == 1 must be explicitly guarded), numbers match
+    numbers, strings only strings, objects compare key-order-independently,
+    arrays element-wise. A body whose JSON types differ is a DIFFERENT
+    artifact even when values coerce equal.
+    """
+    if isinstance(left, bool) or isinstance(right, bool):
+        return isinstance(left, bool) and isinstance(right, bool) and left == right
+    if isinstance(left, (int, float)) and isinstance(right, (int, float)):
+        return left == right
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(
+            _json_projection_equal(left[key], right[key]) for key in left
+        )
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(
+            _json_projection_equal(a, b) for a, b in zip(left, right)
+        )
+    return type(left) is type(right) and left == right
+
+
+def _normalize_text_projection_value(value: Any) -> Any:
+    """TEXT-field normalization (detail): only a blank string counts as no
+    content; the text is NEVER parsed as JSON — "true", "null", and numeric
+    text must keep their string identity against type-substituted bodies.
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    return value
+
+
+def _normalize_json_projection_value(value: Any) -> Any:
+    """JSON-field normalization (readback): None, blank strings, and empty
+    containers carry no business content; JSON strings are parsed so objects
+    compare structurally (key order is not part of the persisted contract).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        try:
+            return json.loads(stripped)
+        except ValueError:
+            return value
+    if isinstance(value, (dict, list)) and not value:
+        return None
+    return value
+
+
+def _two_stage_human_approvals_proven(
+    evidence: dict[str, Any], *, server: dict[str, Any]
+) -> tuple[bool, str]:
+    """Verify operator-supplied approval evidence against the SKILL contract
+    (supportportal-media-relay-enablement): TWO distinguishable human
+    approvals — the pre-execution approval of the precheck report and the
+    post-execution approval of the result return — each bound to THIS
+    request/version, with an EXPLICIT approving decision, stage 1's digest
+    matching the server approval_ref digest, stage 2 approving the ACTUAL
+    returned artifact (the supplied result payload must hash to the stage's
+    digest and match the server outcome), and the stage order following the
+    contract (result approval strictly after the precheck approval).
+
+    Rejected decisions, records bound to another request, wrong versions,
+    test_auto_approval methods, digests that do not cover the artifact,
+    payload/server outcome mismatches, inverted stage order, or a missing
+    stage leave the verdict False with the reason.
+    """
+    pre = evidence.get("precheck")
+    res = evidence.get("execution_result")
+    if not isinstance(pre, dict) or not isinstance(res, dict):
+        return False, "approval evidence must carry both stages (precheck + execution_result)"
+    request_id = str(server.get("request_id") or "")
+    version = str(server.get("request_version") or "")
+    stage_times: dict[str, datetime] = {}
+    for label, stage in (("precheck", pre), ("execution_result", res)):
+        if str(stage.get("request_id") or "") != request_id:
+            return False, f"{label} approval is bound to a different request"
+        if str(stage.get("request_version") or "") != version:
+            return False, f"{label} approval version mismatch"
+        if str(stage.get("method") or "") != "human":
+            return False, f"{label} approval method is not human"
+        if not str(stage.get("approver") or "").strip():
+            return False, f"{label} approval has no approver"
+        try:
+            stage_times[label] = datetime.fromisoformat(
+                str(stage.get("approved_at") or "").replace("Z", "+00:00")
+            )
+        except ValueError:
+            return False, f"{label} approval approved_at missing/unparseable"
+    if str(pre.get("action") or "") != "approve_execution":
+        return False, "precheck approval action is not approve_execution"
+    if str(res.get("decision") or "") != "approved":
+        return False, "execution_result record does not record an approving decision"
+    if stage_times["execution_result"] <= stage_times["precheck"]:
+        return False, (
+            "execution_result approval does not follow the precheck approval "
+            "(stage order inverted)"
+        )
+    pre_digest = str(pre.get("report_digest") or "")
+    if pre_digest != str(server.get("report_digest") or ""):
+        return False, "precheck digest does not match the server approval_ref digest"
+    res_digest = str(res.get("result_digest") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", res_digest):
+        return False, "execution_result approval digest missing/not sha256"
+    if res_digest == pre_digest:
+        return False, "the two approval records are duplicates (identical digests)"
+    payload = res.get("result_payload")
+    if not isinstance(payload, dict):
+        return False, "execution_result approval lacks the approved result payload"
+    computed = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    ).hexdigest()
+    if computed != res_digest:
+        return False, "result_digest does not cover the supplied result payload"
+    if str(payload.get("request_id") or "") != request_id:
+        return False, "approved result payload is bound to a different request"
+    if str(payload.get("request_version") or "") != version:
+        return False, "approved result payload version mismatch"
+    if str(payload.get("outcome") or "") != str(server.get("outcome") or ""):
+        return False, "approved result payload outcome differs from the server record"
+    # The payload must agree with the authoritative persisted projection on
+    # the business fields the server records: a self-consistent digest over a
+    # MODIFIED body (e.g. write_attempted flipped and the digest recomputed)
+    # is still not the artifact that was actually returned (R7), and OMITTING
+    # a field the server recorded must not skip verification either (R8).
+    if "write_attempted" not in payload:
+        return False, "approved result payload lacks write_attempted"
+    # JSON-type-preserving: the worker persists bool(payload[write_attempted])
+    # (worker.py), where the STRING "false" would land as True — so only a
+    # real boolean matching the recorded boolean is the same returned body.
+    server_write_attempted = server.get("write_attempted")
+    payload_write_attempted = payload.get("write_attempted")
+    if (
+        not isinstance(payload_write_attempted, bool)
+        or not isinstance(server_write_attempted, bool)
+        or payload_write_attempted is not server_write_attempted
+    ):
+        return False, "approved result payload write_attempted differs from the server record"
+    # Per-field normalization (R10): detail keeps its TEXT contract (no JSON
+    # parsing — text "true"/"null" stays a string); JSON decoding applies to
+    # the readback path only.
+    normalizers = {
+        "detail": _normalize_text_projection_value,
+        "readback": _normalize_json_projection_value,
+    }
+    for field in ("detail", "readback"):
+        server_value = normalizers[field](server.get(field))
+        payload_present = field in payload
+        payload_value = (
+            normalizers[field](payload.get(field))
+            if payload_present else None
+        )
+        if server_value is None:
+            if payload_present and payload_value is not None:
+                return False, (
+                    f"approved result payload {field} carries content the "
+                    "server record does not have"
+                )
+            continue
+        if not payload_present or payload_value is None:
+            return False, (
+                f"approved result payload omits {field} present in the server "
+                "record; omission cannot stand in for the actual returned body"
+            )
+        if not _json_projection_equal(payload_value, server_value):
+            return False, f"approved result payload {field} differs from the server record"
+    relay_message_id = str(res.get("relay_message_id") or "")
+    if not relay_message_id or relay_message_id != str(server.get("relay_message_id") or ""):
+        return False, (
+            "execution_result approval is not bound to the returned artifact "
+            "(relay_message_id missing/mismatched)"
+        )
+    return True, "both stages verified"
+
+
+def run_pp_a1_full(
+    engine: Any,
+    *,
+    stop_after: str = "progress",
+    relay_base: str = "",
+    relay_token: str = "",
+    relay_client_identity: dict[str, str] | None = None,
+    ecs_agent_id: str = "",
+    fetch_json: Callable[..., dict] = _http_json,
+    get_json: Callable[..., dict] = _http_json,
+    approval_evidence: dict | None = None,
+    **_ignored: Any,
+) -> dict:
+    """PP-A1: missing App ID ask -> meaning question -> invalid -> valid -> nudge.
+
+    Runs against the hermes native case engine (AUTOMATION_CASE_ENGINE=hermes)
+    with real archer enablement dispatch. Every customer-visible turn outcome
+    is asserted on DELIVERY for the current turn (whichever pipeline produced
+    it) plus content, ownership, and application-count contracts; a turn that
+    was merely created, queued, superseded, or failed never counts.
+    ``stop_after="progress"`` (default) stops after the turn-5 nudge and
+    reports ``complete=False``; ``"full"`` additionally waits for the relay
+    result, completion reply, delivery, and solved — the completion leg
+    requires the Mac relay execution window and real human approvals.
+    """
+    if engine.customer_turn_transport != "zendesk_api":
+        raise AutomationTestScenarioError(
+            "PP-A1 requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api "
+            "(the email transport is not usable for preproduction customer turns)"
+        )
+    ctx = ScenarioContext("PP-A1")
+    engine.start_ticket(
+        ctx,
+        "Enable media relay for our project",
+        "Hello Agora team,\n\n"
+        "I want to enable media relay for our project.\n\n"
+        "Thanks.",
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+
+    # Turn 1 (E3-pinned): the missing-App-ID ask is an agent-drafted reply.
+    engine.wait_hermes_draft_delivered(
+        ctx, "ask for App ID draft delivered (turn 1)",
+        content_check=_ask_appid_content_check,
+    )
+
+    # Turn 2: meaning question. Knowledge unavailability is an allowed
+    # degradation this round, but a PASS requires the answer to be DELIVERED
+    # to the customer for THIS turn (draft or reply-job pipeline) and to
+    # actually address the question — turn creation alone never counts.
+    engine.next_customer_turn(
+        ctx,
+        "What is the App ID? I am not sure where to find it in the console.",
+    )
+    engine.wait_customer_reply_delivered(
+        ctx, "App ID meaning question answered and delivered (turn 2)",
+        content_check=_a1_meaning_answer_content_check,
+    )
+    engine.wait_case_field(
+        ctx, "automation_status", "automation",
+        "case stays automation-owned after the meaning question (turn 2)",
+    )
+    requests_after_turn2 = engine.relay_request_count(ctx)
+    engine.record(
+        ctx, "meaning question creates no relay application (turn 2)",
+        requests_after_turn2 == 0,
+        f"relay_request_count={requests_after_turn2}",
+    )
+
+    # Turn 3 (p2-178 pinned, worker-side): invalid-format App ID is rejected
+    # with the dedicated reply intent and case marker, no relay application.
+    engine.next_customer_turn(ctx, f"My App ID is {A1_INVALID_APPID}")
+    engine.wait_reply_intent(
+        ctx, {"enablement_appid_invalid"}, "invalid-format App ID rejected (turn 3)"
+    )
+    engine.wait_case_field(
+        ctx, "internal_email_send_reason", "appid_invalid_format",
+        "invalid App ID case marker (turn 3)",
+    )
+    requests_after_turn3 = engine.relay_request_count(ctx)
+    engine.record(
+        ctx, "invalid App ID creates no relay application (turn 3)",
+        requests_after_turn3 == 0,
+        f"relay_request_count={requests_after_turn3}",
+    )
+
+    # Turn 4 (p2-178 pinned): valid App ID -> submission confirmation ->
+    # exactly one relay application, dispatched to the real Mac client.
+    engine.next_customer_turn(
+        ctx,
+        f"Sorry, typo. My App ID is {PP_APP_ID}\n\n"
+        "We are building a live event platform and need Media Relay to bridge "
+        "presenters between two channels. Thank you.",
+    )
+    engine.wait_reply_intent(
+        ctx, {"submission_confirmation"}, "submission confirmation (turn 4)"
+    )
+    engine.wait_published_reply_content(
+        ctx,
+        expected_intent="submission_confirmation",
+        check=_submission_confirmation_content_check,
+        step="confirmation content mentions review without a deadline promise",
+    )
+    turn4_request = engine.wait_enablement_relay_request(
+        ctx, "relay request created after confirmation"
+    )
+    turn4_request_id = str(turn4_request.get("request_id") or "")
+    request_row = wait_enablement_relay_dispatched(
+        engine=engine, ctx=ctx,
+        step="relay request dispatched to the Mac client (real archer mode)",
+    )
+    binding = verify_relay_binding(
+        engine,
+        ctx,
+        request_row,
+        relay_api_base=relay_base,
+        relay_token=relay_token,
+        identity=relay_client_identity or load_relay_client_identity(),
+        ecs_agent_id=ecs_agent_id,
+        fetch_json=fetch_json,
+        get_json=get_json,
+    )
+    engine.record(
+        ctx,
+        "relay binding verified (server readback + same-AppID table)",
+        True,
+        f"relay_task={binding.get('relay_task_id')} status={binding.get('status')} "
+        f"ticket_valid={binding.get('ticket_valid')}",
+    )
+
+    # Turn 5: progress nudge answered from the bound relay request's state —
+    # PASS requires the answer DELIVERED for THIS turn with progress-answer
+    # content (review status stated, no acceleration promise); hard parts are
+    # the untouched bound request and no second application.
+    engine.next_customer_turn(
+        ctx,
+        "Hi, any progress on the media relay enablement for our project?",
+    )
+    engine.wait_customer_reply_delivered(
+        ctx, "progress nudge answered and delivered (turn 5)",
+        content_check=_progress_answer_content_check,
+    )
+    engine.wait_bound_relay_request_active(
+        ctx, turn4_request_id,
+        "nudge leaves the bound relay application untouched (turn 5)",
+    )
+    requests_after_turn5 = engine.relay_request_count(ctx)
+    engine.record(
+        ctx, "nudge creates no second relay application (turn 5)",
+        requests_after_turn5 == 1,
+        f"relay_request_count={requests_after_turn5}",
+    )
+    engine.wait_case_field(
+        ctx, "automation_status", "automation",
+        "case stays automation-owned after the nudge (turn 5)",
+    )
+
+    if stop_after == "progress":
+        engine.info(
+            "[PP-A1] stopping after the conversational contract (stop_after=progress); "
+            "the completion leg requires the Mac relay execution window"
+        )
+        return {
+            "scenario": "PP-A1",
+            "stop_after": stop_after,
+            # Explicit incompleteness: a progress-mode run never claims the
+            # full A1 acceptance (completion leg not executed; no approvals
+            # observed), and the CLI must exit non-zero on this flag.
+            "complete": False,
+            "incomplete_reason": (
+                "stop_after=progress: relay result, completion reply, delivery, "
+                "solved, and the two human approvals were NOT executed or verified"
+            ),
+            "steps": [step.as_dict() for step in engine.steps],
+        }
+
+    # Completion leg (real archer): relay result -> approval binding verified
+    # -> completion reply -> solved.
+    engine.emit_relay_approval_hint(ctx, timeout_min=engine.relay_timeout_min)
+    engine.wait_enablement_relay_result(
+        ctx, {"enabled", "already_satisfied"},
+        "relay result: enabled or already_satisfied (completion leg)",
+        request_id=turn4_request_id,
+    )
+    evidence_input = approval_evidence or {}
+    precheck_digest = ""
+    if isinstance(evidence_input.get("precheck"), dict):
+        precheck_digest = str(evidence_input["precheck"].get("report_digest") or "")
+    approval = engine.verify_relay_result_approval_binding(
+        ctx, turn4_request_id,
+        "relay result approval binding verified (worker gate)",
+        expected_outcomes={"enabled", "already_satisfied"},
+        expected_report_digest=precheck_digest or None,
+    )
+    two_human_proven, two_human_reason = _two_stage_human_approvals_proven(
+        evidence_input, server=approval
+    )
+    engine.wait_reply_intent(
+        ctx, {"enablement_archer_enabled"}, "enablement completion reply"
+    )
+    engine.wait_published_reply_content(
+        ctx,
+        expected_intent="enablement_archer_enabled",
+        check=_enablement_enabled_content_check,
+        step="completion content states enablement and closes the case",
+    )
+    engine.wait_zendesk_delivery_delivered(ctx, "ticket solved delivery")
+    engine.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
+    approval_evidence_report = {
+        "request_id": approval.get("request_id"),
+        "request_version": approval.get("request_version"),
+        "report_digest": approval.get("report_digest"),
+        "outcome": approval.get("outcome"),
+        "binding_verified": approval.get("binding_verified"),
+        "digest_cross_checked": approval.get("digest_cross_checked"),
+        "two_human_approvals_verified": two_human_proven,
+        "two_human_approvals_reason": two_human_reason,
+        "method_limitation": (
+            "the two-human-approvals verdict requires operator-supplied evidence "
+            "for BOTH stages of the SKILL contract: the pre-execution approval of "
+            "the precheck report (digest matching the server approval_ref) and "
+            "the post-execution approval of the result return (bound via "
+            "relay_message_id); server-side records cannot prove either stage's "
+            "human origin by themselves"
+        ),
+    }
+    if two_human_proven:
+        return {
+            "scenario": "PP-A1",
+            "stop_after": stop_after,
+            "complete": True,
+            "steps": [step.as_dict() for step in engine.steps],
+            "approval_method": "real_human",
+            "approval_evidence": approval_evidence_report,
+        }
+    # The completion chain executed, but the two-human-approvals claim is NOT
+    # proven: keep the run explicitly incomplete rather than asserting
+    # real_human from binding evidence alone.
+    return {
+        "scenario": "PP-A1",
+        "stop_after": stop_after,
+        "complete": False,
+        "incomplete_reason": (
+            "completion leg executed and the approval reference is bound "
+            "(action/request_id/version/digest shape), but the TWO human "
+            "approvals are not proven: operator-supplied two-stage approval "
+            f"evidence failed verification ({two_human_reason})"
+        ),
+        "steps": [step.as_dict() for step in engine.steps],
+        "approval_evidence": approval_evidence_report,
+    }
+
+
 PP_SCENARIOS: dict[str, dict[str, Any]] = {
+    "PP-A1": {
+        "label": "Enablement conversational lifecycle (preproduction, engine=hermes)",
+        "description": (
+            "missing App ID ask -> App ID meaning question (knowledge degradation "
+            "allowed) -> invalid-format rejection -> valid submission + relay "
+            "dispatch/binding -> progress nudge from bound request state; "
+            "stop_after=full additionally waits for the Mac relay execution window, "
+            "completion reply, delivery, and solved"
+        ),
+        "run": run_pp_a1_full,
+        "requires": {"relay": True, "pilot": False, "zendesk_api": True, "intake": False},
+    },
     "PP-EN-QUICK": {
         "label": "Media Relay quick enablement (preproduction)",
         "description": (
