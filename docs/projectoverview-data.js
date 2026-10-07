@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T07:23:10Z",
-  "source_base_commit": "22e835bc602e3526907dfe199b84f6069677b444",
-  "registry_digest": "e286206015ebd571d35908527239772fd59f31f69a14370fc2c955b81b82fd75",
+  "generated_at": "2026-10-07T07:40:41Z",
+  "source_base_commit": "8811d91a2aabf9d5274eaf04b821f3c9c2a0f759",
+  "registry_digest": "679ba93ac826d1753f4ee5c9eb43414c8f359b4807e2b1cd067460a48e3f624e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5227,6 +5227,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复后实证（2026-10-07）：两检索工具经真实 Agent 入口读取既有知识",
           "command": "zacBot→ENI 172.31.47.202:8642 /v1/runs 与 /v1/responses 探针 + dashboard sessions/messages + core CloudWatch 请求日志 + 面板 chat-memory/search 交叉核对",
           "result": "T1e（run_64461ea8a0ae4e07a9f6191027ba6308）：memory_tencentdb_memory_search 原生直呼返回 3 条 L1（CSD-79603，正文与面板独立检索逐字一致）；06:51 追加实验（AEC 查询）返回 CSD-79846 两条真实条目，对应 core atomic/search 06:51:40-45 两次 200（duration 1419/344ms）——验收条件'两种检索工具读取既有知识'之 memory_search 通道实证成立、conversation_search 通道派发/执行已通但结果解析存在上游小缺陷（恒空），已单独定性。wiki_search 回归正常。raw capture 仍零（conversation/add=0，env false）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮二（2026-10-07，R4 评审后）：conversation_search/write_knowledge 解析修复 + 发布源同步 + td:39",
+          "command": "agent-infra 插件两消费点修复（data.items→data.messages）→ zacBot amd64 overlay 镜像（FROM 部署 digest 8e28d4d9，e473e5ed）→ td:39（:38 克隆+换镜像+恢复 runtimePlatform）→ 部署 8a00a3af + 三件套 handler 回归探针 + hermes-deploy 源提交",
+          "result": "证据：①非空命中——conversation_search 'media relay' 返回 3 条真实消息（enablement 对话原文，与面板/直连一致；run_3d02db62）；②合法空——不存在词正确返回 No conversations found；③写入去重——write_knowledge 同 knowledge_id 两次调用返回 written→already_written，窗口 core 日志 conversation/add 仅 1 次请求（07:38:43，START+END 成对）即第二次零新增写调用（修复前该分支会重复写入）；回归——memory_search（CSD-79846 真实条目）与 wiki_search（wiki-xr1oantr）通过；raw capture 保持 false、探针外零采集写入；测试知识行已 layer-delete 清理。修复内容与披露：插件 __init__.py 980/1036 两处 data.items→data.messages（网关契约经直连只读探针实证：code=0, data.keys=[messages]）；write_knowledge 去重失效为已证实行为（评审离线复现二次调用 conversation_add×1）但线上未见重复数据；hermes-deploy@codex/p2-186-raw-capture-off 新增 PORT env 提交（发布链可复现 :38+）；:38 注册遗漏 runtimePlatform 已在 :39 恢复（:38 存续期内未观察运行异常）；agent-infra 修改未提交（沿用既定模式，本地与部署基线一致）。镜像 e473e5ed 仅替换插件目录（其余层继承 8e28d4d9）。"
         }
       ],
       "source_refs": [
@@ -16197,9 +16203,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
       "created_at": "2026-10-06T00:00:00Z",
-      "updated_at": "2026-10-07T07:30:00Z",
+      "updated_at": "2026-10-07T08:20:00Z",
       "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
-      "next_action": "实链验收轮执行中（2026-10-07，评审结论证据不足后的定向补测）：wiki 链已完整闭环——既有知识读取（T1 探针 run_0c1f1090：wiki_search 56/56 命中 wiki-ms0rjfcw、wiki_read_page 引用原文两句经面板 API 逐字核对）+ 受控样本写入（wiki-cxbm3dh0 四步 create/raw-write/ingest→ready、检索命中）+ 绑定 agt-7oifq1fctv 后另一会话（run_0b5bfdb8）跨会话精确回读同一对象；raw capture 零新增成立（td:37 起 L0=0，含 4 轮真实对话）。阻断项（第二轮复核后收窄定性）：memory_tencentdb 两个检索工具共 5 次真实调用全部 Unknown tool（双入口 3 会话；桥接另 2 次被拒 non-deferrable；read_scene/write_knowledge 未测）——provider 确认活跃（会话启动 L1/L0 召回请求均 200）、仅模型工具调用派发断裂，根因在 manager 路由表与 agent.tools 注入之间，需 hermes 侧容器插桩或本地复现定位后修复（agent-infra 独立缺陷轮，修复前 v4 Prompt 工具合同与运行时不一致，memory 工具读取验收项维持阻断）。Solved 链：受控重放已定性不可行（治理期版本无 solved_ticket 去重但窗口内无知识型 SOLVED 自然样本；preprod 库唯一已解决工单 13832 为 Media Relay 必被 AI 筛选排除；缺 Zendesk 写凭据无法造受控合格工单），恢复后真实执行（187316/187389 等）已证 webhook→去重→快照→完整评论校验→AI 筛选各段、拒绝分支按设计工作，approve→Wiki 入库段待自然合格样本；CSD 链已于 2026-10-07 12:00（北京）自然触发取证（执行 187702，18/18 命中去重零新入库，链与去重门禁正常）；两链 approve→Wiki 入库段的完整工作流内执行仍待自然合格样本。",
+      "next_action": "第四轮评审（未通过）后修复轮完成（2026-10-07）：①conversation_search/write_knowledge 响应解析缺陷已修——根因为插件读取 data.items 而网关 /v3/conversation/search 实际返回 data.messages（直连实证 item 键 content/id/role/score/timestamp），两消费点（检索展示 980 行、write_knowledge 去重 1036 行）一并修复，插件 overlay 镜像 e473e5ed（FROM 8e28d4d9 仅换插件目录）经 td:39 部署（含 :37 runtimePlatform X86_64/LINUX 恢复——:38 注册时该项被遗漏，:39 已恢复）；handler 回归三件套实证：非空命中（conversation_search 'media relay' 3 条真实消息）、合法空（不存在词正确报 No conversations found）、重复写入零新增（同 knowledge_id 二次调用 already_written，窗口 conversation/add 仅 1 次请求）+ memory_search/wiki 回归通过 + raw capture 保持 false。②发布来源已同步：hermes-deploy codex/p2-186-raw-capture-off 新提交将 MEMORY_TENCENTDB_GATEWAY_PORT=8420 加入 SUPPORT_AGENT_ENVIRONMENT（import 校验 8 项 env 含 PORT）。③agent-infra 工作树插件修改未提交（沿用 9 月补丁的既定模式，本地=部署基线）。剩余：两 n8n 链（Solved/CSD）工作流内 approve→生成→create→raw/write→ingest 正向入库样本仍缺（CSD 每日 12:00 北京自然触发可观察、Solved 待自然合格工单或授权受控通道）；测试知识行已清理（layer-delete deleted_count=1）。p2-186 保持 active，门禁未释放。",
       "acceptance_criteria": [
         "治理总开关关闭（缺省）且 Hermes=real 时：solved/closed/本地 resolved 零新增 Summary/Review 行；standalone/CSD/article intake 与同版本重投零创建零复活；排水不领取既有任务、零 Hermes 知识治理会话、零 WeKnora 调用；残留 WEKNORA_PROMOTION_ENABLED=1 时 close 默认分支零候选；普通调查与回复不受影响。",
         "/v1/knowledge/promotions/{id}/decision 在治理关闭时对 approve/reject 显式 409 拒绝，积压 human_review 行内容不变。",
@@ -16287,6 +16293,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复后实证（2026-10-07）：两检索工具经真实 Agent 入口读取既有知识",
           "command": "zacBot→ENI 172.31.47.202:8642 /v1/runs 与 /v1/responses 探针 + dashboard sessions/messages + core CloudWatch 请求日志 + 面板 chat-memory/search 交叉核对",
           "result": "T1e（run_64461ea8a0ae4e07a9f6191027ba6308）：memory_tencentdb_memory_search 原生直呼返回 3 条 L1（CSD-79603，正文与面板独立检索逐字一致）；06:51 追加实验（AEC 查询）返回 CSD-79846 两条真实条目，对应 core atomic/search 06:51:40-45 两次 200（duration 1419/344ms）——验收条件'两种检索工具读取既有知识'之 memory_search 通道实证成立、conversation_search 通道派发/执行已通但结果解析存在上游小缺陷（恒空），已单独定性。wiki_search 回归正常。raw capture 仍零（conversation/add=0，env false）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮二（2026-10-07，R4 评审后）：conversation_search/write_knowledge 解析修复 + 发布源同步 + td:39",
+          "command": "agent-infra 插件两消费点修复（data.items→data.messages）→ zacBot amd64 overlay 镜像（FROM 部署 digest 8e28d4d9，e473e5ed）→ td:39（:38 克隆+换镜像+恢复 runtimePlatform）→ 部署 8a00a3af + 三件套 handler 回归探针 + hermes-deploy 源提交",
+          "result": "证据：①非空命中——conversation_search 'media relay' 返回 3 条真实消息（enablement 对话原文，与面板/直连一致；run_3d02db62）；②合法空——不存在词正确返回 No conversations found；③写入去重——write_knowledge 同 knowledge_id 两次调用返回 written→already_written，窗口 core 日志 conversation/add 仅 1 次请求（07:38:43，START+END 成对）即第二次零新增写调用（修复前该分支会重复写入）；回归——memory_search（CSD-79846 真实条目）与 wiki_search（wiki-xr1oantr）通过；raw capture 保持 false、探针外零采集写入；测试知识行已 layer-delete 清理。修复内容与披露：插件 __init__.py 980/1036 两处 data.items→data.messages（网关契约经直连只读探针实证：code=0, data.keys=[messages]）；write_knowledge 去重失效为已证实行为（评审离线复现二次调用 conversation_add×1）但线上未见重复数据；hermes-deploy@codex/p2-186-raw-capture-off 新增 PORT env 提交（发布链可复现 :38+）；:38 注册遗漏 runtimePlatform 已在 :39 恢复（:38 存续期内未观察运行异常）；agent-infra 修改未提交（沿用既定模式，本地与部署基线一致）。镜像 e473e5ed 仅替换插件目录（其余层继承 8e28d4d9）。"
         }
       ]
     },
