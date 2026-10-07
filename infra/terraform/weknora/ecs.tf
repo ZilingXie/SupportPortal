@@ -86,7 +86,9 @@ resource "aws_ecs_service" "weknora" {
   launch_type      = each.value.launch_type
   platform_version = each.value.platform_version
 
-  availability_zone_rebalancing = each.value.launch_type == "FARGATE" ? "ENABLED" : "DISABLED"
+  # Single-instance services by design; AZ rebalancing is meaningless here and
+  # ECS rejects it combined with the replace-style rollout (maximumPercent=100).
+  availability_zone_rebalancing = "DISABLED"
   wait_for_steady_state         = false
 
   enable_ecs_managed_tags = true

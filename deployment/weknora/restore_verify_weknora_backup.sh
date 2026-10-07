@@ -60,9 +60,13 @@ podman exec "$CONTAINER" pg_restore -U "$DB_USER" -d "$DB_NAME" --no-owner --no-
 log "restore complete; verifying object counts"
 
 COUNTS="$(podman exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -Atc \
-  "SELECT 'knowledge_bases='||count(*) FROM knowledge_bases WHERE deleted_at IS NULL UNION ALL SELECT 'knowledges='||count(*) FROM knowledges WHERE deleted_at IS NULL UNION ALL SELECT 'chunks='||count(*) FROM chunks WHERE deleted_at IS NULL UNION ALL SELECT 'embeddings='||count(*) FROM embeddings")"
+  "SELECT 'users='||count(*) FROM users WHERE deleted_at IS NULL UNION ALL SELECT 'knowledge_bases='||count(*) FROM knowledge_bases WHERE deleted_at IS NULL UNION ALL SELECT 'knowledges='||count(*) FROM knowledges WHERE deleted_at IS NULL UNION ALL SELECT 'chunks='||count(*) FROM chunks WHERE deleted_at IS NULL UNION ALL SELECT 'embeddings='||count(*) FROM embeddings")"
 log "$COUNTS"
-echo "$COUNTS" | grep -q "knowledge_bases=0" && fail "restored database has no knowledge bases"
+# Minimal proof that the restored copy carries live data: the bootstrap admin
+# account. Knowledge object counts are meaningful once the document loop has
+# run (see --expect-knowledge for the targeted read-back check).
+USERS_N="$(awk -F= '$1=="users"{print $2}' <<<"$COUNTS")"
+[[ "${USERS_N:-0}" -ge 1 ]] || fail "restored database has no user rows (restore incomplete?)"
 
 if [[ -n "$EXPECT_KNOWLEDGE" ]]; then
   HIT="$(podman exec "$CONTAINER" psql -U "$DB_USER" -d "$DB_NAME" -Atc \

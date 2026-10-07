@@ -19,6 +19,7 @@ set -Eeuo pipefail
 COMMIT=""
 ADMIN_EMAIL=""
 OPEN_REGISTRATION=0
+REQUIRE_EXISTING_PGDATA=0
 OUTPUT=""
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 REGION="${AWS_REGION:-us-east-1}"
@@ -32,6 +33,7 @@ while [[ $# -ge 1 ]]; do
     --commit) [[ $# -ge 2 ]] || fail "--commit requires a value"; COMMIT="$2"; shift 2 ;;
     --admin-email) [[ $# -ge 2 ]] || fail "--admin-email requires a value"; ADMIN_EMAIL="$2"; shift 2 ;;
     --open-registration) OPEN_REGISTRATION=1; shift 1 ;;
+    --require-existing-pgdata) REQUIRE_EXISTING_PGDATA=1; shift 1 ;;
     --output) [[ $# -ge 2 ]] || fail "--output requires a value"; OUTPUT="$2"; shift 2 ;;
     *) fail "unknown argument: $1" ;;
   esac
@@ -113,6 +115,8 @@ log "  redis     ${REDIS_IMAGE}"
 
 DISABLE_REGISTRATION="true"
 [[ "$OPEN_REGISTRATION" -eq 1 ]] && DISABLE_REGISTRATION="false"
+PGDATA_GUARD="false"
+[[ "$REQUIRE_EXISTING_PGDATA" -eq 1 ]] && PGDATA_GUARD="true"
 
 secret() { printf '{"name":"%s","valueFrom":"%s/%s"}' "$1" "$PARAM_PREFIX" "$2"; }
 envkv()  { printf '{"name":"%s","value":"%s"}' "$1" "$2"; }
@@ -145,6 +149,7 @@ exec docker-entrypoint.sh postgres -c ssl=on -c ssl_cert_file=/var/lib/postgresq
 PARADEDB_ARN="$(register weknora-paradedb "$(jq -n \
   --arg image "$PARADEDB_IMAGE" --arg exec "$EXECUTION_ROLE_ARN" --arg region "$REGION" \
   --arg cmd "$PARADEDB_CMD" --argjson logs "$(awslogs paradedb)" \
+  --arg guard "$PGDATA_GUARD" \
   --argjson secrets "$(jq -n -c \
     "[$(secret POSTGRES_USER db_username),$(secret POSTGRES_PASSWORD db_password),$(secret POSTGRES_DB db_name),$(secret DB_TLS_SERVER_CERT_PEM db_tls_server_cert_pem),$(secret DB_TLS_SERVER_KEY_PEM db_tls_server_key_pem)]")" \
   '{
@@ -163,7 +168,8 @@ PARADEDB_ARN="$(register weknora-paradedb "$(jq -n \
       entryPoint: ["sh", "-ec"],
       command: [$cmd],
       environment: [
-        {name: "PGDATA", value: "/var/lib/postgresql/data/pgdata"}
+        {name: "PGDATA", value: "/var/lib/postgresql/data/pgdata"},
+        {name: "REQUIRE_EXISTING_PGDATA", value: $guard}
       ],
       secrets: $secrets,
       portMappings: [{containerPort: 5432, hostPort: 5432, protocol: "tcp"}],
@@ -336,6 +342,7 @@ FRONTEND_ARN="$(register weknora-frontend "$(jq -n \
         {name: "APP_PORT", value: "8080"},
         {name: "APP_SCHEME", value: "http"},
         {name: "URL_PREFIX", value: "/dashboard/weknora"},
+        {name: "DNS_RESOLVER", value: "169.254.169.253"},
         {name: "TZ", value: "Asia/Shanghai"}
       ],
       portMappings: [{containerPort: 80, hostPort: 80, protocol: "tcp"}],

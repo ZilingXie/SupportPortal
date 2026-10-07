@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T13:06:40Z",
-  "source_base_commit": "a34b62f10997c64deafed14d239a43df67188adf",
-  "registry_digest": "4b5ad06a97f58a492d5d512474dfe2d91aa1d5044855892dd13f0a55e12723ac",
+  "generated_at": "2026-10-07T15:39:35Z",
+  "source_base_commit": "9afc066b6ae8c8e4a18e40478298d0cc586da266",
+  "registry_digest": "25a6078f30110ac225aebccca871a4b578c05350005ad1b3a3116cc8f9ea89db",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5373,16 +5373,34 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "evidence": [
         {
-          "type": "document",
-          "label": "R1 只读 AWS 基线（2026-10-07T12:18Z）",
-          "command": "aws sts get-caller-identity; aws elbv2 describe-rules(443); aws ecs describe-{clusters,services,tasks}; aws ec2 describe-{subnets,route-tables,security-groups}; aws ecr describe-repositories; aws s3api list-buckets; aws rds describe-db-instances; aws route53 list-hosted-zones; aws servicediscovery list-namespaces; dig supportcenter.stellarix.space",
-          "result": "账户 891612554546 user Zac us-east-1；域名→supportportal-production-alb-1001190104（443 证书=supportcenter.stellarix.space ISSUED）；路径占用：/dashboard/weknora 空闲；两集群各 4 服务 ACTIVE 1/1；preprod 任务基线 api:108/route:107/worker:108/hermes:39（镜像 digest 已记录 docs/deploy_weknora_standalone_ecs.md）；VPC 默认公网无 NAT；无 ASG/EC2 容量提供程序；RDS/EFS/ECR/S3/CloudMap/SSM 清单已记录。上述为隔离验收基线。"
+          "type": "deployment",
+          "label": "R2 部署与公网验收（2026-10-07 23:5x）",
+          "command": "deploy_weknora_services.sh --task-definitions \u003carns3>；curl 矩阵；aws ecs describe-services/clusters",
+          "result": "五服务 ACTIVE 1/1（paradedb/redis/docreader/app/frontend，任务定义 :3）；https://supportcenter.stellarix.space/dashboard/weknora/ → 200（WeKnora index），无尾斜杠→301 保 https，config.js/tdesign-icons/hash 资产/深层路由全 200；API 代理经 app 应答（login 空 body 400、无 token 401、注册 403、/files 401、/mcp 401、/r/ 坏 token 404）；app 任务强制重建后 API 自动恢复（resolver 修复实证：502 仅存在于 app 停机窗口，新任务起来即 400/401 正常往返）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 管理员 bootstrap 与访问控制",
+          "command": "POST /api/v1/auth/register + login（公网路径）；aws logs app 日志；PUT admin/settings（env 路径未遂改用任务定义 :3）",
+          "result": "[email redacted] 注册成功（公网真实路径）→ app 重启后日志 'promoted user f4fbfdb0… to system admin via WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL' → login is_system_admin=true；注册关闭（403，:3 DISABLE_REGISTRATION=true）；无 token knowledge-bases=401。密码存 SSM /supportportal/weknora/admin_password（SecureString，交付后应轮换）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 持久化与备份恢复",
+          "command": "backup_weknora_database.sh；restore_verify_weknora_backup.sh --key db/weknora-…-20261007T153157Z.dump",
+          "result": "备份通道=SSM docker exec 容器内 pg_dump（localhost trust）→ docker cp → stdlib SigV4 预签名 PUT；产物 292,884B sha256 df7a8b765fea…；独立本地 paradedb 容器恢复 users=1（含管理员）、全表可查、verified=true。持久化：:3 在既有 PGDATA 上以 REQUIRE_EXISTING_PGDATA=true 守卫启动通过（数据跨任务重建保留的构造性证明），期间多次任务重建登录数据完好。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 构建可复现与隔离终检",
+          "command": "pack_and_build_weknora_images.sh（×3）；aws ecr describe-images；terraform plan；describe-services/rules 对照",
+          "result": "三次构建均固定归档（v1=TggfxXbx/sha256 2b869a76…、v2=w0GWxG0n/3cd17029…、v3=5c38e217 构建），buildspec WEKNORA_COMMIT_INFO 校验 commit 匹配；ECR tag=commit（v1 digest：app b8434444…/frontend 8d55d777…/docreader b800aa1c…/base-paradedb 2727f84a…/base-redis 56e4f286…）。隔离：两集群 8 服务与 ALB 规则 10/20/101-104 对照基线未变（preprod hermes :39→:40 为 p2-187 I4 修复并行部署，PR#1421）；weknora terraform 根 plan=No changes。"
         },
         {
           "type": "document",
-          "label": "R1 WeKnora fork 源码核对（79c4b2aa）",
-          "command": "git -C ~/Desktop/personal_proj/WeKnora log -1; git status; rg sslmode/BASE_URL/S3 credential chain/migrations 结构",
-          "result": "HEAD=79c4b2aaf23a8eb359db465f5eff214bb988242e（Round-14 versioned migrations 提交）、工作区干净、分支 supportportal-write-contract、无 remote。BASE_URL SPA 侧已支持（LocalHub 补丁）；sslmode=disable 3 处硬编码；S3 默认凭据链可用；versioned 迁移 000000-000116。"
+          "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+          "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+          "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
         }
       ],
       "source_refs": [
@@ -16538,8 +16556,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-standalone-deployment",
       "created_at": "2026-10-07",
       "updated_at": "2026-10-07",
-      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。目标：交付 https://supportcenter.stellarix.space/dashboard/weknora/ 可用的独立 WeKnora（登录、测试知识库、上传、处理状态、检索与原文回读），只使用非业务测试文档。R1（2026-10-07，只读基线+源码核对）：AWS 账户 891612554546/us-east-1；域名 supportcenter.stellarix.space → supportportal-production-alb（证书 ACM 5348b5fc 恰好覆盖该域名）；ALB 443 listener 现有路径 /automation/production(10)、/automation/preproduction(20)、/v1(101→hermes prod)、/dashboard/hermes(102)、/dashboard/memory(103)、/auth/password-login(104)，后三者经 TG supportportal-preprod-ui-tg2（目标=preprod hermes 任务 ENI 172.31.32.231:8080 的 ui-proxy 容器）；/dashboard/weknora 未占用。集群 supportportal-production（FARGATE/FARGATE_SPOT，api:46 route:40 worker:44 hermes:3）与 supportportal-preproduction（无 capacity provider，api:108 route:107 worker:108 hermes:39，全部 FARGATE、公网子网 assignPublicIp=ENABLED，SG sg-0845c28285f5909f3）。VPC vpc-0125f57b2ec2f0423 默认 VPC 6 公网子网、无 NAT（rtb-04449d61f9c17c19d 0.0.0.0/0→igw-0246a0889648aa00f）。RDS 仅 n8n-postgres-db（17.9 db.t4g.micro，禁用，不适用 ParadeDB 扩展）；EFS 仅 production graph-cache（禁用）；ECR 现有 supportportal/{production,preproduction,hermes,build-cache}；S3 无 weknora 桶；CloudMap 私有命名空间 preproduction.supportportal.local；SSM 前缀 /supportportal/{preproduction,production}；账户无 ASG/EC2 容量提供程序（ParadeDB 需新建专属 ECS EC2 容量）。WeKnora fork=/Users/xieziling/Desktop/personal_proj/WeKnora（分支 supportportal-write-contract，HEAD 79c4b2aaf23a8eb359db465f5eff214bb988242e，工作区干净，无 remote）。源码要点：compose 五件套=frontend(nginx80→app:8080)/app(Go 8080 /health)/docreader(gRPC50051)/paradedb v0.22.6-pg17/redis 7.0 appendonly；迁移=AUTO_MIGRATE 跑 migrations/versioned 000000..000116（fresh 库），migrations/paradedb/00-init-db.sql 为旧库路径；S3 实现支持 AWS 默认凭据链（空 AK/SK→task role）；sslmode=disable 硬编码 3 处（container.go:824/848、migration.go:304）需 fork 可配置化；前端已有 LocalHub BASE_URL 补丁（api-base.ts + createWebHistory(import.meta.env.BASE_URL)），缺口=index.html 硬编码 /config.js、/tdesign-icons 绝对路径 + frontend nginx.conf 全根相对 location + Dockerfile 无 --base 注入；docreader 共享卷为主链路不写盘的回退（拆分部署无阻断）；app 需外呼 LLM/embedding（模型凭据待定）。工作区 .worktrees/weknora-parallel-phase1（codex/weknora-parallel-phase1）。",
-      "next_action": "R2：在任务工作区落 WeKnora 专属 Terraform（新集群 supportportal-weknora + EC2 容量提供程序 + Fargate 服务 + 新 ECR/S3/CloudMap/SG/日志组 + /dashboard/weknora listener 规则，diff 只含新资源）→ fork 提交子路径与 DB SSLMODE 可配置化 → 固定 commit 归档建 CodeBuild → 部署与验收。模型凭据（LLM+embedding）在创建资源前列清，缺失时停在准备阶段。",
+      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07 晚，实施完成）：独立 WeKnora 已在 https://supportcenter.stellarix.space/dashboard/weknora/ 上线。发布链：fork 分支 supportportal-weknora-deploy（79c4b2aa + 3 个部署适配提交：3b0c8d6d 子路径+DB TLS 可配置化 → 797d6321 静态 alias 修复 → 5c38e217 upstream 动态解析）→ git archive+WEKNORA_COMMIT_INFO 归档至 release-evidence 桶（版本化+sha256）→ CodeBuild supportportal-weknora-image-build（LARGE）构建 app/frontend/docreader 三镜像 + paradedb v0.22.6-pg17/redis 7.0-alpine 基础副本 → ECR supportportal/weknora（IMMUTABLE，tag=commit）。基础设施：新 terraform 根 infra/terraform/weknora（专属集群 supportportal-weknora + t3.xlarge 容量提供程序 min=max=1 + Fargate 四服务 + TG/ALB 105 规则 + SG×2 + CloudMap weknora.supportportal.local + docs/backup 双桶 + ECR + 日志组 + CodeBuild + IAM 五角色），两次 add-only apply（46+5 资源）+ 收尾零漂移。任务定义 :1→:3（:1 开放注册 bootstrap → :3 注册关闭+REQUIRE_EXISTING_PGDATA 数据守卫）；SSM /supportportal/weknora 12 参数（DB/Redis/JWT/AES/签名密钥+DB TLS CA/证书+管理员密码）。运行态：五服务 ACTIVE 1/1，app /health 200，DB TLS verify-ca 连接（fork 改动 DB_SSLMODE/DB_SSLROOT_CERT 三处 DSN），AUTO_MIGRATE versioned 000000-000116 完成。管理员：[email redacted]（密码在 SSM admin_password）经公网注册+重启 bootstrap 提权 is_system_admin=true；注册已关闭（403）。验收：构建可复现/访问控制/Web 路由/持久化/备份恢复/隔离六项过（备份 s3://supportportal-weknora-backup…/db/…153157Z.dump 292,884B + 独立容器恢复 verified=true；隔离=旧服务/规则零变化+零漂移；期间 preprod hermes :39→:40 系 p2-187 并行线部署非本任务）。剩余两项（文档闭环、异常表现）唯一前置=模型凭据（LLM+embedding，OpenAI 兼容，可经管理 UI 或 builtin_models.yaml 配置）。实施中发现并修复：nginx 子路径 root→try_files 自循环（alias 修复）、301 scheme 降级（absolute_redirect off）、assets alias 物理路径、app 任务重建后 upstream IP 缓存 502（resolver+变量 upstream 根治，换任务实测自动恢复）、CodeBuild 版本化源需 GetObjectVersion、ECS awsvpc host→task ENI 过滤（备份改 docker exec 通道）、bsdtar 无 --transform、本机 aws 构建 presign 仅 GET（stdlib SigV4）。",
+      "next_action": "用户提供/授权模型凭据（chat+embedding，含维度与额度核对）后：管理 UI 配模型 → 非业务样本上传→处理→检索→原文回读（文档闭环）→ 失败样本错误透出（异常表现）→ 复跑备份恢复含知识对象断言（--expect-knowledge）→ p2-188 收口 done。阶段二（n8n 接入/治理链/Hermes 切换/历史迁移）另行规划。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16552,20 +16570,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
       ],
       "blockers": [
-        "文档处理与检索所需 LLM/embedding 模型凭据未定：WeKnora 需要自管 OpenAI 兼容 chat+embedding API key（不入 Hermes 配置）；创建资源前须列清并核对额度，缺失则停在准备阶段"
+        "文档闭环与异常表现两项验收需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，需固定维度并核对额度；不使用 Hermes 配置）：待用户提供新 key 或授权复用 preproduction 既有 SSM 参数（候选名：/supportportal/preproduction/openai-api-key、hermes-memory-llm-api-key、hermes-memory-embedding-api-key）"
       ],
       "evidence": [
         {
-          "type": "document",
-          "label": "R1 只读 AWS 基线（2026-10-07T12:18Z）",
-          "command": "aws sts get-caller-identity; aws elbv2 describe-rules(443); aws ecs describe-{clusters,services,tasks}; aws ec2 describe-{subnets,route-tables,security-groups}; aws ecr describe-repositories; aws s3api list-buckets; aws rds describe-db-instances; aws route53 list-hosted-zones; aws servicediscovery list-namespaces; dig supportcenter.stellarix.space",
-          "result": "账户 891612554546 user Zac us-east-1；域名→supportportal-production-alb-1001190104（443 证书=supportcenter.stellarix.space ISSUED）；路径占用：/dashboard/weknora 空闲；两集群各 4 服务 ACTIVE 1/1；preprod 任务基线 api:108/route:107/worker:108/hermes:39（镜像 digest 已记录 docs/deploy_weknora_standalone_ecs.md）；VPC 默认公网无 NAT；无 ASG/EC2 容量提供程序；RDS/EFS/ECR/S3/CloudMap/SSM 清单已记录。上述为隔离验收基线。"
+          "type": "deployment",
+          "label": "R2 部署与公网验收（2026-10-07 23:5x）",
+          "command": "deploy_weknora_services.sh --task-definitions \u003carns3>；curl 矩阵；aws ecs describe-services/clusters",
+          "result": "五服务 ACTIVE 1/1（paradedb/redis/docreader/app/frontend，任务定义 :3）；https://supportcenter.stellarix.space/dashboard/weknora/ → 200（WeKnora index），无尾斜杠→301 保 https，config.js/tdesign-icons/hash 资产/深层路由全 200；API 代理经 app 应答（login 空 body 400、无 token 401、注册 403、/files 401、/mcp 401、/r/ 坏 token 404）；app 任务强制重建后 API 自动恢复（resolver 修复实证：502 仅存在于 app 停机窗口，新任务起来即 400/401 正常往返）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 管理员 bootstrap 与访问控制",
+          "command": "POST /api/v1/auth/register + login（公网路径）；aws logs app 日志；PUT admin/settings（env 路径未遂改用任务定义 :3）",
+          "result": "[email redacted] 注册成功（公网真实路径）→ app 重启后日志 'promoted user f4fbfdb0… to system admin via WEKNORA_BOOTSTRAP_SYSTEM_ADMIN_EMAIL' → login is_system_admin=true；注册关闭（403，:3 DISABLE_REGISTRATION=true）；无 token knowledge-bases=401。密码存 SSM /supportportal/weknora/admin_password（SecureString，交付后应轮换）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 持久化与备份恢复",
+          "command": "backup_weknora_database.sh；restore_verify_weknora_backup.sh --key db/weknora-…-20261007T153157Z.dump",
+          "result": "备份通道=SSM docker exec 容器内 pg_dump（localhost trust）→ docker cp → stdlib SigV4 预签名 PUT；产物 292,884B sha256 df7a8b765fea…；独立本地 paradedb 容器恢复 users=1（含管理员）、全表可查、verified=true。持久化：:3 在既有 PGDATA 上以 REQUIRE_EXISTING_PGDATA=true 守卫启动通过（数据跨任务重建保留的构造性证明），期间多次任务重建登录数据完好。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 构建可复现与隔离终检",
+          "command": "pack_and_build_weknora_images.sh（×3）；aws ecr describe-images；terraform plan；describe-services/rules 对照",
+          "result": "三次构建均固定归档（v1=TggfxXbx/sha256 2b869a76…、v2=w0GWxG0n/3cd17029…、v3=5c38e217 构建），buildspec WEKNORA_COMMIT_INFO 校验 commit 匹配；ECR tag=commit（v1 digest：app b8434444…/frontend 8d55d777…/docreader b800aa1c…/base-paradedb 2727f84a…/base-redis 56e4f286…）。隔离：两集群 8 服务与 ALB 规则 10/20/101-104 对照基线未变（preprod hermes :39→:40 为 p2-187 I4 修复并行部署，PR#1421）；weknora terraform 根 plan=No changes。"
         },
         {
           "type": "document",
-          "label": "R1 WeKnora fork 源码核对（79c4b2aa）",
-          "command": "git -C ~/Desktop/personal_proj/WeKnora log -1; git status; rg sslmode/BASE_URL/S3 credential chain/migrations 结构",
-          "result": "HEAD=79c4b2aaf23a8eb359db465f5eff214bb988242e（Round-14 versioned migrations 提交）、工作区干净、分支 supportportal-write-contract、无 remote。BASE_URL SPA 侧已支持（LocalHub 补丁）；sslmode=disable 3 处硬编码；S3 默认凭据链可用；versioned 迁移 000000-000116。"
+          "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+          "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+          "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
         }
       ]
     },

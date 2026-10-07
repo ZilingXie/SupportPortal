@@ -71,6 +71,18 @@ resource "aws_vpc_security_group_ingress_rule" "postgres_from_tasks" {
   description                  = "WeKnora app to ParadeDB"
 }
 
+# Ops path: pg_dump/psql via SSM port-forwarding from the capacity instance
+# (backup_weknora_database.sh). The paradedb task ENI shares this group, so the
+# instance-to-task hop needs a self-referencing rule.
+resource "aws_vpc_security_group_ingress_rule" "postgres_from_data_instance" {
+  security_group_id            = aws_security_group.data.id
+  referenced_security_group_id = aws_security_group.data.id
+  from_port                    = 5432
+  to_port                      = 5432
+  ip_protocol                  = "tcp"
+  description                  = "Capacity instance (SSM ops port-forward) to ParadeDB task"
+}
+
 resource "aws_vpc_security_group_ingress_rule" "redis_from_tasks" {
   security_group_id            = aws_security_group.data.id
   referenced_security_group_id = aws_security_group.tasks.id

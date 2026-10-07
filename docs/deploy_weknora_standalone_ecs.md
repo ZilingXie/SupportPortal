@@ -85,12 +85,67 @@ Preproduction 任务全部 FARGATE、公网子网 `assignPublicIp=ENABLED`、SG 
 ## 实施顺序与状态
 
 1. [x] 只读基线核对（本文档）
-2. [ ] WeKnora 专属 Terraform（新根 `infra/terraform/weknora/`，只含新资源）
-3. [ ] fork 适配提交（子路径 + DB SSLMODE 可配置化，基于 79c4b2aa）
-4. [ ] 固定 commit 源码归档 → S3；CodeBuild 构建 app/frontend/docreader 镜像 → ECR（digest 记录）
-5. [ ] 基础镜像 ECR 副本（paradedb/redis）；SSM 参数创建
-6. [ ] 受控迁移与依赖启动顺序（data → docreader → app → frontend → 接入 ALB 105）
-7. [ ] 验收表逐项验证 + 备份恢复演练
-8. [ ] 记录与交接（任务 JSON、运维文档、发布清单）
+2. [x] WeKnora 专属 Terraform（新根 `infra/terraform/weknora/`；foundation 46 资源 + 5 服务两次 apply，均为 add-only）
+3. [x] fork 适配提交（分支 `supportportal-weknora-deploy`：3b0c8d6d 子路径+DB TLS → 797d6321 静态 alias 修复 → 5c38e217 upstream 动态解析）
+4. [x] 固定 commit 源码归档 → S3（release-evidence 桶 weknora/src/source.tar.gz，版本化+sha256）；CodeBuild `supportportal-weknora-image-build` 构建五镜像 → ECR `supportportal/weknora`
+5. [x] 基础镜像 ECR 副本（paradedb v0.22.6-pg17 / redis 7.0-alpine，随构建转推）；SSM `/supportportal/weknora/*` 12 参数（含 DB TLS CA/证书）
+6. [x] 部署（data → docreader → app → frontend 依赖序；ALB 105 规则已接；公网入口 HTTP 200）
+7. [x] 验收表逐项验证 + 备份恢复演练（文档闭环/异常表现两项待模型凭据，见下）
+8. [x] 记录与交接（任务 JSON、运维文档、发布清单）
 
-模型凭据（LLM + embedding，OpenAI 兼容）在部署前须列清并核对额度；缺失时停在准备阶段（当前为唯一 blocker，见 p2-188）。
+### 阶段一验收表状态（2026-10-07 23:5x）
+
+| 验收项 | 状态 | 证据 |
+| --- | --- | --- |
+| 构建可复现 | ✅ | 三次构建均从固定归档（commit+VersionId+sha256 链），镜像 tag=commit、digest 已录；buildspec 内 WEKNORA_COMMIT_INFO 校验通过 |
+| 访问控制 | ✅ | 管理员登录 success+is_system_admin=true；无 token GET knowledge-bases=401；注册已关闭（403，env+DB 双保险） |
+| Web 路由 | ✅ | 301(https 保留)/index/config.js/tdesign-icons/hash 资产/深层刷新全部 200；API/文件/MCP 代理经 app 应答（400/401/404） |
+| 文档闭环 | ⏸ | 待模型凭据（LLM+embedding）后执行：上传→处理→检索→回读 |
+| 异常表现 | ⏸ | 同上（需先配好模型再制造失败样本验证错误透出） |
+| 持久化 | ✅ | :3 带 REQUIRE_EXISTING_PGDATA=true 在既有数据上启动通过；期间 app 任务多次重建，登录/管理员数据完好 |
+| 备份恢复 | ✅ | backup 脚本产出 s3://…/db/weknora-…-20261007T153157Z.dump（292,884B，sha256 df7a8b76…）；restore_verify 在独立容器恢复 users=1、verified=true |
+| 现有测试隔离 | ✅ | 两集群服务 task def 与 ALB 规则 10/20/101-104 未变；weknora 根 terraform plan=No changes（零漂移）。观察：preprod hermes :39→:40 为 p2-187 并行线 I4 修复部署（PR#1421），非本任务改动 |
+
+模型凭据（LLM + embedding，OpenAI 兼容）为文档闭环/异常表现两项的唯一前置；已停在准备阶段（p2-188 blockers）。
+
+## 部署实录（2026-10-07）
+
+### 发布链（可复现构建）
+
+| 项 | 值 |
+| --- | --- |
+| 源码归档 v1 | commit 3b0c8d6d…，S3 版本 TggfxXbx…，sha256 2b869a76…，构建 d3bc598c SUCCEEDED |
+| 源码归档 v2 | commit 797d6321…，S3 版本 w0GWxG0n…，sha256 3cd17029…，构建 1620e085 SUCCEEDED |
+| 源码归档 v3 | commit 5c38e217…，S3 版本见 /tmp 或发布记录，构建 SUCCEEDED（22:18 前后） |
+| ECR 镜像（v1 digest 示例） | app b8434444… / frontend 8d55d777… / docreader b800aa1c… / base-paradedb 2727f84a… / base-redis 56e4f286… |
+| 任务定义 | v1=:1（开放注册，bootstrap）→ v2=:2 → v3=:3（注册关闭 + REQUIRE_EXISTING_PGDATA=true） |
+| CodeBuild | BUILD_GENERAL1_LARGE，单次全量 ~15-25 分钟，~$1.5-2.5/次 |
+
+镜像 tag=commit 前缀（app-/frontend-/docreader-），base-* 固定 tag；ECR IMMUTABLE + 生命周期各保 3。
+
+### 事件与修复记录
+
+1. **CodeBuild DOWNLOAD_SOURCE AccessDenied**：S3 版本化源下载需要 `s3:GetObjectVersion`（非仅 GetObject）——已在 terraform iam.tf 修复并增量 apply。
+2. **app 首任务 DNS 竞态**：terraform 一次性创建五服务时，app 先于 paradedb 的 CloudMap 注册启动 → `lookup paradedb.weknora.supportportal.local: no such host` 退出，第二任务自愈。正式链路用 `deploy_weknora_services.sh` 依赖序部署可避免。
+3. **frontend nginx 静态服务 500（内部重定向循环）**：URL 前缀 ≠ 磁盘布局，root 把 `/prefix/index.html` 映射到不存在路径 → try_files 回退自循环。修复=静态 location 全部改 alias（797d6321），本地 podman+真实 dist 双模式验证后上线。
+4. **`/dashboard/weknora` 301 scheme 降级**：nginx absolute_redirect 默认拼 `$scheme://`（容器内为 http）→ 修复=redirect include 中 `absolute_redirect off`，Location 保持相对路径（https 得以保留）。
+5. **assets 404**：alias 替换的是被匹配的 location 前缀——`location /prefix/assets/` 的 alias 必须指向物理 `…/html/assets/`。
+6. **app 任务重建后 API 502（upstream IP 缓存）**：nginx 在配置加载时解析一次 proxy_pass 主机名，app 任务换 ENI 后仍打旧 IP。修复=resolver(DNS_RESOLVER 变量，默认 127.0.0.11 保持上游 compose 契约) + `set $app_upstream` 运行时变量 + 全部代理 location 统一 `rewrite 剥前缀 + proxy_pass 变量`（5c38e217）。ECS 侧 frontend 任务注入 DNS_RESOLVER=169.254.169.253。
+7. **macOS bsdtar 无 --transform**：归档脚本改 staging 目录方式追加 WEKNORA_COMMIT_INFO。
+8. **管理员 bootstrap**：注册开放态下经公网真实路径注册 `weknora-admin@stellarix.space`（密码存 SSM `/supportportal/weknora/admin_password`），app 重启后 bootstrap 自动提权（日志：promoted user f4fbfdb0… to system admin）。注册模式经 `PUT /api/v1/admin/settings/auth.registration_mode=invite_only` 即时关闭，任务定义 :3 同步 DISABLE_REGISTRATION=true。
+9. **AWS login 会话过期**（22:2x）：`aws login` 需浏览器交互恢复——恢复后继续 :3 注册与部署。
+10. **备份通道改道**：原设计 SSM 端口转发→paradedb 任务 ENI 不可达（ECS awsvpc 任务网络过滤 host→task ENI 流量，即便 data 组自引用放行）。改为 SSM `docker exec` 容器内 localhost pg_dump（localhost trust）→ `docker cp` → 预签名 PUT 上传（本机 CLI 的 `s3 presign` 仅支持 GET，SigV4 PUT 用 python3 标准库签名）。
+
+### 启动验证（v2 时点）
+
+- 五服务 ACTIVE 1/1；app `/health` 200 连续；CloudMap paradedb/redis/docreader/app 各 1 实例 HEALTHY。
+- 公网矩阵（v2）：`/dashboard/weknora`→301(https 保留)、`/`→200、`/config.js`→200、`/tdesign-icons/…`→200、hash 资产→200、深层路由→200、`POST /api/v1/auth/login` 空 body→400（经 app 校验）。
+- 隔离复检：ALB 规则 10/20/101-104 与两集群 8 服务 task def 均未变（仅新增 105）。
+
+### 已知限制（阶段一）
+
+- frontend nginx 依赖 CloudMap 解析 app；:2 及以前版本在 app 任务重建后需重启 frontend（:3 起动态重解析根治）。
+- 容量实例替换（ASG min=max=1，仅不健康时触发）不自动迁移 root EBS 上的 docker volume——数据以备份恢复为准（备份脚本+恢复演练见验收）。
+- docreader 与 app 拆分后无共享卷：`/tmp/docreader` 图片直传回退路径不可用（主链路不写盘，compose 注释确认）；chat 内图片回显如有异常归因于此。
+- redis 无 TLS（VPC 内 + SG 限制 + requirepass）；ParadeDB TLS=verify-ca 自签 CA。
+
