@@ -311,6 +311,7 @@ def ensure_production_automation_ownership(
     *,
     mode: OwnershipGateMode = "gate",
     updated_at: str,
+    allow_reclaim_from_human_review: bool = False,
 ) -> OwnershipGateResult:
     """Ensure the production automated case is owned by the configured AI agent.
 
@@ -323,6 +324,13 @@ def ensure_production_automation_ownership(
     ``mode="verify"`` is read-only and used right before each Zendesk comment
     write: if a human took the ticket over, automation stops instead of
     stealing the ticket back.
+
+    ``allow_reclaim_from_human_review=True`` (gate mode only) re-admits a case
+    sitting in human_review_required / released_to_queue for ONE purpose:
+    delivering a draft the human has explicitly approved. The approval is the
+    human's release; the full snapshot -> routing-window wait -> assignment
+    PUT -> verify sequence still runs, so a human who actively holds the
+    ticket still blocks the delivery. Default behavior is unchanged.
     """
     if not ownership_gate_eligible(account_case):
         return OwnershipGateResult(eligible=False, state=OWNERSHIP_STATE_ASSIGNED)
@@ -333,11 +341,18 @@ def ensure_production_automation_ownership(
     previous = previous if isinstance(previous, dict) else {}
     previous_state = str(previous.get("state") or "").strip().lower()
 
-    if (
+    human_review_stopped = (
         previous_state == OWNERSHIP_STATE_RELEASED_TO_QUEUE
         or str(account_case.get("automation_status") or "").strip().lower()
         in {"human_review_required", "human_review"}
-    ):
+    )
+    reclaim_authorized = (
+        allow_reclaim_from_human_review
+        and mode == "gate"
+        and str(account_case.get("processing_profile") or "").strip().lower()
+        in {"preproduction", "production"}
+    )
+    if human_review_stopped and not reclaim_authorized:
         return _ownership_result(
             account_case,
             state=OWNERSHIP_STATE_RELEASED_TO_QUEUE,

@@ -2310,6 +2310,79 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
             zendesk_ticket_id
         )
         if isinstance(account_case_for_guard, dict):
+            # An approved-and-queued hermes draft reached this delivery only
+            # through an explicit human approval (Slack/dashboard approve).
+            # Investigation cases sit in human_review_required as their
+            # NORMAL state, so the bare verify guard would fail-close on the
+            # approval that authorized the send (13892). Reclaim ownership
+            # through the authoritative gate first; a human who actively
+            # holds the ticket still blocks inside the gate's verify.
+            _automation_status = str(
+                account_case_for_guard.get("automation_status") or ""
+            ).strip().lower()
+            _ownership_context = (
+                account_case_for_guard.get("automation_context") or {}
+            )
+            _previous_state = str(
+                (_ownership_context.get("ownership") or {}).get("state") or ""
+            ).strip().lower()
+            if _automation_status in {"human_review_required", "human_review"} or (
+                _previous_state == "released_to_queue"
+            ):
+                reclaim = ensure_production_automation_ownership(
+                    account_case_for_guard,
+                    mode="gate",
+                    updated_at=now_iso(),
+                    allow_reclaim_from_human_review=True,
+                )
+                if reclaim.eligible and reclaim.fail_closed:
+                    # The approval authorized a reclaim, but the gate itself
+                    # fail-closed (e.g. a human actively holds the ticket):
+                    # terminate with the gate's precise failure code — the
+                    # case stays human-owned and nothing is sent.
+                    ticket_repository.complete_account_zendesk_comment_delivery(
+                        account_case_id=account_case_id,
+                        message_id=message_id,
+                        status="failed",
+                        zendesk_comment_id=None,
+                        failure_code=reclaim.failure_code
+                        or "zendesk_ownership_reclaim_failed",
+                        completed_at=now_iso(),
+                    )
+                    LOGGER.warning(
+                        "hermes_zendesk_delivery_reclaim_stopped ticket_id=%s "
+                        "account_case_id=%s message_id=%s failure_code=%s",
+                        zendesk_ticket_id,
+                        account_case_id,
+                        message_id,
+                        reclaim.failure_code,
+                    )
+                    return
+                if reclaim.eligible and not reclaim.fail_closed:
+                    # Mirror _claim_automation_ownership_before_work: the gate
+                    # mutates the ownership context in place; the approval
+                    # also returns case ownership to automation so the verify
+                    # below passes and later turns are automation-owned.
+                    account_case_for_guard["automation_status"] = "automation"
+                    try:
+                        ticket_repository.save_account_case(
+                            account_case_for_guard
+                        )
+                        LOGGER.info(
+                            "hermes_zendesk_delivery_ownership_reclaimed "
+                            "ticket_id=%s account_case_id=%s message_id=%s",
+                            zendesk_ticket_id,
+                            account_case_id,
+                            message_id,
+                        )
+                    except Exception as exc:  # noqa: BLE001 - persist best effort
+                        LOGGER.warning(
+                            "hermes_zendesk_delivery_ownership_reclaim_save_failed "
+                            "ticket_id=%s account_case_id=%s error=%s",
+                            zendesk_ticket_id,
+                            account_case_id,
+                            str(exc)[:120],
+                        )
             guard_ownership = ensure_production_automation_ownership(
                 account_case_for_guard,
                 mode="verify",
