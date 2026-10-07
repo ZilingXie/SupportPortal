@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T04:38:34Z",
-  "source_base_commit": "563edc369ee221577f3a0715003fafb44574aa83",
-  "registry_digest": "9ab6dce26bf5137f5a90e78ebd4cefa72acebe0c41ab13d3e74f492fb7d04033",
+  "generated_at": "2026-10-07T06:56:07Z",
+  "source_base_commit": "af7d5442ad42f82d33afe663a418c79480e82add",
+  "registry_digest": "c2daab2260f5ad0c0d2d7b79ec26a590627ceed490055e908084be8a0c066b4c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5163,16 +5163,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "T1 新会话（run_0c1f1090，gpt-6-astra，5 次工具调用）wiki_search 检索 56 个绑定 ready wiki 命中 wiki-ms0rjfcw（[Ticket#13515] SNI TLS），wiki_read_page 读 wiki/sources/article.md，回答引用 Wiki ID+页面路径+两句原文；面板 wiki/get+page/read 独立核对原文逐字一致。T2a 受控样本 wiki-cxbm3dh0（标记 p2186zephyrlattice）：create→raw/write(703B)→ingest→约 50 秒 ready（LLM 生成 entities/concepts/sources 结构页）→wiki/search 命中→knowledge/allocate 绑定后另一新会话（run_0b5bfdb8）经 wiki_search/wiki_read_page 回读同一对象，错误码 ZL-4471/阈值 0.87/backoff 120ms/固件 3.4.2 与写入内容逐字一致（跨会话回读闭环）。T3（第二轮补强至调用计数级）：4 轮真实对话（T1/T1b/T1c/T3c）后窗口 L0=0（td:37 起 2026-10-06T11:51Z→2026-10-07 全程 0 行；对照 10-06 上午同 flag 开启时 156 行）；td:37 容器 env raw capture=false 复核；memory-core CloudWatch 请求日志断言——自 td:37 起采集写入端点 POST /v3/conversation/add 计数=0，而同窗口召回读（/v3/atomic/search、/v3/conversation/query）存在且 200（provider 活跃的反证），即\"普通对话零采集外部调用\"在请求日志计数层面成立，且零写入归因于关闭配置与 sync_turn 早退（代码路径经评审独立核对），非 provider 不活跃所致。"
         },
         {
-          "type": "test",
-          "label": "缺陷（2026-10-07 复核修正）：memory_tencentdb 检索工具派发失败——provider 活跃、召回链正常、仅模型工具调用派发断裂",
-          "command": "/v1/runs 与 /v1/responses 双入口探针（enabled_toolsets 含 memory）+ dashboard messages 工具调用明细 + memory-core 请求日志比对",
-          "result": "2026-10-07 第二轮评审后复核修正（含判别复测 T1d 与 memory-core 请求日志全窗口断言）。失败口径（按评审收窄）：memory_tencentdb_memory_search 3 次真实调用（T1/T1b/T1d）与 memory_tencentdb_conversation_search 2 次真实调用（T1/T1b）全部返回 {\"error\":\"Unknown tool\"}，覆盖 /v1/runs 与 /v1/responses 双入口共 3 个会话；另 T1c 经 tool_call 桥 2 次被拒（\"not a deferrable tool\"）；read_scene/write_knowledge 与前两者同注册路径但未做调用测试、不作失败断言。根因边界（较上轮收窄）：provider 在 td:37 下确认活跃——每个探班会话启动时 memory-core 收到 /v3/atomic/search（L1 召回，02:32:46=T1/02:49:44/02:53:13/02:55:26，均 200）与 /v3/conversation/query（L0 召回，02:48:37-39×3）请求，T1 回答中 CSD-79603 引述即来自该 L1 召回注入（上轮\"本地 MEMORY.md 注入\"为误判，已更正）；因此缺陷定位收窄为：provider 已加载、自动召回链正常，仅模型发起的工具调用在执行器派发层失败（agent.tool_executor 的 memory-manager 分支未命中：manager 路由表 has_tool 与 agent.tools schema 注入之间存在断裂，具体在 add_provider 路由表构建或 schema 形状契约，需 hermes 侧容器内插桩或本地复现定位；本机无 session-manager-plugin、容器日志 WARNING 级起，远程无法再收窄）。影响不变：恢复的 Investigation/Ad-hoc v4 Prompt（hermes_support_agent.py 指示使用两检索工具）与运行时不一致，生产调查回合将命中报错。无历史成功调用对照，不能定性为 :37 回归（td:35 时代同镜像 provider 活跃可写 L0 的事实仅覆盖写侧，与工具派发无对照价值）。修复属 agent-infra/hermes 侧独立缺陷轮。"
+          "type": "deployment",
+          "label": "缺陷已修复（2026-10-07 修复轮）：memory_tencentdb 检索工具派发——根因由干预法证实并经 td:38 配置修复",
+          "command": "td:38（:37 逐字段克隆+仅增 env MEMORY_TENCENTDB_GATEWAY_PORT=8420）register+update-service+rollout 回读 + zacBot 探针（T1e/T1f/wiki 回归）+ core CloudWatch 请求日志对时",
+          "result": "根因（干预法证实）：已部署插件 get_tool_schemas() 在 _gateway_available/_initialized 为假且无 MEMORY_TENCENTDB_GATEWAY_CMD/GATEWAY_PORT env 时返回空表（镜像内 924-929 行），而 agent_init 顺序为 add_provider（此刻急切构建 _tool_to_provider 路由表→空）→ initialize_all（此后 provider 激活、召回正常、schema 注入 agent.tools 也恢复）但路由表永不重建——净效果：模型可见工具、召回链正常、has_tool 恒假→Unknown tool。td:35 时代同为无 PORT env（该缺陷应同样存在，与\"无历史成功调用\"自洽；10-06 上午 L0 写入走 sync_turn 不经工具派发，不受影响）。修复：td:38 仅增 MEMORY_TENCENTDB_GATEWAY_PORT=8420（插件自带逃生门；该 env 另一用途 _resolve_gateway_port 同值零行为差），镜像/secrets/raw capture=false 全保留。验证（2026-10-07 06:45-07:15Z，新 task 23c38af9）：T1e（run_64461ea8，/v1/runs 原生直呼）memory_tencentdb_memory_search 返回 3 条真实 L1 知识（CSD-79603 首帧优化，与面板 chat-memory/search 独立结果逐字一致，可追溯）；core 日志对时证实 /v3/atomic/search 200（06:45/06:47/06:51 三组，scores 0.87-0.94）；06:51 追加实验 memory_search（AEC 查询）返回 CSD-79846 真实条目并对应 core 06:51:40 200——检索流量确实经 memory-core 容器；wiki 工具回归通过（wiki_search 正常）。conversation_search：派发与执行已通（core /v3/conversation/search 200 且返回 3 条 messages），但插件 client 按 data.items 解析而 core 该端点响应字段不同→恒报 No conversations found——独立上游插件小缺陷（需改 client.py 响应解析并重建镜像），未随本轮修复。raw capture 保持关闭：td:38 env false 复核、新任务 conversation/add 计数=0。遗留：上游 agent-infra 两项后续（插件解析修复；路由表 initialize 后重建或 add_provider 惰性构建的代码级根治），hermes-deploy 侧 SUPPORT_AGENT_ENVIRONMENT 同步 PORT env 待源仓库同步。"
         },
         {
           "type": "test",
           "label": "实链验收（2026-10-07）：n8n Solved/CSD 恢复链自然执行面与入库段边界",
           "command": "n8n MCP 执行记录取证（Solved MM3Z3T469Eru3Q1I / CSD GgDxPEWtW7ltT5BW）+ 面板 wiki 资产对账",
           "result": "Solved：恢复发布后 145 次真实 webhook 执行；187316/187389（评审引用）及 187613/187637 等多次完成 去重→快照→分页评论完整性校验→脱敏聚合→AI 审批筛选 后按设计走不入库分支；受控重放定性不可行——治理期版本（743bba31）无 solved_ticket 去重写入但其窗口（10-01→10-06）无知识型 SOLVED 自然样本（执行全部亚秒级状态过滤退出，仅 WeKnora e2e 手工重放 13793 停在 Deliver Source Snapshot 405 且该单为 Media Relay 必被 AI 筛选排除），preprod SP 库唯一已解决工单 13832 亦为 Media Relay，且本轮无 Zendesk 写凭据无法构造受控合格工单。CSD：2026-10-07 12:00（北京）自然触发执行 187702（trigger 模式 success，12.8s）：JQL 扫回 18 条近期已解决 CSD issue（含 CSD-80108/79950/79943/79958/80041/79994/79914），18/18 全部命中 csd 去重（Update_DB1 18 次成功、If1 全走已处理回环分支，节点迹完整），零新入库（面板 wiki 总数 71 不变、今日零新建）——恢复版 CSD 链自然执行与去重门禁正常；AI 清晰度判定→KB 生成→Wiki create/raw-write/ingest 段因当日无新增合格 issue 未被自然样本执行。两链入库段的目标 API 已由受控样本闭环独立证明（见同日 wiki 读写闭环证据）；工作流内 approve→入库段的完整执行证据仍待自然合格样本（或后续授权的 Zendesk 受控工单通道）后补。"
+        },
+        {
+          "type": "test",
+          "label": "修复后实证（2026-10-07）：两检索工具经真实 Agent 入口读取既有知识",
+          "command": "zacBot→ENI 172.31.47.202:8642 /v1/runs 与 /v1/responses 探针 + dashboard sessions/messages + core CloudWatch 请求日志 + 面板 chat-memory/search 交叉核对",
+          "result": "T1e（run_64461ea8a0ae4e07a9f6191027ba6308）：memory_tencentdb_memory_search 原生直呼返回 3 条 L1（CSD-79603，正文与面板独立检索逐字一致）；06:51 追加实验（AEC 查询）返回 CSD-79846 两条真实条目，对应 core atomic/search 06:51:40-45 两次 200（duration 1419/344ms）——验收条件'两种检索工具读取既有知识'之 memory_search 通道实证成立、conversation_search 通道派发/执行已通但结果解析存在上游小缺陷（恒空），已单独定性。wiki_search 回归正常。raw capture 仍零（conversation/add=0，env false）。"
         }
       ],
       "source_refs": [
@@ -16143,7 +16149,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
       "created_at": "2026-10-06T00:00:00Z",
-      "updated_at": "2026-10-07T05:40:00Z",
+      "updated_at": "2026-10-07T07:30:00Z",
       "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
       "next_action": "实链验收轮执行中（2026-10-07，评审结论证据不足后的定向补测）：wiki 链已完整闭环——既有知识读取（T1 探针 run_0c1f1090：wiki_search 56/56 命中 wiki-ms0rjfcw、wiki_read_page 引用原文两句经面板 API 逐字核对）+ 受控样本写入（wiki-cxbm3dh0 四步 create/raw-write/ingest→ready、检索命中）+ 绑定 agt-7oifq1fctv 后另一会话（run_0b5bfdb8）跨会话精确回读同一对象；raw capture 零新增成立（td:37 起 L0=0，含 4 轮真实对话）。阻断项（第二轮复核后收窄定性）：memory_tencentdb 两个检索工具共 5 次真实调用全部 Unknown tool（双入口 3 会话；桥接另 2 次被拒 non-deferrable；read_scene/write_knowledge 未测）——provider 确认活跃（会话启动 L1/L0 召回请求均 200）、仅模型工具调用派发断裂，根因在 manager 路由表与 agent.tools 注入之间，需 hermes 侧容器插桩或本地复现定位后修复（agent-infra 独立缺陷轮，修复前 v4 Prompt 工具合同与运行时不一致，memory 工具读取验收项维持阻断）。Solved 链：受控重放已定性不可行（治理期版本无 solved_ticket 去重但窗口内无知识型 SOLVED 自然样本；preprod 库唯一已解决工单 13832 为 Media Relay 必被 AI 筛选排除；缺 Zendesk 写凭据无法造受控合格工单），恢复后真实执行（187316/187389 等）已证 webhook→去重→快照→完整评论校验→AI 筛选各段、拒绝分支按设计工作，approve→Wiki 入库段待自然合格样本；CSD 链已于 2026-10-07 12:00（北京）自然触发取证（执行 187702，18/18 命中去重零新入库，链与去重门禁正常）；两链 approve→Wiki 入库段的完整工作流内执行仍待自然合格样本。",
       "acceptance_criteria": [
@@ -16217,16 +16223,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "T1 新会话（run_0c1f1090，gpt-6-astra，5 次工具调用）wiki_search 检索 56 个绑定 ready wiki 命中 wiki-ms0rjfcw（[Ticket#13515] SNI TLS），wiki_read_page 读 wiki/sources/article.md，回答引用 Wiki ID+页面路径+两句原文；面板 wiki/get+page/read 独立核对原文逐字一致。T2a 受控样本 wiki-cxbm3dh0（标记 p2186zephyrlattice）：create→raw/write(703B)→ingest→约 50 秒 ready（LLM 生成 entities/concepts/sources 结构页）→wiki/search 命中→knowledge/allocate 绑定后另一新会话（run_0b5bfdb8）经 wiki_search/wiki_read_page 回读同一对象，错误码 ZL-4471/阈值 0.87/backoff 120ms/固件 3.4.2 与写入内容逐字一致（跨会话回读闭环）。T3（第二轮补强至调用计数级）：4 轮真实对话（T1/T1b/T1c/T3c）后窗口 L0=0（td:37 起 2026-10-06T11:51Z→2026-10-07 全程 0 行；对照 10-06 上午同 flag 开启时 156 行）；td:37 容器 env raw capture=false 复核；memory-core CloudWatch 请求日志断言——自 td:37 起采集写入端点 POST /v3/conversation/add 计数=0，而同窗口召回读（/v3/atomic/search、/v3/conversation/query）存在且 200（provider 活跃的反证），即\"普通对话零采集外部调用\"在请求日志计数层面成立，且零写入归因于关闭配置与 sync_turn 早退（代码路径经评审独立核对），非 provider 不活跃所致。"
         },
         {
-          "type": "test",
-          "label": "缺陷（2026-10-07 复核修正）：memory_tencentdb 检索工具派发失败——provider 活跃、召回链正常、仅模型工具调用派发断裂",
-          "command": "/v1/runs 与 /v1/responses 双入口探针（enabled_toolsets 含 memory）+ dashboard messages 工具调用明细 + memory-core 请求日志比对",
-          "result": "2026-10-07 第二轮评审后复核修正（含判别复测 T1d 与 memory-core 请求日志全窗口断言）。失败口径（按评审收窄）：memory_tencentdb_memory_search 3 次真实调用（T1/T1b/T1d）与 memory_tencentdb_conversation_search 2 次真实调用（T1/T1b）全部返回 {\"error\":\"Unknown tool\"}，覆盖 /v1/runs 与 /v1/responses 双入口共 3 个会话；另 T1c 经 tool_call 桥 2 次被拒（\"not a deferrable tool\"）；read_scene/write_knowledge 与前两者同注册路径但未做调用测试、不作失败断言。根因边界（较上轮收窄）：provider 在 td:37 下确认活跃——每个探班会话启动时 memory-core 收到 /v3/atomic/search（L1 召回，02:32:46=T1/02:49:44/02:53:13/02:55:26，均 200）与 /v3/conversation/query（L0 召回，02:48:37-39×3）请求，T1 回答中 CSD-79603 引述即来自该 L1 召回注入（上轮\"本地 MEMORY.md 注入\"为误判，已更正）；因此缺陷定位收窄为：provider 已加载、自动召回链正常，仅模型发起的工具调用在执行器派发层失败（agent.tool_executor 的 memory-manager 分支未命中：manager 路由表 has_tool 与 agent.tools schema 注入之间存在断裂，具体在 add_provider 路由表构建或 schema 形状契约，需 hermes 侧容器内插桩或本地复现定位；本机无 session-manager-plugin、容器日志 WARNING 级起，远程无法再收窄）。影响不变：恢复的 Investigation/Ad-hoc v4 Prompt（hermes_support_agent.py 指示使用两检索工具）与运行时不一致，生产调查回合将命中报错。无历史成功调用对照，不能定性为 :37 回归（td:35 时代同镜像 provider 活跃可写 L0 的事实仅覆盖写侧，与工具派发无对照价值）。修复属 agent-infra/hermes 侧独立缺陷轮。"
+          "type": "deployment",
+          "label": "缺陷已修复（2026-10-07 修复轮）：memory_tencentdb 检索工具派发——根因由干预法证实并经 td:38 配置修复",
+          "command": "td:38（:37 逐字段克隆+仅增 env MEMORY_TENCENTDB_GATEWAY_PORT=8420）register+update-service+rollout 回读 + zacBot 探针（T1e/T1f/wiki 回归）+ core CloudWatch 请求日志对时",
+          "result": "根因（干预法证实）：已部署插件 get_tool_schemas() 在 _gateway_available/_initialized 为假且无 MEMORY_TENCENTDB_GATEWAY_CMD/GATEWAY_PORT env 时返回空表（镜像内 924-929 行），而 agent_init 顺序为 add_provider（此刻急切构建 _tool_to_provider 路由表→空）→ initialize_all（此后 provider 激活、召回正常、schema 注入 agent.tools 也恢复）但路由表永不重建——净效果：模型可见工具、召回链正常、has_tool 恒假→Unknown tool。td:35 时代同为无 PORT env（该缺陷应同样存在，与\"无历史成功调用\"自洽；10-06 上午 L0 写入走 sync_turn 不经工具派发，不受影响）。修复：td:38 仅增 MEMORY_TENCENTDB_GATEWAY_PORT=8420（插件自带逃生门；该 env 另一用途 _resolve_gateway_port 同值零行为差），镜像/secrets/raw capture=false 全保留。验证（2026-10-07 06:45-07:15Z，新 task 23c38af9）：T1e（run_64461ea8，/v1/runs 原生直呼）memory_tencentdb_memory_search 返回 3 条真实 L1 知识（CSD-79603 首帧优化，与面板 chat-memory/search 独立结果逐字一致，可追溯）；core 日志对时证实 /v3/atomic/search 200（06:45/06:47/06:51 三组，scores 0.87-0.94）；06:51 追加实验 memory_search（AEC 查询）返回 CSD-79846 真实条目并对应 core 06:51:40 200——检索流量确实经 memory-core 容器；wiki 工具回归通过（wiki_search 正常）。conversation_search：派发与执行已通（core /v3/conversation/search 200 且返回 3 条 messages），但插件 client 按 data.items 解析而 core 该端点响应字段不同→恒报 No conversations found——独立上游插件小缺陷（需改 client.py 响应解析并重建镜像），未随本轮修复。raw capture 保持关闭：td:38 env false 复核、新任务 conversation/add 计数=0。遗留：上游 agent-infra 两项后续（插件解析修复；路由表 initialize 后重建或 add_provider 惰性构建的代码级根治），hermes-deploy 侧 SUPPORT_AGENT_ENVIRONMENT 同步 PORT env 待源仓库同步。"
         },
         {
           "type": "test",
           "label": "实链验收（2026-10-07）：n8n Solved/CSD 恢复链自然执行面与入库段边界",
           "command": "n8n MCP 执行记录取证（Solved MM3Z3T469Eru3Q1I / CSD GgDxPEWtW7ltT5BW）+ 面板 wiki 资产对账",
           "result": "Solved：恢复发布后 145 次真实 webhook 执行；187316/187389（评审引用）及 187613/187637 等多次完成 去重→快照→分页评论完整性校验→脱敏聚合→AI 审批筛选 后按设计走不入库分支；受控重放定性不可行——治理期版本（743bba31）无 solved_ticket 去重写入但其窗口（10-01→10-06）无知识型 SOLVED 自然样本（执行全部亚秒级状态过滤退出，仅 WeKnora e2e 手工重放 13793 停在 Deliver Source Snapshot 405 且该单为 Media Relay 必被 AI 筛选排除），preprod SP 库唯一已解决工单 13832 亦为 Media Relay，且本轮无 Zendesk 写凭据无法构造受控合格工单。CSD：2026-10-07 12:00（北京）自然触发执行 187702（trigger 模式 success，12.8s）：JQL 扫回 18 条近期已解决 CSD issue（含 CSD-80108/79950/79943/79958/80041/79994/79914），18/18 全部命中 csd 去重（Update_DB1 18 次成功、If1 全走已处理回环分支，节点迹完整），零新入库（面板 wiki 总数 71 不变、今日零新建）——恢复版 CSD 链自然执行与去重门禁正常；AI 清晰度判定→KB 生成→Wiki create/raw-write/ingest 段因当日无新增合格 issue 未被自然样本执行。两链入库段的目标 API 已由受控样本闭环独立证明（见同日 wiki 读写闭环证据）；工作流内 approve→入库段的完整执行证据仍待自然合格样本（或后续授权的 Zendesk 受控工单通道）后补。"
+        },
+        {
+          "type": "test",
+          "label": "修复后实证（2026-10-07）：两检索工具经真实 Agent 入口读取既有知识",
+          "command": "zacBot→ENI 172.31.47.202:8642 /v1/runs 与 /v1/responses 探针 + dashboard sessions/messages + core CloudWatch 请求日志 + 面板 chat-memory/search 交叉核对",
+          "result": "T1e（run_64461ea8a0ae4e07a9f6191027ba6308）：memory_tencentdb_memory_search 原生直呼返回 3 条 L1（CSD-79603，正文与面板独立检索逐字一致）；06:51 追加实验（AEC 查询）返回 CSD-79846 两条真实条目，对应 core atomic/search 06:51:40-45 两次 200（duration 1419/344ms）——验收条件'两种检索工具读取既有知识'之 memory_search 通道实证成立、conversation_search 通道派发/执行已通但结果解析存在上游小缺陷（恒空），已单独定性。wiki_search 回归正常。raw capture 仍零（conversation/add=0，env false）。"
         }
       ]
     },
