@@ -1137,6 +1137,48 @@ class PP_A1_RealCliTests(unittest.TestCase):
         self.assertIs(report["complete"], False)
 
 
+class PP_A1_RealCliFullModeTests(unittest.TestCase):
+    def test_real_cli_full_mode_receives_approval_evidence(self):
+        """R14 CLI regression: --approval-evidence-file must reach the runner
+        in full mode (an indentation slip previously swallowed it)."""
+        import tempfile
+        from scripts.testing.preproduction import __main__ as cli
+
+        engine = _happy_path_engine()
+        _full_leg_queue(engine, approval_ref=_VALID_APPROVAL)
+        with tempfile.TemporaryDirectory() as tmp:
+            evidence_file = os.path.join(tmp, "approval-evidence.json")
+            with open(evidence_file, "w", encoding="utf-8") as handle:
+                json.dump(_two_stage_evidence(), handle)
+            report_file = os.path.join(tmp, "report.json")
+            argv = [
+                "pp", "--scenario", "PP-A1", "--stop-after", "full",
+                "--approval-evidence-file", evidence_file,
+                "--yes", "--report-file", report_file,
+            ]
+            with patch.object(cli, "load_env_into_process", lambda: None), \
+                 patch.object(cli, "_ensure_preprod_db_env", lambda: None), \
+                 patch.object(cli, "_ensure_relay_env", lambda: ("https://relay.test", "tok")), \
+                 patch.object(cli, "_ensure_zendesk_api_env", lambda: "auth"), \
+                 patch.object(cli, "_ssm_value", lambda name: "ssm"), \
+                 patch(
+                     "backend.services.automation_test_scenarios.ScenarioEngine.from_env",
+                     staticmethod(lambda: engine),
+                 ), \
+                 patch.object(pp, "verify_relay_binding", return_value={
+                     "relay_task_id": "task-1", "status": "dispatched", "ticket_valid": True,
+                 }), \
+                 patch.object(pp, "wait_enablement_relay_dispatched", return_value={
+                     "request_id": "enr-AC-13899-v1", "dispatch_status": "dispatched",
+                 }), \
+                 patch("sys.argv", argv):
+                exit_code = cli.main()
+            report = json.loads(open(report_file, encoding="utf-8").read())
+        self.assertEqual(exit_code, 0, "full mode WITH valid evidence must pass")
+        self.assertIs(report["complete"], True)
+        self.assertEqual(report["approval_method"], "real_human")
+
+
 class DiscoveryWaiterDefectCharacterization(unittest.TestCase):
     """Documents the R1 defect the strict waiter replaces.
 

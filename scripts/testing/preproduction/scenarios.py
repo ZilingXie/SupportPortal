@@ -2127,7 +2127,499 @@ def run_pp_a1_full(
     }
 
 
+# -- PP-I1 (plan scenario I1): evidence-sufficient native investigation -----
+
+
+# Evidence-reading tool identities as REGISTERED by the deployed Argus
+# plugin (agentRelay/hermes-deploy/build/argus_call_search/__init__.py
+# ctx.register_tool; docs/deploy_hermes_investigator_ecs.md; live CloudWatch
+# confirmed argus_query_call_events in the 13883 run window). Membership is
+# exact — MCP-style names, verb-shaped names, and product-write tools never
+# prove an evidence read.
+I1_EVIDENCE_READ_TOOLS = frozenset({
+    "argus_search_call_sessions",
+    "argus_get_call_session",
+    "argus_search_user_sessions",
+    "argus_query_call_counters",
+    "argus_query_call_events",
+    "argus_query_call_voqa",
+})
+
+
+def run_pp_i1(
+    engine: Any, *, evidence: dict, stop_after: str = "review",
+    existing_ticket: str | None = None, fetch_run=None, **_ignored: Any,
+) -> dict:
+    """PP-I1: a customer ticket carrying a REAL call/log sample drives the
+    hermes NATIVE investigation chain on Preproduction (R15 contract).
+
+    Surfaces and gates (fail-closed):
+    - fixture guard BEFORE any send: the subject/body must not contain the
+      sample SIDs (zero email / zero ticket on violation);
+    - existing_ticket binds the scenario to an already-created ticket (resume
+      path; no new ticket is created);
+    - a completed investigation work turn binds the run (turn_id + run_id);
+    - the product (automation_hermes_case_bindings.investigation) must be
+      bound via recorded_turn_id == that turn, with summary and sourced
+      evidence items cross-checking a sample SID;
+    - the ACTUAL tool read is proven ONLY by an independent execution trace
+      of that run (fetch_run): a tool call that succeeded AND references the
+      designated sample. Product self-description (evidence.source) never
+      proves this; when the trace cannot be obtained the step records
+      "execution trace unavailable — tool read NOT verified" and fails;
+    - stage gate result.status == awaiting_investigation_review (no draft);
+    - zero public Zendesk deliveries (re-checked after the draft stage too);
+    - stop_after="draft" additionally follows the exact linkage
+      work-turn result.continued_turn_id -> investigation_reply turn ->
+      draft.turn_id, requiring a non-empty draft body and a live (not
+      superseded/cancelled/failed) status.
+    The report is assembled only after every check; conclusion-quality
+    checklist output remains for human review.
+    """
+    question_subject = str(evidence.get("subject") or "").strip()
+    question_body = str(evidence.get("body") or "").strip()
+    sid_prefixes = [
+        str(p).strip().upper()
+        for p in (evidence.get("sid_prefixes") or [])
+        if str(p).strip()
+    ]
+    sample_refs = [
+        str(evidence.get(key) or "").strip()
+        for key in ("call_id", "audience_uid", "host_uid")
+        if str(evidence.get(key) or "").strip()
+    ]
+    if not question_subject or not question_body or not sid_prefixes:
+        raise AutomationTestScenarioError(
+            "PP-I1 requires evidence with subject, body, and sid_prefixes"
+        )
+    ctx = ScenarioContext("PP-I1")
+
+    # Fixture guard BEFORE any send: a ticket text carrying SIDs would let the
+    # agent parrot them; nothing is sent or created on violation.
+    ticket_text = f"{question_subject} {question_body}".upper()
+    leaked = [p for p in sid_prefixes if p in ticket_text]
+    if leaked:
+        engine.record(
+            ctx, "ticket text excludes sample SIDs (fixture guard)", False,
+            f"leaked prefixes: {leaked}; nothing was sent or created",
+        )
+        raise AssertionError(f"evidence fixture leaks SIDs into the ticket: {leaked}")
+
+    if existing_ticket:
+        rows = engine.db_query(
+            "SELECT account_case_id, client_ticket_id, zendesk_ticket_id "
+            "FROM support_account_cases WHERE external_id = %s",
+            (str(existing_ticket).strip(),),
+        )
+        if not rows:
+            raise AutomationTestScenarioError(
+                f"existing ticket {existing_ticket} has no case row"
+            )
+        ctx.account_case_id = str(rows[0].get("account_case_id") or "")
+        ctx.client_ticket_id = str(rows[0].get("client_ticket_id") or "")
+        ctx.zendesk_ticket_id = str(rows[0].get("zendesk_ticket_id") or "")
+        engine.record(
+            ctx, "bound to the existing ticket (resume path)", True,
+            f"case={ctx.account_case_id} ticket={ctx.zendesk_ticket_id} "
+            f"emails_sent=0",
+        )
+    else:
+        engine.start_ticket(ctx, question_subject, question_body)
+        engine.record(
+            ctx, "ticket text excludes sample SIDs (fixture guard)", True,
+            f"checked {len(sid_prefixes)} prefixes before sending",
+        )
+        engine.find_case(ctx)
+    case = engine.case_row(ctx)
+    engine.record(
+        ctx, "case routed (calibration, not a pass/fail route)",
+        True,
+        f"execution_action={case.get('execution_action')!r} "
+        f"automation_status={case.get('automation_status')!r}",
+    )
+
+    def _work_turns() -> list[dict]:
+        return engine.db_query(
+            "SELECT turn_id, run_id, route, result->>'status' AS result_status, "
+            "result->>'continued_turn_id' AS continued_turn_id "
+            "FROM automation_hermes_agent_turns "
+            "WHERE zendesk_ticket_id = %s AND direction = 'investigation' "
+            "AND phase = 'work' ORDER BY created_at DESC",
+            (ctx.zendesk_ticket_id,),
+        )
+
+    work_turn = engine.wait_for(
+        "completed investigation work turn",
+        lambda: next(
+            (
+                row for row in _work_turns()
+                if str(row.get("result_status") or "") in {
+                    "completed", "awaiting_investigation_review",
+                }
+            ),
+            None,
+        ),
+        engine.turn_timeout_min * 60,
+    )
+    work_turn_id = str(work_turn.get("turn_id") or "")
+    work_run_id = str(work_turn.get("run_id") or "")
+    continued_turn_id = str(work_turn.get("continued_turn_id") or "")
+    engine.record(
+        ctx, "investigation work turn completed",
+        bool(work_turn_id),
+        f"turn={work_turn_id} run={work_run_id} route={work_turn.get('route')} "
+        f"result_status={work_turn.get('result_status')}",
+    )
+
+    def _binding() -> dict:
+        rows = engine.db_query(
+            "SELECT status, investigation, slack_channel_id, slack_thread_ts "
+            "FROM automation_hermes_case_bindings WHERE zendesk_ticket_id = %s",
+            (ctx.zendesk_ticket_id,),
+        )
+        return rows[0] if rows else {}
+
+    def _product_probe():
+        binding = _binding()
+        investigation = binding.get("investigation")
+        if isinstance(investigation, str):
+            try:
+                investigation = json.loads(investigation)
+            except ValueError:
+                investigation = None
+        if not isinstance(investigation, dict):
+            return None
+        if str(investigation.get("recorded_turn_id") or "") != work_turn_id:
+            return None
+        if not str(investigation.get("summary") or "").strip():
+            return None
+        evidence_items = investigation.get("evidence")
+        if not isinstance(evidence_items, list) or not evidence_items:
+            return None
+        return {"binding": binding, "investigation": investigation}
+
+    product = engine.wait_for(
+        "native investigation product bound to the work turn",
+        _product_probe,
+        engine.turn_timeout_min * 60,
+    )
+    investigation = product["investigation"]
+    evidence_items = investigation["evidence"]
+
+    unsourced = [
+        index for index, item in enumerate(evidence_items)
+        if not isinstance(item, dict) or not str(item.get("source") or "").strip()
+    ]
+    engine.record(
+        ctx, "product evidence items carry sources (product quality)",
+        not unsourced,
+        f"evidence_items={len(evidence_items)} unsourced={unsourced}",
+    )
+    if unsourced:
+        raise AssertionError(f"evidence items without a source: {unsourced}")
+    evidence_text = " ".join(
+        str(item.get("reference") or "") for item in evidence_items
+        if isinstance(item, dict)
+    ).upper()
+    sid_hits = [p for p in sid_prefixes if p in evidence_text]
+    engine.record(
+        ctx, "sample SIDs cross-checked in evidence references",
+        bool(sid_hits),
+        f"sid_prefixes_found={sid_hits}",
+    )
+    if not sid_hits:
+        raise AssertionError(
+            "no sample SID appears in evidence references — the investigation "
+            "did not cross-check the designated sample"
+        )
+
+    # ACTUAL tool-read proof: an independent execution trace of THIS run.
+    # fetch_run(run_id) -> dict (the gateway run record) or None. Product
+    # self-description never proves a tool call happened.
+    trace = None
+    trace_error = ""
+    if fetch_run is None:
+        trace_error = "no execution-trace reader configured"
+    else:
+        try:
+            trace = fetch_run(work_run_id)
+        except Exception as exc:  # noqa: BLE001 - unobtainable trace is a verdict
+            trace_error = f"{type(exc).__name__}: {str(exc)[:120]}"
+    if not isinstance(trace, dict) or not trace:
+        engine.record(
+            ctx, "actual tool read verified via independent execution trace",
+            False,
+            f"execution trace unavailable ({trace_error or 'empty'}) — "
+            "tool read NOT verified; evidence.source self-description is "
+            "not accepted as proof",
+        )
+        raise AssertionError(
+            f"execution trace unavailable — tool read NOT verified ({trace_error})"
+        )
+    # Strict trace contract (R16), matching the DEPLOYED gateway schema
+    # (gateway/platforms/api_server_runs.py): the run status carries NO
+    # tool-call array (retention 24h, pollable status only) and tool calls
+    # surface only as live SSE events — tool.started {run_id, tool, preview}
+    # paired with tool.completed {run_id, tool, error}. A read is proven ONLY
+    # by an event pair on THIS run for an EVIDENCE-READING tool (query/
+    # lookup family; product-write tools like save_investigation_progress
+    # never qualify) whose started preview references the designated sample
+    # and whose completion carries error: false.
+    events = trace.get("events")
+    if not isinstance(events, list) or not events:
+        engine.record(
+            ctx, "actual tool read verified via independent execution trace",
+            False,
+            "trace carries no tool-event records (deployed run status is "
+            "pollable-only; SSE events must be captured during the run) — "
+            "tool read NOT verified",
+        )
+        raise AssertionError(
+            "execution trace has no tool-event records — tool read NOT verified"
+        )
+    mismatched = [
+        str(e.get("event") or "?") for e in events
+        if not isinstance(e, dict)
+        or str(e.get("run_id") or "") != work_run_id
+    ]
+    identity_ok = not mismatched
+    sample_tokens = [r for r in sample_refs if r] + [
+        p for p in sid_prefixes
+    ]
+    # Exact registered identities only (see I1_EVIDENCE_READ_TOOLS).
+    read_tools = I1_EVIDENCE_READ_TOOLS
+    # Per-invocation pairing (R17): started/completed events carry no call
+    # id, so completions are matched FIFO per tool name in event order. A
+    # completion arriving while >1 same-name started events are pending is
+    # AMBIGUOUS and verifies nothing; a started without its completion is an
+    # unverified invocation. Only an unambiguous, error-free pair on an
+    # evidence-read tool whose started preview references the designated
+    # sample proves the read — a later unrelated failure never revokes it.
+    pending: dict[str, list[dict]] = {}
+    ambiguous_pairs = 0
+    unmatched_completions = 0
+    verified_pairs: list[dict] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        kind = str(event.get("event") or "")
+        tool = str(event.get("tool") or "")
+        if not tool:
+            continue
+        if kind == "tool.started":
+            queue = pending.setdefault(tool, [])
+            overlapping = bool(queue)
+            if overlapping:
+                # An overlapping same-name call contaminates EVERY open
+                # invocation of that tool — including itself: subsequent
+                # completions cannot be uniquely attributed to either start.
+                for open_invocation in queue:
+                    open_invocation["ambiguous"] = True
+            queue.append({
+                "preview": str(event.get("preview") or ""),
+                "error": None,
+                "ambiguous": overlapping,
+            })
+        elif kind == "tool.completed":
+            queue = pending.get(tool)
+            if not queue:
+                unmatched_completions += 1
+                continue
+            invocation = queue.pop(0)
+            if len(queue) >= 1:
+                # More than one same-name call still open: this completion
+                # cannot be uniquely attributed to the popped start.
+                invocation["ambiguous"] = True
+                ambiguous_pairs += 1
+            # Explicit success only: error is False. Missing flag is not a
+            # verified success.
+            invocation["error_ok"] = event.get("error") is False
+            invocation["tool"] = tool
+            verified_pairs.append(invocation)
+    successful_sample_call = False
+    verified_tool = ""
+    for invocation in verified_pairs:
+        tool = str(invocation.get("tool") or "")
+        if invocation.get("ambiguous"):
+            continue
+        if tool not in read_tools:
+            continue
+        if invocation.get("error_ok") is not True:
+            continue
+        preview = str(invocation.get("preview") or "")
+        if not any(tok in preview for tok in sample_tokens):
+            continue
+        successful_sample_call = True
+        verified_tool = tool
+        break
+    unresolved_pending = sum(len(q) for q in pending.values())
+    engine.record(
+        ctx, "actual tool read verified via independent execution trace",
+        bool(identity_ok and successful_sample_call),
+        f"run={work_run_id} identity_ok={identity_ok} "
+        f"mismatched_events={mismatched[:3]} "
+        f"verified_tool={verified_tool or 'none'} "
+        f"ambiguous_pairs={ambiguous_pairs} "
+        f"unmatched_completions={unmatched_completions} "
+        f"unresolved_started={unresolved_pending} "
+        f"events={len(events)}",
+    )
+    if not identity_ok:
+        raise AssertionError(
+            "trace events are not all bound to this run — tool read NOT verified"
+        )
+    if not successful_sample_call:
+        raise AssertionError(
+            "trace shows no successful evidence-reading tool call referencing "
+            "the designated sample on this run — tool read NOT verified"
+        )
+
+    stage = str(work_turn.get("result_status") or "")
+    engine.record(
+        ctx, "stage gate: awaiting investigation review (no draft yet)",
+        stage == "awaiting_investigation_review",
+        f"result_status={stage!r}",
+    )
+    if stage != "awaiting_investigation_review":
+        raise AssertionError(
+            f"unexpected stage gate: {stage!r} (expected awaiting_investigation_review)"
+        )
+
+    def _deliveries() -> list[dict]:
+        return engine.db_query(
+            "SELECT message_id, zendesk_comment_id FROM support_account_zendesk_comment_deliveries "
+            "WHERE zendesk_ticket_id = %s",
+            (ctx.zendesk_ticket_id,),
+        )
+
+    def _assert_zero_deliveries(step_label: str) -> None:
+        deliveries = _deliveries()
+        engine.record(
+            ctx, step_label, not deliveries,
+            f"delivery_count={len(deliveries)}",
+        )
+        if deliveries:
+            raise AssertionError(
+                f"{step_label}: {len(deliveries)} delivery(ies) exist"
+            )
+
+    _assert_zero_deliveries("zero customer delivery (no approved draft in I1 scope)")
+    binding_row = product["binding"]
+    engine.record(
+        ctx, "slack binding present (channel/thread) — calibration",
+        True,
+        f"channel={binding_row.get('slack_channel_id')} "
+        f"thread={binding_row.get('slack_thread_ts')}",
+    )
+
+    if stop_after == "draft":
+        def _draft_probe():
+            rows = _work_turns()
+            current = next(
+                (r for r in rows if str(r.get("turn_id") or "") == work_turn_id), None
+            )
+            if current is None:
+                return None
+            reply_id = str(current.get("continued_turn_id") or "")
+            if not reply_id:
+                return None
+            reply_turns = engine.db_query(
+                "SELECT turn_id, turn_kind, status FROM automation_hermes_agent_turns "
+                "WHERE turn_id = %s",
+                (reply_id,),
+            )
+            if not reply_turns:
+                return None
+            reply = reply_turns[0]
+            if str(reply.get("turn_kind") or "") != "investigation_reply":
+                return None
+            if str(reply.get("status") or "") != "completed":
+                return None
+            drafts = engine.db_query(
+                "SELECT draft_id, turn_id, status, content FROM automation_hermes_case_drafts "
+                "WHERE turn_id = %s ORDER BY created_at DESC LIMIT 1",
+                (reply_id,),
+            )
+            if not drafts:
+                return None
+            draft = drafts[0]
+            # Positive awaiting-approval requirement (R16): a live-but-not-
+            # pending state (queued/preparing/approved/unknown) is NOT an
+            # awaiting draft (automation_ecs_store state machine).
+            if str(draft.get("status") or "") != "awaiting_approval":
+                return None
+            if not str(draft.get("content") or "").strip():
+                return None
+            current_binding = _binding().get("investigation") or {}
+            if isinstance(current_binding, str):
+                try:
+                    current_binding = json.loads(current_binding)
+                except ValueError:
+                    current_binding = {}
+            if str((current_binding or {}).get("recorded_turn_id") or "") != work_turn_id:
+                return None
+            draft["reply_turn_id"] = reply_id
+            return draft
+
+        draft = engine.wait_for(
+            "valid awaiting draft via work-turn continued_turn_id -> investigation_reply turn",
+            _draft_probe,
+            engine.turn_timeout_min * 60,
+        )
+        engine.record(
+            ctx, "awaiting customer draft bound to this investigation",
+            True,
+            f"draft={draft.get('draft_id')} reply_turn={draft.get('reply_turn_id')} "
+            f"status={draft.get('status')} chars={len(str(draft.get('content') or ''))}",
+        )
+        _assert_zero_deliveries("zero customer delivery re-check after draft ready")
+
+    engine.info(
+        "[PP-I1] stopping before approval (Prepare-draft/approval = I4 scope)"
+    )
+    report = {
+        "scenario": "PP-I1",
+        "stop_after": stop_after,
+        "complete": False,
+        "incomplete_reason": (
+            "investigation verified at the review gate with an independent tool "
+            "trace; approval and delivery are NOT exercised (I4 scope); "
+            "conclusion-quality checklist pending human review"
+        ),
+        "work_turn_id": work_turn_id,
+        "investigation": {
+            "summary": investigation.get("summary"),
+            "evidence": evidence_items,
+            "blockers": investigation.get("blockers"),
+            "next_steps": investigation.get("next_steps"),
+        },
+        "steps": [step.as_dict() for step in engine.steps],
+        "human_review": {
+            "checklist": evidence.get("checklist") or [],
+            "expected_bounded_conclusion": evidence.get("expected_conclusion_hint") or "",
+        },
+    }
+    if stop_after == "draft":
+        report["incomplete_reason"] = (
+            "awaiting draft verified with trace + identity + zero-delivery; "
+            "approval and delivery are I4 scope"
+        )
+    return report
+
+
+
 PP_SCENARIOS: dict[str, dict[str, Any]] = {
+    "PP-I1": {
+        "label": "Evidence-sufficient native investigation (preproduction)",
+        "description": (
+            "customer ticket carrying a real call/log sample -> investigation "
+            "opened -> Argus SIDs cited in progress (proof of actual tool read) "
+            "-> customer-reply draft awaiting approval -> zero delivery before "
+            "approval; conclusion-quality checklist output for human review"
+        ),
+        "run": run_pp_i1,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": False, "intake": False},
+    },
     "PP-A1": {
         "label": "Enablement conversational lifecycle (preproduction, engine=hermes)",
         "description": (
