@@ -326,3 +326,15 @@ Hermes `common` 工具集新增 `wiki_search` 和 `wiki_read_page`，源码在�
 - 分层验证：① Core 绑定接口完整分页与 Knowledge API 的已知页面 `search`→`read_page` 一致；② Hermes `common` 工具可见，未绑定 Wiki 拒绝；③不带客户数据、不走 SupportPortal 工单入口的调查 Work 技术探针实际调用两工具，返回的 Wiki ID、页面路径、正文片段可与 Knowledge API 独立回读匹配；④零命中、单 Wiki 不可用与全部不可用区分。技术探针不触发 Slack/Zendesk/Archer，不能替代真实业务工单验收。
 
 本节描述验收合同；实际部署 revision、digest、检查时间和结果记录在 p2-177 的 evidence 中，不把本节当作当前运行状态证明。
+
+## Preproduction Hermes 会话存储故障修复（p2-188，2026-10-07）
+
+AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O error`）的修复部署。Hermes 侧分支 `codex/hermes-session-storage-fix`（hermes-agent @ cd87be9506，基线 bc9a0f7d），核心源码 overlay 构建为 `deploy-ecs/Dockerfile.hermes-p2188-overlay`（FROM 当时的 hermes 容器 digest `e473e5ed…`，构建前已校验五个被覆盖文件与基线逐字节一致）。
+
+- 变更内容：`classify_persistence_error` 新增 `io` 桶（SQLITE_IOERR 不再给出清盘/改权限的确定性建议）；`/v1/runs` 的 `run.failed` 事件与状态保留结构化 `failure_reason`（重启回读生效）；`_execute_write` 对 transcript 批量保存提供**单次**受限 I/O 补试（仅 fn 阶段、回滚已证实、连接不在事务、文件身份未变；COMMIT 失败/回滚失败/被替换/非 IOERR 一律不重试）；失败日志补堆栈与 SQLite 错误码、回滚结果不再被吞。
+- 发布：推送镜像 `hermes-20261007-p2188`（digest `sha256:dfb2bcb4…`），从 `:40` 克隆注册 `:41` 仅更换 hermes 容器镜像，update-service 滚动完成（task HEALTHY、五容器 RUNNING）。
+- 隔离验收：在新镜像内（linux/amd64、真实 SQLite、临时 HERMES_HOME）注入 write 阶段 IOERR——单次补试后无重复行/计数；连续两败停止且零残留；重启回读完整；io 分类与文案契约全过（脚本固化在 `agent-infra/deploy-ecs/verify_p2188_acceptance.py`）。
+- 回滚：`update-service --task-definition supportportal-preproduction-hermes:40`；`raw capture` 约束不变（`:41` 显式 `false` 继承）。
+- SupportPortal 侧配套（事件细分原因、告警真实 job/turn/run/phase 与接管结果）在 SP 分支 `codex/hermes-session-storage-fix`，部署随该分支合入后的 release 进行。
+
+本节描述该次发布；实际运行状态以 task definition revision 与 live 读回为准。

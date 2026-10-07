@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T15:54:28Z",
-  "source_base_commit": "40c3fa2c95909a6ace5a532fd2b81b073f9fabcf",
-  "registry_digest": "ef68c4dfb87bd04bc49dd4368ee8ab52c6a82a9a7701b6f4d757ac9bd620b839",
+  "generated_at": "2026-10-07T16:19:38Z",
+  "source_base_commit": "785804525379440e578dc753cc583b8f65d4fe37",
+  "registry_digest": "4e753efa4665c76534f38df61742259d062d2dcc6de5fd2bcee5d91e6b9dc4d1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1465,6 +1465,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布后验收补充：es resend_request 无重音词干（2026-10-04）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_persona.py backend/tests/test_enablement_reply_language_eval.py",
           "result": "82 passed/89 subtests（新增 test_es_followup_resend_request_accepts_unaccented_enviar：验收报告原句全语义组命中、禁组不命中、无关正文不命中）+ eval 门控默认 7 skipped。纯评测断言修正，Preproduction r20261003-1c867cf 不受影响。"
+        },
+        {
+          "type": "document",
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（td :41、digest、隔离验收、回滚）"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes td :41（镜像 digest sha256:dfb2bcb481ef，task 963f18c1 HEALTHY，2026-10-07T16:14Z）"
+        },
+        {
+          "type": "test",
+          "label": "镜像内隔离验收 18 项全过（真实 SQLite 故障注入：单次补试无重复/两败零残留/重启回读完整）"
+        },
+        {
+          "type": "test",
+          "label": "hermes-agent cd87be9506：tests/hermes_state 513+283 通过，新故障注入 21 通过；预存基线失败 1 项（FTS5 projection，基线同样失败，与本改动无关）"
+        },
+        {
+          "type": "test",
+          "label": "SP 78580452：hermes 系列 176+23 通过；PG store 隔离 PostgreSQL 10 通过（本地实例，独立 schema）"
+        },
+        {
+          "type": "pr",
+          "label": "SP 分支 codex/hermes-session-storage-fix @ 78580452（待根 main 干净后 finalize）"
         },
         {
           "type": "test",
@@ -16494,10 +16518,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
       "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
       "status": "active",
-      "next_action": "实施中：阶段一错误分类与告警修正，随后阶段二受限重试与 SQLite 故障注入测试",
+      "next_action": "Hermes 侧已部署 Preproduction（td :41）并完成镜像内隔离验收；SP 分支已就绪待 finalize（根 main 存在他线程未提交改动），合入后发布 SP release 并回读告警新契约",
       "owner": "agent",
       "created_at": "2026-10-07",
-      "updated_at": "2026-10-07",
+      "updated_at": "2026-10-08",
       "acceptance_criteria": [
         "io 类错误独立分类，不再给出确定性清盘建议；磁盘满/只读/权限/损坏/锁竞争分别处理",
         "失败日志含 session_id/run_id、SQLite 错误码及名称、异常堆栈、失败阶段 begin/write/commit、回滚结果；不含消息正文/工具参数/凭据",
@@ -16509,7 +16533,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "故障注入测试覆盖 BEGIN/批量写入/COMMIT/ROLLBACK，验证无重复消息、计数、持久化标记，模型与工具调用次数不因重试增加"
       ],
       "blockers": [],
-      "evidence": []
+      "evidence": [
+        {
+          "type": "document",
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（td :41、digest、隔离验收、回滚）"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction Hermes td :41（镜像 digest sha256:dfb2bcb481ef，task 963f18c1 HEALTHY，2026-10-07T16:14Z）"
+        },
+        {
+          "type": "test",
+          "label": "镜像内隔离验收 18 项全过（真实 SQLite 故障注入：单次补试无重复/两败零残留/重启回读完整）"
+        },
+        {
+          "type": "test",
+          "label": "hermes-agent cd87be9506：tests/hermes_state 513+283 通过，新故障注入 21 通过；预存基线失败 1 项（FTS5 projection，基线同样失败，与本改动无关）"
+        },
+        {
+          "type": "test",
+          "label": "SP 78580452：hermes 系列 176+23 通过；PG store 隔离 PostgreSQL 10 通过（本地实例，独立 schema）"
+        },
+        {
+          "type": "pr",
+          "label": "SP 分支 codex/hermes-session-storage-fix @ 78580452（待根 main 干净后 finalize）"
+        }
+      ]
     },
     {
       "schema_version": 2,
