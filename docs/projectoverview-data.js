@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T06:56:07Z",
-  "source_base_commit": "af7d5442ad42f82d33afe663a418c79480e82add",
-  "registry_digest": "c2daab2260f5ad0c0d2d7b79ec26a590627ceed490055e908084be8a0c066b4c",
+  "generated_at": "2026-10-07T07:23:10Z",
+  "source_base_commit": "22e835bc602e3526907dfe199b84f6069677b444",
+  "registry_digest": "e286206015ebd571d35908527239772fd59f31f69a14370fc2c955b81b82fd75",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4376,6 +4376,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Console fixes live retest (deploy 24122e6)",
           "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
+          "type": "test",
+          "label": "R18 修复：工具集合改为插件注册的原生名（组合 158 passed，等待定向复验）",
+          "command": "组合 pytest（158 passed+18 subtests）；git diff --check",
+          "result": "唯一 P1 关闭：I1_EVIDENCE_READ_TOOLS 改为部署版 Argus 插件以 ctx.register_tool 注册的六个原生名（argus_search_call_sessions/get_call_session/search_user_sessions/query_call_counters/query_call_events/query_call_voqa；证据=插件注册源码 agentRelay/hermes-deploy/build/argus_call_search/__init__.py:575 + 部署记录 docs/deploy_hermes_investigator_ecs.md:237 + 线上 CloudWatch 于 13883 run 窗口实证 argus_query_call_events），并撤回上轮'部署版 MCP 实名 mcp__argus__*'的错误表述（mcp_tool.py 只证明 MCP 命名规则，不证明部署存在这些工具；该形名称现为拒绝反例）。测试：六成员逐一正例（subTest）、MCP 形/点号形拒绝、无关动词形与产物写工具拒绝保留；配对/歧义/draft/零投递逻辑未动。"
+        },
+        {
+          "type": "test",
+          "label": "R17 修复：按次配对+显式工具身份（组合 157 passed，等待定向复验）+ 13883 留存口径纠正",
+          "command": "组合 pytest（157 passed+10 subtests）；git diff --check",
+          "result": "两项 P1 关闭：①按次配对——SSE 事件无调用 ID，completed 按事件序 FIFO 配对同工具 started；同名重叠（started 到达时该工具已有未决调用）双向污染所有涉及 invocation 为 ambiguous（其完成不可唯一归属），started 无完成=未决不验证；只有无歧义、error 显式为 False、工具在读证集合、preview 引用指定样本的配对才证明实读；后续无关失败不撤销已成立的样本成功（R17 三反例+同名重叠全 FAIL/正确 PASS）。②显式工具身份——I1_EVIDENCE_READ_TOOLS 精确集合（部署版 hermes MCP 实名 mcp__argus__search_calls/get_call_users/get_user_sessions/get_event_list/get_counter_meta/get_counter_series，命名规则 mcp__\u003cserver>__\u003ctool> 于 mcp_tool.py:6862 实证），动词形（lookup_notes）、点号形（argus.search_calls）、产物写工具一律非成员拒绝；正例与全部测试改用真实 MCP 名称。**留存口径纠正（撤回前次结论）**：13883 work run 创建 2026-10-07 04:24:26 UTC、完成 04:28:48 UTC，07:04 核对时距创建约 2.66 小时——未超 24h，'超留存'不成立；状态留存与历史 SSE 可恢复是两个问题，旧事件流可恢复性未经证实，不得据此开新工单。"
+        },
+        {
+          "type": "test",
+          "label": "R16 修复：真实网关合同的严格实读门禁 + awaiting_approval 正向要求（组合 151 passed，等待定向复验）",
+          "command": "网关源码实证（agent-infra/hermes-agent/gateway/platforms/api_server_runs.py + api_server_run_idempotency.py）+ SSM 内网探针 + 组合 pytest（151 passed+10 subtests）；git diff --check",
+          "result": "两项 P1 关闭：①实读门禁按部署版真实合同重写——源码确认 GET /v1/runs/{id} 仅可轮询状态（idempotency store 留存 24h、无工具调用数组）、工具调用只存在于活动期 SSE 事件（tool.started{run_id,tool,preview}+tool.completed{run_id,tool,error}）；SSM 内网探针实证通道可通（此前 RemoteDisconnected 实为 token 无效被拒）。严格解析器：事件 run_id 逐条必须非空且等于本轮 work run（缺身份即 FAIL，R16 反例①）；实读=读证工具（search/lookup/query/get_/list_/fetch 族，显式排除 save/record/publish/draft 等产物写工具，反例③）的 tool.started preview 引用指定样本 且配对 tool.completed error:false（completed 但 error:true/unauthorized 拒绝，反例④；普通 steps 条目拒绝，反例②）；无事件记录显式'NOT verified'。CLI 新增 --i1-trace-file 注入活动期捕获的事件流（内网执行位置只读取证）。②draft 门禁改正向 status==awaiting_approval（automation_ecs_store 状态机合同），queued/preparing/approved/cancelled/空 全拒，正例改用真实待批状态；保留关联链/非空正文/草稿后零投递复查/终检后报告。四反例+真形正例（tool.started/completed 对）入测。"
+        },
+        {
+          "type": "test",
+          "label": "R15 修复：轨迹实读证明+发送前守卫+草稿链身份+续跑路径（组合 147 passed，等待定向复验）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q test_pp_i1(10)+test_pp_a1(62)+QUICK/DUP(75)（147 passed+6 subtests）；git diff --check",
+          "result": "R15 三项 P1+续跑缺口全关：①实读证明改为独立执行轨迹——run_pp_i1 经注入的 fetch_run 读 hermes 网关 GET /v1/runs/{run_id}（CLI 用环境 SSM hermes-agent-base-url/api-server-key 构建），PASS 需轨迹 run 身份一致+轨迹含样本引用+至少一条成功且指向样本的工具调用；产物自述（evidence.source）不再作为证明，伪造 source 反例入测；轨迹取不到（网关为 VPC 内网 :8642，操作机不可达已实证）显式记'execution trace unavailable — tool read NOT verified'并 FAIL。②SID 泄漏守卫前置到发送前直接检查 subject/body（不再依赖仅 FakeEngine 有的 sent_emails），违例零邮件零工单（测试断言 sent_emails==[]且 db_queue 未动）。③draft 阶段改为精确链 work turn result.continued_turn_id → turn_kind=investigation_reply 且 completed 的 turn → draft.turn_id==该 turn，要求非空正文与存活状态（cancelled/superseded/rejected/prepare_failed/published 拒绝），草稿就绪后重验零投递，报告在全部检查后组装（draft 步骤与终检入 steps；normal turn 草稿/空正文/取消态/等待期投递四反例入测）。④续跑路径：CLI --i1-existing-ticket 绑定既有工单（按 external_id 查 case，零邮件），新建与续跑不再混淆。开放项不变：Slack 实际投递独立回读、1090 未解释事件；网关内网不可达使操作机侧轨迹读取待 SSM 隧道或 API 代理通道（复验后决定）。"
+        },
+        {
+          "type": "document",
+          "label": "R14 复验结论与归因修正（2026-10-07）",
+          "command": "规划线只读审查 codex/auto-agent-i1（基线 563edc36+未提交改动）+ Preprod 只读 DB 回读 13883",
+          "result": "未通过（4 项 P1），最重要的纠正：**13883 已产出原生调查结果，此前'客户工单直驱未启动调查/需 Slack 触发'的定性撤回**。真实产物（06:06 UTC 回读）：automation_hermes_case_bindings.investigation 含 989 字符 summary、5 项 evidence、3 项 blocker、4 项 next_step，recorded_turn_id 与 work turn（normal/investigation/rag，gpt-6-sol/xhigh）精确一致，result.status=awaiting_investigation_review（Prepare draft 阶段门之前），Slack binding channel/thread 已建，客户草稿/投递=0 符合阶段。work_result=null 属 automation 合同，调查方向走 investigation 产物门禁，不是'无产物'证据。四项 P1：①I1 观察面用错表（support_ticket_investigations vs 原生 bindings.investigation）且合并了 review 与 draft 两阶段②CLI 缩进回归吞掉 A1 审批证据参数③SID 出现不足以证明实读（需工具调用/source 证据+题面排除守卫）④草稿步骤未核验状态与同一调查身份。"
+        },
+        {
+          "type": "test",
+          "label": "R14 修复：CLI 回归修复 + PP-I1 重写原生面（组合 146 passed）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q test_pp_i1(9)+test_pp_a1(62)+QUICK/DUP(75)（组合 146 passed+4 subtests）；git diff --check",
+          "result": "①CLI runner_kwargs 块重写（PP-A1 的 --approval-evidence-file 恢复正确转交），新增真实 main() 入口 full 模式回归测试（带证据文件→complete=true+exit 0）。②run_pp_i1 重写：题面 SID 泄漏守卫（fixture 泄 SID 即 FAIL）→work turn 绑定（direction=investigation+phase=work+completed/awaiting）→bindings.investigation 产物（recorded_turn_id==work turn 身份核验+summary+evidence 非空）→实读证明=每条 evidence 携带非空 source（工具/查询描述）且至少一条 reference 交叉核对样本 SID→阶段门 result.status==awaiting_investigation_review→零客户投递硬断言→Slack binding 校准；stop_after=draft 额外要求草稿来自 work turn 之后的回复 turn 且 recorded_turn_id 不变（身份/状态反例入测：无 source、异 turn 绑定、错阶段、草稿挂旧 turn、投递泄漏、fixture 泄 SID）。③13883 补查：结论质量七条中六条成立（实读 source 族与用户现场 MCP 验证一致、四 SID+join/leave 与预期表一致、收流/解码/渲染正向+freeze=0、quit 不写手动退出、前提否定+边界保留、建议客户端日志）；开放项两条：error 1090 未列为未解释事件（事件查询输出截断，blockers 已记载截断）、Slack 实际投递 SP 侧零事件记录（binding channel/thread 存在，需 Slack API 独立回读）。"
+        },
+        {
+          "type": "document",
+          "label": "R11 复验结论（2026-10-07）：环境对齐+PP-A1 progress 成立",
+          "command": "规划线只读核验（公网 health/AWS 任务定义/pipeline checkpoint/只读 DB 查询工单 13882）",
+          "result": "证据不足（完整计划）但本轮两项核实成立、无新阻断：发布 r20261007-f72e7a7 生效（api:107/route:106=hermes/worker:107=archer+real，prompt pr-d9166ff58459，rollout completed）；恢复成果保留（治理/promotion 开关=0、无 WeKnora secret 引用、hermes:37 raw capture 显式 false）。PP-A1 progress 终态报告 17 步全 PASS、complete=false（完成腿与两次人工审批明确未执行）；独立 DB 复核工单 13882：turn1/2/5 均有 delivered 公开评论且 turn2/5 草稿绑定本轮客户 comment 对应 event、turn 均 completed，turn3/4 有真实投递且 reply job=published，仅一条申请 enr-AC-13882-v1（dispatched/archer/有 relay task 绑定），relay result=0 与 progress 停止边界一致，工单 automation 所有。完整计划尚缺 A1 完成腿、I1 及剩余矩阵。"
+        },
+        {
+          "type": "test",
+          "label": "对齐发布 r20261007-f72e7a7 + PP-A1 progress 复跑（17/17 PASS）",
+          "command": "/tmp/auto-agent-align-release.sh（配方：preprod 目录源库+TICKET_DB_SCHEMA=supportportal_preproduction+AUTOMATION_TERRAFORM_BIN=~/bin/terraform+PATH 含 ~/.local/bin）；部署后 aws 回读+公网 health；SUPPORTPORTAL_ENV_FILE=\u003croot .env> python3.12 -m scripts.testing.preproduction --scenario PP-A1 --stop-after progress --yes --report-file /tmp/pp-a1-rerun-report.json",
+          "result": "发布全阶段 exit 0（CodeBuild c2d1d5f1→preflight→deploy→activation）；开关回读 route:106=hermes/worker:107=archer+real+gpt-6-sol，公网 health=r20261007-f72e7a7@f72e7a70。A1 复跑（新工单→enr-AC-13882-v1，relay task_59d7112b…）：17/17 步 PASS——turn1 ask 草稿投递（comment 54321525361812）；turn2 知识回答实际投递并绑定触发评论（comment 54321540167188，bound_to_comment=54321525841428）；turn3 非法拒绝 published+case 标记+零申请；turn4 确认发布+relay 创建/派发/服务端绑定核验；turn5 进度回答投递（bound_to_comment=54321719201428）+申请 untouched+恰好 1 申请+automation 归属；complete=false 正确停止语义（exit 2 属 CLI 设计）。R1 失败模式（superseded 无投递记 PASS）与 R2 死因（case_row 缺列）均线上关闭。"
         },
         {
           "type": "test",
@@ -16254,7 +16302,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "R10 修复已提交第十轮独立验收（等待结论）：规范化按字段拆分——detail 保持文本合同（不 JSON 解析，'true'/'null' 文本保持字符串身份），JSON 解码仅限 readback 路径。验收通过后复跑 PP-A1 progress、推进 I1 主链；A2 新开通仍被 a06094d1 stale UAP 阻断（另行授权清理）。",
+      "next_action": "R18 修复已提交定向复验（不 finalize）：工具集合=插件注册原生名（六项，三源证据），MCP 形表述已撤回。复验通过后：内网只读确认 13883 旧事件流可恢复性→可恢复则 --i1-trace-file 注入完成实读验证；否则安排活动期可捕获的 I1 实测→Prepare draft→I4。A1 完成腿需 Mac 10:00 窗口两次真实人工审批；A2 stale UAP 另行授权。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16267,6 +16315,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R18 修复：工具集合改为插件注册的原生名（组合 158 passed，等待定向复验）",
+          "command": "组合 pytest（158 passed+18 subtests）；git diff --check",
+          "result": "唯一 P1 关闭：I1_EVIDENCE_READ_TOOLS 改为部署版 Argus 插件以 ctx.register_tool 注册的六个原生名（argus_search_call_sessions/get_call_session/search_user_sessions/query_call_counters/query_call_events/query_call_voqa；证据=插件注册源码 agentRelay/hermes-deploy/build/argus_call_search/__init__.py:575 + 部署记录 docs/deploy_hermes_investigator_ecs.md:237 + 线上 CloudWatch 于 13883 run 窗口实证 argus_query_call_events），并撤回上轮'部署版 MCP 实名 mcp__argus__*'的错误表述（mcp_tool.py 只证明 MCP 命名规则，不证明部署存在这些工具；该形名称现为拒绝反例）。测试：六成员逐一正例（subTest）、MCP 形/点号形拒绝、无关动词形与产物写工具拒绝保留；配对/歧义/draft/零投递逻辑未动。"
+        },
+        {
+          "type": "test",
+          "label": "R17 修复：按次配对+显式工具身份（组合 157 passed，等待定向复验）+ 13883 留存口径纠正",
+          "command": "组合 pytest（157 passed+10 subtests）；git diff --check",
+          "result": "两项 P1 关闭：①按次配对——SSE 事件无调用 ID，completed 按事件序 FIFO 配对同工具 started；同名重叠（started 到达时该工具已有未决调用）双向污染所有涉及 invocation 为 ambiguous（其完成不可唯一归属），started 无完成=未决不验证；只有无歧义、error 显式为 False、工具在读证集合、preview 引用指定样本的配对才证明实读；后续无关失败不撤销已成立的样本成功（R17 三反例+同名重叠全 FAIL/正确 PASS）。②显式工具身份——I1_EVIDENCE_READ_TOOLS 精确集合（部署版 hermes MCP 实名 mcp__argus__search_calls/get_call_users/get_user_sessions/get_event_list/get_counter_meta/get_counter_series，命名规则 mcp__\u003cserver>__\u003ctool> 于 mcp_tool.py:6862 实证），动词形（lookup_notes）、点号形（argus.search_calls）、产物写工具一律非成员拒绝；正例与全部测试改用真实 MCP 名称。**留存口径纠正（撤回前次结论）**：13883 work run 创建 2026-10-07 04:24:26 UTC、完成 04:28:48 UTC，07:04 核对时距创建约 2.66 小时——未超 24h，'超留存'不成立；状态留存与历史 SSE 可恢复是两个问题，旧事件流可恢复性未经证实，不得据此开新工单。"
+        },
+        {
+          "type": "test",
+          "label": "R16 修复：真实网关合同的严格实读门禁 + awaiting_approval 正向要求（组合 151 passed，等待定向复验）",
+          "command": "网关源码实证（agent-infra/hermes-agent/gateway/platforms/api_server_runs.py + api_server_run_idempotency.py）+ SSM 内网探针 + 组合 pytest（151 passed+10 subtests）；git diff --check",
+          "result": "两项 P1 关闭：①实读门禁按部署版真实合同重写——源码确认 GET /v1/runs/{id} 仅可轮询状态（idempotency store 留存 24h、无工具调用数组）、工具调用只存在于活动期 SSE 事件（tool.started{run_id,tool,preview}+tool.completed{run_id,tool,error}）；SSM 内网探针实证通道可通（此前 RemoteDisconnected 实为 token 无效被拒）。严格解析器：事件 run_id 逐条必须非空且等于本轮 work run（缺身份即 FAIL，R16 反例①）；实读=读证工具（search/lookup/query/get_/list_/fetch 族，显式排除 save/record/publish/draft 等产物写工具，反例③）的 tool.started preview 引用指定样本 且配对 tool.completed error:false（completed 但 error:true/unauthorized 拒绝，反例④；普通 steps 条目拒绝，反例②）；无事件记录显式'NOT verified'。CLI 新增 --i1-trace-file 注入活动期捕获的事件流（内网执行位置只读取证）。②draft 门禁改正向 status==awaiting_approval（automation_ecs_store 状态机合同），queued/preparing/approved/cancelled/空 全拒，正例改用真实待批状态；保留关联链/非空正文/草稿后零投递复查/终检后报告。四反例+真形正例（tool.started/completed 对）入测。"
+        },
+        {
+          "type": "test",
+          "label": "R15 修复：轨迹实读证明+发送前守卫+草稿链身份+续跑路径（组合 147 passed，等待定向复验）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q test_pp_i1(10)+test_pp_a1(62)+QUICK/DUP(75)（147 passed+6 subtests）；git diff --check",
+          "result": "R15 三项 P1+续跑缺口全关：①实读证明改为独立执行轨迹——run_pp_i1 经注入的 fetch_run 读 hermes 网关 GET /v1/runs/{run_id}（CLI 用环境 SSM hermes-agent-base-url/api-server-key 构建），PASS 需轨迹 run 身份一致+轨迹含样本引用+至少一条成功且指向样本的工具调用；产物自述（evidence.source）不再作为证明，伪造 source 反例入测；轨迹取不到（网关为 VPC 内网 :8642，操作机不可达已实证）显式记'execution trace unavailable — tool read NOT verified'并 FAIL。②SID 泄漏守卫前置到发送前直接检查 subject/body（不再依赖仅 FakeEngine 有的 sent_emails），违例零邮件零工单（测试断言 sent_emails==[]且 db_queue 未动）。③draft 阶段改为精确链 work turn result.continued_turn_id → turn_kind=investigation_reply 且 completed 的 turn → draft.turn_id==该 turn，要求非空正文与存活状态（cancelled/superseded/rejected/prepare_failed/published 拒绝），草稿就绪后重验零投递，报告在全部检查后组装（draft 步骤与终检入 steps；normal turn 草稿/空正文/取消态/等待期投递四反例入测）。④续跑路径：CLI --i1-existing-ticket 绑定既有工单（按 external_id 查 case，零邮件），新建与续跑不再混淆。开放项不变：Slack 实际投递独立回读、1090 未解释事件；网关内网不可达使操作机侧轨迹读取待 SSM 隧道或 API 代理通道（复验后决定）。"
+        },
+        {
+          "type": "document",
+          "label": "R14 复验结论与归因修正（2026-10-07）",
+          "command": "规划线只读审查 codex/auto-agent-i1（基线 563edc36+未提交改动）+ Preprod 只读 DB 回读 13883",
+          "result": "未通过（4 项 P1），最重要的纠正：**13883 已产出原生调查结果，此前'客户工单直驱未启动调查/需 Slack 触发'的定性撤回**。真实产物（06:06 UTC 回读）：automation_hermes_case_bindings.investigation 含 989 字符 summary、5 项 evidence、3 项 blocker、4 项 next_step，recorded_turn_id 与 work turn（normal/investigation/rag，gpt-6-sol/xhigh）精确一致，result.status=awaiting_investigation_review（Prepare draft 阶段门之前），Slack binding channel/thread 已建，客户草稿/投递=0 符合阶段。work_result=null 属 automation 合同，调查方向走 investigation 产物门禁，不是'无产物'证据。四项 P1：①I1 观察面用错表（support_ticket_investigations vs 原生 bindings.investigation）且合并了 review 与 draft 两阶段②CLI 缩进回归吞掉 A1 审批证据参数③SID 出现不足以证明实读（需工具调用/source 证据+题面排除守卫）④草稿步骤未核验状态与同一调查身份。"
+        },
+        {
+          "type": "test",
+          "label": "R14 修复：CLI 回归修复 + PP-I1 重写原生面（组合 146 passed）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q test_pp_i1(9)+test_pp_a1(62)+QUICK/DUP(75)（组合 146 passed+4 subtests）；git diff --check",
+          "result": "①CLI runner_kwargs 块重写（PP-A1 的 --approval-evidence-file 恢复正确转交），新增真实 main() 入口 full 模式回归测试（带证据文件→complete=true+exit 0）。②run_pp_i1 重写：题面 SID 泄漏守卫（fixture 泄 SID 即 FAIL）→work turn 绑定（direction=investigation+phase=work+completed/awaiting）→bindings.investigation 产物（recorded_turn_id==work turn 身份核验+summary+evidence 非空）→实读证明=每条 evidence 携带非空 source（工具/查询描述）且至少一条 reference 交叉核对样本 SID→阶段门 result.status==awaiting_investigation_review→零客户投递硬断言→Slack binding 校准；stop_after=draft 额外要求草稿来自 work turn 之后的回复 turn 且 recorded_turn_id 不变（身份/状态反例入测：无 source、异 turn 绑定、错阶段、草稿挂旧 turn、投递泄漏、fixture 泄 SID）。③13883 补查：结论质量七条中六条成立（实读 source 族与用户现场 MCP 验证一致、四 SID+join/leave 与预期表一致、收流/解码/渲染正向+freeze=0、quit 不写手动退出、前提否定+边界保留、建议客户端日志）；开放项两条：error 1090 未列为未解释事件（事件查询输出截断，blockers 已记载截断）、Slack 实际投递 SP 侧零事件记录（binding channel/thread 存在，需 Slack API 独立回读）。"
+        },
+        {
+          "type": "document",
+          "label": "R11 复验结论（2026-10-07）：环境对齐+PP-A1 progress 成立",
+          "command": "规划线只读核验（公网 health/AWS 任务定义/pipeline checkpoint/只读 DB 查询工单 13882）",
+          "result": "证据不足（完整计划）但本轮两项核实成立、无新阻断：发布 r20261007-f72e7a7 生效（api:107/route:106=hermes/worker:107=archer+real，prompt pr-d9166ff58459，rollout completed）；恢复成果保留（治理/promotion 开关=0、无 WeKnora secret 引用、hermes:37 raw capture 显式 false）。PP-A1 progress 终态报告 17 步全 PASS、complete=false（完成腿与两次人工审批明确未执行）；独立 DB 复核工单 13882：turn1/2/5 均有 delivered 公开评论且 turn2/5 草稿绑定本轮客户 comment 对应 event、turn 均 completed，turn3/4 有真实投递且 reply job=published，仅一条申请 enr-AC-13882-v1（dispatched/archer/有 relay task 绑定），relay result=0 与 progress 停止边界一致，工单 automation 所有。完整计划尚缺 A1 完成腿、I1 及剩余矩阵。"
+        },
+        {
+          "type": "test",
+          "label": "对齐发布 r20261007-f72e7a7 + PP-A1 progress 复跑（17/17 PASS）",
+          "command": "/tmp/auto-agent-align-release.sh（配方：preprod 目录源库+TICKET_DB_SCHEMA=supportportal_preproduction+AUTOMATION_TERRAFORM_BIN=~/bin/terraform+PATH 含 ~/.local/bin）；部署后 aws 回读+公网 health；SUPPORTPORTAL_ENV_FILE=\u003croot .env> python3.12 -m scripts.testing.preproduction --scenario PP-A1 --stop-after progress --yes --report-file /tmp/pp-a1-rerun-report.json",
+          "result": "发布全阶段 exit 0（CodeBuild c2d1d5f1→preflight→deploy→activation）；开关回读 route:106=hermes/worker:107=archer+real+gpt-6-sol，公网 health=r20261007-f72e7a7@f72e7a70。A1 复跑（新工单→enr-AC-13882-v1，relay task_59d7112b…）：17/17 步 PASS——turn1 ask 草稿投递（comment 54321525361812）；turn2 知识回答实际投递并绑定触发评论（comment 54321540167188，bound_to_comment=54321525841428）；turn3 非法拒绝 published+case 标记+零申请；turn4 确认发布+relay 创建/派发/服务端绑定核验；turn5 进度回答投递（bound_to_comment=54321719201428）+申请 untouched+恰好 1 申请+automation 归属；complete=false 正确停止语义（exit 2 属 CLI 设计）。R1 失败模式（superseded 无投递记 PASS）与 R2 死因（case_row 缺列）均线上关闭。"
+        },
         {
           "type": "test",
           "label": "R10 修复验证：按字段规范化（detail 保持文本合同）（等待第十轮独立验收）",

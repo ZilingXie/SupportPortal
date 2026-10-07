@@ -327,6 +327,33 @@ def _ensure_zendesk_api_env() -> str:
     return auth
 
 
+def _build_hermes_run_fetcher():
+    """Independent execution-trace reader for PP-I1: GET /v1/runs/{run_id} on
+    the hermes agent gateway (credentials from the environment SSM
+    parameters). Transport failures surface as an unavailable trace — the
+    scenario records the tool read as NOT verified rather than guessing."""
+    import urllib.request
+
+    try:
+        base = _ssm_value("/supportportal/preproduction/hermes-agent-base-url").rstrip("/")
+        token = _ssm_value("/supportportal/preproduction/hermes-api-server-key")
+    except SystemExit as exc:
+        reason = str(exc)
+
+        def _unavailable(run_id, _reason=reason):
+            raise RuntimeError(f"gateway config unreadable: {_reason}")
+        return _unavailable
+
+    def _fetch(run_id):
+        request = urllib.request.Request(f"{base}/v1/runs/{run_id}", method="GET")
+        request.add_header("Authorization", f"Bearer {token}")
+        request.add_header("Accept", "application/json")
+        with urllib.request.urlopen(request, timeout=25) as response:
+            return json.loads(response.read() or b"{}")
+
+    return _fetch
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=sorted(_scenario_ids()))
@@ -344,10 +371,32 @@ def main() -> int:
         "and match the server outcome), relay_message_id}}. Without it a full run stays "
         "complete=false: the server-side approval_ref cannot prove two HUMAN approvals.",
     )
+    parser.add_argument(
+        "--i1-evidence-file",
+        default=None,
+        help="PP-I1 only (required): JSON evidence file {subject, body, sid_prefixes[], "
+        "checklist[], expected_conclusion_hint}; the body must NOT contain the SIDs or "
+        "the expected answer — SID presence in investigation progress proves the "
+        "actual Argus read.",
+    )
+    parser.add_argument(
+        "--i1-existing-ticket",
+        default=None,
+        help="PP-I1 only (optional): bind to an ALREADY-CREATED ticket (resume path, "
+        "e.g. 13883) instead of creating a new one; no email is sent.",
+    )
+    parser.add_argument(
+        "--i1-trace-file",
+        default=None,
+        help="PP-I1 only (optional): JSON file with the captured run event stream "
+        "({events: [tool.started/tool.completed ...]} per the gateway SSE schema) "
+        "obtained read-only during the run (e.g. via an internal execution "
+        "position); without a trace the tool read is reported NOT verified.",
+    )
     parser.add_argument("--relay-timeout-min", type=int, default=None)
     parser.add_argument(
         "--stop-after",
-        choices=("progress", "full"),
+        choices=("progress", "full", "review", "draft"),
         default=None,
         help="PP-A1 only: stop after the conversational contract (default progress); "
         "'full' additionally waits for the Mac relay execution window, completion "
@@ -377,6 +426,9 @@ def main() -> int:
     from scripts.testing.preproduction import scenarios as pp
 
     requires = pp.PP_SCENARIOS[args.scenario].get("requires") or {}
+    if args.scenario == "PP-I1" and not (args.i1_evidence_file or "").strip():
+        print("PP-I1 requires --i1-evidence-file with the verifiable call/log sample.")
+        return 1
     if args.scenario == "PP-EN-DUP" and not (args.duplicate_of_ticket or "").strip():
         print(
             "PP-EN-DUP requires --duplicate-of-ticket referencing a Preproduction test "
@@ -441,6 +493,20 @@ def main() -> int:
                     runner_kwargs["approval_evidence"] = json.loads(
                         Path(args.approval_evidence_file).read_text(encoding="utf-8")
                     )
+            if args.scenario == "PP-I1":
+                runner_kwargs["evidence"] = json.loads(
+                    Path(args.i1_evidence_file).read_text(encoding="utf-8")
+                )
+                runner_kwargs["stop_after"] = args.stop_after or "review"
+                if args.i1_existing_ticket:
+                    runner_kwargs["existing_ticket"] = args.i1_existing_ticket
+                if args.i1_trace_file:
+                    trace_payload = json.loads(
+                        Path(args.i1_trace_file).read_text(encoding="utf-8")
+                    )
+                    runner_kwargs["fetch_run"] = lambda rid, _t=trace_payload: _t
+                else:
+                    runner_kwargs["fetch_run"] = _build_hermes_run_fetcher()
             report = runner(
                 engine,
                 skill_script=_default_skill(),
