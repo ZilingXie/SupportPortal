@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T02:30:14Z",
-  "source_base_commit": "332d24df17f0ce970ad4c06c038bd8b41807c55f",
-  "registry_digest": "af4467100607605375b835bee01cb8c73933ed091f2c2296f5d7cbc02bc3b293",
+  "generated_at": "2026-10-07T02:44:55Z",
+  "source_base_commit": "8a1d8a28ec20e9f1bb040f14d96922eadeed83b1",
+  "registry_digest": "480857e4b9a9053d7721541834515a68a8d32dfd1c858fdeeb57dd5264e8edd2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5094,6 +5094,67 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "SSM 只读通道：psql 管道全景+promotions 明细；ecs describe 三角色+hermes 服务 task def；DB active prompt release",
           "result": "36/36+36/36 completed；64 promotions 全 human_review(review_requested_human_review)；SP=r20261006-b648a65+pr-0a07d038eef8；hermes def35 无 weknora 键+memory-core 在；v20",
           "recorded_at": "2026-10-06T17:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R35 WeKnora 旧实例清理执行+R36 独立回读通过（收口）",
+          "command": "SSM AWS-RunShellScript（最终 4805af2e Success exit 0）→ 验收方独立回读全资源缺席+RAGFlow 不变+healthz 200+SSM 参数零残留",
+          "result": "四容器+三卷+匿名卷+网络+目录+18080 全清；Caddy 仅移除 WeKnora 块；SSM 5 参数全删；脚本哈希 ee0dcf4a（补审通过）；RAGFlow 五容器不变",
+          "recorded_at": "2026-10-07T01:00:00Z"
+        },
+        {
+          "type": "test",
+          "label": "停用合同与渲染定向测试（worktree codex/agentmemory-restore）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_ecs_deploy.py backend/tests/test_knowledge_source_repository.py backend/tests/test_hermes_knowledge_workflow.py backend/tests/test_knowledge_standalone_workflow.py backend/tests/test_knowledge_governance_review_fixes.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_automation_comment_sync.py",
+          "result": "236 passed + 10 subtests passed。新增用例：总开关关闭时 real 模式排队零新增（含本地 resolved）、排水零领取积压保持 pending、残留 promotion=1 下默认 close 生产者门禁保持关闭、decision 端点治理关闭 409 且行不变、初始渲染退休合同（无 WeKnora secret/env、双开关=0）、更新路径剥除继承引用+重复渲染幂等、api/worker 双角色开关钉死。"
+        },
+        {
+          "type": "test",
+          "label": "外围回归与基线对照",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py",
+          "result": "test_worker.py 失败集与根区 main@332d24df 完全一致（预存 investigation 族，diff 为空）；test_account_intake 全过。PG 门禁套件（hermes_knowledge_workflow/standalone_knowledge/weknora_promotion _postgres）本地无 PostgreSQL 跳过 14 项，SQL 层无改动，线上验证在部署窗口补。test_repository_configuration 单项失败为 main 预存（版本串 v20-standalone-retry vs v18-n8n-summary-trigger 失同步），与本任务无关。"
+        },
+        {
+          "type": "decision",
+          "label": "Prompt 恢复轮：Investigation/Ad-hoc 手册 v4 恢复 AgentMemory 工具合同（codex/agentmemory-prompt-restore）",
+          "command": "restore + version bump in backend/services/prompts/hermes_support_agent.py",
+          "result": "Investigation/Ad-hoc 手册恢复 AgentMemory 工具合同（memory_tencentdb_memory_search/conversation_search + 恢复整理后知识写入 bullet），版本升 v4（跳过线上已占用的 v3 draft）；import 级验证无 weknora 残留、memory 工具指引在位。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20261006-c17ea45（p2-186 停用+恢复部署）",
+          "command": "deployment/release_automation_ecs_pipeline.sh --release-commit c17ea45f95a763a3646b6b0a24b6b02a92645759 --prompt-release-id pr-d9166ff58459 --through preproduction --hermes-case-workflow-mode real --hermes-agent-enabled --hermes-persona-enabled --bootstrap-account-schema",
+          "result": "全阶段 passed（codebuild 142s/preflight 140s/deploy 1130s：prompt_schema/route_worker_rollout 282s/heartbeat/api_rollout 190s/collector/activation/release_note）；SLO breach=true（1413s>900s 目标，非阻断，含首次因缺 --bootstrap-account-schema 失败重跑）。/health/release 回读=r20261006-c17ea45+c17ea45f+pr-d9166ff58459；worker/api td :105=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0/WEKNORA_PROMOTION_ENABLED 0（worker）/WeKnora secret+AUTH env 零残留/HERMES_AGENT_* 保留/mode=real。首次运行 preflight 失败（Hermes real 需 --bootstrap-account-schema），清状态目录后带 flag 重跑成功。"
+        },
+        {
+          "type": "deployment",
+          "label": "n8n AgentMemory 链恢复（Solved 1f544830 / CSD b5cf6d6b）",
+          "command": "n8n MCP update_workflow + publish（快照规程：变更前刷新 Solved 快照至 ab3563f8+校验，变更后重建快照并脱敏校验 15 published/53 redacted）",
+          "result": "Solved Cases 移除治理投递 5 节点、恢复 21 节点（PG solved 去重→完整分页评论校验→脱敏聚合→AI 审批筛选含 Media Relay 排除→KB 生成→Wiki create/raw-write/ingest），29 节点发布 1f544830；CSD 移除治理 6 节点、恢复 13 节点（csd 去重→AI 清晰度判定→KB→Wiki 链），Get_CSD_Detail 具名字段扩展 customfield_10700/13915，26 节点发布 b5cf6d6b；Zendesk KB/Sheets/2_rag 保留为断开死节点。中途两个修复：Solved splitInBatches batchSize 表达式格式、CSD Get_CSD_Detail 参数被 replace 误清后全量恢复。快照按 pre+ops 程序化重建，Tdai key 脱敏并记录 SSM 回绑路径。"
+        },
+        {
+          "type": "test",
+          "label": "D 节真实入口回归（p2-186 部署后）",
+          "command": "psql 只读（migration DSN）+ curl 真实 intake 端点 + Wiki 四步 API 受控样本",
+          "result": "【验收轮 2 更正容器识别错误】前一轮把 containerDefinitions[0]（memory-core 容器，镜像 e4c0f4e6）误当作 hermes 容器证据；实际 hermes 容器（第二容器，镜像 8e28d4d9）当时携带 MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=true，本轮已修复（见 td:37 证据）。其余结论不变：D1/D3 standalone 36/36 completed+64 human_review 零领取零新增；D2 CSD-79603 同版本重投 already_exists 零复活；D6 Wiki 四步 API 受控实链全通；hermes 持久化 profile=/opt/data/config.yaml（config 41、provider=memory_tencentdb）经容器内回读确认。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复 A：hermes raw capture 显式关闭（td:37）",
+          "command": "aws ecs register-task-definition（:35 克隆翻转）+ update-service + describe/exec 回读",
+          "result": "td:37 hermes 容器 MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=false（其余 14 项 env/租户真实 ID/镜像/5 容器结构逐字段保留）；service running=1（task 84f52c07）；ECS Exec 容器内 printenv=false、/opt/data/config.yaml=_config_version 41+provider memory_tencentdb；/v1/health 200。发布来源 hermes-deploy codex/p2-186-raw-capture-off(c444224)：SUPPORT_AGENT_ENVIRONMENT 对齐真实租户 ID+显式 false+dashboard 两项。回滚约束：:35 携带 raw capture=true，不是合规回滚目标；如需回退其他配置须从 :37 克隆并保留 false（验收轮 3 纠正后写入 docs/deploy_hermes_investigator_ecs.md）。"
+        },
+        {
+          "type": "test",
+          "label": "修复 B/C：Slack 决策入口与 promotion drain 总开关（codex/agentmemory-gate-fixes）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "全绿（test_hermes_slack_knowledge_review 13 过含 2 新关闭态用例：approve/reject 双命令 409 且 human_review 行 status/决策字段/payload 不变、非命令回复在开关关闭时仍开 investigation_feedback turn；test_weknora_promotion_worker 9 过含新用例：总开关关闭+残留 promotion=1+已配置客户端+queued 候选→领取/完成/外写全零）。test_worker 14 失败与根区 main 基线 diff 为空（预存）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮发布 r20261006-84ae189 + 部署后关闭态合同回读",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 84ae189575e55b607708eb4f6ad7674f66bfb576 --prompt-release-id pr-d9166ff58459（同前 flags+--bootstrap-account-schema）+ curl/psql 线上回读",
+          "result": "全阶段 passed（codebuild 153s/deploy 1057s，SLO breach=true 非阻断）；/health/release=r20261006-84ae189+84ae1895+pr-d9166ff58459；worker/api :106=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0+worker WEKNORA_PROMOTION_ENABLED 0+WeKnora secret 零残留+HERMES_AGENT_* 保留+APP_BUILD_REF=84ae1895；真实 decision POST（approve+完整 resolution）→409 显式拒绝，目标 human_review 行前后零变化；旧任务退出（running=1/pending=0 各角色单任务）。"
         }
       ],
       "source_refs": [
@@ -5101,7 +5162,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 2,
+      "task_count": 3,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -15756,7 +15817,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "review",
       "owner": "codex",
       "summary": "验收修复计划的五个工作包在三个仓库实施：SupportPortal——来源/原生 Case/Summary 补齐（article 源类型、按冻结输入指纹的代际去重、无 Case 来源的独立 Summary/Review 会话与消费桥复用）；WeKnora 客户端（记忆分页全量 walk、human_review 可观察队列 GET /v1/knowledge/promotions）；Review 合同 v2（搜索成功无匹配允许 new、检索失败进人工、proposed_content 统一为操作后完整正文、kind 固定枚举）。WeKnora fork（官方 0.8.2 基线）——四个外部写端点（memory/knowledge create+update）接入幂等键 + 原子版本保护（同键同请求回放原结果、同键不同请求 409、base_version 不匹配 412 零修改、对象与回执同事务）。hermes-deploy——weknora_tools 只读插件（搜索/读知识/召回记忆，失败显式）+ overlay 镜像 + ECS SSM 注入。",
-      "next_action": "R29 线上补充回读证据已由执行方补齐（AWS 会话恢复，只读取证 2026-10-06，待验收方复验）：(1) 管道全景——99 intakes（csd 36=18 源×2 日投版本 / zendesk 63）；36/36 Summary completed、36/36 Review completed、0 failed；64 promotions（knowledge 63+skill 1）全部 human_review、原因=review_requested_human_review、0 条已决策；63 zendesk intakes 零 Summary 为既定架构语义（无 case 绑定不派生 Summary，automation_ecs_api R2-4/R4-3），供验收方定性；(2) ECS 配置——SP api:103/route:102/worker:103 均 r20261006-b648a65（digest 三镜像各自 pinned）、PROMPT_RELEASE_ID=pr-0a07d038eef8（DB active 同值）、agent secrets 在 api+worker、worker real 模式；(3) Hermes 服务 def:35——hermes 容器 env 零 weknora 键（插件未发布=b5b6614 未上线，预期态）、memory-core 容器仍在（AgentMemory 未退休，预期态）；(4) schema=v20。剩余门禁不变：写入链（fork 目标 A/B 决策+限定授权）/AgentMemory 迁移退休/插件镜像发布+新会话读取实证。",
+      "next_action": "R35 清理执行+R36 独立回读通过：WeKnora 旧实例（ragflow-kb）清理计划收口。脚本最终哈希 ee0dcf4a（入口探针 bash 默认值截断修复，验收方补审通过——恢复旧写法精确回到放行哈希 c71bd871，零夹带逻辑）。清理终态：四容器+三具名卷+redis 匿名卷+网络+/opt/weknora+18080 全部 deleted/absent；Caddy 仅移除 WeKnora 路由块（其余字节与 .pre-cleanup.bak 一致）；SSM 5 参数全删（活动引用=零）；RAGFlow 五容器 ID/启动时间/挂载/网络不变、healthz 200。★口径收窄（验收方指定）：WeKnora 连接配置与凭据引用清零，停用开关 WEKNORA_PROMOTION_ENABLED=0 保留；公网 200 本轮未独立复证（本机 403 未定位），主机直连 200+caddy catch-all 兜底已确认；清理前零在途窗口为执行时证据（SSM 4805af2e Success exit 0），本轮未重建历史窗口。历史 task definition（api:103/route:102/worker:103 之前各 revision）仍含 WeKnora secret 引用——不可作为有效回滚目标（参数已删除）。WeKnora fork 源码（~/Desktop/personal_proj/WeKnora @79c4b2a）+插件源码+SP 历史审计数据保留，供将来迁移规划。AgentMemory 恢复的功能验收（新会话读取/n8n 自然样本入库/Slack drain 门禁修复发布）由 p2-186 恢复计划完成。",
       "acceptance_criteria": [
         "普通 AgentRelay Task 的 handoff 行为不变。",
         "article/csd_issue 无 Case 来源创建独立 Summary + Review session，结果可追溯到来源版本。",
@@ -15886,6 +15947,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "SSM 只读通道：psql 管道全景+promotions 明细；ecs describe 三角色+hermes 服务 task def；DB active prompt release",
           "result": "36/36+36/36 completed；64 promotions 全 human_review(review_requested_human_review)；SP=r20261006-b648a65+pr-0a07d038eef8；hermes def35 无 weknora 键+memory-core 在；v20",
           "recorded_at": "2026-10-06T17:30:00Z"
+        },
+        {
+          "type": "deployment",
+          "label": "R35 WeKnora 旧实例清理执行+R36 独立回读通过（收口）",
+          "command": "SSM AWS-RunShellScript（最终 4805af2e Success exit 0）→ 验收方独立回读全资源缺席+RAGFlow 不变+healthz 200+SSM 参数零残留",
+          "result": "四容器+三卷+匿名卷+网络+目录+18080 全清；Caddy 仅移除 WeKnora 块；SSM 5 参数全删；脚本哈希 ee0dcf4a（补审通过）；RAGFlow 五容器不变",
+          "recorded_at": "2026-10-07T01:00:00Z"
         }
       ],
       "source_refs": [
@@ -15899,7 +15967,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/worker.py"
       ],
       "created_at": "2026-10-02T00:00:00Z",
-      "updated_at": "2026-10-06T17:30:00Z",
+      "updated_at": "2026-10-07T01:00:00Z",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "rag-scope-governance",
@@ -16045,6 +16113,85 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [
         "p2-184"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-186",
+      "title": "AgentMemory 恢复计划（计划二）：WeKnora 知识治理停用与 AgentMemory/Wiki 链路恢复",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "rag-scope-governance",
+      "created_at": "2026-10-06T00:00:00Z",
+      "updated_at": "2026-10-06T18:30:00Z",
+      "summary": "计划名：AgentMemory 恢复计划（实施计划）。用户决策（2026-10-06）：停止 WeKnora 知识治理路线，恢复 Preproduction AgentMemory/Wiki 使用链，Automation 与问题调查 Agent 继续运行。固定停用合同（A）：新增治理总开关 HERMES_KNOWLEDGE_WORKFLOW_ENABLED（缺省关闭）区分治理启用与运行就绪（real 模式+gateway 配置）；knowledge_workflow_active() 与 queue_hermes_summary_for_case 自查总开关，覆盖 Zendesk solved/closed、本地 resolved、API 触发全部排队入口；standalone 排队与双 drain 经 standalone_workflow_active 自动覆盖；close 事务默认候选分支显式受总开关约束（automation_account_reply_sync，残留 WEKNORA_PROMOTION_ENABLED=1 也不产生候选）；/v1/knowledge/promotions/{id}/decision 人工决策端点在治理关闭时显式拒绝（approve 会把 human_review 重新入队进外写合同，是唯一绕过排队/排水门禁的入口）。渲染合同（B）：render_initial_task_definition 与 render_task_definition 双路径在 Preproduction api/worker 显式 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0（不再由 Hermes real 模式推导）、剥除 WEKNORA secret 注入与旧定义继承引用（重复渲染不复活）；保留 HERMES_AGENT_* 调查配置；secret 引用清理由本任务负责，SSM 参数实体删除归计划一（WeKnora 服务退役）。运行态资产（C，部署窗口）：Hermes td 显式关 raw capture、持久化 profile 只改 provider/相关插件键禁整表覆盖、发布与实际工具合同匹配的 AgentMemory/Wiki Prompt、n8n 治理投递节点真断入边并恢复旧 Wiki 入库链。基线 main@332d24df。保留合同：既有 task/intake/Summary/Review/promotion 审计记录不降级不审批不重放（33 条 human_review 积压原样保留）；HERMES_CASE_WORKFLOW_MODE=real 与调查 Agent 配置不变；Production ECS 不触碰。",
+      "next_action": "验收轮 3 通过后已完成发布：r20261006-84ae189（PR#1408=84ae1895，全阶段 passed，prompt 复用 pr-d9166ff58459）。部署后回读：/health/release 一致；worker/api :106 双开关=0、WeKnora 零残留、agent 配置保留；decision 端点线上关闭态实测=409 显式拒绝且 human_review 行（CSD-80108 目标）status/决策字段/updated_at 零变化；drain 关闭=三重结构性证据（总开关 0+promotion 0+凭据移除）。hermes :37 raw capture=false 持续运行。剩余保留项（等自然流量）：真实 Agent 新会话经工具入口读取既有知识、restored n8n Solved/CSD 链自然样本入库核对。Production 未触碰；WeKnora 服务删除（计划一）待其独立验收的清理脚本与无在途调用核对。",
+      "acceptance_criteria": [
+        "治理总开关关闭（缺省）且 Hermes=real 时：solved/closed/本地 resolved 零新增 Summary/Review 行；standalone/CSD/article intake 与同版本重投零创建零复活；排水不领取既有任务、零 Hermes 知识治理会话、零 WeKnora 调用；残留 WEKNORA_PROMOTION_ENABLED=1 时 close 默认分支零候选；普通调查与回复不受影响。",
+        "/v1/knowledge/promotions/{id}/decision 在治理关闭时对 approve/reject 显式 409 拒绝，积压 human_review 行内容不变。",
+        "双渲染路径（初始/更新）产出的 Preproduction api/worker 定义均含 HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、worker WEKNORA_PROMOTION_ENABLED=0，无 WEKNORA secret 引用与 AUTH env；对旧定义含 WeKnora 引用的渲染剥除全部继承引用，重复渲染输出不变。",
+        "持久化 profile 升级只改 provider 与相关插件键，模型/Wiki/Argus 等其他配置前后不变；Hermes td raw capture 显式关闭；Prompt Release 与实际注册工具合同匹配。",
+        "n8n CSD/Solved 工作流治理投递节点零入边连接，旧 Wiki create→raw/write→ingest 链恢复且保留既有具名字段/完整评论/Media Relay 排除修复，不引入无关发布节点。",
+        "AgentMemory 实链验收：既有知识经真实工具入口读取可追溯；受控合成知识写入+入库+检索+新会话回读同一对象；普通对话 raw capture 保持关闭（外部调用断言为零）。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "停用合同与渲染定向测试（worktree codex/agentmemory-restore）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_automation_ecs_deploy.py backend/tests/test_knowledge_source_repository.py backend/tests/test_hermes_knowledge_workflow.py backend/tests/test_knowledge_standalone_workflow.py backend/tests/test_knowledge_governance_review_fixes.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_automation_comment_sync.py",
+          "result": "236 passed + 10 subtests passed。新增用例：总开关关闭时 real 模式排队零新增（含本地 resolved）、排水零领取积压保持 pending、残留 promotion=1 下默认 close 生产者门禁保持关闭、decision 端点治理关闭 409 且行不变、初始渲染退休合同（无 WeKnora secret/env、双开关=0）、更新路径剥除继承引用+重复渲染幂等、api/worker 双角色开关钉死。"
+        },
+        {
+          "type": "test",
+          "label": "外围回归与基线对照",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_worker.py backend/tests/test_account_intake.py",
+          "result": "test_worker.py 失败集与根区 main@332d24df 完全一致（预存 investigation 族，diff 为空）；test_account_intake 全过。PG 门禁套件（hermes_knowledge_workflow/standalone_knowledge/weknora_promotion _postgres）本地无 PostgreSQL 跳过 14 项，SQL 层无改动，线上验证在部署窗口补。test_repository_configuration 单项失败为 main 预存（版本串 v20-standalone-retry vs v18-n8n-summary-trigger 失同步），与本任务无关。"
+        },
+        {
+          "type": "decision",
+          "label": "Prompt 恢复轮：Investigation/Ad-hoc 手册 v4 恢复 AgentMemory 工具合同（codex/agentmemory-prompt-restore）",
+          "command": "restore + version bump in backend/services/prompts/hermes_support_agent.py",
+          "result": "Investigation/Ad-hoc 手册恢复 AgentMemory 工具合同（memory_tencentdb_memory_search/conversation_search + 恢复整理后知识写入 bullet），版本升 v4（跳过线上已占用的 v3 draft）；import 级验证无 weknora 残留、memory 工具指引在位。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布 r20261006-c17ea45（p2-186 停用+恢复部署）",
+          "command": "deployment/release_automation_ecs_pipeline.sh --release-commit c17ea45f95a763a3646b6b0a24b6b02a92645759 --prompt-release-id pr-d9166ff58459 --through preproduction --hermes-case-workflow-mode real --hermes-agent-enabled --hermes-persona-enabled --bootstrap-account-schema",
+          "result": "全阶段 passed（codebuild 142s/preflight 140s/deploy 1130s：prompt_schema/route_worker_rollout 282s/heartbeat/api_rollout 190s/collector/activation/release_note）；SLO breach=true（1413s>900s 目标，非阻断，含首次因缺 --bootstrap-account-schema 失败重跑）。/health/release 回读=r20261006-c17ea45+c17ea45f+pr-d9166ff58459；worker/api td :105=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0/WEKNORA_PROMOTION_ENABLED 0（worker）/WeKnora secret+AUTH env 零残留/HERMES_AGENT_* 保留/mode=real。首次运行 preflight 失败（Hermes real 需 --bootstrap-account-schema），清状态目录后带 flag 重跑成功。"
+        },
+        {
+          "type": "deployment",
+          "label": "n8n AgentMemory 链恢复（Solved 1f544830 / CSD b5cf6d6b）",
+          "command": "n8n MCP update_workflow + publish（快照规程：变更前刷新 Solved 快照至 ab3563f8+校验，变更后重建快照并脱敏校验 15 published/53 redacted）",
+          "result": "Solved Cases 移除治理投递 5 节点、恢复 21 节点（PG solved 去重→完整分页评论校验→脱敏聚合→AI 审批筛选含 Media Relay 排除→KB 生成→Wiki create/raw-write/ingest），29 节点发布 1f544830；CSD 移除治理 6 节点、恢复 13 节点（csd 去重→AI 清晰度判定→KB→Wiki 链），Get_CSD_Detail 具名字段扩展 customfield_10700/13915，26 节点发布 b5cf6d6b；Zendesk KB/Sheets/2_rag 保留为断开死节点。中途两个修复：Solved splitInBatches batchSize 表达式格式、CSD Get_CSD_Detail 参数被 replace 误清后全量恢复。快照按 pre+ops 程序化重建，Tdai key 脱敏并记录 SSM 回绑路径。"
+        },
+        {
+          "type": "test",
+          "label": "D 节真实入口回归（p2-186 部署后）",
+          "command": "psql 只读（migration DSN）+ curl 真实 intake 端点 + Wiki 四步 API 受控样本",
+          "result": "【验收轮 2 更正容器识别错误】前一轮把 containerDefinitions[0]（memory-core 容器，镜像 e4c0f4e6）误当作 hermes 容器证据；实际 hermes 容器（第二容器，镜像 8e28d4d9）当时携带 MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=true，本轮已修复（见 td:37 证据）。其余结论不变：D1/D3 standalone 36/36 completed+64 human_review 零领取零新增；D2 CSD-79603 同版本重投 already_exists 零复活；D6 Wiki 四步 API 受控实链全通；hermes 持久化 profile=/opt/data/config.yaml（config 41、provider=memory_tencentdb）经容器内回读确认。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复 A：hermes raw capture 显式关闭（td:37）",
+          "command": "aws ecs register-task-definition（:35 克隆翻转）+ update-service + describe/exec 回读",
+          "result": "td:37 hermes 容器 MEMORY_TENCENTDB_RAW_CAPTURE_ENABLED=false（其余 14 项 env/租户真实 ID/镜像/5 容器结构逐字段保留）；service running=1（task 84f52c07）；ECS Exec 容器内 printenv=false、/opt/data/config.yaml=_config_version 41+provider memory_tencentdb；/v1/health 200。发布来源 hermes-deploy codex/p2-186-raw-capture-off(c444224)：SUPPORT_AGENT_ENVIRONMENT 对齐真实租户 ID+显式 false+dashboard 两项。回滚约束：:35 携带 raw capture=true，不是合规回滚目标；如需回退其他配置须从 :37 克隆并保留 false（验收轮 3 纠正后写入 docs/deploy_hermes_investigator_ecs.md）。"
+        },
+        {
+          "type": "test",
+          "label": "修复 B/C：Slack 决策入口与 promotion drain 总开关（codex/agentmemory-gate-fixes）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_weknora_promotion_worker.py backend/tests/test_weknora_promotion_workflow.py backend/tests/test_weknora_client.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "全绿（test_hermes_slack_knowledge_review 13 过含 2 新关闭态用例：approve/reject 双命令 409 且 human_review 行 status/决策字段/payload 不变、非命令回复在开关关闭时仍开 investigation_feedback turn；test_weknora_promotion_worker 9 过含新用例：总开关关闭+残留 promotion=1+已配置客户端+queued 候选→领取/完成/外写全零）。test_worker 14 失败与根区 main 基线 diff 为空（预存）。"
+        },
+        {
+          "type": "deployment",
+          "label": "修复轮发布 r20261006-84ae189 + 部署后关闭态合同回读",
+          "command": "release_automation_ecs_pipeline.sh --release-commit 84ae189575e55b607708eb4f6ad7674f66bfb576 --prompt-release-id pr-d9166ff58459（同前 flags+--bootstrap-account-schema）+ curl/psql 线上回读",
+          "result": "全阶段 passed（codebuild 153s/deploy 1057s，SLO breach=true 非阻断）；/health/release=r20261006-84ae189+84ae1895+pr-d9166ff58459；worker/api :106=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0+worker WEKNORA_PROMOTION_ENABLED 0+WeKnora secret 零残留+HERMES_AGENT_* 保留+APP_BUILD_REF=84ae1895；真实 decision POST（approve+完整 resolution）→409 显式拒绝，目标 human_review 行前后零变化；旧任务退出（running=1/pending=0 各角色单任务）。"
+        }
       ]
     },
     {

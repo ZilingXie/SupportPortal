@@ -156,6 +156,7 @@ from backend.services.hermes_case_workflow import (
 )
 from backend.services.hermes_knowledge_workflow import (
     drain_hermes_knowledge_tasks,
+    knowledge_governance_enabled,
     knowledge_workflow_active,
 )
 from backend.services.hermes_agent_runtime import HermesAgentClient
@@ -2929,6 +2930,12 @@ def _drain_real_hermes_promotions(*, limit: int = 20) -> int:
 
 
 def _drain_weknora_promotions(*, limit: int = 20) -> int:
+    # The governance master switch gates CONSUMPTION too: with governance
+    # disabled, queued promotions stay untouched even if a stale task
+    # definition still carries WEKNORA_PROMOTION_ENABLED=1 and credentials —
+    # zero claims, zero external write-boundary calls.
+    if not knowledge_governance_enabled():
+        return 0
     if not weknora_promotion_enabled():
         return 0
     from backend.services.hermes_knowledge_workflow import (

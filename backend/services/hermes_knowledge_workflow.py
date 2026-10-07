@@ -121,8 +121,27 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+HERMES_KNOWLEDGE_WORKFLOW_ENABLED_ENV = "HERMES_KNOWLEDGE_WORKFLOW_ENABLED"
+
+
+def knowledge_governance_enabled() -> bool:
+    """Master switch: knowledge governance may produce or consume tasks at all.
+
+    Runtime readiness (real Hermes case workflow + configured gateway) never
+    re-enables the pipeline on its own — governance is opt-in per deployment;
+    Preproduction runs with the switch off (AgentMemory recovery plan).
+    """
+    import os
+
+    return str(
+        os.getenv(HERMES_KNOWLEDGE_WORKFLOW_ENABLED_ENV) or ""
+    ).strip().lower() in {"1", "true", "yes"}
+
+
 def knowledge_workflow_active() -> bool:
     """The pipeline only runs against the real Hermes case workflow + gateway."""
+    if not knowledge_governance_enabled():
+        return False
     if hermes_workflow_mode() != "real":
         return False
     return HermesAgentSettings.from_env().configured()
@@ -234,7 +253,10 @@ def queue_hermes_summary_for_case(
     version, an advanced ledger) produces a new Summary generation with a
     versioned task id while the earlier generation keeps its own record.
     """
-    if hermes_workflow_mode() != "real":
+    # The master switch gates queueing itself, not only consumption: every
+    # caller — Zendesk solved/closed sync, local resolved, API-side triggers —
+    # stops creating Summary rows while governance is disabled.
+    if not knowledge_governance_enabled() or hermes_workflow_mode() != "real":
         return None
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not isinstance(binding, dict):

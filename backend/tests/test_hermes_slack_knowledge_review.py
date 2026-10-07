@@ -51,6 +51,7 @@ def _preproduction_settings() -> AutomationEcsSettings:
         "AUTOMATION_IMAGE_DIGEST": "sha256:" + "a" * 64,
         "APP_BUILD_REF": "abc123",
         "PROMPT_RELEASE_ID": "prompt-1",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
     }
     with patch.dict(os.environ, env, clear=True):
         return AutomationEcsSettings.from_env("api")
@@ -146,6 +147,7 @@ def _install_real_factory(monkeypatch, repository: InMemoryTicketRepository) -> 
 
     monkeypatch.setattr(ticket_repository_module, "create_ticket_repository", factory)
     monkeypatch.setenv("TICKET_DB_DSN", "postgresql://test/test")
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
 
 
 def _promotion(repository: InMemoryTicketRepository, promotion_id: str) -> dict[str, Any]:
@@ -205,6 +207,62 @@ def test_real_entry_approve_finds_standalone_promotion_by_thread(monkeypatch) ->
     assert row["decision"] == "new"
     assert row["candidate_payload"]["content"] == "Approved full body from the thread."
     assert row["candidate_payload"]["decision"] == "new"
+
+
+def test_real_entry_commands_refused_when_governance_disabled(monkeypatch) -> None:
+    """p2-186 acceptance round 2: the Slack decision entry carries the SAME
+    fail-closed master switch as the API decision endpoint. With governance
+    disabled, approve and reject both refuse explicitly, the parked backlog
+    row is untouched (status, decision fields, payload), and the reply is a
+    refusal — not reviewer feedback, not success."""
+    store = _bound_store()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    promotion_id = _parked_promotion(repository)
+    _install_real_factory(monkeypatch, repository)
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+
+    rejected = _reply(store, "knowledge reject")
+    approved = _reply(
+        store, "knowledge approve new Approved body while governance is off."
+    )
+
+    assert rejected["ok"] is False
+    assert rejected["status_code"] == 409
+    assert "disabled" in str(rejected["detail"])
+    assert approved["ok"] is False
+    assert approved["status_code"] == 409
+    row = _promotion(repository, promotion_id)
+    assert row["status"] == "human_review"
+    assert row["human_decision"] is None
+    assert row["human_decision_detail"] is None
+    assert row["candidate_payload"]["content"] == "proposed body"
+    review = store.get_hermes_case_review(_TICKET) or {}
+    assert not [
+        turn for turn in review.get("turns") or []
+        if str(turn.get("turn_kind") or "") == "investigation_feedback"
+    ]
+
+
+def test_real_entry_non_command_reply_opens_feedback_when_governance_disabled(
+    monkeypatch,
+) -> None:
+    """The master switch only gates decision commands: with governance off,
+    an ordinary thread reply still opens the normal reviewer feedback turn."""
+    store = _bound_store()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    _install_real_factory(monkeypatch, repository)
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+
+    result = _reply(store, "looks good overall, ship it")
+
+    assert result.get("ok") is True, result
+    review = store.get_hermes_case_review(_TICKET) or {}
+    assert [
+        turn for turn in review.get("turns") or []
+        if str(turn.get("turn_kind") or "") == "investigation_feedback"
+    ]
 
 
 def test_real_entry_targeted_approve_requires_target_and_base_version(monkeypatch) -> None:
