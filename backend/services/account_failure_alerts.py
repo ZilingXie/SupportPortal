@@ -27,6 +27,21 @@ def _safe_detail(value: Any, *, limit: int = 500) -> str:
     return detail[:limit]
 
 
+# System-generated identifiers (job-/turn-/run-prefixed hex ids) carry no
+# credential risk and must survive redaction to stay diagnostically useful
+# in alert context lines — the generic 28+ char token rule would otherwise
+# mask every job/turn/run id to <redacted-token>.
+_SYSTEM_IDENTIFIER_RE = re.compile(r"^(?:job|turn|run)[-_][0-9a-f]{8,}$", re.I)
+
+
+def _safe_identifier(value: Any, *, limit: int = 120) -> str:
+    """Redact like _safe_detail except for known system id shapes."""
+    text = " ".join(str(value or "").split())
+    if _SYSTEM_IDENTIFIER_RE.fullmatch(text):
+        return text[:limit]
+    return _safe_detail(text, limit=limit)
+
+
 def _safe_code(value: Any, *, limit: int = 160) -> str:
     """Keep stable diagnostic codes readable without allowing secrets."""
 
@@ -47,6 +62,10 @@ def build_account_failure_alert(
     attempts: int | None = None,
     detail: Any = "",
     summary: dict[str, Any] | None = None,
+    environment: str | None = None,
+    turn_id: str | None = None,
+    run_id: str | None = None,
+    failed_phase: str | None = None,
 ) -> tuple[str, str]:
     subject = f"[SupportPortal][Account failure] {_safe_detail(stage, limit=120)}"
     lines = [
@@ -56,8 +75,15 @@ def build_account_failure_alert(
         f"Code: {_safe_code(code)}",
         f"Ticket: {_safe_detail(ticket_id, limit=120) or '<unknown>'}",
         f"Account Case: {_safe_detail(account_case_id, limit=120) or '<unknown>'}",
-        f"Job: {_safe_detail(job_id, limit=120) or '<none>'}",
-        f"Attempts: {int(attempts or 0)}",
+        # Absent context must read as unknown — a fabricated "<none>" job or
+        # a defaulted attempt count of 0 misstates what actually ran
+        # (AC-13898: the alert claimed Attempts: 0 for a job on attempt 1).
+        f"Job: {_safe_identifier(job_id) or '<unknown>'}",
+        f"Attempts: {attempts if isinstance(attempts, int) else '<unknown>'}",
+        f"Environment: {_safe_detail(environment, limit=80) or '<unknown>'}",
+        f"Turn: {_safe_identifier(turn_id) or '<unknown>'}",
+        f"Run: {_safe_identifier(run_id) or '<unknown>'}",
+        f"Failed phase: {_safe_detail(failed_phase, limit=80) or '<unknown>'}",
         f"Detail: {_safe_detail(detail) or '<none>'}",
     ]
     if isinstance(summary, dict):
@@ -284,6 +310,10 @@ def notify_account_failure(
     attempts: int | None = None,
     detail: Any = "",
     summary: dict[str, Any] | None = None,
+    environment: str | None = None,
+    turn_id: str | None = None,
+    run_id: str | None = None,
+    failed_phase: str | None = None,
     mail_sender: Callable[..., None] | None = None,
     now: str,
 ) -> dict[str, Any]:
@@ -326,6 +356,10 @@ def notify_account_failure(
         attempts=attempts,
         detail=detail,
         summary=summary,
+        environment=environment,
+        turn_id=turn_id,
+        run_id=run_id,
+        failed_phase=failed_phase,
     )
     try:
         sender(

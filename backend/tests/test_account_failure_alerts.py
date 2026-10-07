@@ -204,3 +204,51 @@ def test_bad_status_line_alert_is_terminal_outcome_unknown():
     assert first["status"] == "delivery_outcome_unknown"
     assert second["status"] == "already_claimed"
     assert len(mail_calls) == 1
+
+
+def test_failure_alert_reports_unknown_context_instead_of_defaults():
+    """AC-13898: absent job/attempt context must read as <unknown>, never a
+    fabricated "<none>" job or a defaulted attempt count of 0."""
+    from backend.services.account_failure_alerts import build_account_failure_alert
+
+    _subject, body = build_account_failure_alert(
+        incident_id="account-automation:AC-13898:hermes_tool:turn_terminal_failure:hermes_run_failed",
+        stage="hermes_tool",
+        code="turn_terminal_failure:hermes_run_failed",
+        ticket_id="13898",
+        account_case_id="AC-13898",
+    )
+    assert "Job: <unknown>" in body
+    assert "Attempts: <unknown>" in body
+    assert "Attempts: 0" not in body
+    assert "Job: <none>" not in body
+    assert "Environment: <unknown>" in body
+    assert "Turn: <unknown>" in body
+    assert "Run: <unknown>" in body
+    assert "Failed phase: <unknown>" in body
+
+
+def test_failure_alert_carries_real_context_fields():
+    from backend.services.account_failure_alerts import build_account_failure_alert
+
+    _subject, body = build_account_failure_alert(
+        incident_id="incident-ctx",
+        stage="hermes_tool",
+        code="turn_terminal_failure:hermes_run_failed",
+        ticket_id="13999",
+        account_case_id="AC-13999",
+        job_id="job-cb528543c1f447a39fb6e4bcc92b1616",
+        attempts=1,
+        environment="preproduction",
+        turn_id="turn-de53f1d25a6a4f7cbf19d5deb9dd23fb",
+        run_id="run_4213b9e35fe3469e9761402c091aea65",
+        failed_phase="work",
+        detail="paused; requires manual continuation [failure_reason=session_persistence_failed:io]",
+    )
+    assert "Job: job-cb528543c1f447a39fb6e4bcc92b1616" in body
+    assert "Attempts: 1" in body
+    assert "Environment: preproduction" in body
+    assert "Turn: turn-de53f1d25a6a4f7cbf19d5deb9dd23fb" in body
+    assert "Run: run_4213b9e35fe3469e9761402c091aea65" in body
+    assert "Failed phase: work" in body
+    assert "failure_reason=session_persistence_failed:io" in body

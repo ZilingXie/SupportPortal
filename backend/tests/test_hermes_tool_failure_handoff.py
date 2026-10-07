@@ -998,3 +998,142 @@ class ToolFailureHandoffTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TerminalFailureAlertContextTests(unittest.TestCase):
+    """AC-13898 follow-up: the terminal-failure alert must carry the real
+    job/turn/run/phase context, keep the structured failure_reason in the
+    execution event, and report the handoff outcome that actually ran."""
+
+    def _seed_case(self):
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Investigate video issue",
+                "status": "open",
+                "created_at": "2026-10-07T11:19:00Z",
+                "updated_at": "2026-10-07T11:19:00Z",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "audience cannot see video",
+                        "created_at": "2026-10-07T11:19:00Z",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-123",
+                "billing_ticket_id": "AC-123",
+                "client_ticket_id": "123",
+                "zendesk_ticket_id": "123",
+                "processing_profile": "preproduction",
+                "automation_status": "automation",
+                "route": "rag",
+                "collected_fields": {},
+                "internal_email_payload": None,
+                "internal_email_send_status": "not_applicable",
+            }
+        )
+        event = harness._event()
+        store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = store.claim_job(
+            JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300
+        )
+        return store, repository, handoff, agent_job
+
+    def test_alert_context_event_reason_and_honest_handoff(self) -> None:
+        from backend.services.automation_ecs_contracts import AgentTurnJobPayload
+        from backend.services.automation_hermes_agent import (
+            HermesAgentTurnProcessor,
+        )
+
+        store, repository, handoff, agent_job = self._seed_case()
+        turn_id = handoff["turn_id"]
+        # A submitted work run so the alert can report its id; the real
+        # _run_phase creates the run row then marks the turn running with
+        # its phase and run id.
+        store.get_or_create_hermes_turn_run(turn_id, "work")
+        store.start_hermes_turn_run(turn_id, "work", run_id="run_4213b9e3")
+
+        processor = HermesAgentTurnProcessor(
+            store,
+            environment="preproduction",
+            repository=repository,
+            client=NS(),
+        )
+        # process() normally captures this; drive the same entry state.
+        processor._active_job_info = {
+            "job_id": getattr(agent_job, "job_id", None)
+            or (agent_job.get("job_id") if isinstance(agent_job, dict) else None),
+            "attempt": getattr(agent_job, "attempt", None),
+        }
+        processor._fail_phase_terminal(
+            turn_id,
+            "work",
+            "failed",
+            {
+                "status": "failed",
+                "error": "Session DB write failed (disk I/O error)",
+                "failure_reason": "session_persistence_failed:io",
+            },
+        )
+        turn = store.get_hermes_turn(turn_id)
+        assert turn["error_code"] == "hermes_run_failed"
+        assert "[failure_reason=session_persistence_failed:io]" in turn["error_message"]
+        # The existing agent_turn.failed event carries the additive fields.
+        failed_events = [
+            e
+            for e in store.list_case_timeline("123")
+            if e.get("event_type") == "agent_turn.failed"
+        ]
+        assert failed_events, "agent_turn.failed event missing"
+        payload = failed_events[-1].get("payload") or {}
+        assert payload.get("failure_reason") == "session_persistence_failed:io"
+        assert payload.get("phase") == "work"
+
+        escalate = NS(
+            status="skipped_inactive_handler",
+            internal_note_status="skipped_inactive_handler",
+            route_back_status="skipped_inactive_handler",
+            note_comment_id=None,
+        )
+        notified: list[dict] = []
+        payload_model = AgentTurnJobPayload.model_validate(agent_job.payload)
+        with patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=escalate,
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ):
+            processor._handoff_terminal_failure(payload_model, turn)
+
+        assert notified, "failure alert not sent"
+        kwargs = notified[0]
+        assert kwargs["environment"] == "preproduction"
+        assert kwargs["turn_id"] == turn_id
+        assert kwargs["run_id"] == "run_4213b9e3"
+        assert kwargs["failed_phase"] == "work"
+        assert kwargs["job_id"] == processor._active_job_info["job_id"]
+        assert kwargs["attempts"] == processor._active_job_info["attempt"]
+        # Honest handoff narrative for the non-automated route.
+        assert "Zendesk reassignment was not executed" in kwargs["detail"]
+        assert "transferred to the human team" not in kwargs["detail"]
+        assert "requires manual continuation" in kwargs["detail"]
+        assert "session_persistence_failed:io" in kwargs["detail"]
+        # Incident idempotency key unchanged — no double-alert risk.
+        assert kwargs["incident_id"].endswith(
+            "turn_terminal_failure:hermes_run_failed"
+        )

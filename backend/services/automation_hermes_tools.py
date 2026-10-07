@@ -869,6 +869,11 @@ def _escalate_uncompleted_automation(
     reason_code: str,
     detail: str,
     notification: str = "failure",
+    environment: str | None = None,
+    run_id: str | None = None,
+    failed_phase: str | None = None,
+    job_id: str | None = None,
+    job_attempt: int | None = None,
 ) -> dict[str, Any]:
     """Unified human handoff for a turn the automation could not complete.
 
@@ -918,6 +923,9 @@ def _escalate_uncompleted_automation(
     # partial handoff must be visible as partial (never reported as success).
     handoff_steps: dict[str, Any] = {}
     handoff_evidence: dict[str, Any] = {}
+    # Initialized so the notified handoff summary below stays honest
+    # ("unknown") when the escalation itself raised before returning.
+    escalation = None
     try:
         escalation = escalate_account_case_to_human_review(
             account_case=account_case,
@@ -977,6 +985,36 @@ def _escalate_uncompleted_automation(
         if notification == "failure"
         else f"account-takeover:{account_case_id}:hermes:{turn_id}:{reason_code}"
     )
+    # Append the REAL handoff outcome to the notified detail: the escalation
+    # above has already run, so claim-vs-skip is a fact, not a promise. A
+    # "transferred to the human team" narrative without this evidence was
+    # the AC-13898 alert inaccuracy (the rag route skips Zendesk
+    # reassignment by design — skipped_inactive_handler). When the
+    # escalation itself raised, the outcome is honestly unknown.
+    handoff_status = str(getattr(escalation, "status", "") or "").strip()
+    note_comment_id = str(getattr(escalation, "note_comment_id", "") or "").strip()
+    if handoff_status == "skipped_inactive_handler":
+        handoff_note = (
+            "Handoff result: automated investigation paused, manual "
+            "continuation required; Zendesk reassignment was not executed "
+            f"(handler '{automation_handler or 'unknown'}' is not an "
+            "automated handler)."
+        )
+    elif handoff_status == "completed":
+        handoff_note = (
+            "Handoff result: internal note "
+            + (f"(comment {note_comment_id}) " if note_comment_id else "")
+            + "sent and the ticket was returned to the human queue."
+        )
+    elif handoff_status:
+        handoff_note = (
+            f"Handoff result: {handoff_status} "
+            f"(note={getattr(escalation, 'internal_note_status', 'unknown')}, "
+            f"queue={getattr(escalation, 'route_back_status', 'unknown')})."
+        )
+    else:
+        handoff_note = "Handoff result: unknown."
+    notified_detail = f"{detail} {handoff_note}"
     try:
         notify_kwargs = dict(
             repository=repository,
@@ -989,11 +1027,20 @@ def _escalate_uncompleted_automation(
         )
         if notification == "takeover":
             notify_result = notify_account_human_takeover(
-                **notify_kwargs, detail=detail[:500]
+                **notify_kwargs, detail=notified_detail[:500]
             )
         else:
+            # The failure alert additionally reports the real job/turn/run/
+            # phase context; absent values surface as <unknown>, never 0.
             notify_result = notify_account_failure(
-                **notify_kwargs, detail=detail[:500]
+                **notify_kwargs,
+                detail=notified_detail[:500],
+                environment=environment,
+                turn_id=turn_id,
+                run_id=run_id,
+                failed_phase=failed_phase,
+                job_id=job_id,
+                attempts=job_attempt,
             )
         notify_status = str((notify_result or {}).get("status") or "").strip()
         if notify_status in {"sent", "sent_unpersisted"}:

@@ -327,10 +327,21 @@ class HermesAgentTurnProcessor:
             else float(os.getenv("HERMES_AGENT_WORK_RESULT_WAIT_SECONDS") or 120.0)
         )
         self._sleep = sleeper
+        # Job context for the currently processed AGENT_TURN job (job_id /
+        # attempt), captured at process() entry so failure alerts report the
+        # real job instead of "<none>" / 0. The worker loop is strictly
+        # serial per processor instance, and every escalation fires inside
+        # the same process() call stack, so a plain attribute is sufficient.
+        self._active_job_info: dict[str, Any] = {}
 
     # ------------------------------------------------------------------ entry
 
     def process(self, job: Any, *, before_external: Any = None) -> dict[str, Any]:
+        job_row = job if isinstance(job, dict) else {}
+        self._active_job_info = {
+            "job_id": str(job_row.get("job_id") or "").strip() or None,
+            "attempt": job_row.get("attempt"),
+        }
         payload = AgentTurnJobPayload.model_validate(job.payload)
         turn = self.store.get_hermes_turn(payload.turn_id)
         if turn is None:
@@ -1145,15 +1156,28 @@ class HermesAgentTurnProcessor:
         )
         if not isinstance(account_case, dict):
             return
+        # The detail must not assert a handoff that has not happened yet —
+        # whether Zendesk reassignment actually executes depends on the
+        # route (non-automated handlers are skipped by design). State the
+        # pause and the manual continuation; the alert appends the real
+        # handoff outcome from the escalation result itself.
+        gateway_detail = str(turn.get("error_message") or "").strip()
+        detail = (
+            "The Hermes turn failed terminally before any customer reply "
+            f"({error_code}); automated investigation is paused and the case "
+            "requires manual continuation."
+        )
+        if gateway_detail:
+            detail = f"{detail} Gateway error: {gateway_detail}"
+        run_id = str(turn.get("run_id") or "").strip() or None
         self._escalate_automation_failure(
             payload,
             account_case,
             reason_code=f"turn_terminal_failure:{error_code}",
-            detail=(
-                "The Hermes turn failed terminally before any customer reply "
-                f"({error_code}); the case was transferred to the human team."
-            ),
+            detail=detail,
             notification="failure",
+            run_id=run_id,
+            failed_phase=str(turn.get("phase") or "").strip() or None,
         )
 
     # ------------------------------------------------------- automation claim
@@ -1329,6 +1353,8 @@ class HermesAgentTurnProcessor:
         reason_code: str,
         detail: str,
         notification: str = "failure",
+        run_id: str | None = None,
+        failed_phase: str | None = None,
     ) -> dict[str, Any] | None:
         from backend.services.automation_hermes_tools import (
             _escalate_uncompleted_automation,
@@ -1344,6 +1370,7 @@ class HermesAgentTurnProcessor:
             )
             or normalized_route
         )
+        active_job = getattr(self, "_active_job_info", {}) or {}
         return _escalate_uncompleted_automation(
             store=self.store,
             repository=self.repository,
@@ -1354,6 +1381,11 @@ class HermesAgentTurnProcessor:
             reason_code=reason_code,
             detail=detail,
             notification=notification,
+            environment=self.environment,
+            run_id=run_id,
+            failed_phase=failed_phase,
+            job_id=active_job.get("job_id"),
+            job_attempt=active_job.get("attempt"),
         )
 
     # ----------------------------------------------------------------- phases
@@ -1656,6 +1688,7 @@ class HermesAgentTurnProcessor:
         *,
         retryable: bool,
         run_status: str | None = None,
+        failure_reason: str | None = None,
     ) -> str:
         if error_code == "idempotency_key_conflict":
             # A body-format change under a reused key can never replay safely.
@@ -1667,11 +1700,31 @@ class HermesAgentTurnProcessor:
         else:
             status = "failed"
         run_status_value = run_status or ("outcome_unknown" if status == "outcome_unknown" else "failed")
+        # Carry the gateway's structured cause (e.g.
+        # "session_persistence_failed:io") onto the persisted error text so
+        # the surviving turn row is self-describing, and into the
+        # agent_turn.<status> event payload as an additive field — the top
+        # level error_code and the incident idempotency key stay unchanged
+        # so the same incident never double-alerts.
+        normalized_reason = str(failure_reason or "").strip()
+        persisted_message = error_message
+        event_extra: dict[str, Any] | None = None
+        if normalized_reason:
+            suffix = f" [failure_reason={normalized_reason}]"
+            if suffix not in persisted_message:
+                persisted_message = f"{persisted_message}{suffix}"
+            event_extra = {"failure_reason": normalized_reason, "phase": phase}
+        else:
+            event_extra = {"phase": phase}
         self.store.fail_hermes_turn_run(
-            turn_id, phase, status=run_status_value, error_code=error_code, error_message=error_message
+            turn_id, phase, status=run_status_value, error_code=error_code, error_message=persisted_message
         )
         self.store.fail_hermes_agent_turn(
-            turn_id, status=status, error_code=error_code, error_message=error_message
+            turn_id,
+            status=status,
+            error_code=error_code,
+            error_message=persisted_message,
+            event_extra=event_extra,
         )
         return _PHASE_FAILED
 
@@ -1679,6 +1732,7 @@ class HermesAgentTurnProcessor:
         self, turn_id: str, phase: str, run_status: str, status: dict[str, Any]
     ) -> str:
         error_message = str(status.get("error") or run_status)
+        failure_reason = str(status.get("failure_reason") or "").strip() or None
         return self._fail_turn_from_phase(
             turn_id,
             phase,
@@ -1686,6 +1740,7 @@ class HermesAgentTurnProcessor:
             error_message,
             retryable=False,
             run_status=run_status,
+            failure_reason=failure_reason,
         )
 
     # -------------------------------------------------------------- recovery
