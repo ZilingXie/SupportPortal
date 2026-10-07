@@ -1014,7 +1014,10 @@ def _escalate_uncompleted_automation(
         )
     else:
         handoff_note = "Handoff result: unknown."
-    notified_detail = f"{detail} {handoff_note}"
+    # The handoff outcome leads the notified detail: the 500-char alert
+    # budget must cut into the (long, user-worded) gateway error text
+    # before it ever cuts the actual takeover result.
+    notified_detail = f"{handoff_note} {detail}"
     try:
         notify_kwargs = dict(
             repository=repository,
