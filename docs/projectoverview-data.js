@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-06T17:29:15Z",
-  "source_base_commit": "44a5269972af796bb544abe5075ad46738880645",
-  "registry_digest": "7d9369107d1b986e7e8aeabc3d3a8a37d8a8c7f3d71579a83fd2fa60f5dafe0e",
+  "generated_at": "2026-10-07T02:44:55Z",
+  "source_base_commit": "8a1d8a28ec20e9f1bb040f14d96922eadeed83b1",
+  "registry_digest": "480857e4b9a9053d7721541834515a68a8d32dfd1c858fdeeb57dd5264e8edd2",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4379,6 +4379,90 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "R10 修复验证：按字段规范化（detail 保持文本合同）（等待第十轮独立验收）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（61 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 136 passed）；git diff --check",
+          "result": "组合 136 passed 零回归。R10 关闭 R9 残留：规范化按字段拆分——detail 走 _normalize_text_projection_value（仅空白串视为无内容，文本永不 JSON 解析，'true'/'null'/数字文本保持字符串身份），readback 独占 _normalize_json_projection_value（JSON 解码仅此路径）。新增反例：服务端 detail 文本 'true' vs 正文布尔 true（重算摘要）拒绝（类型穿透关闭）、服务端 detail 文本 'null' 省略字段（重算摘要）拒绝（'omits detail'，省略绕过再次关闭）；普通 detail 等值、空值规则与 readback 键序正例保留通过。"
+        },
+        {
+          "type": "test",
+          "label": "R9 修复验证：类型保持比较（已被 R10 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（59 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 134 passed）；git diff --check",
+          "result": "组合 134 passed 零回归。R9 关闭 R8 残留：write_attempted 改为 JSON 类型保持比较——正文必须携带真布尔且与服务端布尔 is 同值（worker 按 bool(payload) 入库、字符串 'false' 会落成 True，故字符串永不等价）；readback/detail 改用 _json_projection_equal 递归结构比较——布尔只匹配布尔（显式拦截 Python False==0/True==1）、数字匹配数字、字符串仅匹配字符串、对象键序无关、数组逐元素。新增反例：write_attempted='false' 字符串（重算摘要）不完整、readback cached:false→0（重算摘要）不完整；键序等价正例保留通过。"
+        },
+        {
+          "type": "document",
+          "label": "R1 独立验收结论（2026-10-06）",
+          "command": "规划线对 codex/auto-agent-acceptance（基线 332d24df+未提交改动）的审查",
+          "result": "未通过。环境对齐确认成功（release r20261006-332d24d、API:104/Route:103/Worker:104/Hermes:35 rollout completed、Route=hermes+Enablement=archer、发布 evidence status=complete、工单 13872 hermes binding 成立）；A1 验收工具误判（发现型 PASS）+progress 未标不完整=两项 P1；I 系列阻断归因错误；任务号撞号。已确认部分：环境对齐阶段成立，A1 未闭环。不放行工具代码 finalize、不构成功能通过、不释放 Production 门禁。"
+        },
+        {
+          "type": "document",
+          "label": "工单 13872 收口（R1 实跑终态）",
+          "command": "tail PP-A1 运行日志 + /tmp/pp-a1-progress-report.json + preprod 库只读查询（turns/reply_jobs/case 行）+ CloudWatch worker 日志",
+          "result": "最终 exit 2。已成立：turn1 ask-App-ID 草稿投递（comment 54284316747284，内容检查通过）；turn3 非法 App ID 拒绝（reply job account-reply-f7c23cc9…，persona v8 经 ~8 分钟轮询后 08:36:19 UTC published+Zendesk 投递 message_id=126）；case 标记 internal_email_send_reason=appid_invalid_format 实际已落库。已撤回：turn2 answered PASS（发现型误判；该回合实为 superseded、无任何投递记录——场景推进过快使知识回答未及投递即被 turn3 取代）。运行终止点：turn3 标记等待超时（case_row 从未 SELECT internal_email_send_reason 列，等待永不满足——R2 已修）。turn4/5 未执行；relay 申请 0；无重复申请、无审批写入。"
+        },
+        {
+          "type": "test",
+          "label": "R8 修复验证：结果投影比较收口（字段必选+JSON 结构比较）（已被 R9 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（57 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 132 passed）；git diff --check",
+          "result": "组合 132 passed 零回归。R8 关闭 R7 残留的两方向：①省略绕过——服务端 detail/readback 有业务内容（经 _normalize_result_projection_value 判空：None/空白串/空容器=无内容）时，批准正文必须携带该字段且内容一致，省略即'omits … present in the server record'拒绝、complete=false；服务端无内容而正文凭空携带也拒绝。②键序误拒回归——readback 按 JSON 结构比较（JSON 串先解析，dict 相等忽略键序、保留值与类型；detail 按规范化后字符串比较），内容相同键序不同正常通过。新增用例：省略服务端非空字段不完整、等价键序 readback 通过（complete=true+real_human）、readback 内容真实不一致拒绝。"
+        },
+        {
+          "type": "test",
+          "label": "R7 修复验证：分页终止符合法性 + 批准正文与服务端权威投影比对（已被 R8 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（54 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 129 passed）；git diff --check",
+          "result": "组合 129 passed 零回归。R7 关闭 R6 两项残留：①分页终止符合法性——唯一合法结束标记是 next_page 为 JSON null 且键必须存在；布尔/对象链接/空白串/缺键全部判畸形显式 FAIL（'malformed comment pagination terminator'/'blank comment pagination link'/'carries no next_page terminator'），不再被解释为'已读完'；正常 null 结束正例保留。②批准正文与权威持久化投影交叉核对——verify 查询补选 res.detail/res.readback，核验器要求批准正文必须携带 write_attempted 且与服务端一致（不一致即拒），正文携带 detail/readback 时须与服务端非空值一致；'自洽的另一份正文'（篡改 write_attempted 并重算摘要、request/version/outcome/relay_message_id 全不变）现在拒绝（'write_attempted differs from the server record'），complete=false。新增反例：next_page=False/对象/空白/缺键四变体（subTest）、篡改 write_attempted 重算摘要；正常分页结束正例沿用存量用例。"
+        },
+        {
+          "type": "test",
+          "label": "R6 修复验证：完整分页归因 + 两阶段批准内容/顺序核验（已被 R7 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（52 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 127 passed）；git diff --check",
+          "result": "组合 127 passed 零回归（test_pp_a1 52 项）。R6 关闭 R5 两项残留：①comment 清单完整分页——_customer_comment_clocks 沿用 zendesk_ticket_assignment.py 同款分页纪律（next_page URL 逐页校验 scheme/netloc/path+去重+页数上限，畸形页/客户评论 created_at 不可解析/清单不可达均显式 FAIL，绝不当作'没有其他评论'）；第二页存在冲突评论即拒绝归因（'attributable to another customer comment'），完整分页下远距评论正例继续绑定。②两阶段批准核验补三点——批准决定（precheck 必须 action=approve_execution；execution_result 必须 decision=approved，reject_execution/rejected 拒绝）；结果内容交叉核对（证据须携带被批准的 enablement-relay-result-v1 payload，canonical sha256 须等于 result_digest，且 payload 的 request_id/version/outcome 与服务端结果行一致——relay_message_id 绑定不再替代内容核验）；阶段时序（execution_result.approved_at 必须严格晚于 precheck.approved_at，倒置拒绝）。新增反例：第二页冲突、畸形页、清单失败、拒绝决定、篡改结果 payload、阶段倒置；新增正例：完整分页跨页绑定、两阶段完整证据（含 payload digest 自洽）complete=true。"
+        },
+        {
+          "type": "test",
+          "label": "R5 修复验证：触发身份核验 + 两阶段人工审批证明（已被 R6 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（45 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 120 passed）；git diff --check",
+          "result": "组合 120 passed 零回归（test_pp_a1 45 项）。R5 关闭 R4 两项残留：①reply-job 绑定升级为身份核验——等待器开工即拉取工单 comment 清单（Zendesk 持久化触发记录，requester 过滤客户侧），anchor 取本次评论的清单权威 created_at；候选 job 的 trigger 时间戳必须唯一归因到本次评论（±1s 内且无其他客户评论同样落在 ±1s 内），窗口内只有另一条评论的 job、同秒不同评论一律拒绝（'attributable to another customer comment'），本次评论不在清单即 FAIL；不再以缩窗替代身份核验。②两次人工审批证明改为 SKILL 合同两阶段核验（_two_stage_human_approvals_proven）：precheck（执行前批准预检报告：request/version/method=human/approver/approved_at/report_digest 与服务端 approval_ref 交叉核对）+ execution_result（执行后批准结果回传：result_digest 64hex 且与 precheck 不同、relay_message_id 与服务端结果行交叉核对绑定回传产物）；重复裸 action 记录、异请求/错版本/method=test_auto_approve、单阶段、重复 digest、未绑定回传产物全部不成立（complete=false、不写 approval_method，原因入 incomplete_reason）；仅两阶段全过才 complete=true+real_human。新增反例：窗口内另一评论 job（±0.5s）、同秒不同评论（+0.3s）、两条重复 action 记录、异请求+错版本+test_auto_approve 混合、单阶段、重复 digest、relay_message_id 不匹配；新增正例：远距（-60s）邻居评论不阻断绑定、有效两阶段证据 complete=true。"
+        },
+        {
+          "type": "test",
+          "label": "R4 修复验证：等值绑定窗+审批证明分离+内容反例前置（已被 R5 取代）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（38 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 113 passed）；git diff --check",
+          "result": "组合 113 passed 零回归（test_pp_a1 38 项）。R4 关闭 R3 三项残留：①reply-job 绑定由 ±5s 邻近改为锚定客户 comment 的持久化 created_at ±1s 等值窗——T-3s 的上一评论 job（published+迟到投递+新 comment id）不再可能绑定；窗内出现多于一个不同 trigger 即歧义 fail-closed；comment id 缺失或 created_at 缺失/不可解析直接 FAIL（禁止本机时钟回退，直测三反例钉住）；实测 reply job payload 无任何 comment/event 绑定键（13872 payload 全文核验），时间戳等值是唯一可用持久化绑定。②审批证明三缺口全关：request_version 必填且与请求行严格互验（缺失即 FAIL）；report_digest 在提供操作侧证据时与预检报告交叉核对（不匹配即 FAIL）；'两次人工审批成立'与'绑定检查通过'彻底分离——full 模式仅在操作侧审批证据（report_digest 交叉核对通过 + ≥2 条 approve_execution 记录，CLI --approval-evidence-file 注入）齐备时 complete=true+approval_method=real_human，否则保持 complete=false+无 approval_method+incomplete_reason 说明，approval_evidence 如实记录 binding_verified/digest_cross_checked/two_human_approvals_verified 三态。③内容检查反例前置且无豁免：索取（正则收紧至 40 字符内作用于 App ID 宾语）与非法值提示先判先拒，console/dashboard 地点名词不再能绕过（两个绕过反例入测试）。"
+        },
+        {
+          "type": "test",
+          "label": "R3 修复验证：绑定链等待器 + 审批核验 + 内容合同 + 真实 CLI（已被 R4 修正取代）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（27 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 102 passed）；git diff --check",
+          "result": "组合 102 passed 零回归（test_pp_a1 27 项，含绑定 reply-job 正例）。R3 改动：(a) wait_customer_reply_delivered 重写为绑定链——客户 comment 经 turn.event_id（zendesk:ticket:\u003cid>:comment:\u003ccomment_id>，13872 实证格式）绑定 turn、draft 经 turn_id 外键、reply job 经 trigger_message_created_at±5s 触发窗绑定，delivery 只认绑定产物（迟到投递/上一回合产物一律拒绝，水位仅辅助排重）；turn failed/superseded/cancelled/human_review、job failed/manual_attention/cancelled、draft superseded/cancelled/rejected/prepare_failed 为终态/无效态，检测到立即停止（不再等满 timeout，快停测试断言 db_call_count==4）；(b) 新增 verify_relay_result_approval_binding——按 worker.py 同款门禁核验 relay_results.approval_ref（action=approve_execution、request_id/version 匹配、report_digest 为 64 位 sha256），审批证据缺失/未绑定即 FAIL；full 模式报告附 approval_evidence（request/version/digest/outcome+test_approval_executed_by_scenario=false+method_limitation：服务端 approval_ref 不编码审批方式，人工归属依赖本轮未执行测试审批这一执行上下文）；(c) turn2 内容检查结构化——必须真实解释 App ID（32 字符唯一标识/console 项目列表等）或显式知识不可用+下一步，索取 AppID 与非法值提示为显式反例；(d) 真实 CLI 路径验证：main() 全流程（mock 引擎与 SSM/env 装载）对 progress 运行返回 exit 2 且报告 complete=false。新覆盖反例：上一回合草稿迟到投递、superseded/cancelled 产物带 delivery、上一回合 job 迟到投递、审批缺失/未绑定、降级无下一步。"
+        },
+        {
+          "type": "document",
+          "label": "R2 验收遗留问题与关闭方式（2026-10-06 R3）",
+          "command": "验收方对 R2 的四项 P1 + 快停纠正",
+          "result": "①comment 水位不能证明回合身份→已改绑定链（见上）；②查询了失效状态未用于拒绝→终态/无效态立即拒绝且短路后续路径；③full 未核验两次人工审批→verify_relay_result_approval_binding 按 worker 门禁核验 digest 绑定，并如实记录服务端不编码审批方式的局限（test_auto_approve 与人工在服务端同构，已实证 13832/13782/13693/13687 历史 approval_ref 无 method 字段）；④内容检查过弱→结构化规则+反例；⑤'终态快速失败'表述纠正→R3 真实实现立即停止（快停测试以调用计数证明）。"
+        },
+        {
+          "type": "test",
+          "label": "R2 修复验证：PP-A1 专属测试 + 组合回归（已被 R3 取代为扩展版）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（14 项）；组合 test_pp_a1+test_pp_en_quick+test_pp_en_duplicate_notice（89 项）",
+          "result": "test_pp_a1 14 passed：4 项特征化测试证明旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS（修复前误判的直接存档证据）；6 项反例测试证明新链路下这些情况一律 FAIL（failed turn 终态原因进入步骤 detail）；上一回合投递冒充与内容不符各 1 项 FAIL；progress 报告 complete=false 且无 approval_method；full 模式仅核验 relay result 后 complete=true。组合 89 passed（存量 75 零回归）。"
+        },
+        {
+          "type": "test",
+          "label": "阶段1配置对齐发布 r20261006-332d24d（R1，验收方独立确认）",
+          "command": "deployment/release_automation_ecs_pipeline.sh --prompt-release-id pr-0a07d038eef8 --through preproduction --automation-case-engine hermes --enablement-workflow-mode archer --hermes-case-workflow-mode real --hermes-agent-enabled --hermes-persona-enabled --bootstrap-account-schema --resume（源 prompt 目录=preprod：TICKET_DB_DSN=\u003cpreprod SSM>+TICKET_DB_SCHEMA=supportportal_preproduction；AUTOMATION_TERRAFORM_BIN=~/bin/terraform）",
+          "result": "全阶段 passed：codebuild（构建 34f78ee4，S3 版本化证据回收）→ preproduction_preflight 185.5s → preproduction_deploy 1284.6s → activation → release_note；schema bootstrap 幂等 skipped（014）。部署后回读（验收方 16:44 CST 复核一致）：公网 /health/release ok、release_id=r20261006-332d24d、git_commit=332d24df；route:103 AUTOMATION_CASE_ENGINE=hermes；worker:104 ENABLEMENT_WORKFLOW_MODE=archer+HERMES_CASE_WORKFLOW_MODE=real+AGENT_MODEL_ID=gpt-6-sol。slo_breach=true（1470s 含三次失败重试恢复，仅记录不阻断）。首次两次失败均为操作配方错误（源库 DSN 选择、遗留 release 目录），非产品缺陷。"
+        },
+        {
+          "type": "test",
+          "label": "PP CLI 通道 preflight（R1，验收方确认通道事实沿用）",
+          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> python3.12 -m scripts.testing.preproduction --check（union）",
+          "result": "全绿：db ok、zendesk_api authenticated、smtp ok、intake configured、relay zac-agent token configured、pilot 存在、profile=supportportal_preproduction。"
+        },
+        {
+          "type": "test",
           "label": "Console API + UI contract + prefix-safety",
           "command": ".venv/bin/python -m unittest backend.tests.test_automation_test_console backend.tests.test_automation_test_ui_contract",
           "details": "18 用例全过：未登录 401；templates 返回带 [zac test] 前缀的三类模板与邮箱配置状态；未知类目 422；发送成功落 sent、失败/未配置落 failed+原因且 502 不重试；refresh 按 production case 关联并快照（zendesk 链接/internal email/reply job intent），无匹配 not_found、失败发送不关联、未知 id 404；[zac test] 前缀不破坏 enablement 确定性检测；UI 契约（挂载/nginx 指向 api_production/版本戳/workspace 登录经 /production/api）。"
@@ -4405,8 +4489,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 4,
+      "status": "active",
+      "task_count": 5,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -16107,6 +16191,117 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "修复轮发布 r20261006-84ae189 + 部署后关闭态合同回读",
           "command": "release_automation_ecs_pipeline.sh --release-commit 84ae189575e55b607708eb4f6ad7674f66bfb576 --prompt-release-id pr-d9166ff58459（同前 flags+--bootstrap-account-schema）+ curl/psql 线上回读",
           "result": "全阶段 passed（codebuild 153s/deploy 1057s，SLO breach=true 非阻断）；/health/release=r20261006-84ae189+84ae1895+pr-d9166ff58459；worker/api :106=HERMES_KNOWLEDGE_WORKFLOW_ENABLED 0+worker WEKNORA_PROMOTION_ENABLED 0+WeKnora secret 零残留+HERMES_AGENT_* 保留+APP_BUILD_REF=84ae1895；真实 decision POST（approve+完整 resolution）→409 显式拒绝，目标 human_review 行前后零变化；旧任务退出（running=1/pending=0 各角色单任务）。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-187",
+      "title": "Automation 与调查 Agent 功能验收（Preproduction）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "account-automation",
+      "function_id": "production-regression-testing",
+      "created_at": "2026-10-06",
+      "updated_at": "2026-10-06",
+      "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
+      "next_action": "R10 修复已提交第十轮独立验收（等待结论）：规范化按字段拆分——detail 保持文本合同（不 JSON 解析，'true'/'null' 文本保持字符串身份），JSON 解码仅限 readback 路径。验收通过后复跑 PP-A1 progress、推进 I1 主链；A2 新开通仍被 a06094d1 stale UAP 阻断（另行授权清理）。",
+      "acceptance_criteria": [
+        "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
+        "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
+        "知识缺失：不编造检索结果；明确缺失与不确定性，仍使用可用工具和客户证据推进调查；知识不可用为允许降级但不免除其他功能要求。",
+        "审批：调查回复批准前零客户投递；过期草稿、重复点击、错误案例绑定不能产生投递。",
+        "幂等与恢复：重复事件、重试与并发不能重复业务动作或客户回复，失败有可观察状态与恢复或接管路径（R1 场景）。",
+        "证据：真实入口、持久记录、worker 执行、外部投递及独立回读按 ID 串联；验收工具自身的 PASS 判定必须基于当前回合的实际投递与内容合同（R1 教训）。",
+        "A2 保留真实人工审批验证（test_auto_approve 只验证快速链路，不替代）；至少一个证据充分的调查场景（I1）实际读取证据并完成调查。",
+        "停止点：Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R10 修复验证：按字段规范化（detail 保持文本合同）（等待第十轮独立验收）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（61 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 136 passed）；git diff --check",
+          "result": "组合 136 passed 零回归。R10 关闭 R9 残留：规范化按字段拆分——detail 走 _normalize_text_projection_value（仅空白串视为无内容，文本永不 JSON 解析，'true'/'null'/数字文本保持字符串身份），readback 独占 _normalize_json_projection_value（JSON 解码仅此路径）。新增反例：服务端 detail 文本 'true' vs 正文布尔 true（重算摘要）拒绝（类型穿透关闭）、服务端 detail 文本 'null' 省略字段（重算摘要）拒绝（'omits detail'，省略绕过再次关闭）；普通 detail 等值、空值规则与 readback 键序正例保留通过。"
+        },
+        {
+          "type": "test",
+          "label": "R9 修复验证：类型保持比较（已被 R10 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（59 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 134 passed）；git diff --check",
+          "result": "组合 134 passed 零回归。R9 关闭 R8 残留：write_attempted 改为 JSON 类型保持比较——正文必须携带真布尔且与服务端布尔 is 同值（worker 按 bool(payload) 入库、字符串 'false' 会落成 True，故字符串永不等价）；readback/detail 改用 _json_projection_equal 递归结构比较——布尔只匹配布尔（显式拦截 Python False==0/True==1）、数字匹配数字、字符串仅匹配字符串、对象键序无关、数组逐元素。新增反例：write_attempted='false' 字符串（重算摘要）不完整、readback cached:false→0（重算摘要）不完整；键序等价正例保留通过。"
+        },
+        {
+          "type": "document",
+          "label": "R1 独立验收结论（2026-10-06）",
+          "command": "规划线对 codex/auto-agent-acceptance（基线 332d24df+未提交改动）的审查",
+          "result": "未通过。环境对齐确认成功（release r20261006-332d24d、API:104/Route:103/Worker:104/Hermes:35 rollout completed、Route=hermes+Enablement=archer、发布 evidence status=complete、工单 13872 hermes binding 成立）；A1 验收工具误判（发现型 PASS）+progress 未标不完整=两项 P1；I 系列阻断归因错误；任务号撞号。已确认部分：环境对齐阶段成立，A1 未闭环。不放行工具代码 finalize、不构成功能通过、不释放 Production 门禁。"
+        },
+        {
+          "type": "document",
+          "label": "工单 13872 收口（R1 实跑终态）",
+          "command": "tail PP-A1 运行日志 + /tmp/pp-a1-progress-report.json + preprod 库只读查询（turns/reply_jobs/case 行）+ CloudWatch worker 日志",
+          "result": "最终 exit 2。已成立：turn1 ask-App-ID 草稿投递（comment 54284316747284，内容检查通过）；turn3 非法 App ID 拒绝（reply job account-reply-f7c23cc9…，persona v8 经 ~8 分钟轮询后 08:36:19 UTC published+Zendesk 投递 message_id=126）；case 标记 internal_email_send_reason=appid_invalid_format 实际已落库。已撤回：turn2 answered PASS（发现型误判；该回合实为 superseded、无任何投递记录——场景推进过快使知识回答未及投递即被 turn3 取代）。运行终止点：turn3 标记等待超时（case_row 从未 SELECT internal_email_send_reason 列，等待永不满足——R2 已修）。turn4/5 未执行；relay 申请 0；无重复申请、无审批写入。"
+        },
+        {
+          "type": "test",
+          "label": "R8 修复验证：结果投影比较收口（字段必选+JSON 结构比较）（已被 R9 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（57 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 132 passed）；git diff --check",
+          "result": "组合 132 passed 零回归。R8 关闭 R7 残留的两方向：①省略绕过——服务端 detail/readback 有业务内容（经 _normalize_result_projection_value 判空：None/空白串/空容器=无内容）时，批准正文必须携带该字段且内容一致，省略即'omits … present in the server record'拒绝、complete=false；服务端无内容而正文凭空携带也拒绝。②键序误拒回归——readback 按 JSON 结构比较（JSON 串先解析，dict 相等忽略键序、保留值与类型；detail 按规范化后字符串比较），内容相同键序不同正常通过。新增用例：省略服务端非空字段不完整、等价键序 readback 通过（complete=true+real_human）、readback 内容真实不一致拒绝。"
+        },
+        {
+          "type": "test",
+          "label": "R7 修复验证：分页终止符合法性 + 批准正文与服务端权威投影比对（已被 R8 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（54 项+4 subtests）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 129 passed）；git diff --check",
+          "result": "组合 129 passed 零回归。R7 关闭 R6 两项残留：①分页终止符合法性——唯一合法结束标记是 next_page 为 JSON null 且键必须存在；布尔/对象链接/空白串/缺键全部判畸形显式 FAIL（'malformed comment pagination terminator'/'blank comment pagination link'/'carries no next_page terminator'），不再被解释为'已读完'；正常 null 结束正例保留。②批准正文与权威持久化投影交叉核对——verify 查询补选 res.detail/res.readback，核验器要求批准正文必须携带 write_attempted 且与服务端一致（不一致即拒），正文携带 detail/readback 时须与服务端非空值一致；'自洽的另一份正文'（篡改 write_attempted 并重算摘要、request/version/outcome/relay_message_id 全不变）现在拒绝（'write_attempted differs from the server record'），complete=false。新增反例：next_page=False/对象/空白/缺键四变体（subTest）、篡改 write_attempted 重算摘要；正常分页结束正例沿用存量用例。"
+        },
+        {
+          "type": "test",
+          "label": "R6 修复验证：完整分页归因 + 两阶段批准内容/顺序核验（已被 R7 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（52 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 127 passed）；git diff --check",
+          "result": "组合 127 passed 零回归（test_pp_a1 52 项）。R6 关闭 R5 两项残留：①comment 清单完整分页——_customer_comment_clocks 沿用 zendesk_ticket_assignment.py 同款分页纪律（next_page URL 逐页校验 scheme/netloc/path+去重+页数上限，畸形页/客户评论 created_at 不可解析/清单不可达均显式 FAIL，绝不当作'没有其他评论'）；第二页存在冲突评论即拒绝归因（'attributable to another customer comment'），完整分页下远距评论正例继续绑定。②两阶段批准核验补三点——批准决定（precheck 必须 action=approve_execution；execution_result 必须 decision=approved，reject_execution/rejected 拒绝）；结果内容交叉核对（证据须携带被批准的 enablement-relay-result-v1 payload，canonical sha256 须等于 result_digest，且 payload 的 request_id/version/outcome 与服务端结果行一致——relay_message_id 绑定不再替代内容核验）；阶段时序（execution_result.approved_at 必须严格晚于 precheck.approved_at，倒置拒绝）。新增反例：第二页冲突、畸形页、清单失败、拒绝决定、篡改结果 payload、阶段倒置；新增正例：完整分页跨页绑定、两阶段完整证据（含 payload digest 自洽）complete=true。"
+        },
+        {
+          "type": "test",
+          "label": "R5 修复验证：触发身份核验 + 两阶段人工审批证明（已被 R6 扩展）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（45 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 120 passed）；git diff --check",
+          "result": "组合 120 passed 零回归（test_pp_a1 45 项）。R5 关闭 R4 两项残留：①reply-job 绑定升级为身份核验——等待器开工即拉取工单 comment 清单（Zendesk 持久化触发记录，requester 过滤客户侧），anchor 取本次评论的清单权威 created_at；候选 job 的 trigger 时间戳必须唯一归因到本次评论（±1s 内且无其他客户评论同样落在 ±1s 内），窗口内只有另一条评论的 job、同秒不同评论一律拒绝（'attributable to another customer comment'），本次评论不在清单即 FAIL；不再以缩窗替代身份核验。②两次人工审批证明改为 SKILL 合同两阶段核验（_two_stage_human_approvals_proven）：precheck（执行前批准预检报告：request/version/method=human/approver/approved_at/report_digest 与服务端 approval_ref 交叉核对）+ execution_result（执行后批准结果回传：result_digest 64hex 且与 precheck 不同、relay_message_id 与服务端结果行交叉核对绑定回传产物）；重复裸 action 记录、异请求/错版本/method=test_auto_approve、单阶段、重复 digest、未绑定回传产物全部不成立（complete=false、不写 approval_method，原因入 incomplete_reason）；仅两阶段全过才 complete=true+real_human。新增反例：窗口内另一评论 job（±0.5s）、同秒不同评论（+0.3s）、两条重复 action 记录、异请求+错版本+test_auto_approve 混合、单阶段、重复 digest、relay_message_id 不匹配；新增正例：远距（-60s）邻居评论不阻断绑定、有效两阶段证据 complete=true。"
+        },
+        {
+          "type": "test",
+          "label": "R4 修复验证：等值绑定窗+审批证明分离+内容反例前置（已被 R5 取代）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（38 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 113 passed）；git diff --check",
+          "result": "组合 113 passed 零回归（test_pp_a1 38 项）。R4 关闭 R3 三项残留：①reply-job 绑定由 ±5s 邻近改为锚定客户 comment 的持久化 created_at ±1s 等值窗——T-3s 的上一评论 job（published+迟到投递+新 comment id）不再可能绑定；窗内出现多于一个不同 trigger 即歧义 fail-closed；comment id 缺失或 created_at 缺失/不可解析直接 FAIL（禁止本机时钟回退，直测三反例钉住）；实测 reply job payload 无任何 comment/event 绑定键（13872 payload 全文核验），时间戳等值是唯一可用持久化绑定。②审批证明三缺口全关：request_version 必填且与请求行严格互验（缺失即 FAIL）；report_digest 在提供操作侧证据时与预检报告交叉核对（不匹配即 FAIL）；'两次人工审批成立'与'绑定检查通过'彻底分离——full 模式仅在操作侧审批证据（report_digest 交叉核对通过 + ≥2 条 approve_execution 记录，CLI --approval-evidence-file 注入）齐备时 complete=true+approval_method=real_human，否则保持 complete=false+无 approval_method+incomplete_reason 说明，approval_evidence 如实记录 binding_verified/digest_cross_checked/two_human_approvals_verified 三态。③内容检查反例前置且无豁免：索取（正则收紧至 40 字符内作用于 App ID 宾语）与非法值提示先判先拒，console/dashboard 地点名词不再能绕过（两个绕过反例入测试）。"
+        },
+        {
+          "type": "test",
+          "label": "R3 修复验证：绑定链等待器 + 审批核验 + 内容合同 + 真实 CLI（已被 R4 修正取代）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（27 项）+ test_pp_en_quick/test_pp_en_duplicate_notice（75 项，组合 102 passed）；git diff --check",
+          "result": "组合 102 passed 零回归（test_pp_a1 27 项，含绑定 reply-job 正例）。R3 改动：(a) wait_customer_reply_delivered 重写为绑定链——客户 comment 经 turn.event_id（zendesk:ticket:\u003cid>:comment:\u003ccomment_id>，13872 实证格式）绑定 turn、draft 经 turn_id 外键、reply job 经 trigger_message_created_at±5s 触发窗绑定，delivery 只认绑定产物（迟到投递/上一回合产物一律拒绝，水位仅辅助排重）；turn failed/superseded/cancelled/human_review、job failed/manual_attention/cancelled、draft superseded/cancelled/rejected/prepare_failed 为终态/无效态，检测到立即停止（不再等满 timeout，快停测试断言 db_call_count==4）；(b) 新增 verify_relay_result_approval_binding——按 worker.py 同款门禁核验 relay_results.approval_ref（action=approve_execution、request_id/version 匹配、report_digest 为 64 位 sha256），审批证据缺失/未绑定即 FAIL；full 模式报告附 approval_evidence（request/version/digest/outcome+test_approval_executed_by_scenario=false+method_limitation：服务端 approval_ref 不编码审批方式，人工归属依赖本轮未执行测试审批这一执行上下文）；(c) turn2 内容检查结构化——必须真实解释 App ID（32 字符唯一标识/console 项目列表等）或显式知识不可用+下一步，索取 AppID 与非法值提示为显式反例；(d) 真实 CLI 路径验证：main() 全流程（mock 引擎与 SSM/env 装载）对 progress 运行返回 exit 2 且报告 complete=false。新覆盖反例：上一回合草稿迟到投递、superseded/cancelled 产物带 delivery、上一回合 job 迟到投递、审批缺失/未绑定、降级无下一步。"
+        },
+        {
+          "type": "document",
+          "label": "R2 验收遗留问题与关闭方式（2026-10-06 R3）",
+          "command": "验收方对 R2 的四项 P1 + 快停纠正",
+          "result": "①comment 水位不能证明回合身份→已改绑定链（见上）；②查询了失效状态未用于拒绝→终态/无效态立即拒绝且短路后续路径；③full 未核验两次人工审批→verify_relay_result_approval_binding 按 worker 门禁核验 digest 绑定，并如实记录服务端不编码审批方式的局限（test_auto_approve 与人工在服务端同构，已实证 13832/13782/13693/13687 历史 approval_ref 无 method 字段）；④内容检查过弱→结构化规则+反例；⑤'终态快速失败'表述纠正→R3 真实实现立即停止（快停测试以调用计数证明）。"
+        },
+        {
+          "type": "test",
+          "label": "R2 修复验证：PP-A1 专属测试 + 组合回归（已被 R3 取代为扩展版）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest -q backend/tests/test_pp_a1.py（14 项）；组合 test_pp_a1+test_pp_en_quick+test_pp_en_duplicate_notice（89 项）",
+          "result": "test_pp_a1 14 passed：4 项特征化测试证明旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS（修复前误判的直接存档证据）；6 项反例测试证明新链路下这些情况一律 FAIL（failed turn 终态原因进入步骤 detail）；上一回合投递冒充与内容不符各 1 项 FAIL；progress 报告 complete=false 且无 approval_method；full 模式仅核验 relay result 后 complete=true。组合 89 passed（存量 75 零回归）。"
+        },
+        {
+          "type": "test",
+          "label": "阶段1配置对齐发布 r20261006-332d24d（R1，验收方独立确认）",
+          "command": "deployment/release_automation_ecs_pipeline.sh --prompt-release-id pr-0a07d038eef8 --through preproduction --automation-case-engine hermes --enablement-workflow-mode archer --hermes-case-workflow-mode real --hermes-agent-enabled --hermes-persona-enabled --bootstrap-account-schema --resume（源 prompt 目录=preprod：TICKET_DB_DSN=\u003cpreprod SSM>+TICKET_DB_SCHEMA=supportportal_preproduction；AUTOMATION_TERRAFORM_BIN=~/bin/terraform）",
+          "result": "全阶段 passed：codebuild（构建 34f78ee4，S3 版本化证据回收）→ preproduction_preflight 185.5s → preproduction_deploy 1284.6s → activation → release_note；schema bootstrap 幂等 skipped（014）。部署后回读（验收方 16:44 CST 复核一致）：公网 /health/release ok、release_id=r20261006-332d24d、git_commit=332d24df；route:103 AUTOMATION_CASE_ENGINE=hermes；worker:104 ENABLEMENT_WORKFLOW_MODE=archer+HERMES_CASE_WORKFLOW_MODE=real+AGENT_MODEL_ID=gpt-6-sol。slo_breach=true（1470s 含三次失败重试恢复，仅记录不阻断）。首次两次失败均为操作配方错误（源库 DSN 选择、遗留 release 目录），非产品缺陷。"
+        },
+        {
+          "type": "test",
+          "label": "PP CLI 通道 preflight（R1，验收方确认通道事实沿用）",
+          "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> python3.12 -m scripts.testing.preproduction --check（union）",
+          "result": "全绿：db ok、zendesk_api authenticated、smtp ok、intake configured、relay zac-agent token configured、pilot 存在、profile=supportportal_preproduction。"
         }
       ]
     },

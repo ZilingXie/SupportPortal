@@ -271,6 +271,16 @@ class ScenarioContext:
     baseline_comment_ids: set = field(default_factory=set)
     last_relay_request_version: int = 0
     bound_relay_request_id: str = ""
+    # Current customer turn identity (R3): the posted Zendesk comment id and
+    # its creation timestamp. Outcome waits bind to the turn/job this comment
+    # TRIGGERED (turn.event_id / job.trigger_message_created_at), so a late
+    # delivery from a previous turn can never satisfy the current turn.
+    last_customer_comment_id: str = ""
+    last_customer_comment_at: str = ""
+    # Requester identity of the ticket (R5): customer-authored comments in the
+    # ticket comment listing are the persisted trigger records a reply job's
+    # timestamp must be uniquely attributed against.
+    customer_requester_id: str = ""
 
     def stamp_turn_baseline(self) -> None:
         self.baseline_turn_ids = set(self.seen_turn_ids)
@@ -590,6 +600,7 @@ class ScenarioEngine:
     def case_row(self, ctx: ScenarioContext) -> dict:
         rows = self.db_query(
             "SELECT execution_action, automation_status, internal_email_send_status, "
+            "internal_email_send_reason, "
             "zendesk_ticket_status, automation_context "
             "FROM support_account_cases WHERE account_case_id = %s",
             (ctx.account_case_id,),
@@ -823,6 +834,10 @@ class ScenarioEngine:
             },
         )
         comment_id = self._extract_created_comment_id(response)
+        ctx.last_customer_comment_id = str(comment_id or "")
+        audit = response.get("audit") if isinstance(response.get("audit"), dict) else {}
+        ctx.last_customer_comment_at = str(audit.get("created_at") or "")
+        ctx.customer_requester_id = str(requester_id or "")
         self.emit(
             "customer_turn_sent",
             {
@@ -996,6 +1011,484 @@ class ScenarioEngine:
         except TimeoutError as exc:
             self.record(ctx, step, False, str(exc))
             raise
+
+    def wait_customer_reply_delivered(
+        self, ctx: ScenarioContext, step: str,
+        *, content_check: Callable[[str], str | None] | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict:
+        """Strict turn-outcome wait: a reply DELIVERED to the customer that
+        was PRODUCED BY the current customer turn, whichever pipeline served
+        it (hermes case draft, or persona reply job).
+
+        Binding chain (R3/R4/R5): the customer comment posted for this turn binds
+        the hermes turn via ``turn.event_id =
+        zendesk:ticket:<id>:comment:<comment_id>``. For the reply-job path the
+        ticket's customer-authored comments (the persisted trigger records,
+        read from the Zendesk listing) are mapped to their created_at; a job
+        binds ONLY when its ``trigger_message_created_at`` falls within ±1s of
+        OUR comment's persisted created_at AND no other customer comment also
+        falls within ±1s of it — a job from another comment (even inside the
+        window) and same-second comments are refused, a missing comment id or
+        unparseable created_at fails closed (never a local-clock fallback),
+        and more than one distinct trigger in the window is an ambiguity we
+        refuse to resolve. A DELIVERED comment from a previous turn arriving
+        late never satisfies this wait, and superseded / cancelled / failed
+        producers are rejected even when a delivery row exists for them.
+        Terminal states stop the wait immediately instead of draining the
+        turn timeout.
+        """
+        event_id = (
+            f"zendesk:ticket:{ctx.zendesk_ticket_id}:comment:{ctx.last_customer_comment_id}"
+            if ctx.last_customer_comment_id
+            else ""
+        )
+        # Identity prerequisites (R4): the job path binds by the persisted
+        # trigger_message_created_at, which only means anything against the
+        # REAL created_at of the customer comment. Without the comment id or
+        # a parseable created_at the wait fails closed — never a local-clock
+        # fallback that would silently claim "bound".
+        if not ctx.last_customer_comment_id:
+            detail = (
+                "cannot bind a reply to this turn: the posted customer comment id "
+                "was not captured"
+            )
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+        try:
+            datetime.fromisoformat(
+                ctx.last_customer_comment_at.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            detail = (
+                "cannot bind a reply to this turn: the customer comment's persisted "
+                "created_at is missing or unparseable; refusing local-clock fallback"
+            )
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+        terminal_failure: list[str] = []
+
+        def _customer_comment_clocks() -> dict[str, datetime]:
+            """Persisted trigger records: the ticket's customer-authored
+            comments (Zendesk listing, FULL pagination) mapped to their
+            created_at. A reply job's trigger timestamp may only bind to our
+            comment when NO other customer comment could have produced it —
+            attribution is only valid over a confirmed-complete listing:
+            pagination links are validated, malformed pages and unreadable
+            listings fail instead of counting as 'no other comment'."""
+            import urllib.parse
+
+            comments_endpoint = f"/tickets/{ctx.zendesk_ticket_id}/comments.json"
+            api_base = "https://agoraio.zendesk.com/api/v2"
+            endpoint_parsed = urllib.parse.urlparse(api_base + comments_endpoint)
+            next_url: str | None = f"{api_base}{comments_endpoint}?per_page=100"
+            seen_urls: set[str] = set()
+            clocks: dict[str, datetime] = {}
+            pages = 0
+            requester = str(ctx.customer_requester_id or "")
+            while next_url is not None:
+                parsed = urllib.parse.urlparse(next_url)
+                if (
+                    parsed.scheme != "https"
+                    or parsed.netloc != endpoint_parsed.netloc
+                    or parsed.path != endpoint_parsed.path
+                    or next_url in seen_urls
+                ):
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: comment pagination link invalid"
+                    )
+                seen_urls.add(next_url)
+                pages += 1
+                if pages > 100:
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: comment pagination did not terminate"
+                    )
+                try:
+                    payload = self._zendesk_request(next_url[len(api_base):])
+                except AutomationTestScenarioError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - listing is mandatory
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: ticket comment listing "
+                        f"unavailable ({type(exc).__name__})"
+                    )
+                entries = payload.get("comments") if isinstance(payload, dict) else None
+                if not isinstance(entries, list) or any(
+                    not isinstance(entry, dict) for entry in entries
+                ):
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: malformed comment listing page"
+                    )
+                for entry in entries:
+                    cid = str(entry.get("id") or "")
+                    author = str(entry.get("author_id") or "")
+                    if requester and author and author != requester:
+                        continue
+                    if not cid:
+                        continue
+                    try:
+                        clocks[cid] = datetime.fromisoformat(
+                            str(entry.get("created_at") or "").replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        raise AutomationTestScenarioError(
+                            "cannot verify trigger identity: customer comment "
+                            f"{cid} has an unparseable created_at"
+                        )
+                # Pagination terminator discipline (R7): the ONLY legitimate
+                # end marker is next_page being JSON null; a missing key or
+                # any non-string / blank value is a malformed response and
+                # fails — it must never be read as "listing complete".
+                if "next_page" not in payload:
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: comment listing page "
+                        "carries no next_page terminator"
+                    )
+                raw_next = payload.get("next_page")
+                if raw_next is None:
+                    next_url = None
+                elif isinstance(raw_next, str):
+                    if not raw_next.strip():
+                        raise AutomationTestScenarioError(
+                            "cannot verify trigger identity: blank comment "
+                            "pagination link"
+                        )
+                    next_url = raw_next
+                else:
+                    raise AutomationTestScenarioError(
+                        "cannot verify trigger identity: malformed comment "
+                        f"pagination terminator (next_page is {type(raw_next).__name__})"
+                    )
+            return clocks
+
+        try:
+            clocks = _customer_comment_clocks()
+        except AutomationTestScenarioError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+        if ctx.last_customer_comment_id not in clocks:
+            detail = (
+                "cannot verify trigger identity: our customer comment is not "
+                "present in the ticket comment listing"
+            )
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+        anchor = clocks[ctx.last_customer_comment_id]
+        deadline = time.monotonic() + int(
+            timeout_seconds
+            if timeout_seconds is not None
+            else getattr(self, "customer_reply_wait_timeout_seconds", None)
+            or self.turn_timeout_min * 60
+        )
+
+        _TURN_TERMINAL = {"failed", "superseded", "cancelled", "human_review"}
+        _JOB_TERMINAL = {"failed", "manual_attention", "cancelled"}
+        _DRAFT_INVALID = {"superseded", "cancelled", "rejected", "prepare_failed"}
+
+        def _bound_turn():
+            if not event_id:
+                return None
+            rows = self.db_query(
+                "SELECT turn_id, status, route FROM automation_hermes_agent_turns "
+                "WHERE event_id = %s ORDER BY created_at DESC LIMIT 1",
+                (event_id,),
+            )
+            return rows[0] if rows else None
+
+        def _bound_draft_delivery(turn_id: str) -> dict | None:
+            rows = self.db_query(
+                "SELECT d.draft_id, d.status AS draft_status, d.content, "
+                "dl.status AS delivery_status, dl.zendesk_comment_id "
+                "FROM automation_hermes_case_drafts d "
+                "LEFT JOIN support_account_zendesk_comment_deliveries dl "
+                "ON dl.message_id = d.draft_id "
+                "WHERE d.turn_id = %s ORDER BY d.created_at DESC LIMIT 1",
+                (turn_id,),
+            )
+            if not rows:
+                return None
+            row = rows[0]
+            draft_status = str(row.get("draft_status") or "")
+            if draft_status in _DRAFT_INVALID:
+                terminal_failure.append(
+                    f"bound draft is {draft_status}; its delivery cannot answer "
+                    f"this turn: {row.get('draft_id')}"
+                )
+                return None
+            if str(row.get("delivery_status") or "") != "delivered":
+                return None
+            comment_id = str(row.get("zendesk_comment_id") or "")
+            if not comment_id or comment_id in ctx.baseline_comment_ids:
+                return None
+            row["kind"] = "draft"
+            row["content"] = row.get("content")
+            return row
+
+        def _bound_reply_job_delivery() -> dict | None:
+            # Candidate jobs are those whose PERSISTED trigger timestamp
+            # equals the customer comment's created_at within ±1s. A job
+            # triggered by a different comment (even 3s away) is not a
+            # candidate at all, and more than one distinct trigger inside
+            # the window is an ambiguity we refuse to resolve.
+            rows = self.db_query(
+                "SELECT job_id, status, payload->>'reply_intent' AS reply_intent, "
+                "trigger_message_created_at "
+                "FROM support_account_reply_jobs "
+                "WHERE ticket_id = %s AND trigger_message_created_at BETWEEN %s AND %s "
+                "ORDER BY created_at DESC",
+                (
+                    ctx.client_ticket_id,
+                    (anchor - timedelta(seconds=1)).isoformat(),
+                    (anchor + timedelta(seconds=1)).isoformat(),
+                ),
+            )
+            if not rows:
+                return None
+            distinct_triggers = {
+                str(row.get("trigger_message_created_at")) for row in rows
+            }
+            if len(distinct_triggers) > 1:
+                terminal_failure.append(
+                    f"ambiguous reply-job binding: {len(distinct_triggers)} distinct "
+                    f"trigger timestamps within ±1s of customer comment "
+                    f"{ctx.last_customer_comment_id}; refusing to pick one"
+                )
+                return None
+            for job in rows:
+                job_id = str(job.get("job_id") or "")
+                if not job_id or job_id in ctx.baseline_reply_job_ids:
+                    continue
+                status = str(job.get("status") or "")
+                if status in _JOB_TERMINAL:
+                    terminal_failure.append(
+                        f"reply job ended {status} before delivery: {job}"
+                    )
+                    return None
+                if status != "published":
+                    continue
+                trigger = job.get("trigger_message_created_at")
+                try:
+                    trigger_dt = (
+                        trigger if isinstance(trigger, datetime)
+                        else datetime.fromisoformat(str(trigger).replace("Z", "+00:00"))
+                    )
+                except ValueError:
+                    trigger_dt = None
+                if trigger_dt is None:
+                    terminal_failure.append(
+                        f"reply job trigger timestamp unparseable: {job}"
+                    )
+                    return None
+                # Identity verification (R5): the trigger timestamp must map
+                # to OUR comment and to no other customer comment. A window
+                # containing only another comment's job fails here instead of
+                # binding, and same-second comments are an ambiguity.
+                colliding = sorted(
+                    cid for cid, ts in clocks.items()
+                    if cid != ctx.last_customer_comment_id
+                    and abs((ts - trigger_dt).total_seconds()) <= 1
+                )
+                if colliding:
+                    terminal_failure.append(
+                        f"reply job trigger is attributable to another customer "
+                        f"comment {colliding} (not comment "
+                        f"{ctx.last_customer_comment_id}); refusing to bind"
+                    )
+                    return None
+                messages = self.db_query(
+                    "SELECT m.id, m.content FROM support_ticket_messages m "
+                    "WHERE m.ticket_id = %s AND m.meta->>'account_reply_job_id' = %s "
+                    "ORDER BY m.id DESC LIMIT 1",
+                    (ctx.client_ticket_id, job_id),
+                )
+                if not messages:
+                    continue
+                deliveries = self.db_query(
+                    "SELECT status, zendesk_comment_id "
+                    "FROM support_account_zendesk_comment_deliveries "
+                    "WHERE message_id = %s ORDER BY created_at DESC LIMIT 1",
+                    (str(messages[0].get("id")),),
+                )
+                if not deliveries or str(deliveries[0].get("status") or "") != "delivered":
+                    continue
+                comment_id = str(deliveries[0].get("zendesk_comment_id") or "")
+                if not comment_id or comment_id in ctx.baseline_comment_ids:
+                    continue
+                return {
+                    "kind": "reply_job",
+                    "job_id": job_id,
+                    "reply_intent": job.get("reply_intent"),
+                    "zendesk_comment_id": comment_id,
+                    "content": messages[0].get("content"),
+                }
+            return None
+
+        def _probe_once() -> dict | None:
+            terminal_failure.clear()
+            turn = _bound_turn()
+            if turn is not None:
+                status = str(turn.get("status") or "")
+                if status in _TURN_TERMINAL:
+                    terminal_failure.append(
+                        f"hermes turn for this customer event is {status}; "
+                        f"it can no longer deliver an answer: {turn}"
+                    )
+                    return None
+                if status == "completed":
+                    draft = _bound_draft_delivery(str(turn.get("turn_id") or ""))
+                    if draft is not None:
+                        return draft
+            if terminal_failure:
+                # A terminally invalid bound turn can no longer produce a
+                # valid answer — do not fall through to the job path.
+                return None
+            job = _bound_reply_job_delivery()
+            if job is not None:
+                return job
+            return None
+
+        attempt = 0
+        row = None
+        while row is None:
+            if self.should_cancel():
+                raise ScenarioCancelled("customer reply delivered for the current turn")
+            if time.monotonic() >= deadline:
+                break
+            row = _probe_once()
+            if row is None:
+                if terminal_failure:
+                    break
+                attempt += 1
+                if attempt % 3 == 0:
+                    self.emit(
+                        "waiting",
+                        {
+                            "description": "customer reply delivered for the current turn",
+                            "waited_seconds": attempt,
+                            "last_error": "",
+                        },
+                    )
+                self.sleep(self.poll_interval_seconds)
+        if row is None:
+            detail = terminal_failure[0] if terminal_failure else (
+                f"timed out waiting for a delivery bound to customer comment "
+                f"{ctx.last_customer_comment_id or '(unknown)'}"
+            )
+            self.record(ctx, step, False, detail)
+            if terminal_failure:
+                raise AutomationTestScenarioError(detail)
+            raise TimeoutError(detail)
+        ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
+        content = str(row.get("content") or "")
+        ok = True
+        detail = (
+            f"kind={row.get('kind')} intent={row.get('reply_intent')} "
+            f"comment={row.get('zendesk_comment_id')} "
+            f"bound_to_comment={ctx.last_customer_comment_id or '(unknown)'}"
+        )
+        if content_check is not None:
+            failure = content_check(content)
+            if failure:
+                ok = False
+                detail += f"; content check failed: {failure}"
+            else:
+                detail += "; content check passed"
+        self.record(ctx, step, ok, detail)
+        if not ok:
+            raise AssertionError(detail)
+        return row
+
+    def verify_relay_result_approval_binding(
+        self, ctx: ScenarioContext, request_id: str, step: str,
+        *, expected_outcomes: set[str],
+        expected_report_digest: str | None = None,
+    ) -> dict:
+        """Verify the persisted relay result carries an approval reference
+        bound to THIS application the same way the ECS worker gates enabled
+        results (worker.py: action=approve_execution, matching request_id and
+        request_version — both REQUIRED here, not optional — and a sha256
+        report_digest).
+
+        With ``expected_report_digest`` (from operator-supplied approval
+        evidence) the digest is additionally cross-checked against that
+        precheck report; without it the digest shape passes but
+        ``digest_cross_checked`` stays False and NO human-approval claim may
+        be derived from this check alone — server-side approval_ref does not
+        encode the approval method (a test_auto_approve run persists the same
+        shape), so "two human approvals proven" is a separate verdict the
+        caller must ground in its own evidence.
+        """
+        rows = self.db_query(
+            "SELECT res.outcome, res.write_attempted, res.approval_ref, "
+            "res.relay_message_id, res.detail, res.readback, "
+            "req.request_id, req.request_version "
+            "FROM support_enablement_relay_results res "
+            "JOIN support_enablement_relay_requests req "
+            "ON req.request_id = res.request_id "
+            "WHERE res.request_id = %s ORDER BY res.created_at DESC LIMIT 1",
+            (request_id,),
+        )
+        if not rows:
+            self.record(ctx, step, False, f"no relay result for {request_id}")
+            raise AssertionError(f"no relay result for {request_id}")
+        row = rows[0]
+        outcome = str(row.get("outcome") or "")
+        approval = row.get("approval_ref")
+        if isinstance(approval, str):
+            try:
+                approval = json.loads(approval)
+            except ValueError:
+                approval = None
+        problems = []
+        if outcome not in expected_outcomes:
+            problems.append(f"outcome={outcome} not in {sorted(expected_outcomes)}")
+        request_version = row.get("request_version")
+        if not isinstance(approval, dict):
+            problems.append("approval_ref missing/not an object")
+        else:
+            if str(approval.get("action") or "") != "approve_execution":
+                problems.append(f"approval action={approval.get('action')!r}")
+            if str(approval.get("request_id") or "") != str(request_id):
+                problems.append("approval request_id unbound")
+            version = approval.get("request_version")
+            if version is None or str(version) == "":
+                problems.append("approval request_version missing (required)")
+            elif request_version is None or str(request_version) == "":
+                problems.append("request row version missing (required)")
+            elif str(version) != str(request_version):
+                problems.append(
+                    f"approval request_version mismatch: {version} != {request_version}"
+                )
+            digest = str(approval.get("report_digest") or "")
+            if not re.fullmatch(r"[0-9a-f]{64}", digest):
+                problems.append("approval report_digest missing/not sha256")
+            elif expected_report_digest is not None and digest != str(expected_report_digest):
+                problems.append("approval report_digest does not match the precheck report")
+        if problems:
+            self.record(ctx, step, False, "; ".join(problems))
+            raise AssertionError(f"relay result approval binding failed: {'; '.join(problems)}")
+        digest_cross_checked = bool(
+            expected_report_digest is not None
+            and str(approval.get("report_digest")) == str(expected_report_digest)
+        )
+        self.record(
+            ctx, step, True,
+            f"outcome={outcome} request={request_id} "
+            f"v{row.get('request_version')} digest={str(approval.get('report_digest'))[:12]}… "
+            f"digest_cross_checked={digest_cross_checked}",
+        )
+        return {
+            "binding_verified": True,
+            "digest_cross_checked": digest_cross_checked,
+            "outcome": outcome,
+            "write_attempted": row.get("write_attempted"),
+            "request_id": request_id,
+            "request_version": row.get("request_version"),
+            "report_digest": approval.get("report_digest"),
+            "relay_message_id": row.get("relay_message_id"),
+            "detail": row.get("detail"),
+            "readback": row.get("readback"),
+        }
 
     def wait_hermes_turn_direction(
         self, ctx: ScenarioContext, expected_direction: str, step: str,
