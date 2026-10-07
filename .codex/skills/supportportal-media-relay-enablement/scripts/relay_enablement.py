@@ -792,13 +792,13 @@ def _pilot_auth_readiness() -> dict[str, Any]:
     if exit_code == 0 and ("expired" in status_text.lower() or has_sso is False):
         record.update(
             state="login_required",
-            next_action="owner runs `pilot auth login` (browser SSO flow) and completes the authorization; then rerun preflight",
+            next_action="executor auto-runs `pilot auth login` (browser SSO flow) and polls status for up to 120 seconds; if it does not complete, the owner finishes the browser authorization; then rerun preflight",
         )
         return record
     if any(marker in markers for marker in SSO_EXPIRY_MARKERS):
         record.update(
             state="login_required",
-            next_action="owner runs `pilot auth login` (browser SSO flow) and completes the authorization; then rerun preflight",
+            next_action="executor auto-runs `pilot auth login` (browser SSO flow) and polls status for up to 120 seconds; if it does not complete, the owner finishes the browser authorization; then rerun preflight",
         )
         return record
     record.update(
