@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T10:54:58Z",
-  "source_base_commit": "ab0d1a0e0130056ec845de3a60913162800f4ba8",
-  "registry_digest": "c572cd2b336f54b6ed809f1bf3d4666151758f18cc3e5aa8ab764df572c6a5cb",
+  "generated_at": "2026-10-07T15:54:28Z",
+  "source_base_commit": "40c3fa2c95909a6ace5a532fd2b81b073f9fabcf",
+  "registry_digest": "ef68c4dfb87bd04bc49dd4368ee8ab52c6a82a9a7701b6f4d757ac9bd620b839",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1573,7 +1573,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 41,
+      "task_count": 42,
       "done_count": 21,
       "blocked_count": 0
     },
@@ -16484,6 +16484,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "全绿：db ok、zendesk_api authenticated、smtp ok、intake configured、relay zac-agent token configured、pilot 存在、profile=supportportal_preproduction。"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-188",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
+      "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
+      "status": "active",
+      "next_action": "实施中：阶段一错误分类与告警修正，随后阶段二受限重试与 SQLite 故障注入测试",
+      "owner": "agent",
+      "created_at": "2026-10-07",
+      "updated_at": "2026-10-07",
+      "acceptance_criteria": [
+        "io 类错误独立分类，不再给出确定性清盘建议；磁盘满/只读/权限/损坏/锁竞争分别处理",
+        "失败日志含 session_id/run_id、SQLite 错误码及名称、异常堆栈、失败阶段 begin/write/commit、回滚结果；不含消息正文/工具参数/凭据",
+        "/v1/runs 失败事件、状态查询、重启回读保留结构化 failure_reason",
+        "SupportPortal 保留 hermes_run_failed 顶层错误码与 incident 幂等键，细分原因入执行事件 JSON，同一失败不重复发信",
+        "告警补齐环境、job ID、attempt、turn/run ID、失败 phase、接管结果；无数据显示未知；无交接证据不得声称已转人工",
+        "受限重试仅限 SQLite I/O 错误且 COMMIT 前、回滚成功、连接不在事务中、文件身份不变：同连接同批次 100ms 后补试一次，重走租约与压缩保护，恢复内存行号等临时标记",
+        "COMMIT 报错/回滚失败/数据库被替换/磁盘满/只读/损坏不重试，回合照常停止",
+        "故障注入测试覆盖 BEGIN/批量写入/COMMIT/ROLLBACK，验证无重复消息、计数、持久化标记，模型与工具调用次数不因重试增加"
+      ],
+      "blockers": [],
+      "evidence": []
     },
     {
       "schema_version": 2,
