@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-189",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
+  "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
+  "status": "active",
+  "next_action": "Round-3 事务失败诊断契约补齐并重新部署（td :43，digest 1b8b2985，镜像内验收 34 项全过，task 启动 2026-10-08T03:30:04Z=北京 11:30:04）；Hermes 分支 60bf08fd、SP 分支待复审；SP finalize 仍待验收放行",
+  "owner": "agent",
+  "created_at": "2026-10-07",
+  "updated_at": "2026-10-08",
+  "acceptance_criteria": [
+    "io 类错误独立分类，不再给出确定性清盘建议；磁盘满/只读/权限/损坏/锁竞争分别处理",
+    "失败日志含 session_id/run_id、SQLite 错误码及名称、异常堆栈、失败阶段 begin/write/commit、回滚结果；不含消息正文/工具参数/凭据",
+    "/v1/runs 失败事件、状态查询、重启回读保留结构化 failure_reason",
+    "SupportPortal 保留 hermes_run_failed 顶层错误码与 incident 幂等键，细分原因入执行事件 JSON，同一失败不重复发信",
+    "告警补齐环境、job ID、attempt、turn/run ID、失败 phase、接管结果；无数据显示未知；无交接证据不得声称已转人工",
+    "受限重试仅限 SQLite I/O 错误且 COMMIT 前、回滚成功、连接不在事务中、文件身份不变：同连接同批次 100ms 后补试一次，重走租约与压缩保护，恢复内存行号等临时标记",
+    "COMMIT 报错/回滚失败/数据库被替换/磁盘满/只读/损坏不重试，回合照常停止",
+    "故障注入测试覆盖 BEGIN/批量写入/COMMIT/ROLLBACK，验证无重复消息、计数、持久化标记，模型与工具调用次数不因重试增加"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "document",
+      "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（:41 回滚 → round-2 :42 → round-3 :43）"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction Hermes td :43（镜像 digest sha256:1b8b298520，task 启动 2026-10-08T03:30:04Z 即北京 11:30:04；:40 保留为回滚目标）。勘误：前次记录的 ':42 task HEALTHY 11:30Z' 时区有误，AWS startedAt 为北京 11:30:04=03:30:04Z"
+    },
+    {
+      "type": "test",
+      "label": "Round-3 镜像内隔离验收 34 项全过（原 25 项 + BEGIN not_attempted/COMMIT uncertain/diag 附异常/完整性；勘误：前次报告'27 项'计数有误，实际 25 项）"
+    },
+    {
+      "type": "test",
+      "label": "hermes 60bf08fd：五个边界的日志断言测试（BEGIN/COMMIT/双败/只读/rollback 失败）；hermes_state 系列 498 通过（1 项预存 FTS5 基线失败与本改动无关）"
+    },
+    {
+      "type": "test",
+      "label": "Round-2 复核通过项：P1 行号污染三场景、SP 告警 95 项复跑、per-step 接管措辞、io 文案、构建追溯（验收方独立确认）"
+    },
+    {
+      "type": "pr",
+      "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage（round-3 提交后更新 digest/源提交 60bf08fd/34 项清单）"
+    }
+  ]
+}

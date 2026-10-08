@@ -1,51 +1,60 @@
 {
   "schema_version": 2,
   "task_id": "p2-188",
-  "phase_id": "phase-1",
-  "module_id": "account-automation",
-  "function_id": "automation-execution-loop",
-  "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
-  "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
+  "title": "WeKnora 并行建设（阶段一：独立部署与 Web 可用）",
   "status": "active",
-  "next_action": "Round-3 事务失败诊断契约补齐并重新部署（td :43，digest 1b8b2985，镜像内验收 34 项全过，task 启动 2026-10-08T03:30:04Z=北京 11:30:04）；Hermes 分支 60bf08fd、SP 分支待复审；SP finalize 仍待验收放行",
-  "owner": "agent",
+  "owner": "codex",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "function_id": "weknora-standalone-deployment",
   "created_at": "2026-10-07",
   "updated_at": "2026-10-08",
+  "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
+  "next_action": "1) build4（714065ba）完成→注册 :4（守卫默认开）→修后 deploy 脚本部署→线上复验子路径修复（带前缀 files 端点 401、bundle 无裸 /login、/dashboard/weknora/login 200）；2) 备份+恢复重跑（带基线对比）；3) 用户答复模型凭据后：配模型→文档闭环→异常表现→知识持久化/恢复后检索回读（--expect-knowledge）→复验收口；4) finalize 待根区他人未提交编辑清空后重跑（分支 codex/weknora-parallel-phase1，含 R3 提交）。",
   "acceptance_criteria": [
-    "io 类错误独立分类，不再给出确定性清盘建议；磁盘满/只读/权限/损坏/锁竞争分别处理",
-    "失败日志含 session_id/run_id、SQLite 错误码及名称、异常堆栈、失败阶段 begin/write/commit、回滚结果；不含消息正文/工具参数/凭据",
-    "/v1/runs 失败事件、状态查询、重启回读保留结构化 failure_reason",
-    "SupportPortal 保留 hermes_run_failed 顶层错误码与 incident 幂等键，细分原因入执行事件 JSON，同一失败不重复发信",
-    "告警补齐环境、job ID、attempt、turn/run ID、失败 phase、接管结果；无数据显示未知；无交接证据不得声称已转人工",
-    "受限重试仅限 SQLite I/O 错误且 COMMIT 前、回滚成功、连接不在事务中、文件身份不变：同连接同批次 100ms 后补试一次，重走租约与压缩保护，恢复内存行号等临时标记",
-    "COMMIT 报错/回滚失败/数据库被替换/磁盘满/只读/损坏不重试，回合照常停止",
-    "故障注入测试覆盖 BEGIN/批量写入/COMMIT/ROLLBACK，验证无重复消息、计数、持久化标记，模型与工具调用次数不因重试增加"
+    "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
+    "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
+    "Web 路由：登录、深层刷新、静态资源、API、预览和下载均走 /dashboard/weknora 专属路径（含受保护文件请求与 token 失效重登录，不以接管根路径绕过）",
+    "文档闭环：非业务样本上传→处理完成→检索命中→原文回读一致",
+    "异常表现：处理或模型调用失败时显示失败原因，不呈现为 ready",
+    "持久化：应用/数据任务重建后，测试对象和索引仍可使用（含知识对象，经应用入口检索验证）",
+    "备份恢复：备份恢复到独立验证目标后，可以检索并读取同一测试对象（基线计数对比+知识全文回读+应用层检索）",
+    "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
+    "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
   ],
-  "blockers": [],
+  "blockers": [
+    "文档闭环/异常表现/知识持久化与恢复后检索回读需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 提供新 key vs 暂不配置），用户尚未答复"
+  ],
   "evidence": [
     {
-      "type": "document",
-      "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（:41 回滚 → round-2 :42 → round-3 :43）"
+      "type": "test",
+      "label": "R3 前端子路径回归（fork 714065ba）",
+      "command": "cd frontend && npx tsx --test src/utils/subpathPrefix.test.mjs && npm test",
+      "result": "subpathPrefix.test.mjs 7/7（子路径登录跳转含 R2 复现场景：/dashboard/weknora/knowledge-bases 深页 redirectToLogin → /dashboard/weknora/login；四种受保护文件 URL 带前缀；根部署回归保持根相对；检测正则仍匹配服务端根相对路径）；全套 397 tests 396 pass 1 skip 0 fail。npm test 仅发现 .test.mjs，新测试按此约定。"
+    },
+    {
+      "type": "test",
+      "label": "R3 部署脚本回归（stub 边界用例）",
+      "command": "deployment/weknora/tests/run_deploy_tests.sh",
+      "result": "15 项全过：正常 rollout 成功并触达公网检查；回滚（PRIMARY 回退旧 TD）非零失败且绝不触达公网检查并报 rolled back or superseded；rolloutState=FAILED 失败；每服务至少轮询两次才判稳；register 默认 REQUIRE_EXISTING_PGDATA=true 且注册默认关闭；--initial-bootstrap 显式 false；restore 失败运行不执行任何 podman rm；两轮容器名唯一。"
+    },
+    {
+      "type": "test",
+      "label": "R3 数据守卫运行时回归（真实 paradedb 镜像）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh",
+      "result": "三场景全过：A 空卷+守卫=拒绝启动（含 refusal 消息）且零数据库写入；B 守卫关+空卷=初始化成功（database system is ready）+PG_VERSION 生成；C 守卫开+已初始化卷=正常启动（升级路径放行）。"
     },
     {
       "type": "deployment",
-      "label": "Preproduction Hermes td :43（镜像 digest sha256:1b8b298520，task 启动 2026-10-08T03:30:04Z 即北京 11:30:04；:40 保留为回滚目标）。勘误：前次记录的 ':42 task HEALTHY 11:30Z' 时区有误，AWS startedAt 为北京 11:30:04=03:30:04Z"
+      "label": "R2 部署与公网验收（2026-10-07 23:5x，部分结论被 R2 独立验收推翻，保留为过程记录）",
+      "command": "deploy_weknora_services.sh --task-definitions <arns3>；curl 矩阵；aws ecs describe-services",
+      "result": "五服务 :3 ACTIVE 1/1；公网入口 200；路由矩阵静态/深层/API 代理通过；管理员注册+提权+注册关闭+401 门禁；备份 292,884B 落桶+独立容器恢复 users=1；隔离=旧服务/规则对照零变化+terraform 零漂移。R2 独立验收核实其中构建链、401/403、隔离；推翻 Web 路由完整性（文件请求/重登录子路径缺口）与持久化/备份恢复的证据充分性。"
     },
     {
-      "type": "test",
-      "label": "Round-3 镜像内隔离验收 34 项全过（原 25 项 + BEGIN not_attempted/COMMIT uncertain/diag 附异常/完整性；勘误：前次报告'27 项'计数有误，实际 25 项）"
-    },
-    {
-      "type": "test",
-      "label": "hermes 60bf08fd：五个边界的日志断言测试（BEGIN/COMMIT/双败/只读/rollback 失败）；hermes_state 系列 498 通过（1 项预存 FTS5 基线失败与本改动无关）"
-    },
-    {
-      "type": "test",
-      "label": "Round-2 复核通过项：P1 行号污染三场景、SP 告警 95 项复跑、per-step 接管措辞、io 文案、构建追溯（验收方独立确认）"
-    },
-    {
-      "type": "pr",
-      "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage（round-3 提交后更新 digest/源提交 60bf08fd/34 项清单）"
+      "type": "document",
+      "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+      "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+      "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
     }
   ]
 }
