@@ -120,6 +120,17 @@ R2 独立验收结论=**未通过**（四项发现：前端文件请求/重登�
 
 R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述：本轮已为发布判定/守卫/清理补齐针对性回归（stub 边界用例），前端子路径补 7 用例。
 
+### R3 部署与线上复验（2026-10-08）
+
+- 发布：fork `714065ba`（子路径修复）→ 归档构建 build4（925e1a14 SUCCEEDED）→ 任务定义 `:4`（守卫默认 true，注册默认关闭）→ 修复版 `deploy_weknora_services.sh` 依赖序部署，五服务稳定（`weknora-frontend stable on 4 (1/1)`，绑定目标 TD 判稳生效），公网入口 200。
+- 线上复验（R2 两类缺陷的关闭证据）：
+  - `/dashboard/weknora/login` → 200；根 `/login` → 404（未接管，符合"不能通过接管域名根绕过"）。
+  - 带前缀受保护文件端点 `/dashboard/weknora/api/v1/knowledge-bases/<kb>/files` → 401（进入 WeKnora 鉴权）、`/dashboard/weknora/files` → 401；根路径同类端点 → 404。
+  - 产物级断言：构建 bundle 中 base 字面量 `/dashboard/weknora/` 进入 14 个 chunk（含 `getApiBaseUrl` 编译产物与 router history）、裸 `href="/login"` 残留 0；`router.push('/login')` 属路由内导航（router base 自动处理，非缺陷）。
+  - UI 级 token 失效跳转由 `subpathPrefix.test.mjs` 复现场景用例钉住（深页 redirectToLogin → `/dashboard/weknora/login`）；浏览器实机验收随模型凭据后的完整验收轮执行。
+- 备份恢复重跑（新基线链）：备份 `db/weknora-weknora-20261008T043728Z.dump`（292,881B，sha256 84db0486…，manifest 含 baselineCounts users=1 与 sourceTaskDefinition :4）；恢复到独立容器 countsMatchBaseline=true（分层输出 appLevelRetrievalVerified=false 显式注明）；负向用例（篡改 manifest users=5）→ exit 1 且报 `users: restored=1 baseline=5`（测试对象已清理）。
+- R2 报告时点的 Preproduction Hermes 基线为 :41；本任务全程未触碰两集群既有服务。
+
 ## 部署实录（2026-10-07）
 
 ### 发布链（可复现构建）
