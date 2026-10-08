@@ -4,6 +4,8 @@
 # Path: SSM command on the capacity instance -> docker exec pg_dump inside the
 # paradedb container (localhost trust, no SG/TLS hop) -> docker cp out ->
 # upload to S3 via a presigned URL (the instance needs no AWS credentials).
+# A manifest (object counts + checksum) is stored next to the dump so the
+# restore verification can compare against the pre-backup baseline.
 #
 # Note: instance -> paradedb task ENI :5432 is filtered by ECS awsvpc task
 # networking, so the earlier SSM port-forward design does not work here.
@@ -35,17 +37,19 @@ INSTANCE_ID="$("$AWS_CLI_BIN" autoscaling describe-auto-scaling-groups \
   --auto-scaling-group-names supportportal-weknora-db-capacity \
   --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text)"
 [[ -n "$INSTANCE_ID" && "$INSTANCE_ID" != "None" ]] || fail "cannot resolve capacity instance"
+TASK_TD="$("$AWS_CLI_BIN" ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
+  --query 'tasks[0].taskDefinitionArn' --output text)"
 
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP_FILE="weknora-${DB_NAME}-${STAMP}.dump"
 S3_KEY="db/${DUMP_FILE}"
+CONTAINER_SEL="sudo docker ps --format '{{.Names}}' | grep '^ecs-weknora-paradedb-[0-9]*-paradedb-' | head -1"
 
 ssm_run() { # json-parameters-file -> prints stdout content
-  local cmdid
+  local cmdid status=""
   cmdid="$("$AWS_CLI_BIN" ssm send-command --cli-input-json "file://$1" --query 'Command.CommandId' --output text)" || fail "ssm send-command failed"
   for _ in $(seq 1 30); do
     sleep 3
-    local status out
     status="$("$AWS_CLI_BIN" ssm get-command-invocation --command-id "$cmdid" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null || echo Pending)"
     case "$status" in Success|Failed|TimedOut|Cancelled) break ;; esac
   done
@@ -53,15 +57,27 @@ ssm_run() { # json-parameters-file -> prints stdout content
   "$AWS_CLI_BIN" ssm get-command-invocation --command-id "$cmdid" --instance-id "$INSTANCE_ID" --query StandardOutputContent --output text
 }
 
-# 1. pg_dump inside the container (localhost trust, custom format).
-DUMP_CMD="sudo docker exec \$(sudo docker ps --format '{{.Names}}' | grep '^ecs-weknora-paradedb-[0-9]*-paradedb-' | head -1) sh -c 'pg_dump \"host=127.0.0.1 user=${DB_USER} dbname=${DB_NAME}\" --no-owner --no-privileges -Fc -f /tmp/${DUMP_FILE} && ls -l /tmp/${DUMP_FILE}'"
+# 1. Pre-backup baseline counts (recorded into the manifest).
+COUNTS_SQL="SELECT 'users='||count(*) FROM users WHERE deleted_at IS NULL UNION ALL SELECT 'knowledge_bases='||count(*) FROM knowledge_bases WHERE deleted_at IS NULL UNION ALL SELECT 'knowledges='||count(*) FROM knowledges WHERE deleted_at IS NULL UNION ALL SELECT 'chunks='||count(*) FROM chunks WHERE deleted_at IS NULL UNION ALL SELECT 'embeddings='||count(*) FROM embeddings"
+COUNTS_CMD="$CONTAINER_SEL | xargs -I{} sudo docker exec {} psql -U ${DB_USER} -d ${DB_NAME} -Atc \"${COUNTS_SQL}\""
+jq -n --arg iid "$INSTANCE_ID" --arg c "$COUNTS_CMD" \
+  '{InstanceIds: [$iid], DocumentName: "AWS-RunShellScript", Comment: "weknora baseline counts", Parameters: {commands: [$c]}}' > "$TMP_DIR/cmd0.json"
+BASELINE_COUNTS="$(ssm_run "$TMP_DIR/cmd0.json" | tr -d '\r')"
+log "baseline counts:
+$BASELINE_COUNTS"
+for key in users knowledge_bases knowledges chunks embeddings; do
+  grep -q "^${key}=" <<<"$BASELINE_COUNTS" || fail "baseline count query incomplete (missing $key)"
+done
+
+# 2. pg_dump inside the container (localhost trust, custom format).
+DUMP_CMD="$CONTAINER_SEL | xargs -I{} sudo docker exec {} sh -c 'pg_dump \"host=127.0.0.1 user=${DB_USER} dbname=${DB_NAME}\" --no-owner --no-privileges -Fc -f /tmp/${DUMP_FILE} && ls -l /tmp/${DUMP_FILE}'"
 jq -n --arg iid "$INSTANCE_ID" --arg c "$DUMP_CMD" \
   '{InstanceIds: [$iid], DocumentName: "AWS-RunShellScript", Comment: "weknora pg_dump in container", Parameters: {commands: [$c]}}' > "$TMP_DIR/cmd1.json"
 log "running pg_dump inside the paradedb container on $INSTANCE_ID"
 ssm_run "$TMP_DIR/cmd1.json" >/dev/null
 
-# 2. docker cp to the instance + sha256.
-CP_CMD="sudo docker cp \$(sudo docker ps --format '{{.Names}}' | grep '^ecs-weknora-paradedb-[0-9]*-paradedb-' | head -1):/tmp/${DUMP_FILE} /tmp/${DUMP_FILE} && sudo chmod 644 /tmp/${DUMP_FILE} && sha256sum /tmp/${DUMP_FILE} && stat -c %s /tmp/${DUMP_FILE}"
+# 3. docker cp to the instance + sha256.
+CP_CMD="$CONTAINER_SEL | xargs -I{} sudo docker cp {}:/tmp/${DUMP_FILE} /tmp/${DUMP_FILE} && sudo chmod 644 /tmp/${DUMP_FILE} && sha256sum /tmp/${DUMP_FILE} && stat -c %s /tmp/${DUMP_FILE}"
 jq -n --arg iid "$INSTANCE_ID" --arg c "$CP_CMD" \
   '{InstanceIds: [$iid], DocumentName: "AWS-RunShellScript", Comment: "weknora dump copy out", Parameters: {commands: [$c]}}' > "$TMP_DIR/cmd2.json"
 CP_OUT="$(ssm_run "$TMP_DIR/cmd2.json")"
@@ -70,7 +86,7 @@ SHA256="$(awk '{print $1}' <<<"$CP_OUT" | head -1)"
 SIZE="$(tail -1 <<<"$CP_OUT")"
 [[ "$SHA256" =~ ^[0-9a-f]{64}$ && "${SIZE:-0}" -gt 0 ]] || fail "unexpected docker cp output"
 
-# 3. Upload via presigned URL (credentials stay on the operator side).
+# 4. Upload via presigned URL (credentials stay on the operator side).
 # The local aws build's `s3 presign` only supports GET, so sign SigV4 PUT here
 # with python3 stdlib only.
 eval "$("$AWS_CLI_BIN" configure export-credentials --format env)"
@@ -105,13 +121,20 @@ jq -n --arg iid "$INSTANCE_ID" --arg c "$UP_CMD" \
 HTTP="$(ssm_run "$TMP_DIR/cmd3.json" | tr -d '[:space:]')"
 [[ "$HTTP" == "200" ]] || fail "presigned upload returned HTTP $HTTP"
 
-# 4. Verify the object landed with the same checksum recorded as metadata.
-"$AWS_CLI_BIN" s3api head-object --bucket "$BACKUP_BUCKET" --key "$S3_KEY" --region "$REGION" \
-  --query '{size: ContentLength}' --output json > "$TMP_DIR/head.json"
-REMOTE_SIZE="$(jq -r .size "$TMP_DIR/head.json")"
+# 5. Store the manifest (baseline counts + checksum + provenance) next to the dump.
+COUNTS_JSON="$(printf '%s\n' "$BASELINE_COUNTS" | python3 -c 'import sys, json; print(json.dumps(dict(line.split("=", 1) for line in sys.stdin.read().split() if "=" in line)))')"
+jq -n --arg bucket "$BACKUP_BUCKET" --arg key "$S3_KEY" --arg sha256 "$SHA256" --arg size "$SIZE" \
+  --arg stamp "$STAMP" --arg td "$TASK_TD" --argjson counts "$COUNTS_JSON" \
+  '{bucket:$bucket, key:$key, sha256:$sha256, bytes:($size|tonumber), createdAt:$stamp, sourceTaskDefinition:$td, baselineCounts:$counts}' \
+  > "$TMP_DIR/manifest.json"
+"$AWS_CLI_BIN" s3 cp "$TMP_DIR/manifest.json" "s3://${BACKUP_BUCKET}/${S3_KEY}.manifest.json" --region "$REGION" >/dev/null \
+  || fail "manifest upload failed"
+
+# 6. Verify the object landed with the expected size.
+REMOTE_SIZE="$("$AWS_CLI_BIN" s3api head-object --bucket "$BACKUP_BUCKET" --key "$S3_KEY" --region "$REGION" --query ContentLength --output text)"
 [[ "$REMOTE_SIZE" == "$SIZE" ]] || fail "uploaded size mismatch (local $SIZE, remote $REMOTE_SIZE)"
-log "backup uploaded: s3://${BACKUP_BUCKET}/${S3_KEY} (${SIZE} bytes, sha256=${SHA256:0:16}...)"
+log "backup uploaded: s3://${BACKUP_BUCKET}/${S3_KEY} (${SIZE} bytes, sha256=${SHA256:0:16}...) + manifest"
 
 jq -n --arg bucket "$BACKUP_BUCKET" --arg key "$S3_KEY" --arg sha256 "$SHA256" --arg size "$SIZE" \
-  --arg stamp "$STAMP" \
-  '{bucket:$bucket, key:$key, sha256:$sha256, bytes:($size|tonumber), createdAt:$stamp}'
+  --arg stamp "$STAMP" --arg td "$TASK_TD" --argjson counts "$COUNTS_JSON" \
+  '{bucket:$bucket, key:$key, sha256:$sha256, bytes:($size|tonumber), createdAt:$stamp, sourceTaskDefinition:$td, baselineCounts:$counts}'

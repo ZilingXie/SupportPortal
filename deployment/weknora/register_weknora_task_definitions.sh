@@ -13,13 +13,21 @@
 #
 # Usage:
 #   register_weknora_task_definitions.sh --commit <full-sha> \
-#       --admin-email <email> [--open-registration] [--output <file>]
+#       --admin-email <email> [--open-registration] [--initial-bootstrap] \
+#       [--require-existing-pgdata] [--output <file>]
+#
+# The ParadeDB data guard (REQUIRE_EXISTING_PGDATA) defaults to ON so routine
+# re-registration keeps refusing to start on a missing PGDATA. Pass
+# --initial-bootstrap only for the very first database initialization.
 set -Eeuo pipefail
 
 COMMIT=""
 ADMIN_EMAIL=""
 OPEN_REGISTRATION=0
-REQUIRE_EXISTING_PGDATA=0
+# Data guard defaults ON: re-registering for an upgrade must never silently
+# re-enable empty-database bootstrap. Only the very first initialization may
+# pass --initial-bootstrap to allow an empty PGDATA.
+REQUIRE_EXISTING_PGDATA=1
 OUTPUT=""
 AWS_CLI_BIN="${AWS_CLI_BIN:-aws}"
 REGION="${AWS_REGION:-us-east-1}"
@@ -34,6 +42,7 @@ while [[ $# -ge 1 ]]; do
     --admin-email) [[ $# -ge 2 ]] || fail "--admin-email requires a value"; ADMIN_EMAIL="$2"; shift 2 ;;
     --open-registration) OPEN_REGISTRATION=1; shift 1 ;;
     --require-existing-pgdata) REQUIRE_EXISTING_PGDATA=1; shift 1 ;;
+    --initial-bootstrap) REQUIRE_EXISTING_PGDATA=0; shift 1 ;;
     --output) [[ $# -ge 2 ]] || fail "--output requires a value"; OUTPUT="$2"; shift 2 ;;
     *) fail "unknown argument: $1" ;;
   esac

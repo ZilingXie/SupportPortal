@@ -93,20 +93,32 @@ Preproduction 任务全部 FARGATE、公网子网 `assignPublicIp=ENABLED`、SG 
 7. [x] 验收表逐项验证 + 备份恢复演练（文档闭环/异常表现两项待模型凭据，见下）
 8. [x] 记录与交接（任务 JSON、运维文档、发布清单）
 
-### 阶段一验收表状态（2026-10-07 23:5x）
+### 阶段一验收表状态（R3 修复轮后，2026-10-08；口径按 R2 独立验收收窄）
 
-| 验收项 | 状态 | 证据 |
+R2 独立验收结论=**未通过**（四项发现：前端文件请求/重登录子路径缺口、发布脚本回滚误判成功、数据守卫默认可被回退、恢复验证证据不足+清理误删风险）。R3 修复内容见下文「R3 修复记录」。
+
+| 验收项 | 状态 | 证据口径（按 R2 验收收窄） |
 | --- | --- | --- |
-| 构建可复现 | ✅ | 三次构建均从固定归档（commit+VersionId+sha256 链），镜像 tag=commit、digest 已录；buildspec 内 WEKNORA_COMMIT_INFO 校验通过 |
-| 访问控制 | ✅ | 管理员登录 success+is_system_admin=true；无 token GET knowledge-bases=401；注册已关闭（403，env+DB 双保险） |
-| Web 路由 | ✅ | 301(https 保留)/index/config.js/tdesign-icons/hash 资产/深层刷新全部 200；API/文件/MCP 代理经 app 应答（400/401/404） |
-| 文档闭环 | ⏸ | 待模型凭据（LLM+embedding）后执行：上传→处理→检索→回读 |
-| 异常表现 | ⏸ | 同上（需先配好模型再制造失败样本验证错误透出） |
-| 持久化 | ✅ | :3 带 REQUIRE_EXISTING_PGDATA=true 在既有数据上启动通过；期间 app 任务多次重建，登录/管理员数据完好 |
-| 备份恢复 | ✅ | backup 脚本产出 s3://…/db/weknora-…-20261007T153157Z.dump（292,884B，sha256 df7a8b76…）；restore_verify 在独立容器恢复 users=1、verified=true |
-| 现有测试隔离 | ✅ | 两集群服务 task def 与 ALB 规则 10/20/101-104 未变；weknora 根 terraform plan=No changes（零漂移）。观察：preprod hermes :39→:40 为 p2-187 并行线 I4 修复部署（PR#1421），非本任务改动 |
+| 构建可复现 | ✅（未重建复验） | 固定源码归档（commit+VersionId+sha256）的 CodeBuild 成功记录 + 三组件 ECR digest 与 :3 定义一致（独立验收方核对）；未做过"同一归档重跑构建"的复现实验 |
+| 访问控制 | ✅（登录沿用执行方证据） | 未授权知识库请求 401、注册关闭配置经独立回读核实；管理员登录成功证据来自执行方自测 |
+| Web 路由 | 🔧 R3 修复待复验 | 首页/静态/深层 200 与 API 代理正常（R2 核实）；但受保护文件请求与 token 失效重登录原落域名根路径（R2 P1 发现）——R3 已修（fork 714065ba），:4 部署后复验 |
+| 文档闭环 | ⏸ | 待模型凭据后执行：上传→处理→检索→回读 |
+| 异常表现 | ⏸ | 同上 |
+| 持久化 | 部分 | 账号/PGDATA 保留已证（守卫启动通过+任务重建后登录数据完好）；知识对象与索引的持久化验证待文档闭环后补 |
+| 备份恢复 | 部分 | dump 存在、可恢复、账号数据保留（R2 认可部分）；知识检索与文件回读未证明——R3 已补基线清单对比与知识断言（--expect-knowledge），文档闭环后执行 |
+| 现有测试隔离 | ✅ | R2 核实当前服务与入口回读正常；历史全过程无影响依赖部署前后证据（R1 基线 vs R2 终检对照，见 R2 验收记录） |
 
 模型凭据（LLM + embedding，OpenAI 兼容）为文档闭环/异常表现两项的唯一前置；已停在准备阶段（p2-188 blockers）。
+
+### R3 修复记录（2026-10-08，响应 R2 独立验收四项发现）
+
+1. **前端子路径缺口（P1）**：受保护文件请求（protectedFileAccess 四条 URL）、token 失效重登录与 TenantInfo 两处登出跳转（/login）、租户切换落地页（/platform/knowledge-bases）、多模态测试原生 fetch 五处全部改为经 `api-base`（新增 `getRouterBase()` 与测试 override 缝隙，`setApiBaseURLOverrideForTests`）。回归：`frontend/src/utils/subpathPrefix.test.mjs` 7 用例（子路径登录跳转/文件 URL 前缀/根部署回归/检测正则契约），全套 397 tests 396 pass 1 skip。npm test 只发现 `.test.mjs`（63 个）——`.test.ts` 不在套件内，新测试按 mjs 约定落位；根 tsconfig 补 paths 供 tsx 解析 `@/` 别名。
+2. **发布脚本回滚误判（P1）**：`wait_stable` 重写为绑定目标 task definition + rolloutState + desired/running/pending 计数；PRIMARY 回退旧定义或 rolloutState=FAILED 即失败退出。回归：`deployment/weknora/tests/run_deploy_tests.sh` 15 项（正常完成/仍在部署持续等待/回滚失败且不触达公网检查/FAILED 失败/守卫默认开/initial-bootstrap 显式关/恢复清理不误删/两轮容器名唯一）。
+3. **数据守卫默认回退（P1）**：`register_weknora_task_definitions.sh` 守卫默认改为开启，仅 `--initial-bootstrap` 显式允许空库；运行时回归 `run_pgdata_guard_runtime_test.sh`（真实 paradedb 镜像：空卷+守卫=拒绝且零写入；显式初始化成功；守卫对既有数据放行）。
+4. **恢复验证与清理（P1 缺口+P2）**：backup 脚本新增备份前基线计数清单（`<dump>.manifest.json` 落 S3，含 sourceTaskDefinition）；restore 脚本对比基线计数（不一致即失败）、`--expect-knowledge` 改为精确标题+块数+全文回读、输出明确分层（dbLevelVerified/countsMatchBaseline/knowledgeReadBack/appLevelRetrievalVerified=false 注明应用层检索另验）；清理改为唯一目录+唯一容器名+仅删除本轮自建资源，名称冲突即拒绝。
+5. **基线备注**：Preproduction Hermes 验收时点为 :41（R2 报告时点 :40 亦为并行线部署，均非本任务改动）；根区另一线程的 hermes 手册未提交编辑仍在（本任务未触碰）。
+
+R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述：本轮已为发布判定/守卫/清理补齐针对性回归（stub 边界用例），前端子路径补 7 用例。
 
 ## 部署实录（2026-10-07）
 
@@ -148,4 +160,3 @@ Preproduction 任务全部 FARGATE、公网子网 `assignPublicIp=ENABLED`、SG 
 - 容量实例替换（ASG min=max=1，仅不健康时触发）不自动迁移 root EBS 上的 docker volume——数据以备份恢复为准（备份脚本+恢复演练见验收）。
 - docreader 与 app 拆分后无共享卷：`/tmp/docreader` 图片直传回退路径不可用（主链路不写盘，compose 注释确认）；chat 内图片回显如有异常归因于此。
 - redis 无 TLS（VPC 内 + SG 限制 + requirepass）；ParadeDB TLS=verify-ca 自签 CA。
-
