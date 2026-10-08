@@ -49,8 +49,9 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 
 ## SSO 与凭证边界
 
-- Pilot 提示 SSO 会话过期时，**停止写入**，提示 owner 在本机运行 `pilot auth login`，
-  本次处理可等待登录或按到期规则收尾。
+- Pilot 提示 SSO 会话过期时，**先自动尝试** `pilot auth login`（浏览器 SSO 流，
+  SSO cookie 有效时通常无人值守完成），轮询 `pilot auth status` 最长 120 秒；
+  超时/失败才提示 owner 在本机完成登录，本次处理可等待登录或按到期规则收尾。
 - 浏览器 token、Cookie、Pilot 会话绝不进入 ECS、Relay 消息或任何报告/草稿。
 
 ## 判定表
@@ -136,15 +137,16 @@ python3 <skill-dir>/scripts/relay_enablement.py preflight --request <request.jso
 | blocker code | 含义 | 下一步 |
 | --- | --- | --- |
 | `missing_relay_env` | 本地缺 `SUPPORTPORTAL_RELAY_API_BASE/TOKEN` | 一次性配置受保护本地环境（绝不写入 prompt/报告/Relay 消息） |
-| `pilot_sso_login_required` | Pilot 会话过期/缺失 | owner 本机运行 `pilot auth login`（浏览器 SSO 流；`--device` 设备流当前在 Ferry 侧 404） |
+| `pilot_sso_login_required` | 自动登录尝试失败（120 秒超时或 SSO cookie 过期） | owner 在浏览器完成 `pilot auth login` 授权 |
 | `pilot_unavailable` | pilot CLI 不可用 | 检查 `PILOT_BIN` 安装后重跑 |
 | `request_status_unreadable` | 服务端 readback 不可读 | 稍后重跑；不可核实绝不执行 |
 | `request_identity_mismatch` | 服务端申请身份与派发不一致 | 停止，报告不匹配证据，只读 resync 指定 Task |
 | `request_not_active` | 申请非 dispatched | 不执行，按结果契约起草失败结果 |
 | `request_ticket_invalid` | 工单不在可操作白名单 | 不执行，按结果契约起草失败结果 |
 
-`auth.state=ready` 且无 blocker 才进入收件绑定核验。Pilot 登录态只报告、
-不代登录：浏览器/设备授权永远由 owner 本人完成。
+`auth.state=ready` 且无 blocker 才进入收件绑定核验。Pilot 登录态优先自动恢复
+（executor 自行运行 `pilot auth login`，浏览器 SSO 流）；自动登录失败（120 秒超时/
+SSO cookie 过期）时才由 owner 本人在浏览器完成授权。
 
 ## 收件绑定核验（Pilot 预检之前，固定顺序）
 
