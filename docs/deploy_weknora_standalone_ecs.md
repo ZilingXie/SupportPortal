@@ -204,3 +204,9 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 2. **子进程日志隔离**：mock 调用日志按 SC_LOG_TAG 分文件（podman-a/b/c/bug.log），B 的"仅一次 run"断言读 B 自己的日志；real-podman 逃逸日志全程累计不截断，覆盖 A/B/C/bug 全部子进程。
 3. **反例与载具自校验**：child B 改为复验场景 2/3（rm 成功+查询 125：stop_owned 必须失败保留归属；连续两次显式 cleanup+退出 trap 共三次清理均不得删数据目录）；新增 child BUG 故意犯下两类缺陷（未确认停止后再启动一个容器、直接调用 realbin 逃逸 mock），父断言证明两类检测器都会触发——即"B 多一次 run 必须失败""A/B 出现逃逸记录也必须失败"的载具有效性证明。
 4. 固定提交实测计数：真实模式 7 PASS；--self-check 父断言 13 PASS（A 5 + B-fault 3 + C-fault 3 + 载具自校验 2），子进程内部另有 PASS 输出（child A 3、child B 2、child C 1，记录于 child-*.out）。
+
+### R8 修复记录（2026-10-08，响应 R7 复验 F1/F3；无镜像/服务变更）
+
+1. **F1 cleanup 单次查询一致判定**：删除原"第二遍重查询重建归属"的循环；每个容器在 cleanup 中只查询一次，同一次结果同时决定（a）归属是否保留、（b）是否允许删除工作目录。仅当本轮全部自建容器均确认 absent 才删 GUARD_WORK_DIR；任一 present/unknown → 保留该容器归属+KEEPING+保留目录。修复"第一次 absent、第二次 unknown → 保留归属却删目录"的反例；持续 unknown、删除失败、重复 cleanup 反例保留并通过。
+2. **F3 合同拒绝与断言失败区分**：child B 合同完成（拒绝启动 C）改用专用退出码 42；所有断言失败路径仍 exit 1。父进程 B 断言要求 exit 42（不再接受任意非零）。新增 child B-BUG：注入 R7 缺陷（rm 后置 STOP_RC=0 并丢弃归属），子进程自身断言必须触发 FAIL 并 exit 1——父断言证明该缺陷子进程被检出（exit 1 + FAIL 行，绝不会被当作合同通过）。
+3. 固定提交实测计数：真实模式 7 PASS；--self-check 父断言 14 PASS（A 5 + B-fault 3 + B-bug 1 + C-fault 3 + 载具自校验 2）。

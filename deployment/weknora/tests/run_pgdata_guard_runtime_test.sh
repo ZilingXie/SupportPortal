@@ -36,6 +36,7 @@ MODE="real"
 [[ "${1:-}" == "--self-check-child" ]] && MODE="self-check-child"
 [[ "${1:-}" == "--self-check-child-fault-stop" ]] && MODE="self-check-child-fault-stop"
 [[ "${1:-}" == "--self-check-child-fault-exit" ]] && MODE="self-check-child-fault-exit"
+[[ "${1:-}" == "--self-check-child-fault-stop-bug" ]] && MODE="self-check-child-fault-stop-bug"
 [[ "${1:-}" == "--self-check-child-bug" ]] && MODE="self-check-child-bug"
 
 FAILURES=0
@@ -69,33 +70,31 @@ container_state() {
 }
 
 cleanup() {
+  # SINGLE query per container: the same result decides BOTH whether the
+  # ownership record is retained AND whether directory deletion is allowed.
+  # (A second re-query pass could disagree with the first — e.g. absent then
+  # unknown — and delete a directory for a container it just decided to keep.)
   local name state confirmed_all=1
+  local remaining=()
   for name in "${OWNED_CONTAINERS[@]}"; do
     [ -n "$name" ] || continue
     podman rm -f "$name" >/dev/null 2>&1 || true
     state="$(container_state "$name")"
     case "$state" in
       absent)
-        # Confirmed gone: drop from ownership below via the rebuild pass.
+        # Confirmed gone: drop from ownership (not added to remaining).
         ;;
       present)
         echo "[guard-test-cleanup] owned container $name still exists after removal; KEEPING container and work dir for manual cleanup" >&2
+        remaining+=("$name")
         confirmed_all=0
         ;;
       *)
         echo "[guard-test-cleanup] cannot confirm removal of $name (container query failed, state unknown); KEEPING container and work dir for manual cleanup" >&2
+        remaining+=("$name")
         confirmed_all=0
         ;;
     esac
-  done
-  # Retain ownership ONLY for containers confirmed present or unknown;
-  # confirmed-absent ones drop out, so a repeated cleanup call issues no
-  # duplicate rm and never deletes a dir that was kept for an unknown one.
-  local remaining=() n st
-  for n in "${OWNED_CONTAINERS[@]}"; do
-    [ -n "$n" ] || continue
-    st="$(container_state "$n")"
-    if [ "$st" != "absent" ]; then remaining+=("$n"); fi
   done
   OWNED_CONTAINERS=("${remaining[@]}")
   if [ "$confirmed_all" != "1" ]; then
@@ -300,6 +299,10 @@ STUB
   run_child b "$sc_state/workB" --self-check-child-fault-stop
   local CHILD_RC_B="$CHILD_RC"
 
+  echo "== child B-BUG: injected defect must FAIL the child assertions (detection) =="
+  run_child bbug "$sc_state/workBBUG" --self-check-child-fault-stop-bug
+  local CHILD_RC_BBUG="$CHILD_RC"
+
   echo "== child C: EXIT-cleanup removal fails (must keep data dir and report) =="
   run_child c "$sc_state/workC" --self-check-child-fault-exit
   local CHILD_RC_C="$CHILD_RC"
@@ -360,10 +363,10 @@ STUB
   #    in B's OWN log.
   local runB
   runB="$(grep -c "podman run -d" "$logB" || true)"
-  if [ "$CHILD_RC_B" -ne 0 ] && [ "$runB" -eq 1 ]; then
-    ok "B-fault: unconfirmed stop propagated and C never started (single run in B's own log)"
+  if [ "$CHILD_RC_B" -eq 42 ] && [ "$runB" -eq 1 ]; then
+    ok "B-fault: contracted rejection (exit 42) with C never started (single run in B's own log)"
   else
-    bad "B-fault: child rc=$CHILD_RC_B, B-log run count=$runB (expected rc!=0, runs=1)"
+    bad "B-fault: child rc=$CHILD_RC_B (expected 42 = contracted rejection, not assertion failure), B-log run count=$runB"
   fi
 
   # 7. The data dir is preserved across repeated cleanups while the state is
@@ -379,6 +382,16 @@ STUB
     ok "B-fault: explicit keep-resources report emitted"
   else
     bad "B-fault: no KEEPING report in child stderr"
+  fi
+
+  # 8b. The injected-defect B child (stop reports success on unknown) must
+  #     FAIL its own assertions and exit 1 — never the contracted 42. This
+  #     proves the strict exit-code check distinguishes rejection from failure.
+  if [ "$CHILD_RC_BBUG" -eq 1 ] \
+     && grep -q "^FAIL: faultB: stop_owned reported success" "$sc_state/child-bbug.err"; then
+    ok "B-bug: injected defect fails the child and is detected (exit 1 + FAIL line, not 42)"
+  else
+    bad "B-bug: defect child rc=$CHILD_RC_BBUG without the expected FAIL line; detection broken"
   fi
 
   # --- Child C (EXIT-cleanup removal failure) ---
@@ -521,6 +534,49 @@ self_check_child_fault_stop() {
   ok "faultB: repeated cleanup kept the data dir"
 
   echo "faultB: B stop unconfirmed; refusing to start C against a possibly live database" >&2
+  # 42 = "fault scenario completed as contracted" — distinct from exit 1,
+  # which every assertion-failure path above uses. The parent requires 42 so
+  # a genuine assertion failure inside this child can never pass as the
+  # expected rejection.
+  exit 42
+}
+
+# Child B-BUG: injects the R7 defect (stop reports success on unknown) via a
+# deliberately broken local stop, making the child's own assertion fire bad()
+# and exit 1. The parent asserts this child is DETECTED (exit 1 + FAIL line),
+# proving the strict exit-42 check distinguishes rejection from failure.
+self_check_child_fault_stop_bug() {
+  IMAGE="guard-mock-image"
+  WRAPPER="$(guard_wrapper)"
+  local dir="${GUARD_WORK_DIR:?GUARD_WORK_DIR required}"
+  mkdir -p "$dir/data"
+
+  DETACH_SEQ=0; RUN_ID="faultb"
+  run_guard_detached "$dir/data" true
+  if [ "$RUN_RC" -ne 0 ]; then
+    bad "faultB-bug: B failed to start (unexpected)"
+    exit 1
+  fi
+  local b_name="$RUN_CONTAINER"
+
+  # INJECTED DEFECT: emulate the pre-R8 bug — rm "succeeds", ownership is
+  # dropped, and success is reported even though confirmation is impossible.
+  export SC_QUERY_RC=125
+  podman rm -f "$b_name" >/dev/null 2>&1 || true
+  local owned=() n
+  for n in "${OWNED_CONTAINERS[@]}"; do
+    [ "$n" = "$b_name" ] || owned+=("$n")
+  done
+  OWNED_CONTAINERS=("${owned[@]}")
+  STOP_RC=0
+
+  # Same contract assertions as the healthy fault-stop child; the defect
+  # above MUST trip them (exit 1 with a FAIL line), never exit 42.
+  if [ "$STOP_RC" -eq 0 ]; then
+    bad "faultB: stop_owned reported success despite unknown confirmation"
+    exit 1
+  fi
+  bad "faultB-bug: defect was not detected by the child assertions"
   exit 1
 }
 
@@ -662,4 +718,5 @@ case "$MODE" in
   self-check-child-fault-stop) self_check_child_fault_stop ;;
   self-check-child-fault-exit) self_check_child_fault_exit ;;
   self-check-child-bug) self_check_child_bug ;;
+  self-check-child-fault-stop-bug) self_check_child_fault_stop_bug ;;
 esac
