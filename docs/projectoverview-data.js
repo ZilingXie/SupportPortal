@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T09:04:51Z",
-  "source_base_commit": "07cac14469723c6e1039fe55aed16ae5ecf17c81",
-  "registry_digest": "470f83667246fd59363c75417c7d6bdbc69590d6d0245501292f3c6edcd9a964",
+  "generated_at": "2026-10-08T09:14:59Z",
+  "source_base_commit": "162968dad842a0a87556d587d504f4237b0e4e37",
+  "registry_digest": "99184a14fbfddce231e2748355edfc282baf62510e6686a6fa6a863574551284",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1476,7 +1476,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（api_rollout 观察窗口 103s 不足+回滚竞争，正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
+          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（失败阶段 api_rollout 实际耗时 103s、脚本等待上限 900s；回滚未完成、其后服务收敛；具体根因待定待原始错误日志；正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
         },
         {
           "type": "deployment",
@@ -16742,7 +16742,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
       "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
       "status": "done",
-      "next_action": "F-D1 已闭环：r20261008-afa0130 的发布失败证据保留为 rollback_incomplete 并已解释（api_rollout 观察窗口 103s 不足即判负，:110 task 启动 35s 后仍在收敛；回滚与在途 rollout 竞争致 rollback=failed；ECS 最终收敛到新 revision，随后被 r20261008-07cac14 正式取代）。运行验证由 07cac14 的完整发布门禁承载（evidence complete：provider_probe/public_health/cloudwatch 零错误/terraform_post_deploy 零漂移/TargetHealth healthy/三角色 runtime_verified+digest 绑定），且该 release 包含本任务代码（#1424 已在 07cac144 祖先链）。剩余观察：自然失败告警样本（等待外部事件，不人为制造）",
+      "next_action": "已完成（验收通过，F-D1 关闭）。r20261008-afa0130 失败记录保留 rollback_incomplete：已核对失败阶段（api_rollout，实际耗时 103s，脚本等待上限为 900s）与最终状态（回滚未完成、其后服务收敛），具体根因待定（需原始错误日志）；运行验证由 r20261008-07cac14 完整发布门禁（evidence complete，三角色 runtime_verified+digest 绑定）与独立线上对账承载。非阻断外部等待：自然失败告警样本。Production 晋级与 AC-13898 重跑不在放行范围",
       "owner": "agent",
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
@@ -16768,7 +16768,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（api_rollout 观察窗口 103s 不足+回滚竞争，正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
+          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（失败阶段 api_rollout 实际耗时 103s、脚本等待上限 900s；回滚未完成、其后服务收敛；具体根因待定待原始错误日志；正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
         },
         {
           "type": "deployment",
