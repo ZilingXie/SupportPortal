@@ -210,3 +210,19 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 1. **F1 cleanup 单次查询一致判定**：删除原"第二遍重查询重建归属"的循环；每个容器在 cleanup 中只查询一次，同一次结果同时决定（a）归属是否保留、（b）是否允许删除工作目录。仅当本轮全部自建容器均确认 absent 才删 GUARD_WORK_DIR；任一 present/unknown → 保留该容器归属+KEEPING+保留目录。修复"第一次 absent、第二次 unknown → 保留归属却删目录"的反例；持续 unknown、删除失败、重复 cleanup 反例保留并通过。
 2. **F3 合同拒绝与断言失败区分**：child B 合同完成（拒绝启动 C）改用专用退出码 42；所有断言失败路径仍 exit 1。父进程 B 断言要求 exit 42（不再接受任意非零）。新增 child B-BUG：注入 R7 缺陷（rm 后置 STOP_RC=0 并丢弃归属），子进程自身断言必须触发 FAIL 并 exit 1——父断言证明该缺陷子进程被检出（exit 1 + FAIL 行，绝不会被当作合同通过）。
 3. 固定提交实测计数：真实模式 7 PASS；--self-check 父断言 14 PASS（A 5 + B-fault 3 + B-bug 1 + C-fault 3 + 载具自校验 2）。
+
+### R9 知识链验收记录（2026-10-08，用户授权复用 preprod LLM key + AgentMemory embedding key）
+
+**凭据**（用户明确授权复用；未改动 Hermes/AgentMemory 自身配置）：chat=gpt-6-sol（/supportportal/preproduction/openai-api-key，OpenAI 官方，openai-responses）；embedding=BAAI/bge-m3 1024 维（/supportportal/preproduction/hermes-memory-embedding-api-key-v2，SiliconFlow）。前置确认：旧 embedding key 失效（Token invalid）；-v2 曾余额不足（30001），用户充值后连通。两模型经 /api/v1/models/:id/debug 实调验证（chat elapsed 1.4s；embedding 返回 1024 维实向量）。
+
+**验收结果（阶段一八项现已全部有证据）**：
+1. 文档闭环：KB `008d2bab`（PUT /initialization/config/:kbId 绑定模型）→ 非业务样本《泽塔七号星球咖啡种植指南》上传（knowledge `963f59b0`）→ parse completed → hybrid-search 命中（gpt-6-sol 摘要块 + bge-m3 原文块）→ 精确事实 `ZETA-7-IRRIGATE-42` 回读 PASS → /knowledge/:id/download 与本地参考文件字节一致。
+2. 异常表现：模型未绑定时的首样本（`bd125801`）parse_status=failed、error_message=`failed to get embedding model: model ID cannot be empty`，未呈现 ready。
+3. 含知识数据的任务重建持久化：weknora-paradedb 与 weknora-app 双强制重建（:4 数据守卫在既有 PGDATA 上放行）→ 重建后 hybrid 检索命中 + 文件下载字节一致。
+4. 备份：`db/weknora-weknora-20261008T090954Z.dump`（310,112B；manifest 基线 users=1/kb=1/knowledges=2/chunks=2/embeddings=2，sourceTaskDefinition :4）。
+5. DB 层恢复：restore_verify countsMatchBaseline=true；`--expect-knowledge 泽塔七号咖啡种植指南-验收样本` 精确标题命中 2 chunks 全文回读。
+6. 独立恢复环境应用层验证（新脚本 `verify_restore_app_level.sh`，已入库）：容量实例（amd64）上三容器（paradedb/redis/app 同 ECR 镜像）→ template0 恢复 → app /health → 管理员登录 → hybrid 检索命中故障码 PASS → /knowledge/:id/download HTTP 200 且 MD5 e53ce21a… 与本地参考全等 → 唯一资源清理 TEARDOWN-OK。产物 JSON 明确分层（appLevelSearch/appLevelFileReadBack）。
+
+**本轮新坑（已记）**：本地 qemu 仿真运行 amd64 app 镜像段错误（arm64 Mac）→应用层验证改在 amd64 容量实例执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复目标库必须 `createdb -T template0`；长会话 STS 凭据在脚本执行中途过期→脚本内即时 export-credentials。
+
+**残余限制更新**：文档处理依赖外部模型（现已配 gpt-6-sol+bge-m3）；知识处理链依赖模型可用性，若上游 key 额度/密码变化需同步更新 WeKnora 模型配置（管理 UI 或 API）。管理员密码已在本轮浏览器会话中出现过，交付时建议轮换。

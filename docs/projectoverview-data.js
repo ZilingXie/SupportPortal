@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T09:04:51Z",
-  "source_base_commit": "07cac14469723c6e1039fe55aed16ae5ecf17c81",
-  "registry_digest": "470f83667246fd59363c75417c7d6bdbc69590d6d0245501292f3c6edcd9a964",
+  "generated_at": "2026-10-08T10:16:24Z",
+  "source_base_commit": "162968dad842a0a87556d587d504f4237b0e4e37",
+  "registry_digest": "913853def662cd826d0e4ea724818e6de3a185b7e0a9dbda6f09048f3be85fb9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5404,6 +5404,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
@@ -16643,7 +16649,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R8（本轮）完成：F1 cleanup 改为每容器单次查询、同果决定归属与目录删除（修复二次重查询两套判定反例）；F3 child B 合同拒绝改用专用退出码 42、断言失败仍 exit 1，父断言要求 42，并新增注入缺陷子进程 B-BUG 证明该缺陷会被检出而非误判通过。固定提交实测：真实模式 7 PASS、--self-check 父断言 14 PASS。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
+      "next_action": "R9（本轮）：用户授权复用凭据（preprod OpenAI gpt-6-sol + AgentMemory SiliconFlow bge-m3/1024，充值后连通）→ 配置两模型并 debug 实调全过 → 知识链验收全部完成：文档闭环（上传→completed→hybrid 检索命中→事实 ZETA-7-IRRIGATE-42 回读→原文件字节级一致）、异常表现（首样本 failed+明确原因不误报 ready）、含知识数据任务重建持久化（paradedb+app 强制重建后检索/下载复验全过）、备份+DB 层恢复（countsMatchBaseline 全等+--expect-knowledge 全文回读）、独立恢复环境应用层验证（verify_restore_app_level.sh：amd64 实例三容器、template0 恢复、app 登录→hybrid 检索 PASS→文件下载 MD5 全等→唯一资源清理，可复现脚本入库）。待办：阶段一验收表八项证据已齐，提交独立复验；通过后收口 p2-188 done。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16655,10 +16661,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
         "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
       ],
-      "blockers": [
-        "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器路径验证（登录/深页刷新/退出/失效重登录/引导跳过）已全部完成，不再阻塞。"
-      ],
+      "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
