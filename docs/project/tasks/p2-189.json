@@ -7,7 +7,7 @@
   "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
   "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
   "status": "done",
-  "next_action": "已完成：四轮独立验收通过（round-4 结论：通过，适用 Hermes 9d1ef79fb6 / SP 64671cd2 / 归档 c3fc6fe+注释修正 475917f），SP PR#1424 合入 main，Preproduction 部署 r20261008-afa0130（api td:110 / route td:109 / worker td:111，digest 与 publish-record 逐一匹配，release 端点回读一致）。遗留观察：告警新字段的生产自然样本（需真实 hermes 失败事件，不人为制造）；deploy 脚本收敛等待超时误判一次（ECS 实际收敛成功，已在部署记录披露）",
+  "next_action": "F-D1 已闭环：r20261008-afa0130 的发布失败证据保留为 rollback_incomplete 并已解释（api_rollout 观察窗口 103s 不足即判负，:110 task 启动 35s 后仍在收敛；回滚与在途 rollout 竞争致 rollback=failed；ECS 最终收敛到新 revision，随后被 r20261008-07cac14 正式取代）。运行验证由 07cac14 的完整发布门禁承载（evidence complete：provider_probe/public_health/cloudwatch 零错误/terraform_post_deploy 零漂移/TargetHealth healthy/三角色 runtime_verified+digest 绑定），且该 release 包含本任务代码（#1424 已在 07cac144 祖先链）。剩余观察：自然失败告警样本（等待外部事件，不人为制造）",
   "owner": "agent",
   "created_at": "2026-10-07",
   "updated_at": "2026-10-08",
@@ -33,7 +33,7 @@
     },
     {
       "type": "deployment",
-      "label": "Preproduction release r20261008-afa0130（git afa01303）：api td:110 digest 7586e6a5 HEALTHY / route td:109 digest 9e5bc171 / worker td:111 digest 6d2f6832，service 指针=运行 revision，/health/release 回读 status=ok、git/prompt/contract 字段一致（2026-10-08T15:2x 北京核验）"
+      "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（api_rollout 观察窗口 103s 不足+回滚竞争，正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
     },
     {
       "type": "deployment",
