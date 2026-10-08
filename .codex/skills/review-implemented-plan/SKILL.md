@@ -1,6 +1,6 @@
 ---
 name: review-implemented-plan
-description: Use when the user asks Codex or Claude Code to review a completed implementation, finished plan, worker handoff, or local diff, including phrases like "实现了计划，你来review一下", "review this implementation", "检查这个改动", "帮我review并处理", "review and finalize", or similar requests after code/docs have been changed.
+description: Independently review a completed implementation, plan handoff, PR or local diff in Codex, ZCode or another coding client. Use for implementation acceptance and failed-review follow-ups; edits and finalization require matching authorization.
 ---
 
 # Review Implemented Plan
@@ -16,7 +16,7 @@ Follow the repository's execution mode: `实施计划，需要验收` requires i
 ## Process
 
 1. **Confirm scope and workspace**
-   - Identify the branch/workspace under review and the authorization already given in the conversation; use read-only review when implementation/finalization has not been authorized.
+   - Identify the plan name/revision, PR, full HEAD, branch/workspace and existing authorization. Use read-only review when implementation/finalization has not been authorized. Retrieve the current contract and evidence from the PR or linked document; a PR URL alone does not freeze the reviewed version.
    - Run the required Git/worktree safety checks for repo-tracked review/finalization.
    - Ignore unrelated branches/worktrees; stop only if the current task workspace/branch is wrong, ambiguous, detached, or dirty with unrelated changes.
 
@@ -34,7 +34,8 @@ Follow the repository's execution mode: `实施计划，需要验收` requires i
    - For `功能类/重大行为变更`, confirm the corresponding `docs/project/tasks/<task-id>.json` and, when the product capability list changes, `docs/feature_list.md` are synchronized; `docs/roadmap.html` is a historical snapshot and is not a progress-state source.
    - For read-only review, report findings and verification gaps without changing files, worktrees, Git state, configuration, APIs, or external state. Do not run checks that would cause those changes.
    - For authorized fixes, correct issues that are safe to decide directly in the task workspace and preserve the requested scope.
-   - Stop for user input only when the issue is ambiguous, unsafe to decide, or blocked by missing external state.
+   - For a material product/architecture/scope/acceptance choice or uncertain authorization, directly ask the human with **"需要你确认：任务已暂停在 ..."**, facts, options and consequences. Pause dependent actions; a PR note or another agent's agreement is not consent. An open required decision blocks overall acceptance. Equivalent local fixes and ordinary evidence collection do not need renewed permission.
+   - Consolidate blocking findings by common cause and dependency. Give each a stable ID and a bounded repair contract using [repair guidance](../implementation-handoff/references/repair.md): reproduction, cause, affected callers/exits, smallest repair and closure checks. Preserve closed findings unless the new diff affects them. Repeated failure at the same boundary requires revisiting its contract before another patch, not another isolated example fix.
 
 4. **Verify and finalize**
    - Classify a changed diff as `文档改动` or `代码改动` before choosing verification depth; see `AGENTS.md`.
@@ -44,7 +45,8 @@ Follow the repository's execution mode: `实施计划，需要验收` requires i
 
 ## Reporting
 
-- State which branch/commit and any additional diff were reviewed. List blocking defects and critical verification gaps first with file/line references; keep optional improvements separate, then state fixes and verification.
+- State the plan/revision, PR, full commit and any additional diff reviewed. List blocking defects and critical verification gaps first with file/line references; keep optional improvements separate. Keep a current open/closed/waiting-for-evidence/needs-human-decision ledger across rounds; do not require unchanged waiting conditions to be repeatedly resubmitted.
+- Separate code acceptance, deployment verification and complete business acceptance. State environment and permitted next action; pre-merge evidence cannot claim a post-deployment outcome. Follow [PR handoff](../../../docs/agent-workflows/pr-handoff.md) when integration changes invalidate a reviewed version.
 - Give an explicit review conclusion: passed, not passed, or insufficient evidence, with scope and residual risks. Passing requires no blocking defects or critical verification gaps. Mark executor self-review as self-review; it cannot release an independent acceptance gate.
 - For read-only review, report findings and verification limits; do not describe it as unfinished implementation or start finalization.
 - For authorized implementation/finalization, use the completion states in `docs/agent_workflow_details.md`; when paused, include the branch, workspace path, clean/dirty state, and blocker.
