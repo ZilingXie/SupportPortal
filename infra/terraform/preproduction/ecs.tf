@@ -24,7 +24,10 @@ resource "aws_ecs_service" "account" {
   }
 
   network_configuration {
-    subnets          = each.key == "worker" ? [var.efs_subnet_id] : var.public_subnet_ids
+    # API joins the worker in the single EFS subnet so the Graph mail
+    # token cache (EFS access point) is reachable from the API container
+    # that executes internal email deliveries for Hermes automation.
+    subnets          = (each.key == "worker" || each.key == "api") ? [var.efs_subnet_id] : var.public_subnet_ids
     security_groups  = [aws_security_group.ecs.id]
     assign_public_ip = true
   }

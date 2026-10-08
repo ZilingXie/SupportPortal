@@ -496,6 +496,7 @@ def _base_environment(
                 "BILLING_AUTOMATION_GRAPH_CLIENT_ID": "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80",
                 "BILLING_AUTOMATION_GRAPH_USERNAME": "ai-support-agent@agora.io",
                 "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
+                "BILLING_AUTOMATION_REPLY_RECORD_PATH": "/app/.msgraph/billing-request-replies.jsonl",
             }
         )
     if role == "worker":
@@ -562,8 +563,8 @@ def render_initial_task_definition(
         raise ValueError("enablement workflow mode must be manual or archer")
     if automation_case_engine == "hermes" and not hermes_agent_enabled:
         raise ValueError("the hermes engine requires hermes agent credentials")
-    if role == "worker" and not (graph_efs_file_system_id and graph_efs_access_point_id):
-        raise ValueError("Worker initial task definition requires Graph EFS inputs")
+    if role in {"api", "worker"} and not (graph_efs_file_system_id and graph_efs_access_point_id):
+        raise ValueError(f"{role} initial task definition requires Graph EFS inputs")
 
     manifest = read_manifest(Path(manifest_path))
     component = manifest.components[role]
@@ -600,6 +601,11 @@ def render_initial_task_definition(
             # Graph mail credentials for the failure-alert email sent by
             # hermes tool escalation (the tool runs on the api role).
             "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "billing-graph-client-secret",
+            # Internal email recipients for the Hermes automation execution
+            # (the tool sends the suspension/fraud handoff email from the
+            # api container, not the worker).
+            "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "fraud-internal-email-recipients",
+            "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "account-suspension-internal-email-recipients",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
@@ -698,7 +704,7 @@ def render_initial_task_definition(
             "startPeriod": 60,
         }
     volumes: list[dict[str, Any]] = []
-    if role == "worker":
+    if role in {"worker", "api"}:
         container["mountPoints"] = [
             {
                 "sourceVolume": "graph-token-cache",

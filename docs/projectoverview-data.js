@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T09:14:59Z",
-  "source_base_commit": "162968dad842a0a87556d587d504f4237b0e4e37",
-  "registry_digest": "99184a14fbfddce231e2748355edfc282baf62510e6686a6fa6a863574551284",
+  "generated_at": "2026-10-08T10:18:54Z",
+  "source_base_commit": "f9388ee5c5baebeab7a0f1501cedd96e70c6ed6e",
+  "registry_digest": "1055e83cd92f9c4b604950c241dfe450ddadd415b60ffadde426fcd552bd0a6c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4396,6 +4396,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Console fixes live retest (deploy 24122e6)",
           "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复（F1-F4）：prepare+failure传播+reply链+API配置（Draft PR 待独立验收）",
+          "command": "py_compile+全量 259+2 回归 + 8 项新定向测试 test_hermes_email_execution.py",
+          "result": "F1（delivery claim unavailable）：Hermes suspension/fraud 工具入口在 _run_internal_email_delivery 前增加 prepare_account_internal_email 调用（将 not_applicable 原子转为 pending+delivery_key），复用既有 prepare 原语；prepare 失败时检查已发送同 key 复用或冲突升级。F3（work_result=executed 掩盖邮件失败）：delivery 返回非 sent 时立即 _escalate_uncompleted_automation，保留原始失败码（如 suspension_email_delivery_unknown），不再以 ownership_lost 作为主要原因。C5/C6（reply 链）：suspension 成功后 update workflow→closing_reply_pending + create account_suspension_handoff_and_close reply job（绑定 automation_delivery_key，close_after_publish=False）；fraud 成功后 create fraud_handoff_confirmation reply job。F2/F4（API Graph 配置）：Terraform API 子网改 [var.efs_subnet_id]（加入 1b 单可用区）；deploy 渲染 API 增加 Graph EFS volume mount（/app/.msgraph）+ REPLY_RECORD_PATH + FRAUD/SUSPENSION recipients SSM secrets。8 项新测试（test_hermes_email_execution.py）验证：prepare 在 delivery 前、not_applicable 可 prepare、claim 不含 not_applicable、失败传播触发 escalation、suspension/fraud reply job 创建、prepare 失败复用/冲突分支。259+2 全量回归零回归。"
         },
         {
           "type": "test",
@@ -16466,7 +16472,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "A4/A5 路由修复（hermes-route-manual v5）已实施，合同测试全过，等待独立验收。验收通过后：Preprod prompt schedule 新版本→正式发布→回读→新工单 A4/A5 实测（完整业务链：字段收集→邮件/分派→客户投递→终态）。A4/A5 场景代码已在 worktree auto-agent-a45 就绪。",
+      "next_action": "邮件执行链修复已实施，全量回归通过，等待独立验收→finalize→Preproduction 发布（Terraform API 子网先行）→A5/A4/A4b 实测。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16479,6 +16485,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "邮件执行链修复（F1-F4）：prepare+failure传播+reply链+API配置（Draft PR 待独立验收）",
+          "command": "py_compile+全量 259+2 回归 + 8 项新定向测试 test_hermes_email_execution.py",
+          "result": "F1（delivery claim unavailable）：Hermes suspension/fraud 工具入口在 _run_internal_email_delivery 前增加 prepare_account_internal_email 调用（将 not_applicable 原子转为 pending+delivery_key），复用既有 prepare 原语；prepare 失败时检查已发送同 key 复用或冲突升级。F3（work_result=executed 掩盖邮件失败）：delivery 返回非 sent 时立即 _escalate_uncompleted_automation，保留原始失败码（如 suspension_email_delivery_unknown），不再以 ownership_lost 作为主要原因。C5/C6（reply 链）：suspension 成功后 update workflow→closing_reply_pending + create account_suspension_handoff_and_close reply job（绑定 automation_delivery_key，close_after_publish=False）；fraud 成功后 create fraud_handoff_confirmation reply job。F2/F4（API Graph 配置）：Terraform API 子网改 [var.efs_subnet_id]（加入 1b 单可用区）；deploy 渲染 API 增加 Graph EFS volume mount（/app/.msgraph）+ REPLY_RECORD_PATH + FRAUD/SUSPENSION recipients SSM secrets。8 项新测试（test_hermes_email_execution.py）验证：prepare 在 delivery 前、not_applicable 可 prepare、claim 不含 not_applicable、失败传播触发 escalation、suspension/fraud reply job 创建、prepare 失败复用/冲突分支。259+2 全量回归零回归。"
+        },
         {
           "type": "test",
           "label": "离线真实模型分类验证：v5 manual + 3 样本 → o3-mini → 叶子原因码全过",
