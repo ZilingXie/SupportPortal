@@ -26,14 +26,12 @@
     "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器登录/深页刷新/退出/失效重登录路径不依赖模型，可先行验证（R4 执行中）。"
   ],
   "evidence": [
-    [
-      {
-        "type": "test",
-        "label": "R4 守卫测试脚本资源归属自检（--self-check）",
-        "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh --self-check",
-        "result": "6/6 过：名称冲突拒绝且零删除；创建失败零 podman rm；两轮唯一容器名（wkguard-round3-0/1）、清理前零删除、cleanup 恰好只删两个自建容器。真实模式三场景复跑仍 5/5。"
-      }
-    ],
+    {
+      "type": "test",
+      "label": "R4 守卫测试脚本资源归属自检（--self-check）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh --self-check",
+      "result": "6/6 过：名称冲突拒绝且零删除；创建失败零 podman rm；两轮唯一容器名（wkguard-round3-0/1）、清理前零删除、cleanup 恰好只删两个自建容器。真实模式三场景复跑仍 5/5。"
+    },
     {
       "type": "deployment",
       "label": "R4 浏览器实机验证（不依赖模型，ZCode IAB，2026-10-08 13:4x-13:5x 北京）",
