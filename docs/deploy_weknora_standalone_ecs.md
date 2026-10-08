@@ -197,3 +197,10 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
    - 正常路径（child A）断言在原 5 项上新增"工作目录在确认清理后被删除"。
 4. 固定提交实测计数：真实模式 7 PASS；--self-check 15 PASS（子 A 3 + 子 C 1 + 父 12（A 5 + B-fault 3 + C-fault 3 + 全局真实 podman 0 逃逸 1））；上一轮登记的 8 PASS 计数由本轮 15 PASS 取代。
 5. 引导措辞按复验收窄为"本轮未复现；R4 异常疑与自动化交互有关，未进一步定位"。
+
+### R7 修复记录（2026-10-08，响应 R6 复验：查询三态判定与子进程日志隔离；无镜像/服务变更）
+
+1. **container exists 三态判定**：新增 container_state()（0=present / 1=absent / 其他如 125=unknown）。全部撤除确认统一走该判定：stop_owned 在 rm 成功后仅当确认 absent 才释放归属并报成功（rm 失败、present、unknown 均保留归属并返回失败）；cleanup 仅当每个自建容器确认 absent 才删 GUARD_WORK_DIR，present/unknown 均 KEEPING 报告并保留（unknown 单独措辞"container query failed, state unknown"）；归属重建同样只对确认 absent 的容器移出清单——修复"首次 KEEPING 却丢归属、第二次删目录"的反例；真实模式 B→C 的前置检查改为"B stopped and confirmed absent"。
+2. **子进程日志隔离**：mock 调用日志按 SC_LOG_TAG 分文件（podman-a/b/c/bug.log），B 的"仅一次 run"断言读 B 自己的日志；real-podman 逃逸日志全程累计不截断，覆盖 A/B/C/bug 全部子进程。
+3. **反例与载具自校验**：child B 改为复验场景 2/3（rm 成功+查询 125：stop_owned 必须失败保留归属；连续两次显式 cleanup+退出 trap 共三次清理均不得删数据目录）；新增 child BUG 故意犯下两类缺陷（未确认停止后再启动一个容器、直接调用 realbin 逃逸 mock），父断言证明两类检测器都会触发——即"B 多一次 run 必须失败""A/B 出现逃逸记录也必须失败"的载具有效性证明。
+4. 固定提交实测计数：真实模式 7 PASS；--self-check 父断言 13 PASS（A 5 + B-fault 3 + C-fault 3 + 载具自校验 2），子进程内部另有 PASS 输出（child A 3、child B 2、child C 1，记录于 child-*.out）。
