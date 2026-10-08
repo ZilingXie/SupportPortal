@@ -10,18 +10,25 @@
 #         never races a live database on the same PGDATA.
 #   C. guard=true + initialized   -> starts again (upgrade path keeps data)
 #
-# Resource ownership (R4/R5 review findings): every run uses a UNIQUE
+# Resource ownership (R4-R7 review findings): every run uses a UNIQUE
 # container name, never pre-deletes anything, and cleanup removes exactly the
-# containers THIS run successfully created — once (idempotent).
+# containers THIS run successfully created — once (idempotent). Removal is
+# only "confirmed" when the container query says ABSENT; a query failure
+# (any exit code other than 0=present / 1=absent) is UNKNOWN, keeps the
+# ownership record, keeps the work dir, and reports KEEPING.
 #
 # Modes:
 #   (default)            real guard scenarios against the actual image
-#   --self-check         parent harness: drives the ownership behavior in a
-#                        CHILD PROCESS against a mocked podman and asserts on
-#                        the child's FULL-EXIT state (existing containers kept,
-#                        owned containers cleaned, no extra removals, no real
-#                        podman calls)
-#   --self-check-child   internal: the child driven by --self-check
+#   --self-check         parent harness: drives the ownership behavior in
+#                        CHILD processes against a mocked podman (per-child
+#                        call logs; a cumulative real-podman escape log) and
+#                        asserts on each child's FULL-EXIT state. Includes a
+#                        bug-simulation child that validates the harness's own
+#                        detection (extra run / escaped real call).
+#   --self-check-child             internal children (SC_LOG_TAG selects)
+#   --self-check-child-fault-stop
+#   --self-check-child-fault-exit
+#   --self-check-child-bug
 set -o pipefail
 
 MODE="real"
@@ -29,6 +36,7 @@ MODE="real"
 [[ "${1:-}" == "--self-check-child" ]] && MODE="self-check-child"
 [[ "${1:-}" == "--self-check-child-fault-stop" ]] && MODE="self-check-child-fault-stop"
 [[ "${1:-}" == "--self-check-child-fault-exit" ]] && MODE="self-check-child-fault-exit"
+[[ "${1:-}" == "--self-check-child-bug" ]] && MODE="self-check-child-bug"
 
 FAILURES=0
 ok()  { echo "PASS: $1"; }
@@ -39,32 +47,58 @@ RUN_ID="$$-$(date +%s)"
 WORK_DIR="$HOME/.tmp-weknora-guard-test-${RUN_ID}"
 
 # Containers this run successfully created (and therefore owns). Ownership is
-# dropped ONLY after removal is CONFIRMED; a container whose removal fails
-# stays in the list, and cleanup then refuses to delete the work dir (which
-# contains its mounted PGDATA) so nothing deletes a data dir still in use.
+# dropped ONLY after removal is CONFIRMED ABSENT; presence or an unknown
+# query result keeps the record, and cleanup then refuses to delete the work
+# dir (which contains the mounted PGDATA).
 OWNED_CONTAINERS=()
-CLEANUP_KEEP_WORK_DIR=0
+
+# container_state <name> -> echoes present|absent|unknown.
+# `podman container exists` contract: 0 = exists, 1 = does not exist,
+# anything else (e.g. 125) = query failure — status UNKNOWN.
+container_state() {
+  local name="$1" rc
+  podman container exists "$name" >/dev/null 2>&1
+  rc=$?
+  if [ "$rc" -eq 0 ]; then
+    echo "present"
+  elif [ "$rc" -eq 1 ]; then
+    echo "absent"
+  else
+    echo "unknown"
+  fi
+}
 
 cleanup() {
-  local name confirmed_gone=1
+  local name state confirmed_all=1
   for name in "${OWNED_CONTAINERS[@]}"; do
     [ -n "$name" ] || continue
-    if ! podman rm -f "$name" >/dev/null 2>&1 || podman container exists "$name" 2>/dev/null; then
-      echo "[guard-test-cleanup] could not confirm removal of owned container $name; KEEPING container and work dir for manual cleanup" >&2
-      confirmed_gone=0
-      continue
-    fi
+    podman rm -f "$name" >/dev/null 2>&1 || true
+    state="$(container_state "$name")"
+    case "$state" in
+      absent)
+        # Confirmed gone: drop from ownership below via the rebuild pass.
+        ;;
+      present)
+        echo "[guard-test-cleanup] owned container $name still exists after removal; KEEPING container and work dir for manual cleanup" >&2
+        confirmed_all=0
+        ;;
+      *)
+        echo "[guard-test-cleanup] cannot confirm removal of $name (container query failed, state unknown); KEEPING container and work dir for manual cleanup" >&2
+        confirmed_all=0
+        ;;
+    esac
   done
-  # Retain ownership only for containers that provably still exist; confirmed
-  # removals drop out, so a repeated cleanup call issues no duplicate rm.
-  local remaining=() n
+  # Retain ownership ONLY for containers confirmed present or unknown;
+  # confirmed-absent ones drop out, so a repeated cleanup call issues no
+  # duplicate rm and never deletes a dir that was kept for an unknown one.
+  local remaining=() n st
   for n in "${OWNED_CONTAINERS[@]}"; do
     [ -n "$n" ] || continue
-    if podman container exists "$n" 2>/dev/null; then remaining+=("$n"); fi
+    st="$(container_state "$n")"
+    if [ "$st" != "absent" ]; then remaining+=("$n"); fi
   done
   OWNED_CONTAINERS=("${remaining[@]}")
-  if [ "$confirmed_gone" != "1" ]; then
-    CLEANUP_KEEP_WORK_DIR=1
+  if [ "$confirmed_all" != "1" ]; then
     return
   fi
   [ -n "${GUARD_WORK_DIR:-}" ] && rm -rf "$GUARD_WORK_DIR"
@@ -111,9 +145,10 @@ run_guard_detached() { # data_dir guard -> RUN_RC / RUN_OUT / RUN_CONTAINER
   local name="wkguard-${RUN_ID}-${DETACH_SEQ}"
   DETACH_SEQ=$((DETACH_SEQ + 1))
   RUN_CONTAINER=""
-  if podman container exists "$name" 2>/dev/null; then
+  local st="$(container_state "$name")"
+  if [ "$st" != "absent" ]; then
     RUN_RC=1
-    RUN_OUT="container name $name already exists; refusing to touch it"
+    RUN_OUT="container name $name is ${st}; refusing to touch it"
     return
   fi
   if ! podman run -d --name "$name" \
@@ -137,7 +172,8 @@ run_guard_detached() { # data_dir guard -> RUN_RC / RUN_OUT / RUN_CONTAINER
       RUN_OUT="$(podman logs "$name" 2>&1)"
       return
     fi
-    if ! podman container exists "$name" 2>/dev/null; then
+    st="$(container_state "$name")"
+    if [ "$st" != "present" ]; then
       RUN_RC=1
       RUN_OUT="$(podman logs "$name" 2>&1 || true)"
       return
@@ -148,10 +184,9 @@ run_guard_detached() { # data_dir guard -> RUN_RC / RUN_OUT / RUN_CONTAINER
   RUN_OUT="$(podman logs "$name" 2>&1 || true)"
 }
 
-# Stop-and-remove an OWNED container, dropping it from ownership so cleanup
-# never removes it twice. Refuses names this run does not own. A FAILED
-# removal returns failure and KEEPS the ownership record, so the EXIT cleanup
-# still knows the container exists and refuses to delete the work dir.
+# Stop-and-remove an OWNED container. Removal counts only when the container
+# is CONFIRMED ABSENT afterwards; present or unknown keeps the ownership
+# record and returns failure. Refuses names this run does not own.
 stop_owned() { # container_name -> STOP_RC
   local name="$1"
   local owned=() found=0
@@ -169,19 +204,31 @@ stop_owned() { # container_name -> STOP_RC
     STOP_RC=1
     return
   fi
-  if podman container exists "$name" 2>/dev/null; then
-    echo "stop_owned: $name still exists after removal; keeping ownership record" >&2
-    STOP_RC=1
+  local st="$(container_state "$name")"
+  if [ "$st" = "absent" ]; then
+    OWNED_CONTAINERS=("${owned[@]}")
+    STOP_RC=0
     return
   fi
-  OWNED_CONTAINERS=("${owned[@]}")
-  STOP_RC=0
+  echo "stop_owned: $name is ${st} after removal; keeping ownership record" >&2
+  STOP_RC=1
 }
 
 # ---------------------------------------------------------------------------
-# Self-check harness (parent). Ownership behavior runs in a CHILD process;
-# assertions read the child's full-exit state.
+# Self-check harness (parent). Each child gets its OWN call log via SC_LOG_TAG;
+# the real-podman escape log is cumulative across all children and is never
+# truncated. A bug-simulation child validates the harness's own detection.
 # ---------------------------------------------------------------------------
+# run_child <tag> <workdir> <mode> — sets CHILD_RC; per-child log via SC_LOG_TAG.
+run_child() {
+  local tag="$1" work="$2" mode="$3"
+  rm -rf "$work"; mkdir -p "$work"
+  SC_STATE="$SC_STATE" SC_LOG_TAG="$tag" GUARD_WORK_DIR="$work" \
+    PATH="$SC_BIN:$SC_REALBIN:$PATH" GUARD_POLL_SLEEP=0 \
+    bash "$SC_SCRIPT" "$mode" > "$SC_STATE/child-${tag}.out" 2> "$SC_STATE/child-${tag}.err"
+  CHILD_RC=$?
+}
+
 self_check_parent() {
   local script_dir
   script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -189,15 +236,16 @@ self_check_parent() {
 
   local sc_state="$HOME/.tmp-weknora-guard-sc-${RUN_ID}"
   rm -rf "$sc_state"
-  mkdir -p "$sc_state/bin" "$sc_state/work" "$sc_state/realbin"
+  mkdir -p "$sc_state/bin" "$sc_state/realbin"
 
-  # Mock podman: alive-state tracked under sc_state; dispatch on $1 so
-  # "rm -f name" / "exec name cmd" / "logs name" match correctly.
+  # Mock podman: per-child call log (SC_LOG_TAG), alive-state under sc_state,
+  # dispatch on $1. Injections: SC_FAIL_RUN, SC_FAIL_RM, SC_QUERY_RC.
   cat > "$sc_state/bin/podman" <<STUB
 #!/usr/bin/env bash
-echo "podman \$*" >> "\${SC_STATE}/podman.log"
+echo "podman \$*" >> "\${SC_STATE}/podman-\${SC_LOG_TAG:-x}.log"
 case "\$1" in
   container)
+    if [ -n "\${SC_QUERY_RC:-}" ]; then exit "\$SC_QUERY_RC"; fi
     case "\$3" in
       *pre-existing-*) exit 0 ;;
     esac
@@ -214,13 +262,11 @@ case "\$1" in
     [ -n "\$name" ] && touch "\${SC_STATE}/alive-\$name"
     exit 0 ;;
   exec)
-    # pg_isready succeeds immediately
     exit 0 ;;
   logs)
     echo "database system is ready to accept connections"
     exit 0 ;;
   rm)
-    # "rm -f <name>": the name is the last argument.
     if [ "\${SC_FAIL_RM:-0}" = "1" ]; then
       echo "mock podman rm failed (SC_FAIL_RM=1)" >&2
       exit 1
@@ -232,8 +278,8 @@ exit 0
 STUB
   chmod +x "$sc_state/bin/podman"
 
-  # Real-podman detector: only reachable if the mock (earlier on PATH) is
-  # gone. Any entry here means the test escaped its isolation boundary.
+  # Real-podman detector: only reachable when invoked deliberately or when
+  # the mock is missing. CUMULATIVE log — never truncated by the parent.
   cat > "$sc_state/realbin/podman" <<STUB
 #!/usr/bin/env bash
 echo "REAL-PODMAN \$*" >> "\${SC_STATE}/real-podman.log"
@@ -241,44 +287,35 @@ exit 0
 STUB
   chmod +x "$sc_state/realbin/podman"
 
-  # Pre-existing container state for the collision round (name shape must
-  # match wkguard-<RUN_ID>-<seq> with RUN_ID "pre-existing-x", seq 0).
+  # Pre-existing container state for the collision round.
   touch "$sc_state/alive-wkguard-pre-existing-x-0"
 
-  echo "== child A: ownership scenarios run to full exit =="
-  SC_STATE="$sc_state" GUARD_WORK_DIR="$sc_state/work" \
-    PATH="$sc_state/bin:$sc_state/realbin:$PATH" GUARD_POLL_SLEEP=0 \
-    bash "$this_script" --self-check-child
-  local child_rc=$?
-  cp "$sc_state/podman.log" "$sc_state/podman-a.log"
-  local SC_A_LOG="$sc_state/podman-a.log"
+  SC_STATE="$sc_state" SC_BIN="$sc_state/bin" SC_REALBIN="$sc_state/realbin" SC_SCRIPT="$this_script"
 
-  echo "== child B: B-removal fails mid-run (must not start C, must keep data dir) =="
-  rm -rf "$sc_state/workB"; mkdir -p "$sc_state/workB"
-  : > "$sc_state/podman.log"
-  rm -f "$sc_state/real-podman.log"
-  SC_STATE="$sc_state" GUARD_WORK_DIR="$sc_state/workB" SC_FAULT_STOP=1 \
-    PATH="$sc_state/bin:$sc_state/realbin:$PATH" GUARD_POLL_SLEEP=0 \
-    bash "$this_script" --self-check-child-fault-stop > "$sc_state/childB.out" 2> "$sc_state/childB.err"
-  local childB_rc=$?
+  echo "== child A: ownership scenarios run to full exit =="
+  run_child a "$sc_state/work" --self-check-child
+  local CHILD_RC_A="$CHILD_RC"
+
+  echo "== child B: stop unconfirmed (rm ok, query unknown) — keep ownership + data dir =="
+  run_child b "$sc_state/workB" --self-check-child-fault-stop
+  local CHILD_RC_B="$CHILD_RC"
 
   echo "== child C: EXIT-cleanup removal fails (must keep data dir and report) =="
-  rm -rf "$sc_state/workC"; mkdir -p "$sc_state/workC"
-  : > "$sc_state/podman.log"
-  rm -f "$sc_state/real-podman.log"
-  SC_STATE="$sc_state" GUARD_WORK_DIR="$sc_state/workC" SC_FAULT_EXIT_RM=1 \
-    PATH="$sc_state/bin:$sc_state/realbin:$PATH" GUARD_POLL_SLEEP=0 \
-    bash "$this_script" --self-check-child-fault-exit > "$sc_state/childC.out" 2> "$sc_state/childC.err"
-  local childC_rc=$?
+  run_child c "$sc_state/workC" --self-check-child-fault-exit
+  local CHILD_RC_C="$CHILD_RC"
+
+  echo "== child BUG: extra run + deliberate real-podman call (harness detection) =="
+  run_child bug "$sc_state/workBUG" --self-check-child-bug
+  local CHILD_RC_BUG="$CHILD_RC"
 
   echo "== parent assertions on child full-exit states =="
 
   # --- Child A (normal path) ---
-  local log="$SC_A_LOG"
+  local logA="$sc_state/podman-a.log"
 
   # 1. The pre-existing container survived untouched.
   if [ -f "$sc_state/alive-wkguard-pre-existing-x-0" ] \
-     && ! grep -q "rm -f wkguard-pre-existing-x-0" "$log"; then
+     && ! grep -q "rm -f wkguard-pre-existing-x-0" "$logA"; then
     ok "A: pre-existing container preserved (no removal, state intact)"
   else
     bad "A: pre-existing container was removed or its state vanished"
@@ -291,17 +328,15 @@ STUB
     bad "A: owned container alive markers survived the child exit cleanup"
   fi
 
-  # 3. Exactly two removals, for the owned names only — this also proves the
-  #    collision and failed-creation rounds removed nothing (any removal there
-  #    would push the count past two or name a different container).
-  local total_rm
-  total_rm="$(grep -c "podman rm -f" "$log" || true)"
-  if [ "$total_rm" -eq 2 ] \
-     && grep -q "podman rm -f wkguard-round3-0" "$log" \
-     && grep -q "podman rm -f wkguard-round3-1" "$log"; then
+  # 3. Exactly two removals in A's OWN log, for the owned names only.
+  local total_rmA
+  total_rmA="$(grep -c "podman rm -f" "$logA" || true)"
+  if [ "$total_rmA" -eq 2 ] \
+     && grep -q "podman rm -f wkguard-round3-0" "$logA" \
+     && grep -q "podman rm -f wkguard-round3-1" "$logA"; then
     ok "A: exactly two removals, each for one owned container (idempotent exit cleanup)"
   else
-    bad "A: removal count/content wrong: $total_rm total"
+    bad "A: removal count/content wrong: $total_rmA total"
   fi
 
   # 4. Child A's work dir was deleted on success cleanup.
@@ -312,43 +347,46 @@ STUB
   fi
 
   # 5. Child A reported success.
-  if [ "$child_rc" -eq 0 ]; then
+  if [ "$CHILD_RC_A" -eq 0 ]; then
     ok "A: child scenario run exited 0"
   else
-    bad "A: child scenario run exited $child_rc"
+    bad "A: child scenario run exited $CHILD_RC_A"
   fi
 
-  # --- Child B (stop_owned failure mid-run) ---
-  local logB="$sc_state/podman.log"
-  local bname="wkguard-faultb-0"
-  # 6. stop failure propagated (child exited non-zero) and C was never started.
+  # --- Child B (rm ok, confirmation query unknown) ---
+  local logB="$sc_state/podman-b.log"
+
+  # 6. stop failure propagated (child exited non-zero) and C was never started
+  #    in B's OWN log.
   local runB
   runB="$(grep -c "podman run -d" "$logB" || true)"
-  if [ "$childB_rc" -ne 0 ] && [ "$runB" -eq 1 ]; then
-    ok "B-fault: stop failure propagated and C never started (single run)"
+  if [ "$CHILD_RC_B" -ne 0 ] && [ "$runB" -eq 1 ]; then
+    ok "B-fault: unconfirmed stop propagated and C never started (single run in B's own log)"
   else
-    bad "B-fault: child rc=$childB_rc, run count=$runB (expected rc!=0, runs=1)"
+    bad "B-fault: child rc=$CHILD_RC_B, B-log run count=$runB (expected rc!=0, runs=1)"
   fi
-  # 7. The data dir still exists — cleanup refused to delete it while the
-  #    container provably still holds it.
-  if [ -d "$sc_state/workB/data" ] && [ -f "$sc_state/alive-$bname" ]; then
-    ok "B-fault: in-use data dir and container marker preserved"
+
+  # 7. The data dir is preserved across repeated cleanups while the state is
+  #    unknown (rm succeeded but existence could not be confirmed).
+  if [ -d "$sc_state/workB/data" ]; then
+    ok "B-fault: data dir preserved under unknown confirmation (incl. repeated cleanup)"
   else
-    bad "B-fault: data dir or container marker was deleted despite failed stop"
+    bad "B-fault: data dir deleted despite unknown confirmation"
   fi
+
   # 8. Explicit keep report present.
-  if grep -q "KEEPING" "$sc_state/childB.err"; then
+  if grep -q "KEEPING" "$sc_state/child-b.err"; then
     ok "B-fault: explicit keep-resources report emitted"
   else
     bad "B-fault: no KEEPING report in child stderr"
   fi
 
   # --- Child C (EXIT-cleanup removal failure) ---
-  # 9. Child C itself succeeded (scenarios fine); only cleanup failed.
-  if [ "$childC_rc" -eq 0 ]; then
+  # 9. Child C itself succeeded; only cleanup failed.
+  if [ "$CHILD_RC_C" -eq 0 ]; then
     ok "C-fault: scenarios passed (exit 0) despite later cleanup failure"
   else
-    bad "C-fault: child exited $childC_rc"
+    bad "C-fault: child exited $CHILD_RC_C"
   fi
   # 10. Data dir + marker preserved after EXIT cleanup failure.
   if [ -d "$sc_state/workC/data" ] && [ -f "$sc_state/alive-wkguard-faultc-0" ]; then
@@ -357,17 +395,30 @@ STUB
     bad "C-fault: data dir or marker deleted despite failed exit cleanup"
   fi
   # 11. Explicit keep report present.
-  if grep -q "KEEPING" "$sc_state/childC.err"; then
+  if grep -q "KEEPING" "$sc_state/child-c.err"; then
     ok "C-fault: explicit keep-resources report emitted"
   else
     bad "C-fault: no KEEPING report in child stderr"
   fi
 
-  # 12. No real podman call in any child.
-  if [ ! -f "$sc_state/real-podman.log" ]; then
-    ok "no real podman invocation escaped the mock (all children)"
+  # --- Child BUG (harness self-validation) ---
+  local logBUG="$sc_state/podman-bug.log"
+  # 12. The extra-run detector flags the bug child (>=2 runs in ITS OWN log).
+  local runBUG
+  runBUG="$(grep -c "podman run -d" "$logBUG" || true)"
+  if [ "$runBUG" -ge 2 ]; then
+    ok "harness: extra-run detection triggers on a simulated extra start (bug child had $runBUG runs)"
   else
-    bad "real podman was invoked: $(cat "$sc_state/real-podman.log")"
+    bad "harness: bug child only shows $runBUG runs; detection would miss extra starts"
+  fi
+  # 13-14. The cumulative escape log caught exactly the one deliberate
+  #        real-podman call, proving A/B/C never escaped.
+  local escapes
+  escapes="$(grep -c "REAL-PODMAN" "$sc_state/real-podman.log" 2>/dev/null || true)"
+  if [ "$escapes" -eq 1 ] && grep -q "REAL-PODMAN ps" "$sc_state/real-podman.log"; then
+    ok "harness: cumulative escape log detects exactly the one deliberate real-podman call; children A/B/C never escaped"
+  else
+    bad "harness: escape log count=$escapes (expected exactly 1 deliberate call)"
   fi
 
   rm -rf "$sc_state"
@@ -382,8 +433,7 @@ STUB
 }
 
 # ---------------------------------------------------------------------------
-# Self-check child: exercises the REAL functions with the mock on PATH and
-# exits; the EXIT trap performs the single, natural cleanup.
+# Self-check children.
 # ---------------------------------------------------------------------------
 self_check_child() {
   IMAGE="guard-mock-image"
@@ -423,22 +473,20 @@ self_check_child() {
     bad "round names/failure wrong (rc=$first_rc/$second_rc)"
   fi
   echo "child owned: ${OWNED_CONTAINERS[*]}"
-  # No manual cleanup: the EXIT trap runs once at process exit.
   [ "$FAILURES" -eq 0 ] || exit 1
   exit 0
 }
 
-# ---------------------------------------------------------------------------
-# Self-check fault children: exercise the FAILURE branches of stop_owned and
-# cleanup. Both must keep the in-use data dir and report explicitly.
-# ---------------------------------------------------------------------------
+# Child B: B starts normally; stop_owned's rm SUCCEEDS (mock removes the
+# alive marker) but the follow-up query returns 125 (unknown) — the review's
+# case 2. stop_owned must fail and keep ownership; repeated cleanup calls
+# must keep the dir (review's case 3).
 self_check_child_fault_stop() {
   IMAGE="guard-mock-image"
   WRAPPER="$(guard_wrapper)"
   local dir="${GUARD_WORK_DIR:?GUARD_WORK_DIR required}"
-  mkdir -p "$dir/data"   # the mock does not perform -v mounts; stand in for PGDATA
+  mkdir -p "$dir/data"
 
-  # Start "B" successfully.
   DETACH_SEQ=0; RUN_ID="faultb"
   run_guard_detached "$dir/data" true
   if [ "$RUN_RC" -ne 0 ]; then
@@ -447,14 +495,11 @@ self_check_child_fault_stop() {
   fi
   local b_name="$RUN_CONTAINER"
 
-  # stop_owned must FAIL (mock rm fails) and KEEP the ownership record.
-  # SC_FAIL_RM stays armed through process exit so the EXIT cleanup's removal
-  # also fails — exactly the review's repro (stop fails, then cleanup cannot
-  # confirm removal and must not delete the in-use data dir).
-  export SC_FAIL_RM=1
+  # rm succeeds, but the confirmation query is unknown (125).
+  export SC_QUERY_RC=125
   stop_owned "$b_name"
   if [ "$STOP_RC" -eq 0 ]; then
-    bad "faultB: stop_owned reported success despite removal failure"
+    bad "faultB: stop_owned reported success despite unknown confirmation"
     exit 1
   fi
   local still_owned=0 n
@@ -462,22 +507,30 @@ self_check_child_fault_stop() {
     [ "$n" = "$b_name" ] && still_owned=1
   done
   if [ "$still_owned" -ne 1 ]; then
-    bad "faultB: ownership dropped after failed stop"
+    bad "faultB: ownership dropped after unknown confirmation"
     exit 1
   fi
+  ok "faultB: unknown confirmation kept ownership and failed the stop"
 
-  # Mirror the real-mode contract: a failed B stop must abort before any C.
-  echo "faultB: B stop failed; refusing to start C against a live database" >&2
+  # Repeat-cleanup contract (case 3): two explicit cleanups must both keep
+  # the dir; SC_QUERY_RC stays armed so the state remains unknown.
+  cleanup
+  [ -d "$dir/data" ] || { bad "faultB: first cleanup deleted the data dir (unknown state)"; exit 1; }
+  cleanup
+  [ -d "$dir/data" ] || { bad "faultB: second cleanup deleted the data dir (unknown state)"; exit 1; }
+  ok "faultB: repeated cleanup kept the data dir"
+
+  echo "faultB: B stop unconfirmed; refusing to start C against a possibly live database" >&2
   exit 1
 }
 
+# Child C: one healthy container; scenarios pass; the EXIT cleanup's rm fails.
 self_check_child_fault_exit() {
   IMAGE="guard-mock-image"
   WRAPPER="$(guard_wrapper)"
   local dir="${GUARD_WORK_DIR:?GUARD_WORK_DIR required}"
-  mkdir -p "$dir/data"   # the mock does not perform -v mounts; stand in for PGDATA
+  mkdir -p "$dir/data"
 
-  # One healthy container; scenarios all pass.
   DETACH_SEQ=0; RUN_ID="faultc"
   run_guard_detached "$dir/data" true
   if [ "$RUN_RC" -ne 0 ]; then
@@ -485,11 +538,38 @@ self_check_child_fault_exit() {
     exit 1
   fi
   ok "faultC: scenario passed"
-
-  # Arm the mock so the EXIT cleanup's rm fails; the trap must keep the work
-  # dir and report, not delete a data dir it cannot prove is unreferenced.
   export SC_FAIL_RM=1
   exit 0
+}
+
+# Child BUG: simulates the two defects the harness must catch — starting an
+# extra container after a failed stop, and a real-podman escape. The PARENT's
+# assertions 12-14 prove the detectors fire.
+self_check_child_bug() {
+  IMAGE="guard-mock-image"
+  WRAPPER="$(guard_wrapper)"
+  local dir="${GUARD_WORK_DIR:?GUARD_WORK_DIR required}"
+  mkdir -p "$dir/data"
+
+  DETACH_SEQ=0; RUN_ID="bug"
+  run_guard_detached "$dir/data" true
+  if [ "$RUN_RC" -ne 0 ]; then
+    bad "bug child: first run failed (unexpected)"
+    exit 1
+  fi
+
+  export SC_QUERY_RC=125
+  stop_owned "$RUN_CONTAINER" >/dev/null 2>&1 || true   # fails; ownership kept
+  unset SC_QUERY_RC
+
+  # DEFECT 1: start another container despite the unconfirmed stop.
+  DETACH_SEQ=1
+  run_guard_detached "$dir/data" true >/dev/null 2>&1 || true
+
+  # DEFECT 2: deliberately bypass the mock (direct realbin path).
+  "${SC_STATE}/realbin/podman" ps >/dev/null 2>&1 || true
+
+  exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -550,10 +630,11 @@ real_run() {
   fi
   local b_name="$RUN_CONTAINER"
   stop_owned "$b_name"
-  if [ "$STOP_RC" -eq 0 ] && ! podman container exists "$b_name" 2>/dev/null; then
-    ok "B stopped and removed before C (no live database on the data dir)"
+  local b_state="$(container_state "$b_name")"
+  if [ "$STOP_RC" -eq 0 ] && [ "$b_state" = "absent" ]; then
+    ok "B stopped and confirmed absent before C (no live database on the data dir)"
   else
-    bad "B stop failed; refusing to start C against a live database"
+    bad "B stop unconfirmed (state=$b_state); refusing to start C against the data dir"
     exit 1
   fi
 
@@ -580,4 +661,5 @@ case "$MODE" in
   self-check-child) self_check_child ;;
   self-check-child-fault-stop) self_check_child_fault_stop ;;
   self-check-child-fault-exit) self_check_child_fault_exit ;;
+  self-check-child-bug) self_check_child_bug ;;
 esac
