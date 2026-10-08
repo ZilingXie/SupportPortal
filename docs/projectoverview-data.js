@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T16:19:38Z",
-  "source_base_commit": "785804525379440e578dc753cc583b8f65d4fe37",
-  "registry_digest": "4e753efa4665c76534f38df61742259d062d2dcc6de5fd2bcee5d91e6b9dc4d1",
+  "generated_at": "2026-10-08T03:34:55Z",
+  "source_base_commit": "e0ecef4dfe6bbbf675b81d350ef35b4d9eb48490",
+  "registry_digest": "4652a6bdff40f67ab28644d70992aaf3884129bf2a795d27375e33ba5d9af703",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1468,27 +1468,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "document",
-          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（td :41、digest、隔离验收、回滚）"
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（:41 回滚 → 修复 → :42 重发布）"
         },
         {
           "type": "deployment",
-          "label": "Preproduction Hermes td :41（镜像 digest sha256:dfb2bcb481ef，task 963f18c1 HEALTHY，2026-10-07T16:14Z）"
+          "label": "Preproduction Hermes td :42（镜像 digest sha256:9860fe85ff，task HEALTHY 2026-10-08T11:30Z 起）；:41 已回滚，:40 保留为回滚目标"
         },
         {
           "type": "test",
-          "label": "镜像内隔离验收 18 项全过（真实 SQLite 故障注入：单次补试无重复/两败零残留/重启回读完整）"
+          "label": "Round-2 镜像内隔离验收 27 项全过（含 P1 回归：部分插入后失败、行号复用窗口；io 文案无健康断言）"
         },
         {
           "type": "test",
-          "label": "hermes-agent cd87be9506：tests/hermes_state 513+283 通过，新故障注入 21 通过；预存基线失败 1 项（FTS5 projection，基线同样失败，与本改动无关）"
+          "label": "hermes 6ce3ee7c：回归 + 反向验证（未修复代码上 rowid-reuse 回归必败）；hermes_state 系列 493 通过（1 项预存 FTS5 基线失败与本改动无关）"
         },
         {
           "type": "test",
-          "label": "SP 78580452：hermes 系列 176+23 通过；PG store 隔离 PostgreSQL 10 通过（本地实例，独立 schema）"
+          "label": "SP e0ecef4d：全链 claim→process(ClaimedJob)→告警 测试（反向验证）+ per-step 接管措辞 + 独立 Failure reason 行；PG event_extra 专项（隔离 PostgreSQL 11 通过）"
         },
         {
           "type": "pr",
-          "label": "SP 分支 codex/hermes-session-storage-fix @ 78580452（待根 main 干净后 finalize）"
+          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage @ f4e9078（Dockerfile+验收脚本+manifest）"
         },
         {
           "type": "test",
@@ -16518,7 +16518,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
       "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
       "status": "active",
-      "next_action": "Hermes 侧已部署 Preproduction（td :41）并完成镜像内隔离验收；SP 分支已就绪待 finalize（根 main 存在他线程未提交改动），合入后发布 SP release 并回读告警新契约",
+      "next_action": "Round-2 验收修复完成并重新部署（td :42，digest 9860fe85，隔离验收 27 项全过）；Hermes 分支 6ce3ee7c、SP 分支 e0ecef4d 均待再验收；SP finalize 仍等根 main 外来改动处置",
       "owner": "agent",
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
@@ -16536,27 +16536,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "document",
-          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（td :41、digest、隔离验收、回滚）"
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-188 节（:41 回滚 → 修复 → :42 重发布）"
         },
         {
           "type": "deployment",
-          "label": "Preproduction Hermes td :41（镜像 digest sha256:dfb2bcb481ef，task 963f18c1 HEALTHY，2026-10-07T16:14Z）"
+          "label": "Preproduction Hermes td :42（镜像 digest sha256:9860fe85ff，task HEALTHY 2026-10-08T11:30Z 起）；:41 已回滚，:40 保留为回滚目标"
         },
         {
           "type": "test",
-          "label": "镜像内隔离验收 18 项全过（真实 SQLite 故障注入：单次补试无重复/两败零残留/重启回读完整）"
+          "label": "Round-2 镜像内隔离验收 27 项全过（含 P1 回归：部分插入后失败、行号复用窗口；io 文案无健康断言）"
         },
         {
           "type": "test",
-          "label": "hermes-agent cd87be9506：tests/hermes_state 513+283 通过，新故障注入 21 通过；预存基线失败 1 项（FTS5 projection，基线同样失败，与本改动无关）"
+          "label": "hermes 6ce3ee7c：回归 + 反向验证（未修复代码上 rowid-reuse 回归必败）；hermes_state 系列 493 通过（1 项预存 FTS5 基线失败与本改动无关）"
         },
         {
           "type": "test",
-          "label": "SP 78580452：hermes 系列 176+23 通过；PG store 隔离 PostgreSQL 10 通过（本地实例，独立 schema）"
+          "label": "SP e0ecef4d：全链 claim→process(ClaimedJob)→告警 测试（反向验证）+ per-step 接管措辞 + 独立 Failure reason 行；PG event_extra 专项（隔离 PostgreSQL 11 通过）"
         },
         {
           "type": "pr",
-          "label": "SP 分支 codex/hermes-session-storage-fix @ 78580452（待根 main 干净后 finalize）"
+          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage @ f4e9078（Dockerfile+验收脚本+manifest）"
         }
       ]
     },
