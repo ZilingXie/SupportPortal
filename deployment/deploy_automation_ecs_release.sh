@@ -792,6 +792,15 @@ render_role_task_definition() {
   if [[ -n "${AGENT_MODEL_VALUE}" ]]; then
     args+=(--agent-model "${AGENT_MODEL_VALUE}")
   fi
+  # Email execution chain (13922): the api container mounts the shared
+  # Graph token-cache EFS volume; the real IDs come from the worker's
+  # live task definition (extracted before the render loop).
+  if [[ "${ENVIRONMENT}" = "preproduction" && "${role}" = "api" ]]; then
+    args+=(
+      --graph-efs-file-system-id "${GRAPH_EFS_FILE_SYSTEM_ID}"
+      --graph-efs-access-point-id "${GRAPH_EFS_ACCESS_POINT_ID}"
+    )
+  fi
   "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
     render-task-definition "${args[@]}" >/dev/null
 }
@@ -1456,6 +1465,23 @@ main() {
   EC2_BACKUP_STATUS="passed"
 
   local role service current_arn baseline_arn expected_digest observed_digest
+  if [[ "${ENVIRONMENT}" = "preproduction" ]]; then
+    # Graph EFS inputs for the API role render (email execution chain,
+    # 13922): the canonical IDs live on the worker's live task
+    # definition — read them once here so the api render (first in the
+    # loop below) can attach the shared token-cache volume.
+    local graph_efs_source_arn
+    graph_efs_source_arn="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
+      --services "$(service_name worker)" --query 'services[0].taskDefinition' --output text)"
+    [[ -n "${graph_efs_source_arn}" && "${graph_efs_source_arn}" != "None" ]] \
+      || fail "worker task definition not found for Graph EFS inputs"
+    aws ecs describe-task-definition --region "${REGION}" --task-definition "${graph_efs_source_arn}" \
+      --include TAGS >"${TEMP_DIR}/worker.graph-efs.json"
+    GRAPH_EFS_FILE_SYSTEM_ID="$(jq -r '.taskDefinition.volumes[]? | select(.name == "graph-token-cache") | .efsVolumeConfiguration.fileSystemId // empty' "${TEMP_DIR}/worker.graph-efs.json")"
+    GRAPH_EFS_ACCESS_POINT_ID="$(jq -r '.taskDefinition.volumes[]? | select(.name == "graph-token-cache") | .efsVolumeConfiguration.authorizationConfig.accessPointId // empty' "${TEMP_DIR}/worker.graph-efs.json")"
+    [[ -n "${GRAPH_EFS_FILE_SYSTEM_ID}" && -n "${GRAPH_EFS_ACCESS_POINT_ID}" ]] \
+      || fail "worker task definition has no Graph EFS volume; cannot render the api Graph mail configuration"
+  fi
   for role in api route worker; do
     expected_digest="$(jq -r --arg role "${role}" '.components[$role].digest' "${MANIFEST_PATH}")"
     observed_digest="$(<"${TEMP_DIR}/${role}.ecr-digest")"
