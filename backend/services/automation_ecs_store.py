@@ -285,6 +285,38 @@ def comment_advances_case(event: AutomationIntakeEvent) -> bool:
     return _author_is_customer(trigger)
 
 
+def native_customer_lifecycle_blocker(binding: dict[str, Any], case: dict[str, Any]) -> str | None:
+    if binding.get("direction") == "human" or binding.get("escalation"):
+        return "actual_human_takeover"
+    if binding.get("status") == "terminal" or str((case.get("ticket") or {}).get("status") or "").lower() in {"solved", "closed"}:
+        return "terminal_ticket"
+    return None
+
+
+def initial_investigation_route(
+    binding: dict[str, Any], case: dict[str, Any], turns: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Use the first durable classification, never the latest direction alone.
+
+    Called under the case/binding lock. Paused investigation review is legal;
+    a persisted takeover or terminal ticket must never be silently resumed.
+    """
+    if (
+        str(binding.get("session_kind") or "case") != "case"
+        or native_customer_lifecycle_blocker(binding, case)
+    ):
+        return None
+    for turn in sorted(turns, key=lambda row: str(row.get("created_at") or "")):
+        if (
+            turn.get("turn_kind") == "normal"
+            and turn.get("event_type") in {"ticket.created", "comment.created"}
+            and turn.get("direction") in {"automation", "investigation", "human"}
+            and turn.get("direction_reason")
+        ):
+            return turn if turn["direction"] == "investigation" else None
+    return None
+
+
 def event_customer_identity(event: AutomationIntakeEvent) -> dict[str, Any] | None:
     """The active customer for an event: the trigger author, else the ticket requester."""
     if event.event_type == IntakeEventType.COMMENT_CREATED:
@@ -606,6 +638,10 @@ class InMemoryAutomationEcsStore:
             updated_at=now_value,
         )
 
+    def append_execution_event(self, execution_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        with self._lock:
+            self._append_event(execution_id, event_type, payload)
+
     def accept_intake(
         self,
         event: AutomationIntakeEvent,
@@ -641,6 +677,9 @@ class InMemoryAutomationEcsStore:
                 "received_at": now_value,
             }
             existing_case = self._cases.get(event.ticket.id)
+            existing_binding = self._hermes_bindings.get((namespace, event.ticket.id))
+            if existing_binding and native_customer_lifecycle_blocker({}, existing_case or {}) == "terminal_ticket":
+                existing_binding.update(status="terminal", updated_at=now_value)
             if existing_case is None:
                 effective_revision = 1
                 active_customer = event_customer_identity(event)
@@ -702,6 +741,8 @@ class InMemoryAutomationEcsStore:
                         ):
                             draft["status"] = "stale"
                             draft["updated_at"] = now_value
+            if existing_binding and native_customer_lifecycle_blocker({}, self._cases[event.ticket.id]) == "terminal_ticket":
+                existing_binding.update(status="terminal", updated_at=now_value)
             if event.comment_snapshot is not None:
                 for comment in event.comment_snapshot.comments:
                     self._comments[(event.ticket.id, comment.id)] = {
@@ -895,6 +936,9 @@ class InMemoryAutomationEcsStore:
                 if job["kind"] != kind.value or not (
                     job["status"] == JobStatus.PENDING.value or lease_expired
                 ):
+                    continue
+                available_at = _parse_mirror_timestamp(job.get("available_at"))
+                if available_at is not None and available_at > now_value:
                     continue
                 token = _new_id("claim")
                 job.update(
@@ -1220,6 +1264,10 @@ class InMemoryAutomationEcsStore:
             event = AutomationIntakeEvent.model_validate(current["payload"]["event"])
             ticket_id = event.ticket.id
             ignored_reason = None
+            if comment_advances_case(event):
+                lifecycle_case = self._cases.get(ticket_id) or {}
+                lifecycle_binding = self._hermes_bindings.get((namespace, ticket_id)) or {}
+                ignored_reason = native_customer_lifecycle_blocker(lifecycle_binding, lifecycle_case)
             if event.event_type == IntakeEventType.TICKET_UPDATED:
                 ignored_reason = "ticket_updated_no_turn"
             elif event.event_type == IntakeEventType.COMMENT_CREATED and not comment_advances_case(event):
@@ -1301,6 +1349,7 @@ class InMemoryAutomationEcsStore:
                     "updated_at": _iso(),
                 }
                 self._hermes_bindings[(namespace, ticket_id)] = binding
+            inherited = initial_investigation_route(binding, case or {}, self._turn_rows(ticket_id)) if comment_advances_case(event) else None
             now_value = _iso()
             turn_id = _new_id("turn")
             request_id = _new_id("hmreq")
@@ -1313,11 +1362,11 @@ class InMemoryAutomationEcsStore:
                 "event_type": event.event_type.value,
                 "input_version": int(binding["conversation_version"]),
                 "case_revision": current_revision,
-                "turn_kind": "normal",
-                "phase": None,
-                "direction": None,
+                "turn_kind": "investigation_feedback" if inherited else "normal",
+                "phase": "work" if inherited else None,
+                "direction": "investigation" if inherited else None,
                 "route": None,
-                "direction_reason": None,
+                "direction_reason": inherited["direction_reason"] if inherited else None,
                 "work_result": None,
                 "input_snapshot": None,
                 "request_id": request_id,
@@ -1350,11 +1399,13 @@ class InMemoryAutomationEcsStore:
                 job.execution_id,
                 "route.classify",
                 job.attempt,
-                StepStatus.SUCCEEDED,
+                StepStatus.SKIPPED if inherited else StepStatus.SUCCEEDED,
                 worker_identity=job.claimed_by,
                 output=copy.deepcopy(handoff_route),
             )
             self._append_event(job.execution_id, "route.hermes_handoff", copy.deepcopy(handoff_route))
+            if inherited:
+                self._append_event(job.execution_id, "agent_turn.route_inherited", {"turn_id": turn_id, "source_turn_id": inherited["turn_id"], "direction": "investigation", "route_phase": "skipped", "event_id": event.event_id})
             agent_job_id = _new_id("job")
             agent_payload = AgentTurnJobPayload(
                 execution_id=job.execution_id,
@@ -1693,7 +1744,11 @@ class InMemoryAutomationEcsStore:
             turn = self._hermes_turns.get(turn_id)
             if turn is None or turn["status"] not in {"pending", "running", "cancel_requested"}:
                 raise HermesTurnStateError(turn_id, "turn is not active")
-            turn.update(work_result=copy.deepcopy(work_result), updated_at=_iso())
+            work_result = copy.deepcopy(work_result)
+            for field in ("reviewer_feedback", "engineer_authority"):
+                if field in (turn.get("work_result") or {}):
+                    work_result[field] = copy.deepcopy(turn["work_result"][field])
+            turn.update(work_result=work_result, updated_at=_iso())
             self._append_event(turn["execution_id"], "agent_turn.work_recorded", {"turn_id": turn_id})
             return copy.deepcopy(turn)
 
@@ -1718,11 +1773,26 @@ class InMemoryAutomationEcsStore:
         prompt_release_id: str | None = None,
     ) -> dict[str, Any]:
         namespace = self.settings.job_namespace
+        source_event_id = str(base_event.get("source_event_id") or "").strip()
+        authority = base_event.get("engineer_authority")
+        authority = dict(authority) if isinstance(authority, dict) else None
         with self._lock:
             case_row = self._cases.get(zendesk_ticket_id)
             binding = self._hermes_bindings.get((namespace, zendesk_ticket_id))
             if case_row is None or binding is None:
                 raise HermesTurnStateError("", "case mirror or binding not found")
+            inbound_event_id = f"feedback:slack:{namespace}:{zendesk_ticket_id}:{source_event_id}" if source_event_id else None
+            if inbound_event_id:
+                prior = next((row for row in self._turn_rows(zendesk_ticket_id) if row["event_id"] == inbound_event_id), None)
+                if prior:
+                    if (prior.get("work_result") or {}).get("reviewer_feedback") != feedback:
+                        raise HermesTurnStateError(prior["turn_id"], "Slack event identity conflict")
+                    prior_authority = (prior.get("work_result") or {}).get("engineer_authority") or {}
+                    if {k: v for k, v in prior_authority.items() if k != "case_revision"} != (authority or {}):
+                        raise HermesTurnStateError(prior["turn_id"], "Slack authority identity conflict")
+                    return {"turn_id": prior["turn_id"], "idempotent_replay": True}
+            if authority is not None:
+                authority["case_revision"] = int(case_row.get("case_revision") or 1)
             blocker = self.get_hermes_turn_fence_blocker(zendesk_ticket_id)
             if blocker is not None:
                 raise HermesTurnConflictError(blocker["turn_id"])
@@ -1734,7 +1804,7 @@ class InMemoryAutomationEcsStore:
             self._executions[execution_id] = {
                 "execution_id": execution_id,
                 "zendesk_ticket_id": zendesk_ticket_id,
-                "event_id": f"feedback:{turn_id}",
+                "event_id": (inbound_event_id or f"feedback:{turn_id}"),
                 "event_type": "investigation_feedback",
                 "status": ExecutionStatus.PROCESSING_PENDING.value,
                 "current_stage": "agent_turn.queued",
@@ -1756,7 +1826,7 @@ class InMemoryAutomationEcsStore:
                 "namespace": namespace,
                 "zendesk_ticket_id": zendesk_ticket_id,
                 "execution_id": execution_id,
-                "event_id": f"feedback:{turn_id}",
+                "event_id": (inbound_event_id or f"feedback:{turn_id}"),
                 "event_type": "investigation_feedback",
                 "input_version": int(binding["conversation_version"]),
                 "case_revision": revision,
@@ -1772,7 +1842,7 @@ class InMemoryAutomationEcsStore:
                     ),
                     None,
                 ),
-                "work_result": {"reviewer_feedback": feedback[:4000]},
+                "work_result": {"reviewer_feedback": feedback[:4000], **({"engineer_authority": authority} if authority else {})},
                 "input_snapshot": None,
                 "request_id": request_id,
                 "prompt_release_id": str(prompt_release_id or "") or None,
@@ -1799,7 +1869,7 @@ class InMemoryAutomationEcsStore:
                     "turn_id": turn_id,
                     "conversation_key": str(binding["logical_conversation_key"]),
                     "event": _synthetic_turn_event_payload(
-                        event_id=f"feedback:{turn_id}",
+                        event_id=(inbound_event_id or f"feedback:{turn_id}"),
                         event_type="investigation_feedback",
                         ticket_row=case_row.get("ticket"),
                         occurred_at=now_value,
@@ -1986,6 +2056,13 @@ class InMemoryAutomationEcsStore:
         with self._lock:
             return list(reversed(self._turn_rows(zendesk_ticket_id)))[: max(1, limit)]
 
+    def get_initial_hermes_classification(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            for turn in self._turn_rows(zendesk_ticket_id):
+                if turn.get("turn_kind") == "normal" and turn.get("event_type") in {"ticket.created", "comment.created"} and turn.get("direction") in {"automation", "investigation", "human"} and turn.get("direction_reason"):
+                    return copy.deepcopy(turn)
+        return None
+
     def start_hermes_agent_turn(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
         with self._lock:
             turn = self._hermes_turns.get(turn_id)
@@ -1994,6 +2071,16 @@ class InMemoryAutomationEcsStore:
             blocker = self.get_hermes_turn_fence_blocker(turn["zendesk_ticket_id"])
             if blocker is not None and blocker["turn_id"] != turn_id:
                 raise HermesTurnConflictError(turn_id)
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"])) or {}
+            case = self._cases.get(turn["zendesk_ticket_id"]) or {}
+            if turn.get("event_type") == "comment.created":
+                reason = native_customer_lifecycle_blocker(binding, case)
+                if reason:
+                    return self.supersede_hermes_turn(turn_id, reason=reason)
+            inherited = initial_investigation_route(binding, case, self._turn_rows(turn["zendesk_ticket_id"]))
+            if turn.get("turn_kind") == "normal" and turn.get("event_type") == "comment.created" and inherited:
+                turn.update(turn_kind="investigation_feedback", phase="work", direction="investigation", route=None, direction_reason=inherited["direction_reason"], input_version=int(binding["conversation_version"]))
+                self._append_event(turn["execution_id"], "agent_turn.route_inherited", {"turn_id": turn_id, "source_turn_id": inherited["turn_id"], "direction": "investigation", "route_phase": "skipped", "event_id": turn["event_id"]})
             turn.update(status="running", run_id=run_id, updated_at=_iso())
             return copy.deepcopy(turn)
 
@@ -2026,6 +2113,25 @@ class InMemoryAutomationEcsStore:
                 {"turn_id": turn_id, "conversation_version": binding["conversation_version"]},
             )
             return copy.deepcopy(turn)
+
+    def complete_hermes_case_solved_turn(self, turn_id: str, *, ticket_status: str, source_updated_at: str, result: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id) or {}
+            case = self._cases.get(str(turn.get("zendesk_ticket_id") or "")) or {}
+            if turn.get("status") != "running" or case.get("case_revision") != turn.get("case_revision"):
+                raise HermesTurnStateError(turn_id, "solve turn lost active revision fence")
+            case.update(merge_mirror_state(case, {**case.get("ticket", {}), "status": ticket_status, "updated_at": source_updated_at}, occurred_at=source_updated_at))
+            binding = self._hermes_bindings[(turn["namespace"], turn["zendesk_ticket_id"])]
+            binding.update(status="terminal", updated_at=_iso())
+            for other in self._turn_rows(turn["zendesk_ticket_id"]):
+                if other["turn_id"] != turn_id and other["status"] == "pending":
+                    self.supersede_hermes_turn(other["turn_id"], reason="terminal_ticket")
+            terminal = {"engine": "hermes", "turn_id": turn_id, "status": "case_solved", "close_result": result}
+            completed = self.complete_hermes_agent_turn(turn_id, result=terminal)
+            for draft in self._hermes_drafts.values():
+                if draft["zendesk_ticket_id"] == turn["zendesk_ticket_id"] and draft["status"] in {"draft", "awaiting_approval", "approved", "preparing", "queued"}:
+                    draft.update(status="stale", updated_at=_iso())
+            return completed
 
     def fail_hermes_agent_turn(
         self,
@@ -3099,6 +3205,11 @@ class PostgresAutomationEcsStore:
             ),
         )
 
+    def append_execution_event(self, execution_id: str, event_type: str, payload: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                self._insert_timeline(cursor, execution_id, event_type, payload)
+
     def accept_intake(
         self,
         event: AutomationIntakeEvent,
@@ -3165,6 +3276,8 @@ class PostgresAutomationEcsStore:
                     (namespace, event.ticket.id),
                 )
                 case_row = cursor.fetchone()
+                if case_row and native_customer_lifecycle_blocker({}, dict(case_row)) == "terminal_ticket":
+                    cursor.execute(sql.SQL("UPDATE {} SET status='terminal',updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s").format(self._table("automation_hermes_case_bindings")), (namespace, event.ticket.id))
                 if case_row is None:
                     # A new case starts at revision 1 with its creating event.
                     effective_revision = 1
@@ -3270,6 +3383,7 @@ class PostgresAutomationEcsStore:
                                 event.ticket.id,
                             ),
                         )
+                cursor.execute(sql.SQL("UPDATE {} b SET status='terminal',updated_at=NOW() FROM {} c WHERE b.namespace=c.namespace AND b.zendesk_ticket_id=c.zendesk_ticket_id AND c.namespace=%s AND c.zendesk_ticket_id=%s AND c.ticket->>'status' IN ('solved','closed')").format(self._table("automation_hermes_case_bindings"), self._table("automation_cases")), (namespace, event.ticket.id))
                 if event.comment_snapshot is not None:
                     for comment in event.comment_snapshot.comments:
                         cursor.execute(
@@ -3776,6 +3890,12 @@ class PostgresAutomationEcsStore:
                 event = AutomationIntakeEvent.model_validate(current["payload"]["event"])
                 ticket_id = event.ticket.id
                 ignored_reason = None
+                if comment_advances_case(event):
+                    cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), (namespace, ticket_id))
+                    lifecycle_case = cursor.fetchone() or {}
+                    cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), (namespace, ticket_id))
+                    lifecycle_binding = cursor.fetchone() or {}
+                    ignored_reason = native_customer_lifecycle_blocker(lifecycle_binding, lifecycle_case)
                 if event.event_type == IntakeEventType.TICKET_UPDATED:
                     ignored_reason = "ticket_updated_no_turn"
                 elif event.event_type == IntakeEventType.COMMENT_CREATED and not comment_advances_case(event):
@@ -3820,7 +3940,7 @@ class PostgresAutomationEcsStore:
                 execution_row = cursor.fetchone()
                 cursor.execute(
                     sql.SQL(
-                        "SELECT case_revision FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
+                        "SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE"
                     ).format(self._table("automation_cases")),
                     (namespace, ticket_id),
                 )
@@ -3892,14 +4012,20 @@ class PostgresAutomationEcsStore:
                     binding = cursor.fetchone()
                     if binding is None:
                         raise RuntimeError("hermes case binding insert returned no row")
+                cursor.execute(
+                    sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s AND turn_kind='normal' AND direction IN ('automation','investigation','human') AND direction_reason IS NOT NULL ORDER BY created_at LIMIT 1").format(self._table("automation_hermes_agent_turns")),
+                    (namespace, ticket_id),
+                )
+                first_route = cursor.fetchone()
+                inherited = initial_investigation_route(binding, case_row or {}, [dict(first_route)] if first_route else []) if comment_advances_case(event) else None
                 turn_id = _new_id("turn")
                 request_id = _new_id("hmreq")
                 cursor.execute(
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,request_id,prompt_release_id,status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'normal',%s,%s,'pending')
+                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -3911,6 +4037,10 @@ class PostgresAutomationEcsStore:
                         event.event_type.value,
                         int(binding["conversation_version"]),
                         current_revision,
+                        "investigation_feedback" if inherited else "normal",
+                        "work" if inherited else None,
+                        "investigation" if inherited else None,
+                        inherited["direction_reason"] if inherited else None,
                         request_id,
                         str(prompt_release_id or "") or None,
                     ),
@@ -3943,11 +4073,13 @@ class PostgresAutomationEcsStore:
                     job.execution_id,
                     "route.classify",
                     job.attempt,
-                    StepStatus.SUCCEEDED,
+                    StepStatus.SKIPPED if inherited else StepStatus.SUCCEEDED,
                     worker_identity=job.claimed_by,
                     output=handoff_route,
                 )
                 self._insert_timeline(cursor, job.execution_id, "route.hermes_handoff", handoff_route)
+                if inherited:
+                    self._insert_timeline(cursor, job.execution_id, "agent_turn.route_inherited", {"turn_id": turn_id, "source_turn_id": inherited["turn_id"], "direction": "investigation", "route_phase": "skipped", "event_id": event.event_id})
                 agent_job_id = _new_id("job")
                 agent_payload = AgentTurnJobPayload(
                     execution_id=job.execution_id,
@@ -4134,6 +4266,13 @@ class PostgresAutomationEcsStore:
         normalized_reason = str(reason or "").strip() or f"turn_direction:{direction}"
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise HermesTurnStateError(turn_id, "turn not found")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                cursor.execute(sql.SQL("SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                cursor.execute(sql.SQL("SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
                 turn = self._lock_turn(cursor, turn_id)
                 if str(turn["status"]) not in {"pending", "running", "cancel_requested"}:
                     raise HermesTurnStateError(turn_id, "turn is not active")
@@ -4144,9 +4283,13 @@ class PostgresAutomationEcsStore:
                     (direction, route, normalized_reason, turn_id),
                 )
                 row = cursor.fetchone()
-                binding_update = self.record_hermes_case_direction(
-                    turn_id, direction=direction, reason=normalized_reason
+                cursor.execute(
+                    sql.SQL("UPDATE {} SET direction=%s,direction_reason=%s,updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s RETURNING *").format(self._table("automation_hermes_case_bindings")),
+                    (direction, normalized_reason, turn["namespace"], turn["zendesk_ticket_id"]),
                 )
+                binding_update = cursor.fetchone()
+                if binding_update is None:
+                    raise HermesTurnStateError(turn_id, "case binding disappeared")
                 self._insert_timeline(
                     cursor,
                     str(turn["execution_id"]),
@@ -4163,6 +4306,10 @@ class PostgresAutomationEcsStore:
                 turn = self._lock_turn(cursor, turn_id)
                 if str(turn["status"]) not in {"pending", "running", "cancel_requested"}:
                     raise HermesTurnStateError(turn_id, "turn is not active")
+                work_result = copy.deepcopy(work_result)
+                for field in ("reviewer_feedback", "engineer_authority"):
+                    if field in (turn.get("work_result") or {}):
+                        work_result[field] = copy.deepcopy(turn["work_result"][field])
                 cursor.execute(
                     sql.SQL(
                         "UPDATE {} SET work_result=%s,updated_at=NOW() WHERE turn_id=%s RETURNING *"
@@ -4213,6 +4360,9 @@ class PostgresAutomationEcsStore:
         at the work phase so reviewer changes flow straight into a new draft.
         """
         namespace = self.settings.job_namespace
+        source_event_id = str(base_event.get("source_event_id") or "").strip()
+        authority = base_event.get("engineer_authority")
+        authority = dict(authority) if isinstance(authority, dict) else None
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 cursor.execute(
@@ -4233,6 +4383,19 @@ class PostgresAutomationEcsStore:
                 binding = cursor.fetchone()
                 if binding is None:
                     raise HermesTurnStateError("", "case binding not found")
+                inbound_event_id = f"feedback:slack:{namespace}:{zendesk_ticket_id}:{source_event_id}" if source_event_id else None
+                if inbound_event_id:
+                    cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s AND event_id=%s").format(self._table("automation_hermes_agent_turns")), (namespace, zendesk_ticket_id, inbound_event_id))
+                    prior = cursor.fetchone()
+                    if prior:
+                        if (prior.get("work_result") or {}).get("reviewer_feedback") != feedback:
+                            raise HermesTurnStateError(prior["turn_id"], "Slack event identity conflict")
+                        prior_authority = (prior.get("work_result") or {}).get("engineer_authority") or {}
+                        if {k: v for k, v in prior_authority.items() if k != "case_revision"} != (authority or {}):
+                            raise HermesTurnStateError(prior["turn_id"], "Slack authority identity conflict")
+                        return {"turn_id": prior["turn_id"], "idempotent_replay": True}
+                if authority is not None:
+                    authority["case_revision"] = int(case_row["case_revision"])
                 cursor.execute(
                     sql.SQL(
                         "SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
@@ -4267,7 +4430,7 @@ class PostgresAutomationEcsStore:
                         execution_id,
                         namespace,
                         zendesk_ticket_id,
-                        f"feedback:{turn_id}",
+                        (inbound_event_id or f"feedback:{turn_id}"),
                         ExecutionStatus.PROCESSING_PENDING.value,
                         "agent_turn.queued",
                         Jsonb({"feedback": feedback[:4000]}),
@@ -4288,13 +4451,13 @@ class PostgresAutomationEcsStore:
                         namespace,
                         zendesk_ticket_id,
                         execution_id,
-                        f"feedback:{turn_id}",
+                        (inbound_event_id or f"feedback:{turn_id}"),
                         int(binding["conversation_version"]),
                         revision,
                         inherited_reason,
                         request_id,
                         str(prompt_release_id or "") or None,
-                        Jsonb({"reviewer_feedback": feedback[:4000]}),
+                        Jsonb({"reviewer_feedback": feedback[:4000], **({"engineer_authority": authority} if authority else {})}),
                     ),
                 )
                 agent_job_id = _new_id("job")
@@ -4315,7 +4478,7 @@ class PostgresAutomationEcsStore:
                                 "turn_id": turn_id,
                                 "conversation_key": str(binding["logical_conversation_key"]),
                                 "event": _synthetic_turn_event_payload(
-                                    event_id=f"feedback:{turn_id}",
+                                    event_id=(inbound_event_id or f"feedback:{turn_id}"),
                                     event_type="investigation_feedback",
                                     ticket_row=dict(case_row["ticket"] or {}),
                                     occurred_at=_iso(),
@@ -4779,23 +4942,46 @@ class PostgresAutomationEcsStore:
                 )
                 return [dict(row) for row in cursor.fetchall()]
 
+    def get_initial_hermes_classification(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection, connection.cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s AND turn_kind='normal' AND event_type IN ('ticket.created','comment.created') AND direction IN ('automation','investigation','human') AND direction_reason IS NOT NULL AND direction_reason<>'' ORDER BY created_at,turn_id LIMIT 1").format(self._table("automation_hermes_agent_turns")), (self.settings.job_namespace, zendesk_ticket_id))
+            first = cursor.fetchone()
+            return dict(first) if first else None
+
     def start_hermes_agent_turn(self, turn_id: str, *, run_id: str) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise HermesTurnStateError(turn_id, "turn not found")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                case = cursor.fetchone() or {}
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
+                binding = cursor.fetchone() or {}
+                turn = self._lock_turn(cursor, turn_id)
+                if turn["status"] != "pending":
+                    raise HermesTurnStateError(turn_id, "turn is not pending")
+                if turn.get("event_type") == "comment.created":
+                    reason = native_customer_lifecycle_blocker(binding, case)
+                    if reason:
+                        cursor.execute(sql.SQL("UPDATE {} SET status='superseded',cancel_reason=%s,cancelled_at=NOW(),updated_at=NOW() WHERE turn_id=%s RETURNING *").format(self._table("automation_hermes_agent_turns")), (reason, turn_id))
+                        superseded = dict(cursor.fetchone())
+                        self._insert_timeline(cursor, turn["execution_id"], "agent_turn.superseded", {"turn_id": turn_id, "reason": reason})
+                        return superseded
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s AND turn_kind='normal' AND direction IN ('automation','investigation','human') AND direction_reason IS NOT NULL ORDER BY created_at LIMIT 1").format(self._table("automation_hermes_agent_turns")), args)
+                first = cursor.fetchone()
+                inherited = initial_investigation_route(binding, case, [dict(first)] if first else [])
+                if turn.get("turn_kind") == "normal" and turn.get("event_type") == "comment.created" and inherited:
+                    cursor.execute(sql.SQL("UPDATE {} SET turn_kind='investigation_feedback',phase='work',direction='investigation',route=NULL,direction_reason=%s,input_version=%s WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (inherited["direction_reason"], int(binding["conversation_version"]), turn_id))
+                    self._insert_timeline(cursor, turn["execution_id"], "agent_turn.route_inherited", {"turn_id": turn_id, "source_turn_id": inherited["turn_id"], "direction": "investigation", "route_phase": "skipped", "event_id": turn["event_id"]})
                 try:
                     with connection.transaction():
-                        cursor.execute(
-                            sql.SQL(
-                                "UPDATE {} SET status='running',run_id=%s,updated_at=NOW() "
-                                "WHERE turn_id=%s AND status='pending' RETURNING *"
-                            ).format(self._table("automation_hermes_agent_turns")),
-                            (run_id, turn_id),
-                        )
+                        cursor.execute(sql.SQL("UPDATE {} SET status='running',run_id=%s,updated_at=NOW() WHERE turn_id=%s AND status='pending' RETURNING *").format(self._table("automation_hermes_agent_turns")), (run_id, turn_id))
                         row = cursor.fetchone()
                 except psycopg.errors.UniqueViolation:
                     raise HermesTurnConflictError(turn_id) from None
-                if row is None:
-                    raise HermesTurnStateError(turn_id, "turn is not pending")
                 return dict(row)
 
     def get_hermes_turn_fence_blocker(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
@@ -4846,6 +5032,32 @@ class PostgresAutomationEcsStore:
                 )
                 return dict(row)
 
+    def complete_hermes_case_solved_turn(self, turn_id: str, *, ticket_status: str, source_updated_at: str, result: dict[str, Any]) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise HermesTurnStateError(turn_id, "turn not found")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                case = cursor.fetchone() or {}
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
+                binding = cursor.fetchone() or {}
+                turn = self._lock_turn(cursor, turn_id)
+                if turn["status"] != "running" or case.get("case_revision") != turn.get("case_revision"):
+                    raise HermesTurnStateError(turn_id, "solve turn lost active revision fence")
+                mirror = {**case, **merge_mirror_state(case, {**case.get("ticket", {}), "status": ticket_status, "updated_at": source_updated_at}, occurred_at=source_updated_at)}
+                cursor.execute(sql.SQL("UPDATE {} SET ticket=%s,ticket_updated_at=%s,last_nonclosed_at=%s,updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s").format(self._table("automation_cases")), (Jsonb(mirror["ticket"]), mirror.get("ticket_updated_at"), mirror.get("last_nonclosed_at"), *args))
+                terminal = {"engine": "hermes", "turn_id": turn_id, "status": "case_solved", "close_result": result}
+                cursor.execute(sql.SQL("UPDATE {} SET status='completed',result=%s,updated_at=NOW() WHERE turn_id=%s RETURNING *").format(self._table("automation_hermes_agent_turns")), (Jsonb(terminal), turn_id))
+                completed = dict(cursor.fetchone())
+                cursor.execute(sql.SQL("UPDATE {} SET status='terminal',conversation_version=GREATEST(conversation_version,%s),updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s").format(self._table("automation_hermes_case_bindings")), (int(turn["input_version"]) + 1, *args))
+                cursor.execute(sql.SQL("UPDATE {} SET status='superseded',cancel_reason='terminal_ticket',cancelled_at=NOW(),updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s AND status='pending'").format(self._table("automation_hermes_agent_turns")), args)
+                cursor.execute(sql.SQL("UPDATE {} SET status='stale',updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s AND status IN ('draft','awaiting_approval','approved','preparing','queued')").format(self._table("automation_hermes_case_drafts")), args)
+                self._insert_timeline(cursor, turn["execution_id"], "agent_turn.case_solved", {"turn_id": turn_id, "ticket_status": ticket_status, "source_updated_at": source_updated_at})
+                return completed
+
     def fail_hermes_agent_turn(
         self,
         turn_id: str,
@@ -4890,6 +5102,13 @@ class PostgresAutomationEcsStore:
             raise ValueError("invalid hermes case direction")
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                identity = cursor.fetchone()
+                if identity is None:
+                    raise HermesTurnStateError(turn_id, "turn not found")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                cursor.execute(sql.SQL("SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                cursor.execute(sql.SQL("SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
                 turn = self._lock_turn(cursor, turn_id)
                 cursor.execute(
                     sql.SQL(

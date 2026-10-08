@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-10-08T12:43:33.419Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "03B6AvcrOgRkWlUc",
@@ -394,11 +394,11 @@
     "redactedValues": [
       {
         "nodeName": "get_case_info",
-        "path": "nodes.get_case_info.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.7.parameters.headerParameters.parameters.1.value",
         "field": "authorization",
         "reason": "secret_named_field"
       }
     ],
-    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+    "credentials": "Credential references retained; rebind redacted literals before restore."
   }
 }

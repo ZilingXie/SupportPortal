@@ -379,6 +379,14 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     blocks = _action_blocks(event)
     if blocks is not None:
         payload["blocks"] = blocks
+    if event_type == "native_customer_comment":
+        # Customer text cannot create mentions, links or Slack action buttons.
+        sections = [message_text]
+        for text in event.get("plain_text_sections") or []:
+            sections.extend(str(text)[offset:offset + 3000] for offset in range(0, len(str(text)), 3000))
+        if len(sections) > 50:
+            raise EngineerSlackDeliveryError("native_customer_comment_too_large")
+        payload["blocks"] = [{"type": "section", "text": {"type": "plain_text", "text": text}} for text in sections]
     return payload
 
 

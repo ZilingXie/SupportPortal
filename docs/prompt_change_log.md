@@ -5069,3 +5069,12 @@ For each new entry, record:
 - `fraud_account` + `registered_fraud_account` → automation/fraud_account
 - `account_suspension` + `account_billing_request`（错误原因码）→ 非 automation（fail-closed）
 - `account_suspension` + additional_intents（混合诉求）→ 非 automation（fail-closed）
+
+
+## 2026-10-08 — p2-190 Investigation continuation and engineer close contract
+
+- First valid native Investigation classification is inherited for customer continuation: work-only in the original session/thread; full current customer comment is an untrusted quote. Routine policy escalation returns continue_investigation; actual terminal technical failure still uses the existing handoff chain.
+- Authenticated current engineer `close the case` grants server-owned turn/revision authority for support_close_case. The work run reads support-close-case via skill_view; only solved status is updated, with readback/idempotency and no customer reply. Quotes, customer/history, ad-hoc and stale turns do not grant authority.
+- Native ticket status changes use the existing atomic status+notification ledger; ambiguous Slack submissions are retained for message-identity readback. Handoff mail shows independently recorded actions without assuming success.
+- No route Prompt catalog or Automation routing change. Runtime Hermes overlay retains the live :44 route plugin schema; source-only canonical close registration is tested separately.
+- Local evidence and PP release boundaries: [p2-190 current record](plans/investigation-route-status-fix.md). Production and real ticket 13923 replay remain outside this task.

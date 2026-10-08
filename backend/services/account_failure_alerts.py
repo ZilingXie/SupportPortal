@@ -67,6 +67,7 @@ def build_account_failure_alert(
     run_id: str | None = None,
     failed_phase: str | None = None,
     failure_reason: str | None = None,
+    handoff: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     subject = f"[SupportPortal][Account failure] {_safe_detail(stage, limit=120)}"
     lines = [
@@ -91,6 +92,8 @@ def build_account_failure_alert(
         f"Failure reason: {_safe_detail(failure_reason, limit=200) or '<unknown>'}",
         f"Detail: {_safe_detail(detail) or '<none>'}",
     ]
+    if handoff is not None:
+        lines.extend(_handoff_lines(handoff))
     if isinstance(summary, dict):
         lines.extend([
             "Rerun summary:",
@@ -138,6 +141,17 @@ def _alert_delivery_outcome(exc: BaseException) -> str:
     return "outcome_unknown"
 
 
+def _handoff_lines(handoff: Any) -> list[str]:
+    evidence = handoff if isinstance(handoff, dict) else {}
+    return [
+        f"Internal note: {_safe_detail(evidence.get('internal_note_status')) or 'unconfirmed'}",
+        f"Queue return: {_safe_detail(evidence.get('route_back_status')) or 'unconfirmed'}",
+        f"Ownership release: {_safe_detail(evidence.get('ownership_release_status')) or 'unconfirmed'}",
+        f"Pending reply cancellation: {_safe_detail(evidence.get('reply_cancellation_status')) or 'unconfirmed'}",
+        f"Cancelled reply jobs: {evidence.get('cancelled_reply_jobs') if isinstance(evidence.get('cancelled_reply_jobs'), int) else 'unconfirmed'}",
+    ]
+
+
 def _build_human_takeover_alert(
     *,
     incident_id: str,
@@ -146,19 +160,26 @@ def _build_human_takeover_alert(
     ticket_id: str | None = None,
     account_case_id: str | None = None,
     detail: Any = "",
+    handoff: dict[str, Any] | None = None,
+    environment: str | None = None,
+    turn_id: str | None = None,
+    job_id: str | None = None,
+    attempts: int | None = None,
 ) -> tuple[str, str]:
     subject = f"[SupportPortal][Human takeover] {_safe_detail(stage, limit=120)}"
     lines = [
-        "A SupportPortal case was routed to the human team and is waiting for pickup.",
-        "This is a policy handoff, not a system failure.",
+        "A policy decision requested human takeover. Verify the recorded actions before pickup.",
         f"Incident: {_safe_detail(incident_id, limit=120)}",
         f"Stage: {_safe_detail(stage, limit=120)}",
         f"Reason: {_safe_code(code)}",
         f"Ticket: {_safe_detail(ticket_id, limit=120) or '<unknown>'}",
         f"Account Case: {_safe_detail(account_case_id, limit=120) or '<unknown>'}",
         f"Detail: {_safe_detail(detail) or '<none>'}",
-        "The internal note, queue return, and ownership release already ran;",
-        "pending automated replies were cancelled.",
+        f"Environment: {_safe_detail(environment, limit=80) or '<unknown>'}",
+        f"Turn: {_safe_identifier(turn_id) or '<unknown>'}",
+        f"Job: {_safe_identifier(job_id) or '<unknown>'}",
+        f"Attempts: {attempts if isinstance(attempts, int) else '<unknown>'}",
+        *_handoff_lines(handoff),
         "Action: continue the case in Zendesk. Restore automation only through the",
         "explicit human entry if that is intended.",
     ]
@@ -278,6 +299,11 @@ def notify_account_human_takeover(
     account_case_id: str | None = None,
     detail: Any = "",
     now: str,
+    handoff: dict[str, Any] | None = None,
+    environment: str | None = None,
+    turn_id: str | None = None,
+    job_id: str | None = None,
+    attempts: int | None = None,
 ) -> dict[str, Any]:
     """Send one redacted human-takeover notice per incident (policy routing).
 
@@ -292,6 +318,7 @@ def notify_account_human_takeover(
         ticket_id=ticket_id,
         account_case_id=account_case_id,
         detail=detail,
+        handoff=handoff, environment=environment, turn_id=turn_id, job_id=job_id, attempts=attempts,
     )
     return _send_incident_mail(
         repository=repository,
@@ -322,6 +349,7 @@ def notify_account_failure(
     failure_reason: str | None = None,
     mail_sender: Callable[..., None] | None = None,
     now: str,
+    handoff: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Send one redacted alert per incident and preserve delivery evidence."""
     # Resolved at call time so tests can patch the module-level transport.
@@ -361,6 +389,7 @@ def notify_account_failure(
         job_id=job_id,
         attempts=attempts,
         detail=detail,
+        handoff=handoff,
         summary=summary,
         environment=environment,
         turn_id=turn_id,
