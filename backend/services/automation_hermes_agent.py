@@ -337,7 +337,16 @@ class HermesAgentTurnProcessor:
     # ------------------------------------------------------------------ entry
 
     def process(self, job: Any, *, before_external: Any = None) -> dict[str, Any]:
-        job_row = job if isinstance(job, dict) else {}
+        # The worker hands a ClaimedJob dataclass (attribute access); tests
+        # and replay paths may pass the raw job row dict. Read both shapes
+        # so the alert context reflects the job that actually ran.
+        if isinstance(job, dict):
+            job_row: dict[str, Any] = job
+        else:
+            job_row = {
+                "job_id": getattr(job, "job_id", None),
+                "attempt": getattr(job, "attempt", None),
+            }
         self._active_job_info = {
             "job_id": str(job_row.get("job_id") or "").strip() or None,
             "attempt": job_row.get("attempt"),
@@ -1169,6 +1178,13 @@ class HermesAgentTurnProcessor:
         )
         if gateway_detail:
             detail = f"{detail} Gateway error: {gateway_detail}"
+        # Structured cause travels as its own alert field (never dependent
+        # on the truncatable prose tail): it rides on the persisted error
+        # message as "[failure_reason=...]" (see _fail_turn_from_phase).
+        failure_reason = None
+        if "[failure_reason=" in gateway_detail:
+            tail = gateway_detail.rsplit("[failure_reason=", 1)[-1]
+            failure_reason = tail.split("]", 1)[0].strip() or None
         run_id = str(turn.get("run_id") or "").strip() or None
         self._escalate_automation_failure(
             payload,
@@ -1178,6 +1194,7 @@ class HermesAgentTurnProcessor:
             notification="failure",
             run_id=run_id,
             failed_phase=str(turn.get("phase") or "").strip() or None,
+            failure_reason=failure_reason,
         )
 
     # ------------------------------------------------------- automation claim
@@ -1355,6 +1372,7 @@ class HermesAgentTurnProcessor:
         notification: str = "failure",
         run_id: str | None = None,
         failed_phase: str | None = None,
+        failure_reason: str | None = None,
     ) -> dict[str, Any] | None:
         from backend.services.automation_hermes_tools import (
             _escalate_uncompleted_automation,
@@ -1384,6 +1402,7 @@ class HermesAgentTurnProcessor:
             environment=self.environment,
             run_id=run_id,
             failed_phase=failed_phase,
+            failure_reason=failure_reason,
             job_id=active_job.get("job_id"),
             job_attempt=active_job.get("attempt"),
         )

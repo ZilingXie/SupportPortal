@@ -352,3 +352,46 @@ def test_postgres_turn_run_creation_is_concurrently_single_row(
             )
         ).fetchone()[0]
     assert count == 1
+
+
+def test_fail_hermes_agent_turn_event_extra_lands_in_timeline(store):
+    """PG parity for the additive event_extra fields (p2-188): the gateway's
+    structured failure_reason and the failing phase must land on the
+    existing agent_turn.<status> event row, and the persisted error message
+    carries the same suffix."""
+    from backend.services.automation_ecs_contracts import JobKind
+    from backend.tests.test_automation_ecs_store import _event as _pg_event
+
+    event = _pg_event()
+    store.accept_intake(event, store.settings.provenance())
+    job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+    handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+    turn_id = handoff["turn_id"]
+
+    store.fail_hermes_agent_turn(
+        turn_id,
+        status="failed",
+        error_code="hermes_run_failed",
+        error_message="Session DB write failed (disk I/O error) "
+        "[failure_reason=session_persistence_failed:io]",
+        event_extra={
+            "failure_reason": "session_persistence_failed:io",
+            "phase": "work",
+        },
+    )
+    query = sql.SQL(
+        "SELECT event_type, payload FROM {} "
+        "WHERE event_type = %s ORDER BY created_at DESC LIMIT 1"
+    ).format(store._table("automation_execution_events"))
+    with store._connect() as connection:
+        rows = connection.execute(query, ("agent_turn.failed",)).fetchall()
+    assert rows, "agent_turn.failed event missing"
+    row = rows[0]
+    payload = row["payload"]
+    assert row["event_type"] == "agent_turn.failed"
+    assert payload["turn_id"] == turn_id
+    assert payload["error_code"] == "hermes_run_failed"
+    assert payload["failure_reason"] == "session_persistence_failed:io"
+    assert payload["phase"] == "work"
+    turn = store.get_hermes_turn(turn_id)
+    assert turn["error_message"].endswith("[failure_reason=session_persistence_failed:io]")

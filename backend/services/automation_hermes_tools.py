@@ -872,6 +872,7 @@ def _escalate_uncompleted_automation(
     environment: str | None = None,
     run_id: str | None = None,
     failed_phase: str | None = None,
+    failure_reason: str | None = None,
     job_id: str | None = None,
     job_attempt: int | None = None,
 ) -> dict[str, Any]:
@@ -988,32 +989,50 @@ def _escalate_uncompleted_automation(
     # Append the REAL handoff outcome to the notified detail: the escalation
     # above has already run, so claim-vs-skip is a fact, not a promise. A
     # "transferred to the human team" narrative without this evidence was
-    # the AC-13898 alert inaccuracy (the rag route skips Zendesk
-    # reassignment by design — skipped_inactive_handler). When the
-    # escalation itself raised, the outcome is honestly unknown.
+    # the AC-13898 alert inaccuracy. Each external step is described from
+    # its own status — an overall "completed" escalation may still contain
+    # skipped steps (skipped_not_production / skipped_missing_zendesk_ticket
+    # / already_human_owned), and those must read as not executed, not as
+    # sent-and-routed. When the escalation itself raised, the outcome is
+    # honestly unknown.
+
+    def _note_step(status: str, comment_id: str) -> str:
+        if status == "sent":
+            return f"internal note sent (comment {comment_id})" if comment_id else "internal note sent"
+        if status == "idempotent_replay":
+            return "internal note already present (deduplicated)"
+        if status.startswith("skipped_"):
+            return f"internal note not sent ({status[len('skipped_'):]})"
+        return f"internal note {status or 'unknown'}"
+
+    def _queue_step(status: str) -> str:
+        if status == "queued":
+            return "ticket returned to the human queue"
+        if status == "already_human_owned":
+            return "ticket already owned by a human"
+        if status.startswith("skipped_"):
+            return f"queue return not executed ({status[len('skipped_'):]})"
+        return f"queue return {status or 'unknown'}"
+
     handoff_status = str(getattr(escalation, "status", "") or "").strip()
     note_comment_id = str(getattr(escalation, "note_comment_id", "") or "").strip()
-    if handoff_status == "skipped_inactive_handler":
-        handoff_note = (
-            "Handoff result: automated investigation paused, manual "
-            "continuation required; Zendesk reassignment was not executed "
-            f"(handler '{automation_handler or 'unknown'}' is not an "
-            "automated handler)."
-        )
-    elif handoff_status == "completed":
-        handoff_note = (
-            "Handoff result: internal note "
-            + (f"(comment {note_comment_id}) " if note_comment_id else "")
-            + "sent and the ticket was returned to the human queue."
-        )
-    elif handoff_status:
-        handoff_note = (
-            f"Handoff result: {handoff_status} "
-            f"(note={getattr(escalation, 'internal_note_status', 'unknown')}, "
-            f"queue={getattr(escalation, 'route_back_status', 'unknown')})."
+    note_status = str(getattr(escalation, "internal_note_status", "") or "").strip()
+    queue_status = str(getattr(escalation, "route_back_status", "") or "").strip()
+    if handoff_status:
+        handoff_note = "Handoff result: {} (overall: {}).".format(
+            "; ".join(
+                part
+                for part in (
+                    _note_step(note_status, note_comment_id),
+                    _queue_step(queue_status),
+                )
+                if part
+            )
+            or "no step status recorded",
+            handoff_status,
         )
     else:
-        handoff_note = "Handoff result: unknown."
+        handoff_note = "Handoff result: unknown (escalation raised before returning)."
     # The handoff outcome leads the notified detail: the 500-char alert
     # budget must cut into the (long, user-worded) gateway error text
     # before it ever cuts the actual takeover result.
@@ -1034,7 +1053,8 @@ def _escalate_uncompleted_automation(
             )
         else:
             # The failure alert additionally reports the real job/turn/run/
-            # phase context; absent values surface as <unknown>, never 0.
+            # phase context and the structured cause as its own field;
+            # absent values surface as <unknown>, never 0.
             notify_result = notify_account_failure(
                 **notify_kwargs,
                 detail=notified_detail[:500],
@@ -1042,6 +1062,7 @@ def _escalate_uncompleted_automation(
                 turn_id=turn_id,
                 run_id=run_id,
                 failed_phase=failed_phase,
+                failure_reason=failure_reason,
                 job_id=job_id,
                 attempts=job_attempt,
             )

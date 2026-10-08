@@ -1128,12 +1128,237 @@ class TerminalFailureAlertContextTests(unittest.TestCase):
         assert kwargs["failed_phase"] == "work"
         assert kwargs["job_id"] == processor._active_job_info["job_id"]
         assert kwargs["attempts"] == processor._active_job_info["attempt"]
-        # Honest handoff narrative for the non-automated route.
-        assert "Zendesk reassignment was not executed" in kwargs["detail"]
+        # Honest per-step handoff narrative for the non-automated route.
+        assert "internal note not sent (inactive_handler)" in kwargs["detail"]
+        assert "queue return not executed (inactive_handler)" in kwargs["detail"]
         assert "transferred to the human team" not in kwargs["detail"]
         assert "requires manual continuation" in kwargs["detail"]
         assert "session_persistence_failed:io" in kwargs["detail"]
+        # Round 2: the structured cause also travels as its own field.
+        assert kwargs["failure_reason"] == "session_persistence_failed:io"
         # Incident idempotency key unchanged — no double-alert risk.
         assert kwargs["incident_id"].endswith(
             "turn_terminal_failure:hermes_run_failed"
         )
+
+
+class FullChainAlertContextTests(unittest.TestCase):
+    """Round-2 review fixes: the REAL worker entry (claim_job -> process with
+    a ClaimedJob) must populate the alert context; the handoff wording must
+    describe each external step from its own status; the structured
+    failure_reason must survive as its own field even when the gateway error
+    text is long enough to be truncated out of the prose detail."""
+
+    def _seed_case(self):
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Investigate video issue",
+                "status": "open",
+                "created_at": "2026-10-07T11:19:00Z",
+                "updated_at": "2026-10-07T11:19:00Z",
+                "messages": [
+                    {
+                        "role": "customer",
+                        "content": "audience cannot see video",
+                        "created_at": "2026-10-07T11:19:00Z",
+                    }
+                ],
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-123",
+                "billing_ticket_id": "AC-123",
+                "client_ticket_id": "123",
+                "zendesk_ticket_id": "123",
+                "processing_profile": "preproduction",
+                "automation_status": "automation",
+                "route": "rag",
+                "collected_fields": {},
+                "internal_email_payload": None,
+                "internal_email_send_status": "not_applicable",
+            }
+        )
+        event = harness._event()
+        store.accept_intake(event, _settings().provenance())
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        handoff = store.hand_off_to_hermes_agent(job, prompt_release_id="prompt-1")
+        agent_job = store.claim_job(
+            JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300
+        )
+        return store, repository, handoff, agent_job
+
+    def test_process_with_claimed_job_feeds_alert_context(self) -> None:
+        from backend.services.automation_hermes_agent import (
+            HermesAgentTurnProcessor,
+        )
+
+        store, repository, handoff, agent_job = self._seed_case()
+        turn_id = handoff["turn_id"]
+
+        # Build the client inline: route completes (direction recorded in the
+        # completion callback), the work run fails terminally with a LONG
+        # gateway error plus the structured failure_reason.
+        from backend.tests.test_hermes_zendesk_agent import FakeHermesClient
+
+        work_run_ids: set = set()
+
+        class WorkFailsClient(FakeHermesClient):
+            def start_run(self, **kwargs):
+                result = super().start_run(**kwargs)
+                if str(kwargs.get("idempotency_key", "")).endswith(":work"):
+                    work_run_ids.add(result["run_id"])
+                return result
+
+            def get_run(self, run_id):
+                if run_id in work_run_ids:
+                    return {
+                        "run_id": run_id,
+                        "status": "failed",
+                        "error": "Session DB write failed (disk I/O error) "
+                        + "pad " * 130,
+                        "failure_reason": "session_persistence_failed:io",
+                    }
+                return super().get_run(run_id)
+
+        def on_run_completed(run_id, idempotency_key):
+            store.record_hermes_turn_direction(
+                turn_id, direction="investigation", route="rag"
+            )
+
+        client = WorkFailsClient(on_run_completed=on_run_completed)
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=repository,
+            poll_interval_seconds=0.01,
+        )
+
+        notified: list[dict] = []
+        with patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ):
+            outcome = processor.process(agent_job)
+
+        assert outcome["status"] == "failed"
+        assert outcome["error_code"] == "hermes_run_failed"
+        assert notified, "failure alert not sent"
+        kwargs = notified[0]
+        # Real job context from the ClaimedJob the worker actually claimed.
+        assert kwargs["job_id"] == agent_job.job_id
+        assert kwargs["attempts"] == agent_job.attempt
+        assert kwargs["environment"] == "preproduction"
+        assert kwargs["turn_id"] == turn_id
+        assert kwargs["failed_phase"] == "work"
+        # Structured cause as its own field — independent of the truncated
+        # prose (the gateway error text is >500 chars).
+        assert kwargs["failure_reason"] == "session_persistence_failed:io"
+        # Per-step handoff wording: rag is not an automated handler, so both
+        # external steps read as not executed.
+        assert "internal note not sent (inactive_handler)" in kwargs["detail"]
+        assert "queue return not executed (inactive_handler)" in kwargs["detail"]
+        assert "transferred to the human team" not in kwargs["detail"]
+
+    def test_completed_with_skipped_steps_reads_not_executed(self) -> None:
+        """An overall 'completed' escalation whose steps were skipped
+        (skipped_not_production / missing ticket) must not claim the note
+        was sent or the ticket routed."""
+        from backend.services.account_failure_alerts import (
+            build_account_failure_alert,
+        )
+        from backend.services.automation_hermes_tools import (
+            _escalate_uncompleted_automation,
+        )
+
+        store = _store()
+        repository = harness._repository() if hasattr(harness, "_repository") else None
+        # Drive the wording through the real notify plumbing with a patched
+        # escalation result, using the shared builder assertions below.
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "123",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "s",
+                "status": "open",
+                "created_at": "2026-10-07T00:00:00Z",
+                "updated_at": "2026-10-07T00:00:00Z",
+                "messages": [],
+            },
+            new_messages=[],
+        )
+        account_case = {
+            "account_case_id": "AC-123",
+            "billing_ticket_id": "AC-123",
+            "client_ticket_id": "123",
+            "zendesk_ticket_id": "123",
+            "processing_profile": "preproduction",
+            "automation_status": "automation",
+            "route": "enablement",
+            "collected_fields": {},
+            "updated_at": "2026-10-07T12:00:00Z",
+        }
+        repository.save_account_case(account_case)
+
+        escalation = NS(
+            status="completed",
+            internal_note_status="skipped_not_production",
+            route_back_status="skipped_not_production",
+            handoff_status=None,
+            note_comment_id=None,
+        )
+        notified: list[dict] = []
+        with patch(
+            "backend.services.account_human_review_escalation."
+            "escalate_account_case_to_human_review",
+            return_value=escalation,
+        ), patch(
+            "backend.services.account_failure_alerts.notify_account_failure",
+            side_effect=lambda **kw: notified.append(kw) or {"status": "sent"},
+        ):
+            result = _escalate_uncompleted_automation(
+                store=store,
+                repository=repository,
+                account_case=dict(account_case),
+                ticket_id="123",
+                turn_id="turn-x",
+                automation_handler="enablement",
+                reason_code="turn_terminal_failure:hermes_run_failed",
+                detail="The Hermes turn failed terminally.",
+                notification="failure",
+                environment="preproduction",
+                failure_reason="session_persistence_failed:io",
+            )
+        kwargs = notified[0]
+        assert "internal note not sent (not_production)" in kwargs["detail"]
+        assert "queue return not executed (not_production)" in kwargs["detail"]
+        # Never claim a sent note or a routed ticket from an overall status.
+        assert "internal note sent" not in kwargs["detail"]
+        assert "returned to the human queue" not in kwargs["detail"]
+        assert result is not None
+
+        # The alert body renders the cause as its own protected line.
+        from backend.services.account_failure_alerts import build_account_failure_alert
+
+        _subject, body = build_account_failure_alert(
+            incident_id="i",
+            stage="hermes_tool",
+            code="c",
+            failure_reason="session_persistence_failed:io",
+            detail=kwargs["detail"],
+        )
+        assert "Failure reason: session_persistence_failed:io" in body
+        assert "Failure reason: <unknown>" not in body

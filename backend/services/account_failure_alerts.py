@@ -66,6 +66,7 @@ def build_account_failure_alert(
     turn_id: str | None = None,
     run_id: str | None = None,
     failed_phase: str | None = None,
+    failure_reason: str | None = None,
 ) -> tuple[str, str]:
     subject = f"[SupportPortal][Account failure] {_safe_detail(stage, limit=120)}"
     lines = [
@@ -84,6 +85,10 @@ def build_account_failure_alert(
         f"Turn: {_safe_identifier(turn_id) or '<unknown>'}",
         f"Run: {_safe_identifier(run_id) or '<unknown>'}",
         f"Failed phase: {_safe_detail(failed_phase, limit=80) or '<unknown>'}",
+        # The structured cause is a dedicated, length-protected line: the
+        # prose Detail below may truncate long gateway errors, and the cause
+        # must never ride on that tail (review P2).
+        f"Failure reason: {_safe_detail(failure_reason, limit=200) or '<unknown>'}",
         f"Detail: {_safe_detail(detail) or '<none>'}",
     ]
     if isinstance(summary, dict):
@@ -314,6 +319,7 @@ def notify_account_failure(
     turn_id: str | None = None,
     run_id: str | None = None,
     failed_phase: str | None = None,
+    failure_reason: str | None = None,
     mail_sender: Callable[..., None] | None = None,
     now: str,
 ) -> dict[str, Any]:
@@ -360,6 +366,7 @@ def notify_account_failure(
         turn_id=turn_id,
         run_id=run_id,
         failed_phase=failed_phase,
+        failure_reason=failure_reason,
     )
     try:
         sender(
