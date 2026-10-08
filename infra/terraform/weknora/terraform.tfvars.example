@@ -1,0 +1,17 @@
+# Copy to terraform.tfvars (gitignored) and adjust from live AWS readback.
+# Values below were verified on 2026-10-07; re-read before bootstrap.
+
+vpc_id                        = "vpc-0125f57b2ec2f0423"
+public_subnet_ids             = ["subnet-0d7cb079536f8c2da", "subnet-0c07dc4f65d7af52b"]
+db_subnet_id                  = "subnet-0d7cb079536f8c2da"
+shared_https_listener_arn     = "arn:aws:elasticloadbalancing:us-east-1:891612554546:listener/app/supportportal-production-alb/0787a4dd18635716/926cb6cec22a5cff"
+shared_alb_security_group_id  = "sg-0fba25adcbdf00ac9"
+listener_rule_priority        = 105
+db_instance_type              = "t3.xlarge"
+db_root_volume_gb             = 100
+log_retention_days            = 30
+create_services               = false
+
+# Stage two (after register_weknora_task_definitions.sh):
+# create_services             = true
+# task_definition_arns        = { paradedb = "...", redis = "...", docreader = "...", app = "...", frontend = "..." }

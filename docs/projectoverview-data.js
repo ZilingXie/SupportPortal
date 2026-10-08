@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T10:54:58Z",
-  "source_base_commit": "ab0d1a0e0130056ec845de3a60913162800f4ba8",
-  "registry_digest": "c572cd2b336f54b6ed809f1bf3d4666151758f18cc3e5aa8ab764df572c6a5cb",
+  "generated_at": "2026-10-08T04:40:55Z",
+  "source_base_commit": "d18d4fb7b0c33ba6499a6e6a9e96cdc025a2d101",
+  "registry_digest": "9221b77366a3dd36f0e1e8a770ccf5a9876e95346b1ec8cebf762bb3f9697f57",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5347,6 +5347,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/weknora_client.py",
         "backend/services/weknora_promotion_adapter.py",
         "backend/repositories/weknora_promotion_repository.py"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 1,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "weknora-standalone-deployment",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "WeKnora 独立部署（并行建设）",
+      "goal": "在不影响现有 SupportPortal/AgentMemory/Hermes 服务的前提下，以独立资源（专属 ECS 集群、ParadeDB、Redis、S3、ECR）部署 WeKnora fork（supportportal-write-contract），并通过 https://supportcenter.stellarix.space/dashboard/weknora/ 提供登录、知识库、文档处理与检索的 Web 能力。阶段一仅独立部署与 Web 验证；n8n 接入、治理链恢复、Hermes 切换与历史迁移属后续阶段。",
+      "acceptance_criteria": [
+        "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
+        "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
+        "Web 路由：登录、深层刷新、静态资源、API、预览和下载均走 /dashboard/weknora 专属路径",
+        "文档闭环：非业务样本上传→处理完成→检索命中→原文回读一致",
+        "异常表现：处理或模型调用失败时显示失败原因，不呈现为 ready",
+        "持久化：应用/数据任务重建后，测试对象和索引仍可使用",
+        "备份恢复：备份恢复到独立验证目标后，可以检索并读取同一测试对象",
+        "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R3 前端子路径回归（fork 714065ba）",
+          "command": "cd frontend && npx tsx --test src/utils/subpathPrefix.test.mjs && npm test",
+          "result": "subpathPrefix.test.mjs 7/7（子路径登录跳转含 R2 复现场景：/dashboard/weknora/knowledge-bases 深页 redirectToLogin → /dashboard/weknora/login；四种受保护文件 URL 带前缀；根部署回归保持根相对；检测正则仍匹配服务端根相对路径）；全套 397 tests 396 pass 1 skip 0 fail。npm test 仅发现 .test.mjs，新测试按此约定。"
+        },
+        {
+          "type": "test",
+          "label": "R3 部署脚本回归（stub 边界用例）",
+          "command": "deployment/weknora/tests/run_deploy_tests.sh",
+          "result": "15 项全过：正常 rollout 成功并触达公网检查；回滚（PRIMARY 回退旧 TD）非零失败且绝不触达公网检查并报 rolled back or superseded；rolloutState=FAILED 失败；每服务至少轮询两次才判稳；register 默认 REQUIRE_EXISTING_PGDATA=true 且注册默认关闭；--initial-bootstrap 显式 false；restore 失败运行不执行任何 podman rm；两轮容器名唯一。"
+        },
+        {
+          "type": "test",
+          "label": "R3 数据守卫运行时回归（真实 paradedb 镜像）",
+          "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh",
+          "result": "三场景全过：A 空卷+守卫=拒绝启动（含 refusal 消息）且零数据库写入；B 守卫关+空卷=初始化成功（database system is ready）+PG_VERSION 生成；C 守卫开+已初始化卷=正常启动（升级路径放行）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 部署与公网验收（2026-10-07 23:5x，部分结论被 R2 独立验收推翻，保留为过程记录）",
+          "command": "deploy_weknora_services.sh --task-definitions \u003carns3>；curl 矩阵；aws ecs describe-services",
+          "result": "五服务 :3 ACTIVE 1/1；公网入口 200；路由矩阵静态/深层/API 代理通过；管理员注册+提权+注册关闭+401 门禁；备份 292,884B 落桶+独立容器恢复 users=1；隔离=旧服务/规则对照零变化+terraform 零漂移。R2 独立验收核实其中构建链、401/403、隔离；推翻 Web 路由完整性（文件请求/重登录子路径缺口）与持久化/备份恢复的证据充分性。"
+        },
+        {
+          "type": "document",
+          "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+          "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+          "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
+        }
+      ],
+      "source_refs": [
+        "infra/terraform/weknora/",
+        "docs/deploy_weknora_standalone_ecs.md",
+        "deployment/weknora/"
       ],
       "legacy_ids": [],
       "status": "active",
@@ -16482,6 +16542,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "PP CLI 通道 preflight（R1，验收方确认通道事实沿用）",
           "command": "SUPPORTPORTAL_ENV_FILE=\u003croot .env> python3.12 -m scripts.testing.preproduction --check（union）",
           "result": "全绿：db ok、zendesk_api authenticated、smtp ok、intake configured、relay zac-agent token configured、pilot 存在、profile=supportportal_preproduction。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-188",
+      "title": "WeKnora 并行建设（阶段一：独立部署与 Web 可用）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-standalone-deployment",
+      "created_at": "2026-10-07",
+      "updated_at": "2026-10-08",
+      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
+      "next_action": "1) build4（714065ba）完成→注册 :4（守卫默认开）→修后 deploy 脚本部署→线上复验子路径修复（带前缀 files 端点 401、bundle 无裸 /login、/dashboard/weknora/login 200）；2) 备份+恢复重跑（带基线对比）；3) 用户答复模型凭据后：配模型→文档闭环→异常表现→知识持久化/恢复后检索回读（--expect-knowledge）→复验收口；4) finalize 待根区他人未提交编辑清空后重跑（分支 codex/weknora-parallel-phase1，含 R3 提交）。",
+      "acceptance_criteria": [
+        "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
+        "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
+        "Web 路由：登录、深层刷新、静态资源、API、预览和下载均走 /dashboard/weknora 专属路径（含受保护文件请求与 token 失效重登录，不以接管根路径绕过）",
+        "文档闭环：非业务样本上传→处理完成→检索命中→原文回读一致",
+        "异常表现：处理或模型调用失败时显示失败原因，不呈现为 ready",
+        "持久化：应用/数据任务重建后，测试对象和索引仍可使用（含知识对象，经应用入口检索验证）",
+        "备份恢复：备份恢复到独立验证目标后，可以检索并读取同一测试对象（基线计数对比+知识全文回读+应用层检索）",
+        "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
+        "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
+      ],
+      "blockers": [
+        "文档闭环/异常表现/知识持久化与恢复后检索回读需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 提供新 key vs 暂不配置），用户尚未答复"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R3 前端子路径回归（fork 714065ba）",
+          "command": "cd frontend && npx tsx --test src/utils/subpathPrefix.test.mjs && npm test",
+          "result": "subpathPrefix.test.mjs 7/7（子路径登录跳转含 R2 复现场景：/dashboard/weknora/knowledge-bases 深页 redirectToLogin → /dashboard/weknora/login；四种受保护文件 URL 带前缀；根部署回归保持根相对；检测正则仍匹配服务端根相对路径）；全套 397 tests 396 pass 1 skip 0 fail。npm test 仅发现 .test.mjs，新测试按此约定。"
+        },
+        {
+          "type": "test",
+          "label": "R3 部署脚本回归（stub 边界用例）",
+          "command": "deployment/weknora/tests/run_deploy_tests.sh",
+          "result": "15 项全过：正常 rollout 成功并触达公网检查；回滚（PRIMARY 回退旧 TD）非零失败且绝不触达公网检查并报 rolled back or superseded；rolloutState=FAILED 失败；每服务至少轮询两次才判稳；register 默认 REQUIRE_EXISTING_PGDATA=true 且注册默认关闭；--initial-bootstrap 显式 false；restore 失败运行不执行任何 podman rm；两轮容器名唯一。"
+        },
+        {
+          "type": "test",
+          "label": "R3 数据守卫运行时回归（真实 paradedb 镜像）",
+          "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh",
+          "result": "三场景全过：A 空卷+守卫=拒绝启动（含 refusal 消息）且零数据库写入；B 守卫关+空卷=初始化成功（database system is ready）+PG_VERSION 生成；C 守卫开+已初始化卷=正常启动（升级路径放行）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R2 部署与公网验收（2026-10-07 23:5x，部分结论被 R2 独立验收推翻，保留为过程记录）",
+          "command": "deploy_weknora_services.sh --task-definitions \u003carns3>；curl 矩阵；aws ecs describe-services",
+          "result": "五服务 :3 ACTIVE 1/1；公网入口 200；路由矩阵静态/深层/API 代理通过；管理员注册+提权+注册关闭+401 门禁；备份 292,884B 落桶+独立容器恢复 users=1；隔离=旧服务/规则对照零变化+terraform 零漂移。R2 独立验收核实其中构建链、401/403、隔离；推翻 Web 路由完整性（文件请求/重登录子路径缺口）与持久化/备份恢复的证据充分性。"
+        },
+        {
+          "type": "document",
+          "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+          "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+          "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
         }
       ]
     },

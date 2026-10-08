@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "function_id": "weknora-standalone-deployment",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "WeKnora 独立部署（并行建设）",
+  "goal": "在不影响现有 SupportPortal/AgentMemory/Hermes 服务的前提下，以独立资源（专属 ECS 集群、ParadeDB、Redis、S3、ECR）部署 WeKnora fork（supportportal-write-contract），并通过 https://supportcenter.stellarix.space/dashboard/weknora/ 提供登录、知识库、文档处理与检索的 Web 能力。阶段一仅独立部署与 Web 验证；n8n 接入、治理链恢复、Hermes 切换与历史迁移属后续阶段。",
+  "acceptance_criteria": [
+    "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
+    "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
+    "Web 路由：登录、深层刷新、静态资源、API、预览和下载均走 /dashboard/weknora 专属路径",
+    "文档闭环：非业务样本上传→处理完成→检索命中→原文回读一致",
+    "异常表现：处理或模型调用失败时显示失败原因，不呈现为 ready",
+    "持久化：应用/数据任务重建后，测试对象和索引仍可使用",
+    "备份恢复：备份恢复到独立验证目标后，可以检索并读取同一测试对象",
+    "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
+  ],
+  "evidence": [],
+  "source_refs": [
+    "infra/terraform/weknora/",
+    "docs/deploy_weknora_standalone_ecs.md",
+    "deployment/weknora/"
+  ],
+  "legacy_ids": []
+}
