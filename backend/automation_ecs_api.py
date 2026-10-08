@@ -1333,6 +1333,12 @@ def create_app(    *,
                 str(os.getenv("AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED") or "").strip() == "1"
             )
             try:
+                if tool_name == "close_case":
+                    from backend.services.automation_hermes_close import tool_close_case
+                    if set(body) != {"turn_id"}:
+                        raise HermesToolError("invalid_close_parameters", "close_case accepts only turn_id")
+                    return await asyncio.to_thread(tool_close_case, coordination_store, repository,
+                        turn_id=turn_id, environment=runtime.environment, zendesk_side_effects_enabled=side_effects)
                 if tool_name == "get_case_context":
                     return await asyncio.to_thread(
                         tool_get_case_context,

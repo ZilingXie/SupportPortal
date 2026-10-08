@@ -347,4 +347,16 @@ AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O err
 
 **发布收尾对账（F-D1，2026-10-08）**：r20261008-afa0130 的正式部署 evidence 保留为 `rollback_incomplete`（未改写）。失败阶段核对：route_worker_rollout/heartbeat 均 passed，失败阶段为 api_rollout（该阶段实际耗时 103 秒；脚本配置的 rollout 等待上限为 900 秒，103 秒不是配置窗口）。api.observed-arn 为部署前读取保存，不能证明判负时刻服务指向。已核实的是：api_rollout 失败、回滚未完成（checks.rollback=failed）、其后服务收敛到新 revision；**具体提前失败原因与回滚竞争机制待定**（需原始错误日志进一步证明）。对该 release 的 `--resume` 恢复被 continuation gate 合规阻断（main 已有后续 runtime 增量：Account routing v5）。最终由后续 release **r20261008-07cac14**（07cac144，包含本任务代码 #1424）完成完整发布门禁：evidence `complete`——provider_probe/public_health passed、CloudWatch 三角色0 错误、terraform 发布后零漂移、TargetHealth healthy=1/blocking=0、三角色 runtime_verified=true 且 digest 逐一绑定（api :111 digest 92d5d6da/route :110 88d274ac/worker :112 cbb4f52d）；线上 /health/release 回读 `r20261008-07cac14` 一致。自然失败告警样本继续等待外部事件。
 
+### p2-190 Investigation continuation / native status / engineer close
+
+源码与操作核对：2026-10-08；当前合同和发布证据统一见 [执行记录](plans/investigation-route-status-fix.md)。新行为只在普通授权的 Preproduction 发布后核验，不重放真实 13923 或发送真实 Slack 测试消息。
+
+- 客户 comment 继承首次 Investigation，使用原 event/execution/comment/revision/session/thread，当前原文是不可信引用；暂停等待工程师仍可续轮，实际 human 接管及 terminal 生命周期不被普通 comment 恢复。结果等待调查审阅，Prepare draft/Approve & send 仍需工程师。
+- 原生 status 使用 `native-hermes-notification:<namespace>` 的 existing `support_idempotency_records`。intent 与 ticket 状态在同一事务；pending/确证未发送 failed 可由原 job 恢复，completed 不重发；sending/outcome_unknown 需要确切 Slack message identity 回读，不能 reset/replay 猜测。缺 thread、channel mismatch、outbound kill switch 保留失败证据，不自动接管 case。修正配置后沿用原 execution retry 入口。
+- 关闭仅来自经验证的当前工程师 thread 消息，严格 `close the case`（大小写/一个末尾句号/外围空白等价），server 保存 actor/source event/thread/revision 授权。`support_close_case(turn_id)` 只改绑定真实票 solved，先读实际状态，PUT 不确定立即 GET 回读；unknown 未确证时不盲重试。confirmed operation 后本地收尾失败可从原 turn 恢复，不重复 PUT。客户/ad-hoc/引用/旧 history 无权限。
+- Hermes image 从实时核验 :44 digest overlay，保留 SQLite 和现有插件；由于运行插件与归档 canonical route schema 不同，`hermes-deploy/build/investigation-close/` 的版本化 runtime 模块只加入 close 工具。canonical 源也注册同一 close 合同，但不把其额外 route schema 强化上线。新 skill 仅通过既有 PP skillsdrop family 投入 PP hermes-home AP；发布前必须再次证明 PP/Production AP disjoint。
+- 顺序为 SP PP 完整 pipeline → Hermes PP plugin/skill → n8n Status/Forward 的 PP 分支。n8n 更新前后归档 active/draft 脱敏 graph 并校验，保留其他分支和上游 Route Support divergent draft。该计划不修改 Prompt catalog/生产 release notes，不新增 schema/资源/队列。
+
+本地隔离数据库和 image/skill 检查证明各自层的实现；实际部署、tool availability、技能加载与自然业务样本分别记录，不能用测试数量或 service steady 替代正式 pipeline complete。
+
 本节描述该次发布；实际运行状态以 task definition revision 与 live 读回为准。

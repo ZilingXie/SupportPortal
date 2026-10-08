@@ -40,6 +40,9 @@ class AccountHumanReviewEscalationResult:
     handoff_status: str | None
     note_comment_id: str | None = None
     failure_code: str | None = None
+    ownership_release_status: str = "unknown"
+    reply_cancellation_status: str = "unknown"
+    cancelled_reply_jobs: int | None = None
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -52,6 +55,9 @@ class AccountHumanReviewEscalationResult:
             "handoff_status": self.handoff_status,
             "note_comment_id": self.note_comment_id,
             "failure_code": self.failure_code,
+            "ownership_release_status": self.ownership_release_status,
+            "reply_cancellation_status": self.reply_cancellation_status,
+            "cancelled_reply_jobs": self.cancelled_reply_jobs,
         }
 
 
@@ -339,6 +345,8 @@ def escalate_account_case_to_human_review(
     customer_context: str = "",
     repository: Any,
     timestamp: str | None = None,
+    native_store: Any = None,
+    native_turn_id: str | None = None,
 ) -> AccountHumanReviewEscalationResult:
     """Persist Human Review and perform Production-only Zendesk handoff."""
     timestamp = timestamp or _utc_now()
@@ -354,6 +362,20 @@ def escalate_account_case_to_human_review(
         "fraud_account",
         "detailed_invoice",
     }
+    native_context = None
+    if native_store is not None and native_turn_id:
+        native_turn = native_store.get_hermes_turn(native_turn_id)
+        native_binding = native_store.get_hermes_case_binding(str(ticket_id))
+        if (
+            isinstance(native_turn, dict) and isinstance(native_binding, dict)
+            and native_turn.get("zendesk_ticket_id") == str(ticket_id)
+            and native_turn.get("namespace") == native_binding.get("namespace")
+            and str(native_binding.get("session_kind") or "case") == "case"
+            and native_turn.get("status") in {"pending", "running", "failed", "human_review", "cancel_requested"}
+            and (native_turn.get("direction") == "human" or (native_turn.get("status") == "failed" and native_turn.get("error_code")))
+        ):
+            active = True
+            native_context = {"turn_id": native_turn_id, "namespace": native_binding["namespace"], "session_id": native_binding["hermes_session_id"]}
     if not active:
         return AccountHumanReviewEscalationResult(
             status="skipped_inactive_handler",
@@ -406,11 +428,14 @@ def escalate_account_case_to_human_review(
             account_case_id=account_case_id,
             handler=normalized_handler,
             zendesk_ticket_id=_zendesk_ticket_id(account_case, ticket_id) or None,
-            internal_note_status=prior_note or "already_reconciled",
+            internal_note_status=prior_note or "unknown",
             route_back_status=prior_route,
             handoff_status=prior_handoff,
             note_comment_id=str(prior_escalation.get("note_comment_id") or "").strip() or None,
             failure_code=str(prior_escalation.get("failure_code") or "").strip() or None,
+            ownership_release_status=str(prior_escalation.get("ownership_release_status") or "unknown"),
+            reply_cancellation_status=str(prior_escalation.get("reply_cancellation_status") or "unknown"),
+            cancelled_reply_jobs=prior_escalation.get("cancelled_reply_jobs"),
         )
 
     updated = reconcile_automation_execution_failure(
@@ -449,7 +474,13 @@ def escalate_account_case_to_human_review(
     updated["route_classification"] = classification
     account_case.clear()
     account_case.update(updated)
-    repository.cancel_pending_account_reply_jobs(str(ticket_id or "").strip(), updated_at=timestamp)
+    cancelled_reply_jobs = None
+    try:
+        cancelled_reply_jobs = repository.cancel_pending_account_reply_jobs(str(ticket_id or "").strip(), updated_at=timestamp)
+        reply_cancellation_status = "completed"
+    except Exception as exc:
+        reply_cancellation_status = f"failed:{type(exc).__name__}"
+    ownership_release_status = "skipped_not_production"
 
     zendesk_ticket_id = _zendesk_ticket_id(account_case, ticket_id)
     processing_profile = str(account_case.get("processing_profile") or "staging").strip().lower()
@@ -459,7 +490,11 @@ def escalate_account_case_to_human_review(
     note_comment_id: str | None = None
     route_failure_code: str | None = None
 
-    if is_live_account_processing_profile(processing_profile) and active and zendesk_ticket_id:
+    native_side_effects_allowed = (
+        native_store is None
+        or str(native_store.settings.environment) == "production"
+    )
+    if native_side_effects_allowed and is_live_account_processing_profile(processing_profile) and active and zendesk_ticket_id:
         prior_context = account_case.get("automation_context")
         prior_context = prior_context if isinstance(prior_context, dict) else {}
         ownership = prior_context.get("zendesk_ownership")
@@ -488,6 +523,7 @@ def escalate_account_case_to_human_review(
             group_id=str(ownership.get("group_id") or "").strip() or None,
         )
         repository.save_account_case(account_case)
+        ownership_release_status = "recorded"
         try:
             route_result = route_ticket_back_to_queue(
                 ticket_id=zendesk_ticket_id,
@@ -509,9 +545,10 @@ def escalate_account_case_to_human_review(
             group_id=str(ownership.get("group_id") or "").strip() or None,
             failure_code=route_failure_code or note_error,
         )
-    elif is_live_account_processing_profile(processing_profile) and active:
+    elif native_side_effects_allowed and is_live_account_processing_profile(processing_profile) and active:
         internal_note_status = "skipped_missing_zendesk_ticket"
         route_back_status = "skipped_missing_zendesk_ticket"
+        ownership_release_status = "skipped_missing_zendesk_ticket"
 
     account_case_context = dict(account_case.get("automation_context") or {})
     account_case_context["human_review_escalation"] = {
@@ -523,6 +560,10 @@ def escalate_account_case_to_human_review(
         "route_back_status": route_back_status,
         "handoff_status": handoff_status,
         "note_comment_id": note_comment_id,
+        "ownership_release_status": ownership_release_status,
+        "reply_cancellation_status": reply_cancellation_status,
+        "cancelled_reply_jobs": cancelled_reply_jobs,
+        "native_context": native_context,
         "updated_at": account_case.get("updated_at") or timestamp,
     }
     account_case["automation_context"] = account_case_context
@@ -552,6 +593,7 @@ def escalate_account_case_to_human_review(
     overall_status = "completed" if (
         internal_note_status in {"sent", "skipped_not_production", "skipped_missing_zendesk_ticket"}
         and route_back_status in {"queued", "already_human_owned", "skipped_not_production", "skipped_missing_zendesk_ticket"}
+        and reply_cancellation_status == "completed"
     ) else "degraded"
     return AccountHumanReviewEscalationResult(
         status=overall_status,
@@ -563,4 +605,7 @@ def escalate_account_case_to_human_review(
         handoff_status=handoff_status,
         note_comment_id=note_comment_id,
         failure_code=route_failure_code,
+        ownership_release_status=ownership_release_status,
+        reply_cancellation_status=reply_cancellation_status,
+        cancelled_reply_jobs=cancelled_reply_jobs,
     )

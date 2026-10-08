@@ -316,6 +316,40 @@ def get_ticket_status(*, ticket_id: str, timeout_seconds: float = 15.0) -> str |
     return _ticket_status_from_payload(payload)
 
 
+def get_ticket_state(*, ticket_id: str, timeout_seconds: float = 15.0) -> dict[str, Any]:
+    """Read the current Zendesk ticket status without writing."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id:
+        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"Authorization": _basic_auth_header(), "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            if status_code < 200 or status_code >= 300:
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
+            payload = _decode_json_response(response)
+    except ZendeskCommentError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise _zendesk_request_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
+    ticket = payload.get("ticket")
+    if not isinstance(ticket, dict) or str(ticket.get("id") or "") != normalized_ticket_id:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_identity_unverified")
+    if not ticket.get("updated_at") or not _ticket_status_from_payload(payload):
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_state_unverified")
+    return {key: ticket.get(key) for key in ("id", "status", "updated_at", "assignee_id", "group_id")}
+
+
+
 def upload_ticket_attachment(
     *,
     filename: str,

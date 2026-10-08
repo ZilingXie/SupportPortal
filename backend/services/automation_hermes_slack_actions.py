@@ -199,6 +199,25 @@ def handle_slack_hermes_message(
     if len(text) > 4000:
         return _invalid("feedback text exceeds 4000 characters")
 
+    # The authenticated n8n app-mention branch removes only its configured
+    # bot mention. Remaining mentions/quotes are not close commands.
+    close_requested = text.casefold() in {"close the case", "close the case."}
+    source_event_id = str(payload.get("source_event_id") or payload.get("event_id") or "").strip()
+    actor = str(payload.get("slack_user_id") or "").strip()
+    message_ts = str(payload.get("message_ts") or "").strip()
+    if close_requested and (not source_event_id or not actor or not message_ts):
+        return _invalid("close requires the authenticated Slack source event, actor, and message timestamp")
+    if close_requested and (not expected_team_id or not expected_channel_id):
+        return _invalid("close requires configured Slack team and channel", status_code=403)
+    authority = None
+    if close_requested:
+        binding = store.get_hermes_case_binding(ticket_id) or {}
+        if str(binding.get("session_kind") or "case") != "case" or not str(ticket_id).isdigit():
+            return _invalid("ad-hoc sessions cannot close Zendesk tickets")
+        authority = {"action": "solve_bound_case", "source_event_id": source_event_id,
+            "actor_id": actor, "team_id": team_id, "channel_id": channel_id,
+            "thread_ts": thread_ts, "message_ts": message_ts, "ticket_id": ticket_id}
+
     # R17/P1-2: check for a knowledge review command BEFORE creating a
     # feedback turn. The engineer replies to a review notification with a
     # decision instead of investigation feedback. The thread lineage rides
@@ -214,6 +233,8 @@ def handle_slack_hermes_message(
     review = store.get_hermes_case_review(ticket_id) or {}
     for turn in review.get("turns") or []:
         if (
+            not source_event_id
+            and
             str(turn.get("turn_kind") or "") == "investigation_feedback"
             and str(turn.get("status") or "") in {"pending", "running"}
             and str((turn.get("work_result") or {}).get("reviewer_feedback") or "") == text
@@ -225,7 +246,11 @@ def handle_slack_hermes_message(
             ticket_id,
             feedback=text,
             base_event={
-                "provenance": {"service_role": "slack", "source": "thread_reply"}
+                "provenance": {"service_role": "slack", "source": "thread_reply",
+                    "source_event_id": source_event_id or None, "actor_id": actor or None,
+                    "channel_id": channel_id, "thread_ts": thread_ts, "message_ts": message_ts or None},
+                "source_event_id": source_event_id,
+                **({"engineer_authority": authority} if authority else {}),
             },
         )
     except HermesTurnConflictError:

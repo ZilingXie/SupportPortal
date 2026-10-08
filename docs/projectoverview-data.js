@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T09:14:59Z",
-  "source_base_commit": "162968dad842a0a87556d587d504f4237b0e4e37",
-  "registry_digest": "99184a14fbfddce231e2748355edfc282baf62510e6686a6fa6a863574551284",
+  "generated_at": "2026-10-08T13:07:43Z",
+  "source_base_commit": "f9388ee5c5baebeab7a0f1501cedd96e70c6ed6e",
+  "registry_digest": "ee5f40f285d87d7de1d8d3f37195da9c3911bb21c5c30554a17d8460841455a7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1487,6 +1487,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "镜像内隔离验收 43 项全过 + hermes_state 500 通过 + SP 全链测试（round-2/3 验收方独立复跑 95 项）"
         },
         {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-fix.md",
+          "label": "当前合同 v1.1 与执行证据"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1593,7 +1598,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 42,
+      "task_count": 43,
       "done_count": 22,
       "blocked_count": 0
     },
@@ -16782,6 +16787,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-190",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Investigation 路由固定与状态同步修复（Ticket 13923）",
+      "summary": "计划 v1.1：C1 首次 Investigation 客户续轮固定 work；C2 原文进入原 Slack thread；C3 原生接管及真实告警；C4 原生状态事务通知与 n8n PP 分支；C5 工程师明确 close tool/skill。仅 Preproduction 发布，禁止真实13923重放或客户回复。",
+      "status": "active",
+      "next_action": "本地 C1-C5 真实入口与隔离 PG 验证已通过；完成版本化记录、镜像验收及正常 finalize 后按 SP→Hermes→n8n 发布 Preproduction，保留自然业务样本缺口。",
+      "owner": "agent",
+      "created_at": "2026-10-08",
+      "updated_at": "2026-10-08",
+      "acceptance_criteria": [
+        "C1: 真实客户 intake/work-only，身份/fence/session/thread不丢失，Automation边界保留",
+        "C2: 当前客户原文带来源身份引用进入原thread，可审计幂等投递",
+        "C3: 真实native terminal failure进入统一接管，各动作状态独立且告警无虚构成功",
+        "C4: 状态和通知intent同PG事务，单调source水位，claim/unknown不盲重发",
+        "C5: 可信工程师明确close授权驱动tool/plugin/skill，只solve绑定票且无客户回复",
+        "隔离PG与真实入口验证；正常merge与PP运行证据，Production不变"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-fix.md",
+          "label": "当前合同 v1.1 与执行证据"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -22114,6 +22149,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
+        "原生 Investigation 续轮与关闭（p2-190，本地验证通过、Preproduction 发布待核验）：首次有效 Investigation 后客户消息在原 session/thread 仅跑 work，工程师可见完整原文；ticket.updated 状态与通知 intent 同事务保存，未知发送结果不自动重发。当前可信工程师明确 `close the case` 可调用 skill/tool 将绑定票设为 solved，无客户自动回复；客户感谢/请求关闭、引用与历史均不赋权。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",
