@@ -2034,6 +2034,7 @@ class InMemoryAutomationEcsStore:
         status: str,
         error_code: str,
         error_message: str,
+        event_extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if status not in {"failed", "interrupted", "outcome_unknown"}:
             raise ValueError("invalid hermes turn failure status")
@@ -2044,9 +2045,15 @@ class InMemoryAutomationEcsStore:
             turn.update(
                 status=status, error_code=error_code, error_message=error_message, updated_at=_iso()
             )
-            self._append_event(
-                turn["execution_id"], f"agent_turn.{status}", {"turn_id": turn_id, "error_code": error_code}
-            )
+            event_payload = {"turn_id": turn_id, "error_code": error_code}
+            if isinstance(event_extra, dict) and event_extra:
+                # Additive structured detail (e.g. the gateway's
+                # failure_reason) on the existing agent_turn.<status>
+                # event — no new event stream, no schema change.
+                event_payload.update(
+                    {str(k): v for k, v in event_extra.items() if k not in event_payload}
+                )
+            self._append_event(turn["execution_id"], f"agent_turn.{status}", event_payload)
             return copy.deepcopy(turn)
 
     def record_hermes_case_direction(self, turn_id: str, *, direction: str, reason: str) -> dict[str, Any]:
@@ -4846,6 +4853,7 @@ class PostgresAutomationEcsStore:
         status: str,
         error_code: str,
         error_message: str,
+        event_extra: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if status not in {"failed", "interrupted", "outcome_unknown"}:
             raise ValueError("invalid hermes turn failure status")
@@ -4861,11 +4869,19 @@ class PostgresAutomationEcsStore:
                 row = cursor.fetchone()
                 if row is None:
                     raise HermesTurnStateError(turn_id, "turn is not pending or running")
+                event_payload = {"turn_id": turn_id, "error_code": error_code}
+                if isinstance(event_extra, dict) and event_extra:
+                    # Additive structured detail (e.g. the gateway's
+                    # failure_reason) on the existing agent_turn.<status>
+                    # event — no new event stream, no schema change.
+                    event_payload.update(
+                        {str(k): v for k, v in event_extra.items() if k not in event_payload}
+                    )
                 self._insert_timeline(
                     cursor,
                     str(row["execution_id"]),
                     f"agent_turn.{status}",
-                    {"turn_id": turn_id, "error_code": error_code},
+                    event_payload,
                 )
                 return dict(row)
 

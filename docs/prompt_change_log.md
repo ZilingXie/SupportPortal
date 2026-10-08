@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-10-08 - 计划交接收敛：共享角色规则、PR 证据与版本校验
+
+- 范围：Codex/ZCode 全局规则模板、项目 AGENTS、implementation-handoff 与 review-implemented-plan；仅开发工具行为，无应用 Prompt catalog 或部署变更。
+- 规划侧负责已核实的入口/持久化/恢复合同；执行与返修通过同一 PR、稳定合同/问题 ID 和具体证据交接。需要人决定的事项显式提问并暂停依赖动作；客户端与模型不固定角色，不自动调整模型配置。
+- 精简规则入口，把分角色细节移至按需 Skill、PR 流程与工作流细则。保留只读授权、独立验收、Production/业务写入、工作区归属及记忆路由边界。
+- finalize 新增可选 `--reviewed-head`，刷新 main 或验证改变 HEAD 时，在推送/合并前拒绝继续；版本匹配不等于验收批准。无门禁的既有流程保留。
+- 交付位置、迁移对应及实测证据见 [计划交接收敛交付记录](agent-workflows/plan-handoff-convergence.md)。
+
 ## 2026-10-03 - automation-persona-v32：Enablement 回复语言连续性（p2-184）
 
 - Area: `render_automation_reply` 代码级系统 Prompt（automation-persona-v32）与

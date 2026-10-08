@@ -1,0 +1,96 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-188",
+  "title": "WeKnora 并行建设（阶段一：独立部署与 Web 可用）",
+  "status": "active",
+  "owner": "codex",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "function_id": "weknora-standalone-deployment",
+  "created_at": "2026-10-07",
+  "updated_at": "2026-10-08",
+  "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
+  "next_action": "R7（本轮）完成：container exists 三态判定（present/absent/unknown）统一用于 stop 确认、cleanup 与真实模式 B→C 前置（unknown 一律保留归属+保留数据目录+KEEPING 报告，修复『首次 KEEPING 却丢归属、二次 cleanup 删目录』反例）；self-check 子进程日志按轮隔离、逃逸日志全程累计；新增 bug 子进程自校验两类检测器（多一次 run/真实 podman 逃逸均会被判失败）。固定提交实测：真实模式 7 PASS、--self-check 父断言 13 PASS（子进程内部另 6 PASS 记录于 child-*.out）。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
+  "acceptance_criteria": [
+    "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
+    "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
+    "Web 路由：登录、深层刷新、静态资源、API、预览和下载均走 /dashboard/weknora 专属路径（含受保护文件请求与 token 失效重登录，不以接管根路径绕过）",
+    "文档闭环：非业务样本上传→处理完成→检索命中→原文回读一致",
+    "异常表现：处理或模型调用失败时显示失败原因，不呈现为 ready",
+    "持久化：应用/数据任务重建后，测试对象和索引仍可使用（含知识对象，经应用入口检索验证）",
+    "备份恢复：备份恢复到独立验证目标后，可以检索并读取同一测试对象（基线计数对比+知识全文回读+应用层检索）",
+    "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
+    "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
+  ],
+  "blockers": [
+    "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器路径验证（登录/深页刷新/退出/失效重登录/引导跳过）已全部完成，不再阻塞。"
+  ],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "R7 查询三态判定与日志隔离（固定提交实测）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh（真实模式）与 --self-check（四子进程 a/b/c/bug）",
+      "result": "真实模式 7 PASS（B 检查改为 stopped and confirmed absent）；--self-check 父断言 13 PASS=A 5（既有容器保留/自建清零/恰两次删除/工作目录确认后删除/退出码 0）+B-fault 3（rm 成功但查询 125：不启动 C 且 B 自有日志仅一次 run/数据目录经三次清理（两次显式+EXIT trap）均保留/KEEPING 报告）+C-fault 3（场景通过/数据目录与标记保留/KEEPING 报告）+载具自校验 2（bug 子进程故意多启动一个容器→run 计数检测触发；直接调用 realbin→累计逃逸日志恰好一条且 A/B/C 零逃逸）。修复：container_state() 三态（0/1/其他）；cleanup 归属重建只对确认 absent 移出；mock 日志按 SC_LOG_TAG 分文件；real-podman.log 全程累计。"
+    },
+    {
+      "type": "test",
+      "label": "R6 停止/清理失败分支修复与故障注入（固定提交实测）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh（真实模式）与 --self-check（含两个故障注入子进程）",
+      "result": "真实模式 7 PASS；--self-check 15 PASS=子 A 3（碰撞拒绝/失败上报/两轮唯一名）+子 C 1（faultC 场景通过）+父 12（A 5：既有容器保留/自建清零/恰两次删除/工作目录确认清理后删除/子退出码 0；B-fault 3：停止失败传播且仅一次 run 即 C 未启动/在用数据目录与容器标记保留/KEEPING 报告；C-fault 3：场景通过退出 0/数据目录与标记保留/KEEPING 报告；全局 1：无真实 podman 逃逸）。修复：stop_owned 删除失败→STOP_RC=1+保留归属（原无条件丢弃并报成功）；cleanup 撤除逐个确认成功才删 GUARD_WORK_DIR，任一未确认→KEEPING 报告+保留资源；幂等保持（确认撤除移出清单，重复调用无重复 rm）。"
+    },
+    {
+      "type": "test",
+      "label": "R5 守卫测试修复（固定提交实测输出）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh（真实模式）与 --self-check（父子进程）",
+      "result": "真实模式 7/7（含新增：B 初始化就绪后显式停止移除、确认无存活库占用数据目录后 C 才启动，C 在既有 PGDATA 上带守卫就绪）；self-check 8 个 PASS=子进程 3（碰撞拒绝/失败上报/两轮唯一名）+父进程对子完整退出态断言 5（既有容器保留且无其删除记录/自建容器 alive 标记清零/恰两次删除且均为自建名/无 REAL-PODMAN 调用逃逸 mock/子进程退出码 0）。修复内容：run_guard_detached 返回后由 stop_owned 显式停止 B；mock 分派按首词匹配（原 rm -f 永不命中）；cleanup 幂等（清空 OWNED_CONTAINERS）；自检改为子进程完整退出后断言（原手动 cleanup 后 EXIT trap 二次清理越界）。"
+    },
+    {
+      "type": "deployment",
+      "label": "R5 引导行为干净验证与表述收窄（浏览器实测，2026-10-08 14:0x 北京）",
+      "command": "清两枚引导标记模拟新用户（仅初始 setup）→登录→正常节点点击跳过→刷新→菜单退出",
+      "result": "登录后引导自然出现（欢迎引导→上下文创建库引导两跳）；正常点击跳过引导/跳过各一次后全部关闭；产品代码自行写回 new-user-guide-done:v1=1 与 contextual-guide-kb-list:v2=1（本轮未手动改标记）；硬刷新后无引导复发（无 active dialog）；用户菜单退出 → /dashboard/weknora/login 表单渲染。结论：R4 会话中引导反复为自动化点击未落点所致，非产品缺陷；原“模型后自然消解”的确定性表述撤回并替换为本实测口径。"
+    },
+    {
+      "type": "test",
+      "label": "R4 守卫测试脚本资源归属自检（--self-check）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh --self-check",
+      "result": "6/6 过：名称冲突拒绝且零删除；创建失败零 podman rm；两轮唯一容器名（wkguard-round3-0/1）、清理前零删除、cleanup 恰好只删两个自建容器。真实模式三场景复跑仍 5/5。"
+    },
+    {
+      "type": "deployment",
+      "label": "R4 浏览器实机验证（不依赖模型，ZCode IAB，2026-10-08 13:4x-13:5x 北京）",
+      "command": "浏览器自动化：goto/reload/键盘输入/localStorage 操作 + app CloudWatch 对照",
+      "result": "五项全过：(1) 未登录访问 /dashboard/weknora/ → 路由守卫落 /dashboard/weknora/login；(2) 管理员登录成功 → 落地 /dashboard/weknora/platform/knowledge-bases（应用完整渲染：侧栏/用户 weknora-admin/空库列表）；(3) 深页硬刷新 → 完整渲染+登录态保持；(4) 破坏 access+refresh token 后刷新 → app 日志实证 401 风暴（/api/v1/me、agents 等）→ 前端自动登出并跳 /dashboard/weknora/login（R2 原缺陷场景端到端修复证明）；(5) 用户菜单退出 → /dashboard/weknora/login 且登录表单渲染。附带产品行为记录：空库时上下文引导弹窗每次进入 KB 列表重新出现且覆盖层拦截侧栏（contextual-guide-kb-list 标记语义待考；模型未配置无法建库以结束引导）——非本任务缺陷，记为已知限制。"
+    },
+    {
+      "type": "test",
+      "label": "R3 前端子路径回归（fork 714065ba）",
+      "command": "cd frontend && npx tsx --test src/utils/subpathPrefix.test.mjs && npm test",
+      "result": "subpathPrefix.test.mjs 7/7（子路径登录跳转含 R2 复现场景：/dashboard/weknora/knowledge-bases 深页 redirectToLogin → /dashboard/weknora/login；四种受保护文件 URL 带前缀；根部署回归保持根相对；检测正则仍匹配服务端根相对路径）；全套 397 tests 396 pass 1 skip 0 fail。npm test 仅发现 .test.mjs，新测试按此约定。"
+    },
+    {
+      "type": "test",
+      "label": "R3 部署脚本回归（stub 边界用例）",
+      "command": "deployment/weknora/tests/run_deploy_tests.sh",
+      "result": "15 项全过：正常 rollout 成功并触达公网检查；回滚（PRIMARY 回退旧 TD）非零失败且绝不触达公网检查并报 rolled back or superseded；rolloutState=FAILED 失败；每服务至少轮询两次才判稳；register 默认 REQUIRE_EXISTING_PGDATA=true 且注册默认关闭；--initial-bootstrap 显式 false；restore 失败运行不执行任何 podman rm；两轮容器名唯一。"
+    },
+    {
+      "type": "test",
+      "label": "R3 数据守卫运行时回归（真实 paradedb 镜像）",
+      "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh",
+      "result": "三场景全过：A 空卷+守卫=拒绝启动（含 refusal 消息）且零数据库写入；B 守卫关+空卷=初始化成功（database system is ready）+PG_VERSION 生成；C 守卫开+已初始化卷=正常启动（升级路径放行）。"
+    },
+    {
+      "type": "deployment",
+      "label": "R2 部署与公网验收（2026-10-07 23:5x，部分结论被 R2 独立验收推翻，保留为过程记录）",
+      "command": "deploy_weknora_services.sh --task-definitions <arns3>；curl 矩阵；aws ecs describe-services",
+      "result": "五服务 :3 ACTIVE 1/1；公网入口 200；路由矩阵静态/深层/API 代理通过；管理员注册+提权+注册关闭+401 门禁；备份 292,884B 落桶+独立容器恢复 users=1；隔离=旧服务/规则对照零变化+terraform 零漂移。R2 独立验收核实其中构建链、401/403、隔离；推翻 Web 路由完整性（文件请求/重登录子路径缺口）与持久化/备份恢复的证据充分性。"
+    },
+    {
+      "type": "document",
+      "label": "R1 只读基线 + 源码核对（2026-10-07T12:18Z）",
+      "command": "aws sts/elbv2/ecs/ec2/ecr/s3/rds/route53/servicediscovery；dig；git -C WeKnora log/status；rg 源码",
+      "result": "域名→supportportal-production-alb（证书恰为 supportcenter.stellarix.space）；/dashboard/weknora 未占用；两集群基线、无 ASG/EC2 容量、无 NAT、RDS/EFS 不适用已录；fork 79c4b2aa 干净、BASE_URL SPA 侧就绪、sslmode 三处硬编码、S3 默认凭据链可用——全部记入 docs/deploy_weknora_standalone_ecs.md。"
+    }
+  ]
+}

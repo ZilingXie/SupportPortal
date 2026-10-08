@@ -869,6 +869,12 @@ def _escalate_uncompleted_automation(
     reason_code: str,
     detail: str,
     notification: str = "failure",
+    environment: str | None = None,
+    run_id: str | None = None,
+    failed_phase: str | None = None,
+    failure_reason: str | None = None,
+    job_id: str | None = None,
+    job_attempt: int | None = None,
 ) -> dict[str, Any]:
     """Unified human handoff for a turn the automation could not complete.
 
@@ -918,6 +924,9 @@ def _escalate_uncompleted_automation(
     # partial handoff must be visible as partial (never reported as success).
     handoff_steps: dict[str, Any] = {}
     handoff_evidence: dict[str, Any] = {}
+    # Initialized so the notified handoff summary below stays honest
+    # ("unknown") when the escalation itself raised before returning.
+    escalation = None
     try:
         escalation = escalate_account_case_to_human_review(
             account_case=account_case,
@@ -977,6 +986,57 @@ def _escalate_uncompleted_automation(
         if notification == "failure"
         else f"account-takeover:{account_case_id}:hermes:{turn_id}:{reason_code}"
     )
+    # Append the REAL handoff outcome to the notified detail: the escalation
+    # above has already run, so claim-vs-skip is a fact, not a promise. A
+    # "transferred to the human team" narrative without this evidence was
+    # the AC-13898 alert inaccuracy. Each external step is described from
+    # its own status — an overall "completed" escalation may still contain
+    # skipped steps (skipped_not_production / skipped_missing_zendesk_ticket
+    # / already_human_owned), and those must read as not executed, not as
+    # sent-and-routed. When the escalation itself raised, the outcome is
+    # honestly unknown.
+
+    def _note_step(status: str, comment_id: str) -> str:
+        if status == "sent":
+            return f"internal note sent (comment {comment_id})" if comment_id else "internal note sent"
+        if status == "idempotent_replay":
+            return "internal note already present (deduplicated)"
+        if status.startswith("skipped_"):
+            return f"internal note not sent ({status[len('skipped_'):]})"
+        return f"internal note {status or 'unknown'}"
+
+    def _queue_step(status: str) -> str:
+        if status == "queued":
+            return "ticket returned to the human queue"
+        if status == "already_human_owned":
+            return "ticket already owned by a human"
+        if status.startswith("skipped_"):
+            return f"queue return not executed ({status[len('skipped_'):]})"
+        return f"queue return {status or 'unknown'}"
+
+    handoff_status = str(getattr(escalation, "status", "") or "").strip()
+    note_comment_id = str(getattr(escalation, "note_comment_id", "") or "").strip()
+    note_status = str(getattr(escalation, "internal_note_status", "") or "").strip()
+    queue_status = str(getattr(escalation, "route_back_status", "") or "").strip()
+    if handoff_status:
+        handoff_note = "Handoff result: {} (overall: {}).".format(
+            "; ".join(
+                part
+                for part in (
+                    _note_step(note_status, note_comment_id),
+                    _queue_step(queue_status),
+                )
+                if part
+            )
+            or "no step status recorded",
+            handoff_status,
+        )
+    else:
+        handoff_note = "Handoff result: unknown (escalation raised before returning)."
+    # The handoff outcome leads the notified detail: the 500-char alert
+    # budget must cut into the (long, user-worded) gateway error text
+    # before it ever cuts the actual takeover result.
+    notified_detail = f"{handoff_note} {detail}"
     try:
         notify_kwargs = dict(
             repository=repository,
@@ -989,11 +1049,22 @@ def _escalate_uncompleted_automation(
         )
         if notification == "takeover":
             notify_result = notify_account_human_takeover(
-                **notify_kwargs, detail=detail[:500]
+                **notify_kwargs, detail=notified_detail[:500]
             )
         else:
+            # The failure alert additionally reports the real job/turn/run/
+            # phase context and the structured cause as its own field;
+            # absent values surface as <unknown>, never 0.
             notify_result = notify_account_failure(
-                **notify_kwargs, detail=detail[:500]
+                **notify_kwargs,
+                detail=notified_detail[:500],
+                environment=environment,
+                turn_id=turn_id,
+                run_id=run_id,
+                failed_phase=failed_phase,
+                failure_reason=failure_reason,
+                job_id=job_id,
+                attempts=job_attempt,
             )
         notify_status = str((notify_result or {}).get("status") or "").strip()
         if notify_status in {"sent", "sent_unpersisted"}:

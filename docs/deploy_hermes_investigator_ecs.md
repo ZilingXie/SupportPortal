@@ -326,3 +326,21 @@ Hermes `common` 工具集新增 `wiki_search` 和 `wiki_read_page`，源码在�
 - 分层验证：① Core 绑定接口完整分页与 Knowledge API 的已知页面 `search`→`read_page` 一致；② Hermes `common` 工具可见，未绑定 Wiki 拒绝；③不带客户数据、不走 SupportPortal 工单入口的调查 Work 技术探针实际调用两工具，返回的 Wiki ID、页面路径、正文片段可与 Knowledge API 独立回读匹配；④零命中、单 Wiki 不可用与全部不可用区分。技术探针不触发 Slack/Zendesk/Archer，不能替代真实业务工单验收。
 
 本节描述验收合同；实际部署 revision、digest、检查时间和结果记录在 p2-177 的 evidence 中，不把本节当作当前运行状态证明。
+
+## Preproduction Hermes 会话存储故障修复（p2-189，2026-10-07）
+
+AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O error`）的修复部署。Hermes 侧分支 `codex/hermes-session-storage-fix`（hermes-agent @ cd87be9506，基线 bc9a0f7d），核心源码 overlay 构建为 `deploy-ecs/Dockerfile.hermes-p2188-overlay`（FROM 当时的 hermes 容器 digest `e473e5ed…`，构建前已校验五个被覆盖文件与基线逐字节一致）。
+
+- 变更内容：`classify_persistence_error` 新增 `io` 桶（SQLITE_IOERR 不再给出清盘/改权限的确定性建议）；`/v1/runs` 的 `run.failed` 事件与状态保留结构化 `failure_reason`（重启回读生效）；`_execute_write` 对 transcript 批量保存提供**单次**受限 I/O 补试（仅 fn 阶段、回滚已证实、连接不在事务、文件身份未变；COMMIT 失败/回滚失败/被替换/非 IOERR 一律不重试）；失败日志补堆栈与 SQLite 错误码、回滚结果不再被吞。
+- 发布：推送镜像 `hermes-20261007-p2188`（digest `sha256:dfb2bcb4…`），从 `:40` 克隆注册 `:41` 仅更换 hermes 容器镜像，update-service 滚动完成（task HEALTHY、五容器 RUNNING）。
+- 隔离验收：在新镜像内（linux/amd64、真实 SQLite、临时 HERMES_HOME）注入 write 阶段 IOERR——单次补试后无重复行/计数；连续两败停止且零残留；重启回读完整；io 分类与文案契约全过（脚本固化在 `agent-infra/deploy-ecs/verify_p2188_acceptance.py`）。
+- 回滚：`update-service --task-definition supportportal-preproduction-hermes:40`；`raw capture` 约束不变（`:41` 显式 `false` 继承）。
+- SupportPortal 侧配套（事件细分原因、告警真实 job/turn/run/phase 与接管结果）在 SP 分支 `codex/hermes-session-storage-fix`，部署随该分支合入后的 release 进行。
+
+**Round 2（同日，验收修复后重新发布）**：验收发现 P1 缺陷（_insert_message_rows 在事务内回填 _row_id，ROLLBACK 不撤销，行号被并发复用时重放会丢消息）后先回滚 :41→:40；修复分支推进到 6ce3ee7c58（fn 级 entry-state 快照恢复 + 回归测试，反向验证未修复必败；io 文案删除未经检查的健康断言）。重新构建 hermes-20261008-p2188r2（digest sha256:9860fe85…，FROM 仍为 e473e5ed…），注册 :42 部署，task HEALTHY。扩展后镜像内隔离验收 27 项全过（新增：部分插入后失败、行号复用窗口、io 文案无健康断言）。构建与验收脚本版本化于 hermes-deploy 仓 codex/p2-188-session-storage @ f4e9078（build/p2188-session-storage/）。回滚：update-service --task-definition supportportal-preproduction-hermes:40。
+
+**Round 3（同日，事务失败日志契约补齐）**：验收指出最终失败路径缺少事务层诊断（仅重试准备有日志）。修复（Hermes 60bf08fd7e）：_execute_write 的每个最终失败出口记录 phase（begin/write/commit）/rollback 三态（not_attempted 与 ok 区分，BEGIN 未开事务不谎称回滚）/attempt 序号/io_retry_used/commit_outcome_uncertain，同一 dict 附在异常（hermes_txn_diag）上，run_agent flush 日志合入这些字段（缺失时显式 <unavailable>）。五个边界的日志断言测试 + 镜像内验收扩展到 34 项全过。重新构建 hermes-20261008-p2188r3（digest sha256:1b8b2985…），注册 :43 部署（task 启动 2026-10-08T04:21:26Z，即北京 12:21:26；03:30:04Z/北京 11:30:04 是 :42 的启动时间，前次记录误归属到 :43，勘误）。勘误：Round-2 记录中 ':42 task 启动 11:30Z' 时区误写（AWS 返回为北京时间 11:30:04）；round-2 镜像验收实际 25 项（先前报告误写 27）。回滚不变：update-service --task-definition supportportal-preproduction-hermes:40。
+
+**Round 4（2026-10-08，诊断再抛出与原始错误码契约）**：验收指出两处遗漏——I/O 重试分支的文件身份复查抛 StateDbReplacedError 时绕过最终诊断；锁等待耗尽的包装异常丢失原始 SQLite 错误码（5/SQLITE_BUSY 变 None/None）。修复（Hermes 9d1ef79fb6）：_record_txn_failure 增加 carrier 参数——诊断以被处理错误的 SQLite 身份生成，附到实际离开函数的异常（替换错误/锁包装异常）上，并把原始 code/name 复制到 carrier；错误处理路径中的替换再抛出（io 重试与 DatabaseError 身份复查两处）先记诊断再抛出，停止写入的行为不变。新增回归两条（替换路径 diag 附抛出错误且不补试；锁耗尽保留原始码），均反向验证在 round-3 行为上必败。镜像 hermes-20261008-p2188r4（digest sha256:a9f342c0…），td :44 部署（task 启动 2026-10-08T05:36:24Z=北京 13:36:24，HEALTHY）。镜像内验收 43 项全过（新增替换路径与锁耗尽场景）。Task 登记改为 p2-189（p2-188 与 WeKnora 任务冲突，main fa50eb53 已占用；两侧记录均保留）。回滚不变：update-service --task-definition supportportal-preproduction-hermes:40。
+
+本节描述该次发布；实际运行状态以 task definition revision 与 live 读回为准。
