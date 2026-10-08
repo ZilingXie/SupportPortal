@@ -327,7 +327,7 @@ Hermes `common` 工具集新增 `wiki_search` 和 `wiki_read_page`，源码在�
 
 本节描述验收合同；实际部署 revision、digest、检查时间和结果记录在 p2-177 的 evidence 中，不把本节当作当前运行状态证明。
 
-## Preproduction Hermes 会话存储故障修复（p2-188，2026-10-07）
+## Preproduction Hermes 会话存储故障修复（p2-189，2026-10-07）
 
 AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O error`）的修复部署。Hermes 侧分支 `codex/hermes-session-storage-fix`（hermes-agent @ cd87be9506，基线 bc9a0f7d），核心源码 overlay 构建为 `deploy-ecs/Dockerfile.hermes-p2188-overlay`（FROM 当时的 hermes 容器 digest `e473e5ed…`，构建前已校验五个被覆盖文件与基线逐字节一致）。
 
@@ -339,6 +339,6 @@ AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O err
 
 **Round 2（同日，验收修复后重新发布）**：验收发现 P1 缺陷（_insert_message_rows 在事务内回填 _row_id，ROLLBACK 不撤销，行号被并发复用时重放会丢消息）后先回滚 :41→:40；修复分支推进到 6ce3ee7c58（fn 级 entry-state 快照恢复 + 回归测试，反向验证未修复必败；io 文案删除未经检查的健康断言）。重新构建 hermes-20261008-p2188r2（digest sha256:9860fe85…，FROM 仍为 e473e5ed…），注册 :42 部署，task HEALTHY。扩展后镜像内隔离验收 27 项全过（新增：部分插入后失败、行号复用窗口、io 文案无健康断言）。构建与验收脚本版本化于 hermes-deploy 仓 codex/p2-188-session-storage @ f4e9078（build/p2188-session-storage/）。回滚：update-service --task-definition supportportal-preproduction-hermes:40。
 
-**Round 3（同日，事务失败日志契约补齐）**：验收指出最终失败路径缺少事务层诊断（仅重试准备有日志）。修复（Hermes 60bf08fd7e）：_execute_write 的每个最终失败出口记录 phase（begin/write/commit）/rollback 三态（not_attempted 与 ok 区分，BEGIN 未开事务不谎称回滚）/attempt 序号/io_retry_used/commit_outcome_uncertain，同一 dict 附在异常（hermes_txn_diag）上，run_agent flush 日志合入这些字段（缺失时显式 <unavailable>）。五个边界的日志断言测试 + 镜像内验收扩展到 34 项全过。重新构建 hermes-20261008-p2188r3（digest sha256:1b8b2985…），注册 :43 部署（task 启动 2026-10-08T03:30:04Z，即北京 11:30:04）。勘误：Round-2 记录中 ':42 task 启动 11:30Z' 时区误写（AWS 返回为北京时间 11:30:04）；round-2 镜像验收实际 25 项（先前报告误写 27）。回滚不变：update-service --task-definition supportportal-preproduction-hermes:40。
+**Round 3（同日，事务失败日志契约补齐）**：验收指出最终失败路径缺少事务层诊断（仅重试准备有日志）。修复（Hermes 60bf08fd7e）：_execute_write 的每个最终失败出口记录 phase（begin/write/commit）/rollback 三态（not_attempted 与 ok 区分，BEGIN 未开事务不谎称回滚）/attempt 序号/io_retry_used/commit_outcome_uncertain，同一 dict 附在异常（hermes_txn_diag）上，run_agent flush 日志合入这些字段（缺失时显式 <unavailable>）。五个边界的日志断言测试 + 镜像内验收扩展到 34 项全过。重新构建 hermes-20261008-p2188r3（digest sha256:1b8b2985…），注册 :43 部署（task 启动 2026-10-08T04:21:26Z，即北京 12:21:26；03:30:04Z/北京 11:30:04 是 :42 的启动时间，前次记录误归属到 :43，勘误）。勘误：Round-2 记录中 ':42 task 启动 11:30Z' 时区误写（AWS 返回为北京时间 11:30:04）；round-2 镜像验收实际 25 项（先前报告误写 27）。回滚不变：update-service --task-definition supportportal-preproduction-hermes:40。
 
 本节描述该次发布；实际运行状态以 task definition revision 与 live 读回为准。
