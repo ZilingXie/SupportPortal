@@ -265,6 +265,263 @@ class RouteToolContractIntegrationTests(unittest.TestCase):
         self.assertEqual(result.get("error"), "classification_required")
         self.assertEqual(captured, [])
 
+    def test_manual_v5_account_billing_examples_route_correctly(self):
+        """Cross-check: extract the account_billing JSON examples from the
+        ACTUAL delivered hermes-route-manual v5 and verify each one through
+        the real plugin + normalizer + store chain. Each example gets its
+        own turn so the persisted direction/route is independently verified;
+        a wrong reason_code in the manual MUST cause this test to fail."""
+        from backend.services.prompts.hermes_support_agent import (
+            build_hermes_route_manual,
+            HERMES_ROUTE_MANUAL_VERSION,
+        )
+        self.assertIn("v5", HERMES_ROUTE_MANUAL_VERSION)
+        manual = build_hermes_route_manual()
+        manual_flat = " ".join(manual.split())
+        self.assertIn("registered_account_suspension", manual)
+        self.assertIn("registered_fraud_account", manual)
+        self.assertIn("NEVER the generic", manual)
+        self.assertIn("Company Information", manual_flat)
+        self.assertIn("ROUTING CLUE ONLY", manual_flat)
+        import re
+        json_blocks = re.findall(r'\{[^{}]{10,}?\}', manual)
+        billing_examples = [
+            json.loads(block) for block in json_blocks
+            if "account_billing" in block and "account_billing_subcategory" in block
+        ]
+        self.assertGreaterEqual(len(billing_examples), 3,
+            "manual must contain at least 3 account_billing examples")
+
+        suspension_pure = False
+        fraud_pure = False
+        mixed_found = False
+
+        for classification in billing_examples:
+            classification.setdefault("conversation_action", None)
+            classification.setdefault("conversation_subcategory", None)
+            classification.setdefault("intent_confidence", 0.9)
+            classification.setdefault("agora_confidence", 0.9)
+            classification.setdefault("action_confidence", None)
+            classification.setdefault("backend_operation", None)
+            classification.setdefault("backend_operation_subcategory", None)
+            classification.setdefault("additional_intents", [])
+            subcategory = classification.get("account_billing_subcategory")
+            tool_args = {
+                "turn_id": self.turn_id,
+                "direction": "automation",
+                "reason": f"manual example: {subcategory}",
+                "route": subcategory,
+                "classification": classification,
+            }
+            result, _captured, server_result, server_error = self._plugin_call(tool_args)
+
+            has_additional = bool(classification.get("additional_intents"))
+            if subcategory == "account_suspension" and not has_additional:
+                # Pure suspension → MUST route to automation with exact route.
+                self.assertIsNone(server_error,
+                    f"pure suspension example must not error: {server_error}")
+                turn = self.store.get_hermes_turn(self.turn_id)
+                self.assertEqual(turn.get("direction"), "automation",
+                    f"pure suspension must persist direction=automation, got {turn.get('direction')}")
+                self.assertEqual(turn.get("route"), "account_suspension",
+                    f"pure suspension must persist route=account_suspension, got {turn.get('route')}")
+                suspension_pure = True
+            elif subcategory == "fraud_account" and not has_additional:
+                # Pure fraud → MUST route to automation with exact route.
+                self.assertIsNone(server_error,
+                    f"pure fraud example must not error: {server_error}")
+                turn = self.store.get_hermes_turn(self.turn_id)
+                self.assertEqual(turn.get("direction"), "automation",
+                    f"pure fraud must persist direction=automation, got {turn.get('direction')}")
+                self.assertEqual(turn.get("route"), "fraud_account",
+                    f"pure fraud must persist route=fraud_account, got {turn.get('route')}")
+                fraud_pure = True
+            elif has_additional:
+                # Mixed → MUST be fail-closed (not automation).
+                turn = self.store.get_hermes_turn(self.turn_id)
+                self.assertNotEqual(turn.get("direction"), "automation",
+                    f"mixed intents must NOT persist automation, got {turn.get('direction')}")
+                mixed_found = True
+
+        self.assertTrue(suspension_pure,
+            "manual must contain a pure suspension example that routes to automation")
+        self.assertTrue(fraud_pure,
+            "manual must contain a pure fraud example that routes to automation")
+        self.assertTrue(mixed_found,
+            "manual must contain a mixed-intent example that fail-closes")
+
+    def test_manual_v5_wrong_reason_code_injection_fails(self):
+        """Negative control: if the manual's suspension example carried the
+        WRONG reason_code (generic account_billing_request), the server must
+        reject it — proving the cross-check test catches manual regressions."""
+        from backend.services.prompts.hermes_support_agent import (
+            build_hermes_route_manual,
+        )
+        manual = build_hermes_route_manual()
+        import re
+        json_blocks = re.findall(r'\{[^{}]{10,}?\}', manual)
+        billing_examples = [
+            json.loads(block) for block in json_blocks
+            if "account_billing" in block and "account_billing_subcategory" in block
+        ]
+        # Find the pure suspension example and inject the WRONG reason code.
+        suspension = next(
+            (c for c in billing_examples
+             if c.get("account_billing_subcategory") == "account_suspension"
+             and not c.get("additional_intents")),
+            None,
+        )
+        self.assertIsNotNone(suspension, "manual must have a pure suspension example")
+        tampered = dict(suspension)
+        tampered["reason_code"] = "account_billing_request"
+        tampered.setdefault("conversation_action", None)
+        tampered.setdefault("conversation_subcategory", None)
+        tampered.setdefault("intent_confidence", 0.9)
+        tampered.setdefault("agora_confidence", 0.9)
+        tampered.setdefault("action_confidence", None)
+        tampered.setdefault("backend_operation", None)
+        tampered.setdefault("backend_operation_subcategory", None)
+        tampered.setdefault("additional_intents", [])
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "tampered suspension with wrong reason code",
+            "route": "account_suspension",
+            "classification": tampered,
+        }
+        _result, _captured, _sr, _se = self._plugin_call(tool_args)
+        turn = self.store.get_hermes_turn(self.turn_id)
+        self.assertNotEqual(
+            turn.get("direction") if turn else None, "automation",
+            "wrong reason_code must NOT persist direction=automation"
+        )
+
+    def test_suspension_with_correct_reason_code_routes_automation(self):
+        """v5 contract: account_suspension + registered_account_suspension
+        produces automation/account_suspension through the full chain."""
+        classification = {
+            "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.95,
+            "agora_confidence": 0.93,
+            "action_confidence": None,
+            "agora_route": "account_billing",
+            "account_billing_subcategory": "account_suspension",
+            "backend_operation_subcategory": None,
+            "backend_operation": None,
+            "additional_intents": [],
+            "confidence": 0.93,
+            "reason_code": "registered_account_suspension",
+        }
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "Account suspension review",
+            "route": "account_suspension",
+            "classification": classification,
+        }
+        _assert_schema_valid(self.plugin, tool_args)
+        result, captured, server_result, server_error = self._plugin_call(tool_args)
+        self.assertTrue(result.get("ok"), result)
+        self.assertIsNone(server_error)
+        turn = self.store.get_hermes_turn(self.turn_id)
+        self.assertEqual(turn.get("direction"), "automation")
+        self.assertEqual(turn.get("route"), "account_suspension")
+
+    def test_fraud_with_correct_reason_code_routes_automation(self):
+        """v5 contract: fraud_account + registered_fraud_account produces
+        automation/fraud_account through the full chain."""
+        classification = {
+            "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.95,
+            "agora_confidence": 0.92,
+            "action_confidence": None,
+            "agora_route": "account_billing",
+            "account_billing_subcategory": "fraud_account",
+            "backend_operation_subcategory": None,
+            "backend_operation": None,
+            "additional_intents": [],
+            "confidence": 0.92,
+            "reason_code": "registered_fraud_account",
+        }
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "Fraud account review",
+            "route": "fraud_account",
+            "classification": classification,
+        }
+        _assert_schema_valid(self.plugin, tool_args)
+        result, captured, server_result, server_error = self._plugin_call(tool_args)
+        self.assertTrue(result.get("ok"), result)
+        self.assertIsNone(server_error)
+        turn = self.store.get_hermes_turn(self.turn_id)
+        self.assertEqual(turn.get("direction"), "automation")
+        self.assertEqual(turn.get("route"), "fraud_account")
+
+    def test_suspension_with_generic_reason_code_fails_closed(self):
+        """v5 contract: using the generic account_billing_request instead
+        of the leaf registered_account_suspension causes the server to
+        reject the classification (invalid_account_billing_output → human)."""
+        classification = {
+            "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.92,
+            "agora_confidence": 0.90,
+            "action_confidence": None,
+            "agora_route": "account_billing",
+            "account_billing_subcategory": "account_suspension",
+            "backend_operation_subcategory": None,
+            "backend_operation": None,
+            "additional_intents": [],
+            "confidence": 0.90,
+            "reason_code": "account_billing_request",
+        }
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "Generic billing reason on suspension",
+            "route": "account_suspension",
+            "classification": classification,
+        }
+        result, _captured, _sr, _se = self._plugin_call(tool_args)
+        # The server must NOT accept automation for a wrong reason code —
+        # either the plugin rejects or the server overrides to human.
+        turn = self.store.get_hermes_turn(self.turn_id)
+        if turn:
+            self.assertNotEqual(turn.get("direction"), "automation")
+
+    def test_suspension_with_additional_intents_routes_human(self):
+        """v5 contract: suspension + refund in additional_intents triggers
+        the human-review policy (mixed substantive intents)."""
+        classification = {
+            "intent_class": "agora",
+            "conversation_action": None,
+            "intent_confidence": 0.90,
+            "agora_confidence": 0.88,
+            "action_confidence": None,
+            "agora_route": "account_billing",
+            "account_billing_subcategory": "account_suspension",
+            "backend_operation_subcategory": None,
+            "backend_operation": None,
+            "additional_intents": ["refund_request"],
+            "confidence": 0.88,
+            "reason_code": "registered_account_suspension",
+        }
+        tool_args = {
+            "turn_id": self.turn_id,
+            "direction": "automation",
+            "reason": "Suspension plus refund request",
+            "route": "account_suspension",
+            "classification": classification,
+        }
+        result, _captured, _sr, _se = self._plugin_call(tool_args)
+        # Mixed intents → the server's fail-closed policy routes to human.
+        turn = self.store.get_hermes_turn(self.turn_id)
+        if turn:
+            self.assertNotEqual(turn.get("direction"), "automation")
+
 
 if __name__ == "__main__":
     unittest.main()

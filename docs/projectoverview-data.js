@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-07T10:54:58Z",
-  "source_base_commit": "ab0d1a0e0130056ec845de3a60913162800f4ba8",
-  "registry_digest": "c572cd2b336f54b6ed809f1bf3d4666151758f18cc3e5aa8ab764df572c6a5cb",
+  "generated_at": "2026-10-08T07:54:55Z",
+  "source_base_commit": "8c0b139782373097b12c4597ee0cedad8303a96c",
+  "registry_digest": "aaa33cd4a4f04ce8a81882cfcc98096a04f34747065382514adc292d68f6e6b1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4376,6 +4376,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Console fixes live retest (deploy 24122e6)",
           "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
+          "type": "test",
+          "label": "离线真实模型分类验证：v5 manual + 3 样本 → o3-mini → 叶子原因码全过",
+          "command": "/tmp/offline_classify.py（OpenAI o3-mini-2025-01-31，v5 build_hermes_route_manual() 作 system prompt）+ normalize_hermes_route_classification 归一化",
+          "result": "3/3 全绿。模型 o3-mini-2025-01-31 在 v5 manual 下输出：13903_suspension_original→account_suspension+registered_account_suspension（PASS）；13905_suspension_clear→account_suspension+registered_account_suspension（PASS）；fraud_four_group_template（含四组模板引用）→fraud_account+registered_fraud_account（PASS）。全部三例 agora_route=account_billing、additional_intents=[]。服务器归一化后：direction=automation、route/action 与子类一致（account_suspension/fraud_account）。manual 版本 hermes-route-manual-v5 含 ROUTING CLUE ONLY、NEVER the generic、registered_account_suspension/registered_fraud_account 关键标记。完整输出（模型参数/原始分类 JSON/token 使用量/归一化结果）保存 /tmp/offline_classification_results.json。此验证无业务写入、不创建工单、不发送邮件。"
+        },
+        {
+          "type": "document",
+          "label": "A4/A5 路由发现与修复：hermes-route-manual v5（等待独立验收）",
+          "command": "只读 DB 核验 13903/13905/13904 + 无业务写入分类器复现（4 种子类×原因码组合）+ 合同测试 8 passed",
+          "result": "**发现**：hermes 引擎下 A4（Fraud）/A5（Suspension）100% 路由到 human（invalid_account_billing_output）。根因不是措辞问题而是 **hermes-route-manual v4 未说明 reason_code 必须使用叶子分类对应的原因码**——LLM 使用通用 account_billing_request，服务器校验拒绝（正确的 fail-closed 行为）。独立复现确认：正确原因码→automation 路由通过，通用原因码→human 拒绝。13904 为网关 DNS 传输失败（Name or service not known），非模型误分类。**修复**：hermes-route-manual v4→v5（新增 account_billing 专节+叶子原因码映射+3 个 JSON 示例+legacy 分类语义沿用；服务器校验不变）。4 项新合同测试（插件→normalizer→持久状态全链）+ 133 项存量回归全过。**待发布**：修改 prompt 源码不会自动更新数据库版本——需在 Preprod prompt 源库 schedule 新版本→正式发布→回读确认包含新分类规则。"
         },
         {
           "type": "test",
@@ -16332,7 +16344,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "R18 修复已提交定向复验（不 finalize）：工具集合=插件注册原生名（六项，三源证据），MCP 形表述已撤回。复验通过后：内网只读确认 13883 旧事件流可恢复性→可恢复则 --i1-trace-file 注入完成实读验证；否则安排活动期可捕获的 I1 实测→Prepare draft→I4。A1 完成腿需 Mac 10:00 窗口两次真实人工审批；A2 stale UAP 另行授权。",
+      "next_action": "A4/A5 路由修复（hermes-route-manual v5）已实施，合同测试全过，等待独立验收。验收通过后：Preprod prompt schedule 新版本→正式发布→回读→新工单 A4/A5 实测（完整业务链：字段收集→邮件/分派→客户投递→终态）。A4/A5 场景代码已在 worktree auto-agent-a45 就绪。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16345,6 +16357,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "离线真实模型分类验证：v5 manual + 3 样本 → o3-mini → 叶子原因码全过",
+          "command": "/tmp/offline_classify.py（OpenAI o3-mini-2025-01-31，v5 build_hermes_route_manual() 作 system prompt）+ normalize_hermes_route_classification 归一化",
+          "result": "3/3 全绿。模型 o3-mini-2025-01-31 在 v5 manual 下输出：13903_suspension_original→account_suspension+registered_account_suspension（PASS）；13905_suspension_clear→account_suspension+registered_account_suspension（PASS）；fraud_four_group_template（含四组模板引用）→fraud_account+registered_fraud_account（PASS）。全部三例 agora_route=account_billing、additional_intents=[]。服务器归一化后：direction=automation、route/action 与子类一致（account_suspension/fraud_account）。manual 版本 hermes-route-manual-v5 含 ROUTING CLUE ONLY、NEVER the generic、registered_account_suspension/registered_fraud_account 关键标记。完整输出（模型参数/原始分类 JSON/token 使用量/归一化结果）保存 /tmp/offline_classification_results.json。此验证无业务写入、不创建工单、不发送邮件。"
+        },
+        {
+          "type": "document",
+          "label": "A4/A5 路由发现与修复：hermes-route-manual v5（等待独立验收）",
+          "command": "只读 DB 核验 13903/13905/13904 + 无业务写入分类器复现（4 种子类×原因码组合）+ 合同测试 8 passed",
+          "result": "**发现**：hermes 引擎下 A4（Fraud）/A5（Suspension）100% 路由到 human（invalid_account_billing_output）。根因不是措辞问题而是 **hermes-route-manual v4 未说明 reason_code 必须使用叶子分类对应的原因码**——LLM 使用通用 account_billing_request，服务器校验拒绝（正确的 fail-closed 行为）。独立复现确认：正确原因码→automation 路由通过，通用原因码→human 拒绝。13904 为网关 DNS 传输失败（Name or service not known），非模型误分类。**修复**：hermes-route-manual v4→v5（新增 account_billing 专节+叶子原因码映射+3 个 JSON 示例+legacy 分类语义沿用；服务器校验不变）。4 项新合同测试（插件→normalizer→持久状态全链）+ 133 项存量回归全过。**待发布**：修改 prompt 源码不会自动更新数据库版本——需在 Preprod prompt 源库 schedule 新版本→正式发布→回读确认包含新分类规则。"
+        },
         {
           "type": "test",
           "label": "I4 投递缺陷修复：批准草稿投递前经 gate 重取归属（worktree auto-agent-ownfix，待独立验收）",

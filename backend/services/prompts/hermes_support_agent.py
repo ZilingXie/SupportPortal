@@ -29,7 +29,7 @@ Invariants that hold in every phase:
   to the customer's language before sending; you never translate."""
 
 
-HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v4"
+HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v5"
 
 
 def build_hermes_route_manual() -> str:
@@ -71,7 +71,8 @@ Fill the fields by `intent_class`:
   the message is a generic conversational reply.
 - `agora`: set `agora_route` to one of the enum values above (never null).
   When `agora_route=backend_operation`, provide `backend_operation_subcategory`;
-  when `agora_route=account_billing`, provide `account_billing_subcategory`.
+  when `agora_route=account_billing`, provide `account_billing_subcategory`
+  AND the leaf-specific `reason_code` (see the account_billing section below).
   The `backend_operation.action` verb must be the operation the customer is
   asking the team to perform (for example enable). A status question or
   nudge is NOT a new operation: classify those as conversation follow-up
@@ -79,7 +80,58 @@ Fill the fields by `intent_class`:
 - `uncertain`: set `agora_route` to null and carry no automation-triggering
   backend_operation combination; leave `conversation_action` null.
 
-Examples (one conversation, one uncertain):
+## When agora_route=account_billing (CRITICAL: read before classifying)
+
+Fill `account_billing_subcategory` AND use the matching leaf `reason_code`:
+
+- **account_suspension** (`reason_code`: `registered_account_suspension`):
+  the customer clearly reports that an Agora account is suspended, disabled,
+  stopped, or inaccessible because of balance, payment, package, quota, plan,
+  usage, or another non-fraud account state. The customer may ask for
+  restoration, unblocking, or a review of the suspension.
+- **fraud_account** (`reason_code`: `registered_fraud_account`):
+  an account is restricted because of explicit fraud, suspicious activity,
+  risk, or security review evidence, including a request to provide the
+  fraud-review information referenced in Agora's standard account
+  restriction notification (which groups the review under Company
+  Information, Contact Information, Use Case, and Payment Information
+  headings). The customer may mention the account was "flagged", "blocked
+  for suspicious activity", or under "fraud review". These four headings
+  are a ROUTING CLUE ONLY — they identify the scenario from the customer's
+  notification, NOT a data-collection checklist; the actual required fields
+  are defined separately by the account_verification handler.
+- **detailed_invoice** (`reason_code`: `detailed_invoice_requested`):
+  an explicit request for a detailed, itemized, full-detail,
+  transaction-level, or line-item invoice/receipt, including a top-up
+  receipt requested for an internal audit.
+- **other** (`reason_code`: one of `missing_invoice`,
+  `invoice_charge_dispute`, `invoice_payment_reconciliation`,
+  `account_billing_other`): refunds, balances, payment methods, pricing,
+  account administration, billing disputes, missing invoices, usage or
+  charge investigations, payment/invoice reconciliation, ordinary invoice
+  copies, and all other Account & Billing requests.
+
+**The `reason_code` MUST be the leaf-specific code for the chosen
+subcategory — NEVER the generic `account_billing_request`.** Using
+`account_billing_request` for account_suspension or fraud_account causes
+the server to reject the classification and route the case to human review
+(`invalid_account_billing_output`), defeating the automation.
+
+Rules for account_billing:
+- Fraud, risk, suspicious activity, security review, or the standard
+  four-group fraud-review template must NOT be classified as
+  account_suspension — choose fraud_account for those.
+- A technical failure remains outside this branch when suspension is only
+  incidental context.
+- When a non-fraud suspension and another billing request (e.g. refund)
+  are both substantive, choose account_suspension for the subcategory and
+  preserve the other intent in `additional_intents` (this triggers
+  human review per policy).
+- Choose detailed_invoice only when the customer explicitly asks for
+  detailed, itemized, transaction-level, full-detail, or line-item billing
+  information.
+
+Examples (conversation, uncertain, suspension, fraud, mixed, enablement):
 
 {"intent_class": "conversation", "conversation_action": "resolve",
  "agora_route": null, "intent_confidence": 0.97, "action_confidence": 0.95,
@@ -88,6 +140,29 @@ Examples (one conversation, one uncertain):
 {"intent_class": "uncertain", "conversation_action": null,
  "agora_route": null, "intent_confidence": 0.5, "confidence": 0.5,
  "reason_code": "out_of_scope_or_unknown"}
+
+{"intent_class": "agora", "agora_route": "account_billing",
+ "account_billing_subcategory": "account_suspension",
+ "intent_confidence": 0.95, "agora_confidence": 0.93,
+ "confidence": 0.93, "reason_code": "registered_account_suspension",
+ "additional_intents": []}
+
+{"intent_class": "agora", "agora_route": "account_billing",
+ "account_billing_subcategory": "fraud_account",
+ "intent_confidence": 0.95, "agora_confidence": 0.92,
+ "confidence": 0.92, "reason_code": "registered_fraud_account",
+ "additional_intents": []}
+
+{"intent_class": "agora", "agora_route": "account_billing",
+ "account_billing_subcategory": "account_suspension",
+ "intent_confidence": 0.9, "agora_confidence": 0.88,
+ "confidence": 0.88, "reason_code": "registered_account_suspension",
+ "additional_intents": ["refund_request"]}
+
+{"backend_operation_subcategory": "enablement",
+ "backend_operation": {"action": "enable", "target": "media_relay",
+                       "evidence": "Please enable Media Relay."},
+ "reason_code": "registered_enablement"}
 
 `backend_operation` is REQUIRED to be either null or an object with exactly
 these keys: `action` (the operation verb, e.g. enable), `target` (what it

@@ -5044,3 +5044,20 @@ For each new entry, record:
 - 版本直接跳 v4 而非 v3：线上已激活 release（pr-89c354c051b7/pr-0a07d038eef8）的 v3 是 DB 侧 draft 内容（WeKnora 只读三件套），从未进过仓库——同 (key, version) 异内容会撞内容哈希。
 - hermes-case-summary-manual v2 的字段类型契约精化保留不动（治理手册随总开关停用，不回退已验证修复）。
 - 部署注意：本变更经正式 release pipeline 的 prompt prepare/activate 生效（SP 侧）；Hermes 侧 profile 工具集恢复在同一发布窗口对齐。
+
+### 2026-10-07 | hermes-route-manual v4 → v5 | p2-187 A4/A5 路由修复
+
+**触发**：A4（Fraud）/A5（Suspension）实测在 hermes 引擎下 100% 路由到 human（`invalid_account_billing_output`），根因是 v4 manual 未说明 `reason_code` 必须使用叶子分类对应的原因码（如 `registered_account_suspension`）而非通用的 `account_billing_request`，导致服务器校验拒绝。
+
+**变更**：`hermes-route-manual-v4` → `hermes-route-manual-v5`
+- 新增 "When agora_route=account_billing" 专节，明确四个子类各自的要求 `reason_code`
+- 加粗标注 "reason_code MUST be the leaf-specific code — NEVER the generic account_billing_request"
+- 新增三个 account_billing JSON 示例：suspension（正确原因码）、fraud（正确原因码）、mixed（suspension + additional_intents）
+- 沿用 legacy `account_billing_system_prompt` 的分类语义描述（子类定义、Fraud 不归入 Suspension、混合诉求保留 additional_intents 等）
+- 服务器 fail-closed 校验保留不变
+
+**合同测试**：新增 4 项集成测试（`test_hermes_route_tool_contract_integration.py`）验证插件入口→normalizer→持久状态全链：
+- `account_suspension` + `registered_account_suspension` → automation/account_suspension
+- `fraud_account` + `registered_fraud_account` → automation/fraud_account
+- `account_suspension` + `account_billing_request`（错误原因码）→ 非 automation（fail-closed）
+- `account_suspension` + additional_intents（混合诉求）→ 非 automation（fail-closed）
