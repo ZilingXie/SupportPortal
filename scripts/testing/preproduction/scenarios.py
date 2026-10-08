@@ -36,6 +36,9 @@ from backend.services.automation_test_scenarios import (
     _enablement_enabled_content_check,
     _progress_answer_content_check,
     _submission_confirmation_content_check,
+    _fraud_handoff_content_check,
+    _suspension_closing_content_check,
+    FRAUD_PARTIAL_INFO_BODY,
 )
 
 # Quick and Full share the same enableable App ID. Fixture history:
@@ -2608,6 +2611,361 @@ def run_pp_i1(
 
 
 
+# -- PP-A4 / PP-A5 (plan scenarios A4/A5): Fraud Account + Account Suspension --
+
+
+_OPEN_TICKET_STATUSES = frozenset({"open", "new", "pending", "hold"})
+
+
+def _assert_ticket_still_open(engine: Any, ctx: ScenarioContext, scenario: str) -> None:
+    """Positively verify the ticket is in a KNOWN open status. None/empty
+    (status not synced or case row missing) is NOT a pass — the scenario
+    fails closed instead of treating the unknown as 'still open'."""
+    row = engine.case_row(ctx)
+    raw = str(row.get("zendesk_ticket_status") or "").strip().lower()
+    engine.record(
+        ctx, "ticket in a known open status (not solved/closed)",
+        raw in _OPEN_TICKET_STATUSES,
+        f"zendesk_ticket_status={raw!r} expected one of {sorted(_OPEN_TICKET_STATUSES)}",
+    )
+    if raw not in _OPEN_TICKET_STATUSES:
+        raise AssertionError(
+            f"{scenario}: zendesk_ticket_status={raw!r} is not a known open "
+            f"status (expected one of {sorted(_OPEN_TICKET_STATUSES)}); "
+            "unknown/missing status cannot be accepted as 'still open'"
+        )
+
+
+# -- Shared helpers for A4/A5 --
+
+_PAYMENT_MARKERS = (
+    "payment information", "payment details",
+    "transaction id", "payment method",
+    "card details", "billing address",
+)
+_PAYMENT_ASK_VERBS = (
+    "provide", "submit", "send", "share", "missing",
+    "require", "need", "supply", "give", "include", "proceed without",
+)
+_PAYMENT_NEGATIONS = (
+    "do not need", "don't need", "no need", "not required",
+    "don't require", "not necessary", "not needed", "without having",
+)
+
+
+def _split_payment_clauses(text: str) -> list[str]:
+    import re
+    segments = re.split(r'[.;]|\bbut\b|\bhowever\b|\b--\b', text)
+    return [s.strip() for s in segments if s.strip()]
+
+
+def no_payment_info_ask_check(content: str) -> str | None:
+    """Clause-level check: a clause containing BOTH a payment marker AND an
+    ask verb AND NOT a same-clause negation is rejected. Negations in a
+    different clause do not mask an ask."""
+    lowered = str(content or "").casefold()
+    for clause in _split_payment_clauses(lowered):
+        if not any(m in clause for m in _PAYMENT_MARKERS):
+            continue
+        if any(n in clause for n in _PAYMENT_NEGATIONS):
+            continue
+        if any(v in clause for v in _PAYMENT_ASK_VERBS):
+            return f"asks for payment information in clause: {clause[:80]}"
+    return None
+
+
+def _wait_intent_delivery_bound(
+    engine: Any, ctx: ScenarioContext, step: str,
+    *, expected_intent: str,
+    content_check: Callable[[str], str | None] | None = None,
+) -> dict:
+    """Chain-linked delivery: published job → message (meta link) → delivery
+    for THAT message → content check on the delivered body. A different
+    comment's delivery cannot satisfy this wait."""
+    from datetime import timedelta
+
+    def probe():
+        since = (ctx.turn_started_at - timedelta(minutes=5)).isoformat()
+        jobs = engine.db_query(
+            "SELECT job_id FROM support_account_reply_jobs "
+            "WHERE ticket_id = %s AND payload->>'reply_intent' = %s "
+            "AND status = 'published' AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (ctx.client_ticket_id, expected_intent, since),
+        )
+        if not jobs:
+            return None
+        job_id = str(jobs[0].get("job_id") or "")
+        if not job_id:
+            return None
+        messages = engine.db_query(
+            "SELECT m.id, m.content FROM support_ticket_messages m "
+            "WHERE m.ticket_id = %s AND m.meta->>'account_reply_job_id' = %s "
+            "ORDER BY m.id DESC LIMIT 1",
+            (ctx.client_ticket_id, job_id),
+        )
+        if not messages:
+            return None
+        message_id = str(messages[0].get("id") or "")
+        content = str(messages[0].get("content") or "")
+        deliveries = engine.db_query(
+            "SELECT status, zendesk_comment_id "
+            "FROM support_account_zendesk_comment_deliveries "
+            "WHERE message_id = %s ORDER BY created_at DESC LIMIT 1",
+            (message_id,),
+        )
+        if not deliveries or str(deliveries[0].get("status") or "") != "delivered":
+            return None
+        return {
+            "job_id": job_id, "message_id": message_id, "content": content,
+            "zendesk_comment_id": deliveries[0].get("zendesk_comment_id"),
+        }
+
+    row = engine.wait_for(
+        f"published {expected_intent} job → message → delivery chain",
+        probe, engine.turn_timeout_min * 60,
+    )
+    ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
+    detail = (
+        f"job={row.get('job_id')} message={row.get('message_id')} "
+        f"comment={row.get('zendesk_comment_id')}"
+    )
+    if content_check is not None:
+        failure = content_check(str(row.get("content") or ""))
+        if failure:
+            engine.record(ctx, step, False, f"{detail}; content check failed: {failure}")
+            raise AssertionError(detail + f"; content check failed: {failure}")
+        detail += "; content check passed"
+    engine.record(ctx, step, True, detail)
+    return row
+
+
+def run_pp_a4_fraud(engine: Any, **_ignored: Any) -> dict:
+    """PP-A4: Fraud Account — missing info ask → partial info → internal email
+    + reviewer handoff + customer confirmation; ticket stays open."""
+    if engine.customer_turn_transport != "zendesk_api":
+        raise AutomationTestScenarioError(
+            "PP-A4 requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api "
+            "(the email transport is not usable for preproduction customer turns)"
+        )
+    ctx = ScenarioContext("PP-A4")
+    engine.start_ticket(
+        ctx,
+        "Account fraud review request - account blocked for suspicious activity",
+        "Hello Agora team,\n\nOur Agora account was flagged for suspicious "
+        "activity and has been blocked. We believe this is a fraud review "
+        "case: the account needs to be reviewed for suspicious/fraudulent "
+        "activity and unblocked. Please initiate the fraud account review "
+        "process.\n\nThanks.",
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "fraud_account", "routed to fraud_account")
+
+    # Turn 1: missing fields → ask for info (exactly once)
+    def _t1_ask_check(content: str) -> str | None:
+        if len(str(content or "").strip()) < 20:
+            return "ask content too short"
+        return no_payment_info_ask_check(content)
+
+    _wait_intent_delivery_bound(
+        engine, ctx, "missing-information ask delivered with content (turn 1 chain)",
+        expected_intent="request_missing_information",
+        content_check=_t1_ask_check,
+    )
+    count = engine.reply_intent_count(ctx, "request_missing_information")
+    engine.record(
+        ctx, "missing-information ask job published exactly once", count == 1,
+        f"request_missing_information_job_count={count}",
+    )
+    engine.wait_case_field(
+        ctx, "internal_email_send_status", "not_ready",
+        "no internal email while fields missing (turn 1)",
+    )
+
+    # Turn 2: customer supplies partial info → proceed with missing fields
+    engine.next_customer_turn(ctx, FRAUD_PARTIAL_INFO_BODY)
+    engine.wait_case_field(ctx, "internal_email_send_status", "sent", "internal email sent (turn 2)")
+
+    def _fraud_confirmation_check(content: str) -> str | None:
+        failure = _fraud_handoff_content_check(content)
+        if failure:
+            return failure
+        return no_payment_info_ask_check(content)
+
+    engine.wait_customer_reply_delivered(
+        ctx, "fraud confirmation delivered to customer (turn 2, chain-bound)",
+        content_check=_fraud_confirmation_check,
+    )
+
+    # Reviewer handoff
+    engine.wait_event(
+        ctx, "zendesk_fraud_review_handoff", "reviewer handoff",
+        expected_states={"assigned", "already_assigned"},
+    )
+    engine.wait_case_field(
+        ctx, "automation_status", "human_review_required",
+        "case transferred to human review",
+    )
+    _assert_ticket_still_open(engine, ctx, "PP-A4")
+    return {
+        "scenario": "PP-A4",
+        "complete": True,
+        "steps": [s.as_dict() for s in engine.steps],
+    }
+
+
+
+
+FRAUD_COMPLETE_SEVEN_ITEM_BODY = (
+    "Thanks. Here is the complete review information.\n\n"
+    "Account type: Enterprise\n"
+    "Name: Zac Tester\n"
+    "Office address: 123 Test Street, Shanghai, China\n"
+    "Contact number: +86 13800138000\n"
+    "Contact email: zac.tester@example.com\n"
+    "Use case: We build a live streaming platform using Agora RTC SDK "
+    "for real-time video and audio communication.\n"
+    "Console configuration: Project ID 123456, App ID fcd0dab13017495bbe25a63bfdb236fc, "
+    "region cn-east-1, enabled features: RTC, RTM."
+)
+
+
+def run_pp_a4_fraud_complete(engine: Any, **_ignored: Any) -> dict:
+    """PP-A4b: Fraud Account with ALL seven required fields in the FIRST
+    email and NO payment information — verifies the flow does NOT ask for
+    payment info, does NOT generate request_missing_information, and
+    proceeds directly to the internal email + handoff path."""
+    if engine.customer_turn_transport != "zendesk_api":
+        raise AutomationTestScenarioError("PP-A4b requires zendesk_api customer turns")
+    ctx = ScenarioContext("PP-A4b")
+    engine.start_ticket(
+        ctx,
+        "Account fraud review request - account blocked for suspicious activity",
+        "Hello Agora team,\n\nOur Agora account was flagged for suspicious "
+        "activity and has been blocked. We believe this is a fraud review "
+        "case.\n\n" + FRAUD_COMPLETE_SEVEN_ITEM_BODY,
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "fraud_account", "routed to fraud_account")
+
+    # All seven items are in the FIRST email: the flow should proceed
+    # directly to internal email without any request_missing_information.
+    engine.wait_case_field(ctx, "internal_email_send_status", "sent",
+                           "internal email sent (all seven fields in first email)")
+    count = engine.reply_intent_count(ctx, "request_missing_information")
+    engine.record(
+        ctx, "no request_missing_information when all seven fields in first email",
+        count == 0,
+        f"request_missing_information_job_count={count}",
+    )
+
+    # Verify the seven required fields were actually extracted and persisted.
+    _REQUIRED_FIELDS = (
+        "account_type", "name", "office_address", "contact_number",
+        "contact_email", "use_case_description", "console_configuration",
+    )
+
+    def _probe_extracted_fields():
+        rows = engine.db_query(
+            "SELECT collected_fields, missing_fields "
+            "FROM support_account_cases WHERE account_case_id = %s",
+            (ctx.account_case_id,),
+        )
+        if not rows:
+            return None
+        collected = rows[0].get("collected_fields")
+        missing = rows[0].get("missing_fields")
+        if not isinstance(collected, dict):
+            return None
+        # All seven must have non-empty values AND missing_fields must be empty.
+        empty = [f for f in _REQUIRED_FIELDS if not str(collected.get(f) or "").strip()]
+        if empty:
+            return None
+        if isinstance(missing, list) and missing:
+            return None
+        return collected
+
+    extracted = engine.wait_for(
+        "all seven verification fields collected (collected_fields, none missing)",
+        _probe_extracted_fields, engine.turn_timeout_min * 60,
+    )
+    engine.record(
+        ctx, "all seven required fields extracted (collected_fields, none missing)",
+        True, f"collected_keys={sorted(extracted.keys())}",
+    )
+
+    def _a4b_check(content: str) -> str | None:
+        failure = _fraud_handoff_content_check(content)
+        if failure:
+            return failure
+        return no_payment_info_ask_check(content)
+
+    # A4b is email-created (no zendesk_api comment → no comment ID for the
+    # strict waiter); use the chain-bound delivery helper instead.
+    _wait_intent_delivery_bound(
+        engine, ctx, "complete-info fraud confirmation delivered (chain-bound)",
+        expected_intent="fraud_handoff_confirmation",
+        content_check=_a4b_check,
+    )
+    engine.wait_event(
+        ctx, "zendesk_fraud_review_handoff", "reviewer handoff (complete info)",
+        expected_states={"assigned", "already_assigned"},
+    )
+    engine.wait_case_field(
+        ctx, "automation_status", "human_review_required",
+        "case transferred to human review",
+    )
+    _assert_ticket_still_open(engine, ctx, "PP-A4b")
+    return {
+        "scenario": "PP-A4b",
+        "complete": True,
+        "steps": [s.as_dict() for s in engine.steps],
+    }
+
+def run_pp_a5_suspension(engine: Any, **_ignored: Any) -> dict:
+    """PP-A5: Account Suspension — direct handoff (internal email + closing
+    reply + reviewer assignment); ticket stays open."""
+    ctx = ScenarioContext("PP-A5")
+    engine.start_ticket(
+        ctx,
+        "Account suspension review - account suspended and needs restoration",
+        "Hello Agora team,\n\nOur account has been suspended and we need "
+        "it restored. The account suspension is blocking our production "
+        "service. We have already topped up the balance but the suspension "
+        "has not been lifted. Please process the account suspension review "
+        "to restore the account.\n\nThanks.",
+    )
+    engine.find_case(ctx)
+    engine.wait_case_field(ctx, "execution_action", "account_suspension", "routed to account_suspension")
+
+    # Direct handoff: internal email sent immediately
+    engine.wait_case_field(ctx, "internal_email_send_status", "sent", "internal email sent (direct handoff)")
+
+    # Closing reply: chain-linked delivery with content check
+    _wait_intent_delivery_bound(
+        engine, ctx, "suspension closing reply delivered with content (chain)",
+        expected_intent="account_suspension_handoff_and_close",
+        content_check=_suspension_closing_content_check,
+    )
+
+    # Reviewer handoff
+    engine.wait_event(
+        ctx, "zendesk_fraud_review_handoff", "reviewer handoff",
+        expected_states={"assigned", "already_assigned"},
+    )
+    engine.wait_suspension_state(ctx, "closed", "suspension workflow closed")
+    engine.wait_case_field(
+        ctx, "automation_status", "human_review_required",
+        "case transferred to human review",
+    )
+    _assert_ticket_still_open(engine, ctx, "PP-A5")
+    return {
+        "scenario": "PP-A5",
+        "complete": True,
+        "steps": [s.as_dict() for s in engine.steps],
+    }
+
+
 PP_SCENARIOS: dict[str, dict[str, Any]] = {
     "PP-I1": {
         "label": "Evidence-sufficient native investigation (preproduction)",
@@ -2631,6 +2989,37 @@ PP_SCENARIOS: dict[str, dict[str, Any]] = {
         ),
         "run": run_pp_a1_full,
         "requires": {"relay": True, "pilot": False, "zendesk_api": True, "intake": False},
+    },
+    "PP-A4": {
+        "label": "Fraud Account (preproduction)",
+        "description": (
+            "missing info ask → partial info → internal email sent → "
+            "fraud_handoff_confirmation with 24h promise → reviewer handoff → "
+            "human_review_required, ticket NOT solved"
+        ),
+        "run": run_pp_a4_fraud,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": True, "intake": False},
+    },
+    "PP-A4b": {
+        "label": "Fraud Account with complete seven items, no payment info (preproduction)",
+        "description": (
+            "all seven required fields provided, NO payment information: "
+            "no request_missing_information, no payment-info ask, "
+            "internal email sent, fraud_handoff_confirmation delivered, "
+            "reviewer handoff, human_review_required, ticket NOT solved"
+        ),
+        "run": run_pp_a4_fraud_complete,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": True, "intake": False},
+    },
+    "PP-A5": {
+        "label": "Account Suspension (preproduction)",
+        "description": (
+            "direct handoff: internal email sent → closing reply with handoff "
+            "and 24h, no close claim → reviewer handoff → workflow closed → "
+            "human_review_required, ticket NOT solved"
+        ),
+        "run": run_pp_a5_suspension,
+        "requires": {"relay": False, "pilot": False, "zendesk_api": False, "intake": False},
     },
     "PP-EN-QUICK": {
         "label": "Media Relay quick enablement (preproduction)",
