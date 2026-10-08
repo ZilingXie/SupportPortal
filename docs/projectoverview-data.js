@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T08:01:27Z",
-  "source_base_commit": "ed798b11b76790d2d48643c59258dc1db0b6549e",
-  "registry_digest": "5881fc240119c569f760f419574dc11582343a1375ebe7795a8204dc135ae4df",
+  "generated_at": "2026-10-08T08:11:09Z",
+  "source_base_commit": "c35cc1dee4d9fbe630060773551e6f04fbb39630",
+  "registry_digest": "a1d4ec281f9d228837d9c94ab04334d2f9db42159da47b3a4d8419eca348d7d6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5392,6 +5392,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
+          "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh（真实模式）与 --self-check（五子进程 a/b/bbug/c/bug）",
+          "result": "真实模式 7 PASS；--self-check 父断言 14 PASS=A 5 + B-fault 3（合同拒绝=exit 42 且 B 自有日志仅一次 run/数据目录经三次清理均保留/KEEPING 报告）+B-bug 1（注入『unknown 时报成功丢归属』缺陷→子进程断言 FAIL+exit 1，父进程检出，证明不会被误判为合同通过）+C-fault 3 + 载具自校验 2。修复：cleanup 单次查询同果决定归属与删目录；B 子进程 42/1 区分；保留持续 unknown/删除失败/重复 cleanup 反例。"
+        },
         {
           "type": "test",
           "label": "R7 查询三态判定与日志隔离（固定提交实测）",
@@ -16613,7 +16619,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R7（本轮）完成：container exists 三态判定（present/absent/unknown）统一用于 stop 确认、cleanup 与真实模式 B→C 前置（unknown 一律保留归属+保留数据目录+KEEPING 报告，修复『首次 KEEPING 却丢归属、二次 cleanup 删目录』反例）；self-check 子进程日志按轮隔离、逃逸日志全程累计；新增 bug 子进程自校验两类检测器（多一次 run/真实 podman 逃逸均会被判失败）。固定提交实测：真实模式 7 PASS、--self-check 父断言 13 PASS（子进程内部另 6 PASS 记录于 child-*.out）。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
+      "next_action": "R8（本轮）完成：F1 cleanup 改为每容器单次查询、同果决定归属与目录删除（修复二次重查询两套判定反例）；F3 child B 合同拒绝改用专用退出码 42、断言失败仍 exit 1，父断言要求 42，并新增注入缺陷子进程 B-BUG 证明该缺陷会被检出而非误判通过。固定提交实测：真实模式 7 PASS、--self-check 父断言 14 PASS。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16629,6 +16635,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器路径验证（登录/深页刷新/退出/失效重登录/引导跳过）已全部完成，不再阻塞。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
+          "command": "deployment/weknora/tests/run_pgdata_guard_runtime_test.sh（真实模式）与 --self-check（五子进程 a/b/bbug/c/bug）",
+          "result": "真实模式 7 PASS；--self-check 父断言 14 PASS=A 5 + B-fault 3（合同拒绝=exit 42 且 B 自有日志仅一次 run/数据目录经三次清理均保留/KEEPING 报告）+B-bug 1（注入『unknown 时报成功丢归属』缺陷→子进程断言 FAIL+exit 1，父进程检出，证明不会被误判为合同通过）+C-fault 3 + 载具自校验 2。修复：cleanup 单次查询同果决定归属与删目录；B 子进程 42/1 区分；保留持续 unknown/删除失败/重复 cleanup 反例。"
+        },
         {
           "type": "test",
           "label": "R7 查询三态判定与日志隔离（固定提交实测）",
