@@ -2321,6 +2321,10 @@ class WorkflowScriptTests(unittest.TestCase):
     def test_finalize_task_to_main_commits_merges_and_cleans_up(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
         task_worktree = self._add_task_worktree(repo)
+        managed_worktree = repo / ".worktrees" / "example-task"
+        managed_worktree.parent.mkdir()
+        _git(["worktree", "move", str(task_worktree), str(managed_worktree)], cwd=repo)
+        task_worktree = managed_worktree
         self._write(task_worktree, "README.md", "task change\n")
         fake_bin, state_dir = self._install_fake_gh(bare)
         (repo / ".codegraph").mkdir()
@@ -2339,6 +2343,12 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("Merged PR", result.stdout)
+        self.assertTrue(task_worktree.exists())
+        cleanup = self._run_workflow(
+            "cleanup_task_worktree.sh", repo, "codex/example-task",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+        self.assertEqual(cleanup.returncode, 0, msg=cleanup.stderr)
         self.assertFalse(task_worktree.exists())
         self.assertEqual(_git(["branch", "--list", "codex/example-task"], cwd=repo).stdout.strip(), "")
         self.assertEqual((repo / "README.md").read_text(encoding="utf-8"), "task change\n")
@@ -2378,7 +2388,7 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn("Skipping CodeGraph sync: no existing index", result.stdout)
         self.assertFalse(sync_call_path.exists())
         self.assertFalse((repo / ".codegraph").exists())
-        self.assertFalse(task_worktree.exists())
+        self.assertTrue(task_worktree.exists())
 
     def test_finalize_task_to_main_retains_workspace_when_codegraph_sync_fails(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
@@ -2456,10 +2466,85 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertTrue((repo / "main.txt").exists())
         self.assertEqual((repo / "README.md").read_text(encoding="utf-8"), "task change\n")
 
+    def test_finalize_reviewed_head_blocks_refresh_before_publish(self) -> None:
+        bare, seed, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "reviewed change\n")
+        self._commit_all(task_worktree, "Reviewed change")
+        reviewed = _git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip()
+        self._advance_origin_main(seed)
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh", task_worktree, "codex/example-task",
+            "--reviewed-head", reviewed, "--verify", "touch verification-ran",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Reviewed HEAD changed", result.stderr)
+        self.assertFalse((task_worktree / "verification-ran").exists())
+        self.assertFalse(any(c[:2] in (["pr", "create"], ["pr", "merge"])
+                             for c in self._read_fake_gh_calls(state_dir)))
+        self.assertEqual(_git(["ls-remote", "origin", "refs/heads/codex/example-task"], cwd=repo).stdout, "")
+        self.assertTrue(task_worktree.exists())
+
+    def test_finalize_reviewed_head_blocks_verification_commit(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "reviewed change\n")
+        self._commit_all(task_worktree, "Reviewed change")
+        reviewed = _git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip()
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh", task_worktree, "codex/example-task",
+            "--reviewed-head", reviewed,
+            "--verify", "git commit --allow-empty -m verification-change",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Reviewed HEAD changed", result.stderr)
+        self.assertNotEqual(_git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip(), reviewed)
+        self.assertFalse(any(c[:2] == ["pr", "merge"] for c in self._read_fake_gh_calls(state_dir)))
+        self.assertEqual(_git(["ls-remote", "origin", "refs/heads/codex/example-task"], cwd=repo).stdout, "")
+
+    def test_finalize_rejects_abbreviated_reviewed_head(self) -> None:
+        repo = self._init_repo()
+        result = self._run_workflow(
+            "finalize_task_to_main.sh", repo, "codex/example-task",
+            "--reviewed-head", "123abcd", "--verify", "true",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("full lowercase commit SHA", result.stderr)
+
+    def test_finalize_reviewed_head_blocks_verification_tracked_edit(self) -> None:
+        bare, _, repo = self._init_remote_repo_on_main()
+        task_worktree = self._add_task_worktree(repo)
+        self._write(task_worktree, "README.md", "reviewed change\n")
+        self._commit_all(task_worktree, "Reviewed change")
+        reviewed = _git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip()
+        fake_bin, state_dir = self._install_fake_gh(bare)
+
+        result = self._run_workflow(
+            "finalize_task_to_main.sh", task_worktree, "codex/example-task",
+            "--reviewed-head", reviewed, "--verify", "echo changed >> README.md",
+            extra_env=self._fake_gh_env(fake_bin, state_dir, bare),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Reviewed workspace changed", result.stderr)
+        self.assertEqual(_git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip(), reviewed)
+        self.assertEqual(_git(["ls-remote", "origin", "refs/heads/codex/example-task"], cwd=repo).stdout, "")
+        self.assertFalse(any(c[:2] == ["pr", "merge"] for c in self._read_fake_gh_calls(state_dir)))
+
     def test_finalize_task_to_main_reuses_existing_open_pr(self) -> None:
         bare, _, repo = self._init_remote_repo_on_main()
         task_worktree = self._add_task_worktree(repo)
         self._write(task_worktree, "README.md", "task change\n")
+        self._commit_all(task_worktree, "Reviewed task change")
+        reviewed = _git(["rev-parse", "HEAD"], cwd=task_worktree).stdout.strip()
         fake_bin, state_dir = self._install_fake_gh(bare)
         state = self._read_fake_gh_state(state_dir)
         state["next_pr"] = 8
@@ -2481,6 +2566,8 @@ class WorkflowScriptTests(unittest.TestCase):
             "finalize_task_to_main.sh",
             task_worktree,
             "codex/example-task",
+            "--reviewed-head",
+            reviewed,
             "--verify",
             "git diff --check",
             extra_env=self._fake_gh_env(fake_bin, state_dir, bare),

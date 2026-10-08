@@ -8,18 +8,24 @@ source "$SCRIPT_DIR/_common.sh"
 
 expected_branch="${1:-}"
 shift || true
-[[ -n "$expected_branch" ]] || die "Usage: scripts/workflow/finalize_task_to_main.sh <task-branch> --verify \"<command>\" [--pr-title \"<title>\"] [--pr-body-file <path>] [--commit-message \"<message>\"]"
+[[ -n "$expected_branch" ]] || die "Usage: scripts/workflow/finalize_task_to_main.sh <task-branch> --verify \"<command>\" [--reviewed-head <full-sha>] [--pr-title \"<title>\"] [--pr-body-file <path>] [--commit-message \"<message>\"]"
 
 verify_command=""
 pr_title=""
 pr_body_file=""
 commit_message=""
+reviewed_head=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --verify)
       shift
       verify_command="${1:-}"
+      ;;
+    --reviewed-head)
+      shift
+      reviewed_head="${1:-}"
+      [[ "$reviewed_head" =~ ^[0-9a-f]{40}$ ]] || die "--reviewed-head requires a full lowercase commit SHA."
       ;;
     --pr-title)
       shift
@@ -104,6 +110,17 @@ if ! git merge-base --is-ancestor origin/main HEAD; then
   fi
 fi
 
+check_reviewed_head() {
+  if [[ -n "$reviewed_head" && "$(git rev-parse HEAD)" != "$reviewed_head" ]]; then
+    die "Reviewed HEAD changed. Inspect the integration diff and reassess acceptance before finalizing; do not automatically replace --reviewed-head."
+  fi
+  if [[ -n "$reviewed_head" ]] && { ! git diff --quiet || ! git diff --cached --quiet; }; then
+    die "Reviewed workspace changed. Commit and reassess tracked verification edits before finalizing."
+  fi
+}
+
+check_reviewed_head
+
 if ! bash -lc "$verify_command"; then
   die "Verification command failed on $expected_branch: $verify_command"
 fi
@@ -131,6 +148,9 @@ ahead_count="$(git rev-list --count origin/main..HEAD)"
 if (( ahead_count == 0 )); then
   die "Branch $expected_branch has no commits ahead of origin/main to finalize."
 fi
+
+# Verification commands can change HEAD; never publish a different reviewed version.
+check_reviewed_head
 
 git push -u origin "$expected_branch"
 head_sha="$(git rev-parse HEAD)"
