@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T10:16:24Z",
-  "source_base_commit": "162968dad842a0a87556d587d504f4237b0e4e37",
-  "registry_digest": "913853def662cd826d0e4ea724818e6de3a185b7e0a9dbda6f09048f3be85fb9",
+  "generated_at": "2026-10-08T11:57:05Z",
+  "source_base_commit": "59da7dc2214ff9f96405afe5601d938ed3cd7872",
+  "registry_digest": "3fe15b1a44b60c89e6bb84a41f022231c23ba1633dfa82c48d2e595becffdc7e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5404,6 +5404,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
         {
           "type": "deployment",
           "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
@@ -16649,7 +16655,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R9（本轮）：用户授权复用凭据（preprod OpenAI gpt-6-sol + AgentMemory SiliconFlow bge-m3/1024，充值后连通）→ 配置两模型并 debug 实调全过 → 知识链验收全部完成：文档闭环（上传→completed→hybrid 检索命中→事实 ZETA-7-IRRIGATE-42 回读→原文件字节级一致）、异常表现（首样本 failed+明确原因不误报 ready）、含知识数据任务重建持久化（paradedb+app 强制重建后检索/下载复验全过）、备份+DB 层恢复（countsMatchBaseline 全等+--expect-knowledge 全文回读）、独立恢复环境应用层验证（verify_restore_app_level.sh：amd64 实例三容器、template0 恢复、app 登录→hybrid 检索 PASS→文件下载 MD5 全等→唯一资源清理，可复现脚本入库）。待办：阶段一验收表八项证据已齐，提交独立复验；通过后收口 p2-188 done。",
+      "next_action": "R10（本轮）：verify_restore_app_level.sh 资源归属 fail-closed 重写（碰撞拒绝/归属文件/EXIT trap 三态清理/外层 rescue）+ --self-check 故障注入套件 17 PASS + 真实模式复跑通过；文件桶证据边界按复核意见记入 Runbook 与本证据。待办：独立复验 R10；通过后 finalize PR#1435 收口 p2-188（阶段一八项证据已齐）。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16663,6 +16669,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
         {
           "type": "deployment",
           "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",

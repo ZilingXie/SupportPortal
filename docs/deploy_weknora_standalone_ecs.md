@@ -226,3 +226,13 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 **本轮新坑（已记）**：本地 qemu 仿真运行 amd64 app 镜像段错误（arm64 Mac）→应用层验证改在 amd64 容量实例执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复目标库必须 `createdb -T template0`；长会话 STS 凭据在脚本执行中途过期→脚本内即时 export-credentials。
 
 **残余限制更新**：文档处理依赖外部模型（现已配 gpt-6-sol+bge-m3）；知识处理链依赖模型可用性，若上游 key 额度/密码变化需同步更新 WeKnora 模型配置（管理 UI 或 API）。管理员密码已在本轮浏览器会话中出现过，交付时建议轮换。
+
+### R10 修复记录（2026-10-08，响应 R9 复验 F1：恢复脚本资源归属；无镜像/服务变更）
+
+1. **碰撞 fail-closed**：删除 `docker rm -f …|| true` 无条件预清理与 `network create …|| true` 静默复用；预检（容器名单 + 网络名单）发现同名资源即退出 81/COLLISION，不触碰既有资源。
+2. **归属文件**：远端脚本将本轮成功创建的每项资源（container:/net:/file:）记入 `/tmp/wkr-owned-<RS>`；清理只处理文件内记录。
+3. **EXIT trap 三态清理**：容器先删、网络后删（端点异步脱离，重试 5×2s）；单次查询判定 absent/present/unknown，无法确认撤除即 KEEPING 报告并保留；幂等（确认撤除移出清单）。
+4. **外层 rescue**：外层 EXIT trap 重放归属文件——覆盖 SSM 中断/超时（SIGKILL 跳过远端 trap）后仅按记录清理本轮资源；成功路径归属文件已空 → rescue 无害 no-op（也输出 rescue-done）。
+5. **--self-check 故障注入套件（17 PASS）**：S1 碰撞（既有容器存活）；S2-S6 restore/appstart/login/search/download 五故障（失败+资源全清）；S7 SSM 短超时杀远端（Failed）→ rescue → 资源全清。
+6. **新坑**：实例 docker 旧版无 `container exists` 子命令（打 usage、rc=1）→ 曾被误判 absent（S1 失效根因）；改 `docker ps -a` 名单三态判定。heredoc 非引用模式下 `\\x27` 不展开（字面反斜杠引号传入远端）→ 统一改双引号形式。
+7. **证据边界（复核意见采纳）**：应用层恢复验证读取现有 docs 桶对象——MD5 证明『独立恢复的 app 经数据库记录读取现有文件桶对象』，不单独证明文件对象在备份恢复链内；完整文件备份/恢复如需，另补对象存储证据。
