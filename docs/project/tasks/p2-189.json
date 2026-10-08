@@ -6,8 +6,8 @@
   "function_id": "automation-execution-loop",
   "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
   "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
-  "status": "active",
-  "next_action": "Round-4 完成：诊断再抛出与原始错误码契约补齐（Hermes 9d1ef79fb6），td :44 部署 HEALTHY（digest a9f342c0，启动 2026-10-08T05:36:24Z=北京 13:36:24），镜像内验收 43 项全过；Task 登记已改为 p2-189（ID 冲突解决）。待复审；SP finalize 仍待验收放行",
+  "status": "done",
+  "next_action": "已完成：四轮独立验收通过（round-4 结论：通过，适用 Hermes 9d1ef79fb6 / SP 64671cd2 / 归档 c3fc6fe+注释修正 475917f），SP PR#1424 合入 main，Preproduction 部署 r20261008-afa0130（api td:110 / route td:109 / worker td:111，digest 与 publish-record 逐一匹配，release 端点回读一致）。遗留观察：告警新字段的生产自然样本（需真实 hermes 失败事件，不人为制造）；deploy 脚本收敛等待超时误判一次（ECS 实际收敛成功，已在部署记录披露）",
   "owner": "agent",
   "created_at": "2026-10-07",
   "updated_at": "2026-10-08",
@@ -25,27 +25,23 @@
   "evidence": [
     {
       "type": "document",
-      "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-189 节（:41 回滚 → :42 → :43 → :44 四轮）"
-    },
-    {
-      "type": "deployment",
-      "label": "Preproduction Hermes td :44（镜像 digest sha256:a9f342c08e，task 启动 2026-10-08T05:36:24Z=北京 13:36:24，HEALTHY）。勘误：:42 启动 03:30:04Z、:43 启动 04:21:26Z（前次记录曾把 :42 时间误写到 :43）；:40 保留为回滚目标"
-    },
-    {
-      "type": "test",
-      "label": "Round-4 镜像内隔离验收 43 项全过（新增：替换路径 diag 附 StateDbReplacedError 且停止补试；锁耗尽保留原始 5/SQLITE_BUSY）"
-    },
-    {
-      "type": "test",
-      "label": "hermes 9d1ef79fb6：两条新回归（反向验证在 round-3 行为必败）；hermes_state 系列 500 通过（1 项预存 FTS5 基线失败与本改动无关）"
-    },
-    {
-      "type": "test",
-      "label": "Round-2/3 已由验收独立确认：P1 行号污染三场景、五边界诊断、SP 告警 95 项、per-step 措辞、34→43 项脚本计数核对"
+      "label": "验收：round-4 独立验收通过（三阻断闭环 + 新旧版本对照 + 线上 :44 核验；非阻断项 Dockerfile 注释已修正 475917f）"
     },
     {
       "type": "pr",
-      "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage @ c3fc6fe（round-4：Dockerfile 源提交 9d1ef79fb6、digest a9f342c0、43 项清单）"
+      "label": "finalize：PR#1424 合入 main（9599faa0，含 WeKnora p2-188 冲突解决与 p2-189 登记）；工作区已清理、CodeSight 已刷新"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction release r20261008-afa0130（git afa01303）：api td:110 digest 7586e6a5 HEALTHY / route td:109 digest 9e5bc171 / worker td:111 digest 6d2f6832，service 指针=运行 revision，/health/release 回读 status=ok、git/prompt/contract 字段一致（2026-10-08T15:2x 北京核验）"
+    },
+    {
+      "type": "deployment",
+      "label": "Hermes td :44（digest a9f342c0）持续 steady；发布过程披露：CodeBuild→gate 与 WeKnora 线程三次竞态（按 gate 指示重建新 release），最终 run 的 deploy 收敛等待超时误判（ECS 实际收敛，三服务 steady+digest 匹配证明）"
+    },
+    {
+      "type": "test",
+      "label": "镜像内隔离验收 43 项全过 + hermes_state 500 通过 + SP 全链测试（round-2/3 验收方独立复跑 95 项）"
     }
   ]
 }
