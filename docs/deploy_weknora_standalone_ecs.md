@@ -171,3 +171,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 - 容量实例替换（ASG min=max=1，仅不健康时触发）不自动迁移 root EBS 上的 docker volume——数据以备份恢复为准（备份脚本+恢复演练见验收）。
 - docreader 与 app 拆分后无共享卷：`/tmp/docreader` 图片直传回退路径不可用（主链路不写盘，compose 注释确认）；chat 内图片回显如有异常归因于此。
 - redis 无 TLS（VPC 内 + SG 限制 + requirepass）；ParadeDB TLS=verify-ca 自签 CA。
+
+### R4 修复记录（2026-10-08，响应 R3 复验遗留项）
+
+1. **[P2] 守卫测试脚本资源归属**：run_pgdata_guard_runtime_test.sh 重构——每轮唯一容器名（RUN_ID+序号）、启动前不再预删任何同名容器、EXIT trap 仅清理本轮成功创建（OWNED_CONTAINERS 记录）；新增 --self-check 模式（mock podman 驱动真实函数）六断言：名称冲突保留、创建失败零误删、两轮唯一名、清理前零删除、cleanup 恰好只删自建两个、（真实模式三场景复跑仍过）。旧缺陷：固定名 wkguard-detached 预删 + trap 删从未创建的 wkguard 名字。
+2. **浏览器实机验证（不依赖模型，五项全过）**：未登录守卫跳转/管理员登录落地/深页硬刷新/token 失效自动登出（app 日志 401 风暴实证）/用户菜单退出——全部落在 /dashboard/weknora/login 专属路径，登录表单渲染正常。
+3. 登记同步：next_action/blockers 按实际剩余项改写（浏览器路径已先行完成，唯一剩余前置=模型凭据相关验收）。
+4. 已知产品行为（非缺陷）：空库时上下文引导（创建第一个知识库）弹窗在 KB 列表页重复出现且覆盖层拦截侧栏交互；模型未配置无法通过建库结束引导。后续配置模型后自然消解或另行产品化处理。
+5. 本轮无镜像/服务变更（测试与文档层修复）；线上栈保持 :4。
