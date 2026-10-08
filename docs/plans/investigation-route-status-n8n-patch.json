@@ -154,10 +154,12 @@
     "baselineVersion": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
     "operations": [
       {
-        "type": "setNodeParameter",
+        "type": "updateNodeParameters",
         "nodeName": "Send Hermes Message",
-        "path": "body",
-        "value": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts }); })() }}"
+        "parameters": {
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts }); })() }}"
+        },
+        "replace": false
       }
     ]
   }

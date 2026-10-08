@@ -36,7 +36,7 @@ def test_actual_status_transformer_uses_same_snapshot_stable_identity_and_real_s
 
 
 def test_actual_slack_forward_preserves_authenticated_message_identity():
-    expression = PATCH["slackWorkflow"]["operations"][0]["value"]
+    expression = PATCH["slackWorkflow"]["operations"][0]["parameters"]["body"]
     code = "return " + expression[3:-2].strip() + ";"
     incoming = {"Input":{"team":"T-TEST","channel":"C-TEST","thread_ts":"123.45","user":"U-TEST","ts":"124.01","text":"<@U08RVQSJQF2> close the case"}}
     result = evaluate(code,incoming)
