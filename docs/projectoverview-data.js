@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T05:25:48Z",
-  "source_base_commit": "3d82d049ffabfed06810f5744f0da358c77d7de5",
-  "registry_digest": "1d7cb1ebec7a2fd8eff9d04f577730188a286f08d76537d44ef81ea300fd1a37",
+  "generated_at": "2026-10-08T05:40:34Z",
+  "source_base_commit": "a287824e951b9730754004c38829c89cb9767156",
+  "registry_digest": "68995bf516cbdba4c87bfcd1a23617a40acc845851a61a9c37980097f95d524b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1468,27 +1468,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "document",
-          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-189 节（:41 回滚 → round-2 :42 → round-3 :43）"
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-189 节（:41 回滚 → :42 → :43 → :44 四轮）"
         },
         {
           "type": "deployment",
-          "label": "Preproduction Hermes td :43（镜像 digest sha256:1b8b298520，task 启动 2026-10-08T04:21:26Z=北京 12:21:26；:42 启动 03:30:04Z=北京 11:30:04；:40 保留为回滚目标）。勘误：前次把 :42 的启动时间误写到 :43 名下"
+          "label": "Preproduction Hermes td :44（镜像 digest sha256:a9f342c08e，task 启动 2026-10-08T05:36:24Z=北京 13:36:24，HEALTHY）。勘误：:42 启动 03:30:04Z、:43 启动 04:21:26Z（前次记录曾把 :42 时间误写到 :43）；:40 保留为回滚目标"
         },
         {
           "type": "test",
-          "label": "Round-3 镜像内隔离验收 34 项全过（原 25 项 + BEGIN not_attempted/COMMIT uncertain/diag 附异常/完整性；勘误：前次报告'27 项'计数有误，实际 25 项）"
+          "label": "Round-4 镜像内隔离验收 43 项全过（新增：替换路径 diag 附 StateDbReplacedError 且停止补试；锁耗尽保留原始 5/SQLITE_BUSY）"
         },
         {
           "type": "test",
-          "label": "hermes 60bf08fd：五个边界的日志断言测试（BEGIN/COMMIT/双败/只读/rollback 失败）；hermes_state 系列 498 通过（1 项预存 FTS5 基线失败与本改动无关）"
+          "label": "hermes 9d1ef79fb6：两条新回归（反向验证在 round-3 行为必败）；hermes_state 系列 500 通过（1 项预存 FTS5 基线失败与本改动无关）"
         },
         {
           "type": "test",
-          "label": "Round-2 复核通过项：P1 行号污染三场景、SP 告警 95 项复跑、per-step 接管措辞、io 文案、构建追溯（验收方独立确认）"
+          "label": "Round-2/3 已由验收独立确认：P1 行号污染三场景、五边界诊断、SP 告警 95 项、per-step 措辞、34→43 项脚本计数核对"
         },
         {
           "type": "pr",
-          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage（round-3 提交后更新 digest/源提交 60bf08fd/34 项清单）"
+          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage @ c3fc6fe（round-4：Dockerfile 源提交 9d1ef79fb6、digest a9f342c0、43 项清单）"
         },
         {
           "type": "test",
@@ -16638,7 +16638,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
       "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
       "status": "active",
-      "next_action": "Round-4 诊断补齐（替换路径/锁耗尽原始码）已提交 Hermes 9d1ef79f；Task ID 冲突已解决（本任务登记为 p2-189，WeKnora 保留 p2-188）；待复审。SP finalize 仍待验收放行",
+      "next_action": "Round-4 完成：诊断再抛出与原始错误码契约补齐（Hermes 9d1ef79fb6），td :44 部署 HEALTHY（digest a9f342c0，启动 2026-10-08T05:36:24Z=北京 13:36:24），镜像内验收 43 项全过；Task 登记已改为 p2-189（ID 冲突解决）。待复审；SP finalize 仍待验收放行",
       "owner": "agent",
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
@@ -16656,27 +16656,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "document",
-          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-189 节（:41 回滚 → round-2 :42 → round-3 :43）"
+          "label": "部署记录：docs/deploy_hermes_investigator_ecs.md p2-189 节（:41 回滚 → :42 → :43 → :44 四轮）"
         },
         {
           "type": "deployment",
-          "label": "Preproduction Hermes td :43（镜像 digest sha256:1b8b298520，task 启动 2026-10-08T04:21:26Z=北京 12:21:26；:42 启动 03:30:04Z=北京 11:30:04；:40 保留为回滚目标）。勘误：前次把 :42 的启动时间误写到 :43 名下"
+          "label": "Preproduction Hermes td :44（镜像 digest sha256:a9f342c08e，task 启动 2026-10-08T05:36:24Z=北京 13:36:24，HEALTHY）。勘误：:42 启动 03:30:04Z、:43 启动 04:21:26Z（前次记录曾把 :42 时间误写到 :43）；:40 保留为回滚目标"
         },
         {
           "type": "test",
-          "label": "Round-3 镜像内隔离验收 34 项全过（原 25 项 + BEGIN not_attempted/COMMIT uncertain/diag 附异常/完整性；勘误：前次报告'27 项'计数有误，实际 25 项）"
+          "label": "Round-4 镜像内隔离验收 43 项全过（新增：替换路径 diag 附 StateDbReplacedError 且停止补试；锁耗尽保留原始 5/SQLITE_BUSY）"
         },
         {
           "type": "test",
-          "label": "hermes 60bf08fd：五个边界的日志断言测试（BEGIN/COMMIT/双败/只读/rollback 失败）；hermes_state 系列 498 通过（1 项预存 FTS5 基线失败与本改动无关）"
+          "label": "hermes 9d1ef79fb6：两条新回归（反向验证在 round-3 行为必败）；hermes_state 系列 500 通过（1 项预存 FTS5 基线失败与本改动无关）"
         },
         {
           "type": "test",
-          "label": "Round-2 复核通过项：P1 行号污染三场景、SP 告警 95 项复跑、per-step 接管措辞、io 文案、构建追溯（验收方独立确认）"
+          "label": "Round-2/3 已由验收独立确认：P1 行号污染三场景、五边界诊断、SP 告警 95 项、per-step 措辞、34→43 项脚本计数核对"
         },
         {
           "type": "pr",
-          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage（round-3 提交后更新 digest/源提交 60bf08fd/34 项清单）"
+          "label": "构建可追溯：hermes-deploy codex/p2-188-session-storage @ c3fc6fe（round-4：Dockerfile 源提交 9d1ef79fb6、digest a9f342c0、43 项清单）"
         }
       ]
     },
