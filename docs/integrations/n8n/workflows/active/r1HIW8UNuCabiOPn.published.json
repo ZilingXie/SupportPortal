@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-08T12:43:33.458Z",
+  "capturedAt": "2026-10-08T13:59:48.796Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "r1HIW8UNuCabiOPn",
     "workflowName": "[slack]Forward Thread|Prod+Preprod",
     "snapshotKind": "published",
-    "versionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
-    "draftVersionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
-    "publishedVersionId": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
-    "updatedAt": "2026-09-18T05:04:39.352Z",
+    "versionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
+    "draftVersionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
+    "publishedVersionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
+    "updatedAt": "2026-10-08T13:58:27.741Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
@@ -255,7 +255,7 @@
           "sendBody": true,
           "contentType": "raw",
           "rawContentType": "application/json",
-          "body": "={{ JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }) }}",
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts }); })() }}",
           "options": {}
         },
         "credentials": {

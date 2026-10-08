@@ -6,8 +6,8 @@
   "function_id": "automation-execution-loop",
   "title": "Investigation 路由固定与状态同步修复（Ticket 13923）",
   "summary": "计划 v1.1：C1 首次 Investigation 客户续轮固定 work；C2 原文进入原 Slack thread；C3 原生接管及真实告警；C4 原生状态事务通知与 n8n PP 分支；C5 工程师明确 close tool/skill。仅 Preproduction 发布，禁止真实13923重放或客户回复。",
-  "status": "active",
-  "next_action": "本地 C1-C5 真实入口与隔离 PG 验证已通过；完成版本化记录、镜像验收及正常 finalize 后按 SP→Hermes→n8n 发布 Preproduction，保留自然业务样本缺口。",
+  "status": "blocked",
+  "next_action": "SP/Hermes/n8n PP 技术部署与实际版本/tool/skill/graph 回读已通过。等待用户确认按 ECS-only 验收豁免本地官方栈重启，或另行设计零业务写入本地验证；确认前保留任务工作区。自然业务样本缺口保留，不重放真实13923。",
   "owner": "agent",
   "created_at": "2026-10-08",
   "updated_at": "2026-10-08",
@@ -19,12 +19,29 @@
     "C5: 可信工程师明确close授权驱动tool/plugin/skill，只solve绑定票且无客户回复",
     "隔离PG与真实入口验证；正常merge与PP运行证据，Production不变"
   ],
-  "blockers": [],
+  "blockers": [
+    "本地官方栈未运行；默认 compose 开启真实 reply poller，与本任务禁止真实业务写入冲突。已直接请求用户决定本次运行验收方式，尚未答复。"
+  ],
   "evidence": [
     {
       "type": "document",
       "url": "docs/plans/investigation-route-status-fix.md",
       "label": "当前合同 v1.1 与执行证据"
+    },
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-route-status-pp-evidence.json",
+      "label": "SP complete / Hermes actual gateway and skill / n8n published graph sanitized PP evidence"
+    },
+    {
+      "type": "pr",
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/1437",
+      "label": "SP C1-C5 已合并，运行源 435811e4"
+    },
+    {
+      "type": "pr",
+      "url": "https://github.com/ZilingXie/heremes-deploy/pull/33",
+      "label": "Hermes close plugin/skill 已合并，构建源 e5c2f119"
     }
   ]
 }

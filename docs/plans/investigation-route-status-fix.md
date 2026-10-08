@@ -18,18 +18,18 @@
 
 | ID | 核验问题 | 当前状态 |
 | --- | --- | --- |
-| F-R1 | 客户续轮normal重新route | 本地实现/真实入口验证通过；待 PP 发布 |
+| F-R1 | 客户续轮normal重新route | 本地真实入口验证通过、SP PP 已正式发布；自然业务样本未取得 |
 | F-H1 | 合法native接管inactive_handler跳过 | 合法 native 上下文进入统一 chain，旧未知 handler 仍拒绝；待自然样本 |
 | F-A1 | 接管告警固定成功与skipped矛盾 | 独立 action 状态送达真实 builder/notifier，各结果矩阵本地通过 |
-| F-S1 | n8n status缺ECS intake | PP 操作图和 SDK 验证已准备；远端尚未修改 |
-| F-S2 | status notifier缺native binding | 真实 worker + 隔离 PG intent/claim/rollback/crash 验证通过；待发布 |
+| F-S1 | n8n status缺ECS intake | PP 分支已发布，active=draft 及非目标 graph 回读通过；自然状态样本未取得 |
+| F-S2 | status notifier缺native binding | 真实 worker + 隔离 PG intent/claim/rollback/crash 验证通过，SP PP 已正式发布 |
 
 ## 基线与证据
 
 - 2026-10-08：SP root main f9388ee5c5baebeab7a0f1501cedd96e70c6ed6e clean；按官方脚本fetch/pull后同SHA建立.worktrees/investigation-route-status-fix / codex/investigation-route-status-fix，初始clean。其他工作区不动。
 - hermes-deploy root clean codex/p2-188-session-storage @475917f3da8641c22ed9519ec031b148a38ad90f；旧归档保留，不直接编辑。
 - 交接n8n历史版本与execution仅调查时snapshot，不证明当前运行。Ticket13923历史snapshot为solved，未查询/重放/修改真实票。incident已证实conversation_follow_up接管，不新增SQLite RCA。
-- 当前 SP/Hermes 新改动未 merge/部署，n8n 尚未更新。运行基线：SP r20261008-07cac14（API :111 / Route :110 / Worker :112），Hermes :44；历史发布 evidence complete。当前 Prompt checkpoint 为 pr-43cee390c4b7，已由线上 /health/release 与当前 API task definition 回读核对。
+- 实施前运行基线：SP r20261008-07cac14（API :111 / Route :110 / Worker :112），Hermes :44；历史发布 evidence complete。Prompt checkpoint 为 pr-43cee390c4b7，已由线上 /health/release 与当前 API task definition 回读核对。后续合并与发布事实见下方当前记录。
 
 ## 验证与完成次序
 
@@ -44,8 +44,8 @@ C1/C2代表路径 -> C3 -> C4及隔离PG -> C5 SP/plugin/skill -> prompt/operati
 | C1 | customer intake → RouteWorker → claimed Hermes processor，Memory/PG | 补频道/感谢/请求关闭仅 1 个 work run，无 route/persona，session 与 event/comment/execution 不变；排队窗口按首次分类规范化；human/terminal 不恢复；首次 Automation 后来 Investigation 不 sticky | PP 自然续轮样本 |
 | C2 | claimed customer processor → 原 thread notifier | 长客户原文完整一次投递、不可信引用、无 close authority；禁止创建 root；调查结果回原 thread | 未对真实 Slack 发测试消息 |
 | C3 | native terminal handoff → escalation → 实际 notifier/builder | sent/queued、inactive skip、PP skip、failed、unknown 的各步骤如实；保留 job/attempt/failure reason；非 native 未知 handler 不放宽 | 真实接管自然样本 |
-| C4 | ticket.updated intake → route system → AutomationWorker + ticket repository | status 与 intent 同 PG 事务 rollback；提交后发送前崩溃重领原 job；并发 claim 唯一；confirmed 不重发；sending/unknown 不重发；明确失败原 job 恢复；同状态较新水位推进、较旧不同状态忽略；human/solved/closed 均回原 thread，无 LLM/回复 | n8n 当前只准备 PP 分支、图验证通过，待发布 |
-| C5 | authenticated engineer HTTP message → work job → API close tool；真实 plugin register/forward | 严格命令；客户/引用/否定/stale/跨环境拒绝；只 PUT solved，一次 GET 回读；timeout 立即回读，unknown 不盲重试；confirmed receipt 后本地失败可恢复且零新 PUT；work progress 保留 server authority/feedback | image/skill_view/EFS/PP 发布验证待完成 |
+| C4 | ticket.updated intake → route system → AutomationWorker + ticket repository | status 与 intent 同 PG 事务 rollback；提交后发送前崩溃重领原 job；并发 claim 唯一；confirmed 不重发；sending/unknown 不重发；明确失败原 job 恢复；同状态较新水位推进、较旧不同状态忽略；human/solved/closed 均回原 thread，无 LLM/回复 | SP/n8n PP 已发布，真实状态自然样本待取得 |
+| C5 | authenticated engineer HTTP message → work job → API close tool；真实 plugin register/forward | 严格命令；客户/引用/否定/stale/跨环境拒绝；只 PUT solved，一次 GET 回读；timeout 立即回读，unknown 不盲重试；confirmed receipt 后本地失败可恢复且零新 PUT；work progress 保留 server authority/feedback | SP/Hermes/n8n PP、实际 toolset/skill_view/hash 回读通过；未关闭任何真实测试票 |
 
 关键补查检出：首轮 classification 已写入、work run POST 回执未返回时 turn.phase 仍旧值；仅用 phase=work 的政策保护会漏过。本轮以已持久化首次/当前 Investigation direction 与实际 human/escalation 事实保护，FakeHermesClient 在 POST 返回前通过真实 tool 触发该窗口。初始未分类/Automation/human 不受此条件影响。
 
@@ -66,6 +66,30 @@ Hermes overlay 固定当前 :44 `sha256:a9f342c08e3a10091b4dbaa8e3ba6bb0c6035412
 
 n8n 准备基线：Status 03B6AvcrOgRkWlUc active=draft 6cfb5781-11bf-4596-bd99-64c092969b92；Comments zc2ndUDqDAS0uX1Y active=draft 30a88a17-aea8-44f2-a7f6-7d603daf68f3；Forward r1HIW8UNuCabiOPn active=draft ddf01d26-7ecf-4c93-a806-ff1729ea0230。上游 Route Support kyiA0QuiVx6JJ03i published ba9403ed-0989-4319-9661-d021df3b20e4 / divergent draft c41c09db-3924-40ed-9d48-f51c571e584e 仅只读，不改/不发布。
 
+## 2026-10-08 合并与 PP 发布当前记录
+
+- SP [PR #1437](https://github.com/ZilingXie/SupportPortal/pull/1437) 已 squash 合并。实现 HEAD `999ed469ce2f36a9e31b9be8ded1888bb8e8cc73`；运行源/main `435811e4139786a843a45c7dfa50d7bec808af62`。finalize 在刷新 main 后重跑三组核心测试，84 passed；CodeGraph/CodeSight 已同步。
+- Hermes [PR #33](https://github.com/ZilingXie/heremes-deploy/pull/33) 已 squash 合并。实现 HEAD `9ee8781b01110f41efcf6765f60d9cd97899c47d`；构建源/main `e5c2f1192c1f5f96eb6a1b5895eee775bd180a67`。canonical/runtime close 与 ECS 检查：34 passed / 5 subtests passed；跨仓既有 CodeGraph 已同步。
+- SP 正式 PP pipeline `r20261008-435811e` 在 `2026-10-08T13:36:02Z` 完成，checkpoint 的 CodeBuild/preflight/deploy 均 passed，部署 evidence 为 `status=complete`。API `:112` / Route `:111` / Worker `:113` 的 runtime digest 与发布记录一致，heartbeat/public health/Provider/CloudWatch/Terraform pre/post zero-drift/Prompt 均通过。Prompt 保持 `pr-43cee390c4b7`，既有 schema 已匹配并跳过 bootstrap，无新 DDL。原始审计 evidence 位于 `.deployments/ecs-pipeline-r20261008-435811e/preproduction-deploy/evidence.json`。
+- 发布恢复披露：第一次使用 root 源库验证当前 PP Prompt 失败，尚未构建/部署；改用既有 PP 源角色后 CodeBuild `06a919e6-b3ff-4fd2-9261-11723ac10c35` 成功，但旧 output 目录阻止收尾。使用正式 `--resume` 从版本化 S3 恢复验证后的 manifest/publish record，没有删除或覆写不可变证据。恢复运行总耗时 1070.845s（其中 ECS 等待 442.603s），超过 900s 目标；门禁均通过，不把超时目标写成故障或隐去。
+- Hermes 新镜像由合并源码构建并 ECR 回读，tag `hermes-20261008-p2190-e5c2f119`，digest `sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99`。已请求 PP `:44 → :45`，注册前证明完整 TD 只有 hermes.image 变化。首次注册因显式空 tags 被 ECS 拒绝（CLI 输入校验会放行）；回读保持 :44 后省略空字段完成注册，未改服务合同。
+- n8n 操作前四条 workflow 的 active/draft 版本重新回读，仍与准备基线相同。刷新 5 个脱敏快照，检查 15 published / 1 divergent draft / 53 redactions 通过；上游 Route Support 的分歧草稿保持不动。
+- 业务 fixture 边界：已检查官方 `scripts/testing/preproduction` 的 PP-I1 和 `docs/operations/testing.md`；PP-I1 会创建真实票并投 Slack，不符合本任务隔离条件。未找到本次状态/关闭链可用的官方隔离 fixture，不执行真实13923或真实Slack测试，保留自然样本缺口。
+- 本地官方栈检查 `rtk proxy bash scripts/workflow/inspect_single_host_stack_mode.sh` exit 1：`Official single-host stack is not running (missing deployment_api_1).` 默认 remote-db/lightweight 和 local-db compose 都开启真实 reply poller，不能把它们当作无业务副作用探针。已直接请求用户确认本任务采用 ECS-only 技术验收还是另行设计零业务写入本地验证；未答复前不豁免该完成规则、不启动本地栈、不声称整体完成。
+- 本任务临时隔离 PG 已停止并清理，临时 reverse fault injection 和 ECR authfile 已移除；任务工作区与不可变 release 审计保留。
+
+### 已完成的 Hermes 与 n8n 技术回读
+
+脱敏可复核物料：[PP evidence](investigation-route-status-pp-evidence.json)。该物料记录技术部署与图/工具检查，不表示自然业务闭环已经发生。
+
+- Hermes `:45` 在 `2026-10-08T13:50:48Z` ECS rollout COMPLETED；实际 task `93bda8af0fcb4ae7b333ac3f230ff240` 为 1/1/0、五容器 HEALTHY，目标 digest 与 ECR 一致，其他四容器 digest 不变，ALB target healthy。CLI waiter 先返回 Max attempts exceeded；后续服务与 task 直接回读证实完成，保留超时记录，不将 waiter 本身写成成功。Production Hermes 仍 `:3 / 1/1/0`，AP disjoint 再次核对。
+- 单项技能投放沿用 `supportportal-preproduction-hermes-skillsdrop:2`，task `c7634adcfd6649808c01fbaf92c1a727` exit 0；只复制 support-close-case，user/entrypoint/IAM/单 PP AP 挂载不变。实际 EFS hash 与源一致，实际 skill_view 返回成功；没有启动批量旧投放命令。
+- ECS Exec 在运行中的 Hermes 容器 GET `/v1/health`、`/v1/toolsets`、`/v1/skills` 均 200；work enabled/configured=true 且包含 support_close_case，技能列表可见且实际 skill_view 成功。runtime plugin hash `bbab36cd476c270fb3662d326fe4b4be527b584d1df8ba6dc43d0cdbf48bb59b`；skill hash `7bad479e58edf9317c3092e2811ef1efc8381bfd73d57daa6f43cd5e0250c88e`。
+- Status active=draft=`80985a3f-fefd-420b-90e5-5ea25a21bde7`，13 nodes；9 个既有节点逐项一致，新增 PP membership/intake 图与已准备图一致，两新 HTTP 节点实际 credential references 回读一致，无自动替换凭据。
+- Forward active=draft=`a3c2add4-c3f5-44f0-8ba2-c273c552f595`，9 nodes；只有既有 PP Send Hermes Message.body 变化，其他字段/节点/连接未变。首次 setNodeParameter path=body 被 MCP 拒绝，version 未变；改为 updateNodeParameters、replace=false 后成功。版本化 patch 已改成实际可执行格式，测试仍直接执行同一 JS，2 passed。
+- Comments active=draft=`30a88a17-aea8-44f2-a7f6-7d603daf68f3` 未变；上游 Route Support published=`ba9403ed-0989-4319-9661-d021df3b20e4` / draft=`c41c09db-3924-40ed-9d48-f51c571e584e`，两图均与操作前一致，未发布其分歧草稿。
+- 发布后 SDK graph validation 均 valid=true。与准备阶段不同，最新校验另报 HTTP/subworkflow 输出字段推断警告：Status 7 项（既有 hardcoded authorization 1 项 + 字段推断 6 项），Forward 字段推断 6 项。HTTP/subworkflow 未提供静态输出 schema；新增 ticket.id 来自既有 Zendesk ticket GET，executions 明确由 SP `/v1/cases/{id}/executions` 返回（API 源码 989–996），Input 是既有 caller 的透传合同，真实 JS 身份/时间测试已通过。未为消除启发式警告加入 pinData 或改非目标分支；真实执行样本仍缺失，不能据 SDK valid 宣称完整业务通过。
+
 ## 待完成
 
-版本化证据/operations/progress/Overview → 正常 merge → SP 正式 PP pipeline 完整门禁 → Hermes PP image/skill 注册与回读 → n8n PP 更新/发布/active graph 回读 → official stack/CodeSight/任务 cleanup。部署完成后补 exact SHA/PR/digest/version/evidence；找到官方隔离 fixture 才做允许的业务验证，否则记录自然样本缺口，不伪造业务 PASS。
+补版本化 operations/Task/Overview → 正常 evidence/test-fixture follow-up finalize → 用户确认本地官方栈验收方式 → 适用收尾和任务 cleanup。未收到该确认前保留工作区；业务样本缺口如实保留，不伪造业务 PASS。

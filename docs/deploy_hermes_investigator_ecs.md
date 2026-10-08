@@ -359,4 +359,10 @@ AC-13898 `hermes_run_failed`（Session DB 在 EFS 上间歇 SQLite `disk I/O err
 
 本地隔离数据库和 image/skill 检查证明各自层的实现；实际部署、tool availability、技能加载与自然业务样本分别记录，不能用测试数量或 service steady 替代正式 pipeline complete。
 
+2026-10-08 PP 实际投放：SP PR #1437 / source `435811e4139786a843a45c7dfa50d7bec808af62`，正式 release `r20261008-435811e` evidence complete；API :112、Route :111、Worker :113，Prompt 保持 pr-43cee390c4b7。Hermes PR #33 / source `e5c2f1192c1f5f96eb6a1b5895eee775bd180a67`，service :45 / 1/1/0 / COMPLETED、五容器 HEALTHY，digest `sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99`。skillsdrop :2 单项任务 exit 0；实际 gateway health/toolsets/skills GET 均 200，work enabled/configured=true 且含 support_close_case，实际 skill_view/hash 与源码一致。Production Hermes 保持 :3 / 1/1/0，PP/Production AP disjoint。
+
+n8n Status published=draft `80985a3f-fefd-420b-90e5-5ea25a21bde7`，Forward published=draft `a3c2add4-c3f5-44f0-8ba2-c273c552f595`；非目标节点/连接、Comments 和 Route Support 两图未变。Forward MCP 更新使用 `updateNodeParameters`、`replace=false` 合并单一 body 字段；`setNodeParameter path=body` 被当前 MCP 拒绝且没有写入。clone TD 时保留非空 tags，空 tags 必须省略（CLI 校验通过仍会被 ECS 拒绝）。CLI waiter 达到尝试上限后应检查实际 rollout/task/digest/health，不能将 waiter 失败或 service steady 单独当作发布成功。
+
+完整脱敏版本和逐层检查见 [PP evidence](plans/investigation-route-status-pp-evidence.json)。已执行的是部署技术验证；官方 PP-I1 会创建真实票并投 Slack，未作为本次隔离 fixture 使用。真实续轮/状态/close 自然样本未取得；本地官方栈尚未启动，默认真实 reply poller 与任务业务写入限制冲突，最终验收方式已向用户单独提问，待确认。
+
 本节描述该次发布；实际运行状态以 task definition revision 与 live 读回为准。
