@@ -734,3 +734,30 @@ class RealRunnerFailureCompositionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ClosingFactsContractTests(unittest.TestCase):
+    """PP-A5 live-round finding: the suspension closing facts must state the
+    handoff explicitly — the persona renders the facts verbatim in spirit,
+    and an 'internal review' wording fails the customer-facing
+    handoff-confirmation contract."""
+
+    def test_closing_facts_state_the_handoff_and_24h_promise(self):
+        from backend.services.account_suspension_automation import closing_reply_facts
+        from backend.services.automation_test_scenarios import (
+            _suspension_closing_content_check,
+        )
+        import re
+
+        facts = closing_reply_facts(confirmed_email="cx@example.com", customer_name="CX")
+        rendered = " ".join(
+            list(facts.get("performed_actions") or [])
+            + [str(facts.get("next_step") or "")]
+        )
+        self.assertRegex(
+            rendered,
+            re.compile(r"(?i)\b(?:handed|passed|escalated|forwarded|relevant team)\b"),
+        )
+        self.assertRegex(rendered, re.compile(r"(?i)\b24\s*[- ]?\s*hours?\b"))
+        # The facts wording alone satisfies the scenario content check.
+        self.assertIsNone(_suspension_closing_content_check(rendered))
