@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T16:31:04Z",
-  "source_base_commit": "860d94c0a9bb11a95f1bc12ea7eca95ee1860de3",
-  "registry_digest": "9dc7b2d23879f26925eee24296195ed2f5d2147c38b219ab786e39276c6b310f",
+  "generated_at": "2026-10-09T16:36:54Z",
+  "source_base_commit": "2ea159c84b3bb5d02156b0e1cc72a298d3d46995",
+  "registry_digest": "e3d15854e47a244deb4ef6f9fd140c07c54f2fb3e66ecbe98617e9835338cde1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4427,6 +4427,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
         },
         {
+          "type": "deployment",
+          "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
+          "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
+          "result": "发布链：服务层 create_draft+schedule（hermes-persona-manual v4/hermes-reply-contract v4，标签与 legacy _FIELD_LABELS 对齐）→prepare pr-ee28a3c51d44（41 项）→管线发布 r20261009-1a7b6e5（main@1a7b6e51，含他线 #1443/#1444/#1445 合并）全阶段 passed（activation 通过）→DB 回读：pr-ee28a3c51d44 active（pr-43cee390c4b7 superseded）、两 key v4 active、B 模式内容在库验证。实测：工单 13949（hermes fraud 首轮零字段）→work_result.reply_basis=fraud_account_reply_basis_v1（ask_layout=bullets、connector=To proceed, please provide:）→persona prompt=hermes-persona-manual→草稿与 Production 风格逐字一致（lead-in/connector/七字段 canonical 标签 bullets/closing anchor 全 verbatim、英文）→C1-C8 判定器全 PASS。发布过程披露：(1)他线并发发布三次撞 main 后置变更守卫（6eed5d0→e8ff95b→1a7b6e5 重建）；(2)他线 direct-r20261009-1a7b6e5-c47 直发用旧源目录 prompt（pr-c47f99044ae0 在 preprod 不存在）致 worker/route 启动崩溃循环，其共享日志组 ERROR 污染我方 collector 窗口（误判一次）——已用窗口戳调和排除；该坏 task def（worker:120 等）仍在 family 中待其线程处理；(3)本地代理 env（source .env 的 HTTP_PROXY=127.0.0.1:1082）曾炸 heartbeat 一次；aws login 会话过期重登一次；(4)api 服务 platform_version 漂移（1.4.0 vs LATEST）terraform apply 归零一次。残余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）决策仍待用户。"
+        },
+        {
           "type": "test",
           "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
           "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
@@ -5487,6 +5493,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R16 rm 成功证据化 + rm 失败注入（固定提交实测 sc32）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验四项关闭条件全部落地：①WK_CTRM_OCCURRED 改为仅 docker rm -f 返回 0 时置位（原无条件 export 的缺陷已修）；②rm 成败写 CTRM-OK/CTRM-FAILED 证据行并随 rescue_assert 输出回传——S15d 现断言 CTRM-OK \u003cpg名> 存在且无 CTRM-FAILED，证明目标场景确在 rm 成功后触发查询故障；③新增 S15e（WK_CTRM_FORCE_FAIL=1 强制 rm 失败）：CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留（删除失败单独验证）+ 恢复完成；④sc32 单轮 34 PASS：S15(4)+S15b(3)+S15c(4)+S15d(5)+S15e(5)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 过期（''→明确 FAIL）其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码，跨轮拼接口径不变）。"
+        },
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
+        {
+          "type": "test",
+          "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验五项关闭条件全部落地并实测：①所有撤归属条件改为严格 state=absent——cleanup/rescue/rescue_assert 三处的重试后判定从 'gone&&!=present'（unknown 也会撤）改为 '=absent 否则 KEEPING+kept=1'；②rescue_assert 初始 unknown 分支现设置 kept=1；ownership 文件删除被 kept 门控（kept>0 → RESCUE-PARTIAL 保留 ownership）；③S15b（netquery2：rm 成功后查询全部 unknown，经 WK_NETQUERY_ARM_AFTER_RM+WK_RM_OCCURRED 两级旋钮实现）实测：net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成；④S15c（rescue 在查询全失败下运行）实测：ownership 存活、不报清理成功、恢复后清理完成；⑤S7 终态断言括号化 if 块——TimedOut/Cancelled/Failed → 明确 PASS，其余（含本环境会话过期的空状态）→ 明确 FAIL（本轮 sc27/28 的 '' → FAIL 即 else 分支实证）。本两轮（sc27/sc28）在会话时限内锁定 S15(4)+S15b(3)+S15c(2)+S16(2)+S1(2)+S2-S6(10)=23 PASS 全绿，其后场景如实 SEND-FAILED；S7/S8 于 sc26 轮全过（同功能代码），kill/race 于 sc24 轮全过（同功能代码）——AWS login 会话约 8-10 分钟、整套约 20 分钟，单会话无法一次跑完为已知环境限制，登记如实记录。"
+        },
+        {
+          "type": "test",
+          "label": "R13 网络查询三态 + 查询失败注入（固定提交实测，两轮拼接证据）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "本轮复验要求的全部关闭项均已实测：①统一 network_state()（present/absent/unknown，docker network ls 名单判定）应用于 cleanup/rescue/rescue_assert/preflight/assert_clean 五处，仅确认 absent 才撤归属；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动（S16 PASS：拒启+零残留）。②S15（WK_NETQUERY_FAIL=1 模拟 daemon 查询失败，资源确属本轮）实测：run 失败、到达 post-restore 触发点、网络 KEPT 未误删、归属文件保留 net: 标记、容器标记正常撤销、TEARDOWN-PARTIAL 不报成功；查询恢复后 rescue 完成清理（4/4 PASS）。③assert_clean 的 network ls 查询失败→'cannot verify absence' 记 miss，不误报零残留。同轮 S1/S2-S6/S8 亦全过。④kill 四边界+双 TOCTOU 竞态+S8 在 sc24 轮（同功能代码，其后仅诊断/顺序/fail-fast 改动）8+4+1 全过。⑤调试过程发现并修复两个载具缺陷：脚本顶层 S3_KEY=”” 覆盖环境变量导致 --self-check 模式 presign 签在桶根（HTTP 200+ListBucketResult XML，此前多轮 dump 依赖场景实为空转）→ 现要求 --key 显式传入否则 fail-fast；嵌套双引号截断 prelude 造成生成脚本语法损坏 → 已修。⑥环境限制如实记录：本机 AWS login 会话仅存活约 8-15 分钟，整套（含 4 次 app 引导）约 20 分钟无法单会话跑完；ssm_run 现在发送失败即清空状态并中止（SEND-FAILED），不再残留上一场景的 Status/Output 造成假象；场景重排为本轮必需覆盖优先。"
+        },
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
+        {
+          "type": "test",
+          "label": "R11 归属崩溃窗口关闭（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 29 PASS（S1 碰撞 2 + S2-S6 五故障 10 + S7 SSM 超时 3 + S8 dump 边界 2 + S9-S12 四 kill 边界 12）。修复：①归属标记改为创建前预登记（net/pg/redis/app 四处）——资源一旦创建即已有归属记录，窗口不存在；②rescue 先确定性删除本轮唯一命名的 dump（覆盖 stage 后、远端启动前的 SSM 失败窗口，此时无归属文件）；③S8 注入该窗口（stage 后不发远端，rescue nothing-owned 路径仍删 dump）；④S9-S12 以 kill -9 在四个创建边界自杀（跳过远端 trap，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，逐项 assert_clean=0。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK）。注：首轮 self-check 26/27，唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。"
+        },
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
@@ -16549,7 +16603,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "fraud 回复风格对齐停在阶段五决策点（离线评估未达全过门槛，发布未执行）：待用户选 A（接受残余偏移×评审门）/B（服务端确定性 reply basis）/C（提升 persona 档位）后继续阶段六发布与实测；A4/A4b 场景实测与 ask 投递通道决策一并待定。",
+      "next_action": "fraud 回复风格对齐（B 方案）全链收口：代码+提示词 v4+确定性 reply basis 已发布 Preproduction（pr-ee28a3c51d44 active）且 13949 实测草稿 C1-C8 全过。剩余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）待用户决策；fraud-reply-style worktree 待清理。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16562,6 +16616,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
+          "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
+          "result": "发布链：服务层 create_draft+schedule（hermes-persona-manual v4/hermes-reply-contract v4，标签与 legacy _FIELD_LABELS 对齐）→prepare pr-ee28a3c51d44（41 项）→管线发布 r20261009-1a7b6e5（main@1a7b6e51，含他线 #1443/#1444/#1445 合并）全阶段 passed（activation 通过）→DB 回读：pr-ee28a3c51d44 active（pr-43cee390c4b7 superseded）、两 key v4 active、B 模式内容在库验证。实测：工单 13949（hermes fraud 首轮零字段）→work_result.reply_basis=fraud_account_reply_basis_v1（ask_layout=bullets、connector=To proceed, please provide:）→persona prompt=hermes-persona-manual→草稿与 Production 风格逐字一致（lead-in/connector/七字段 canonical 标签 bullets/closing anchor 全 verbatim、英文）→C1-C8 判定器全 PASS。发布过程披露：(1)他线并发发布三次撞 main 后置变更守卫（6eed5d0→e8ff95b→1a7b6e5 重建）；(2)他线 direct-r20261009-1a7b6e5-c47 直发用旧源目录 prompt（pr-c47f99044ae0 在 preprod 不存在）致 worker/route 启动崩溃循环，其共享日志组 ERROR 污染我方 collector 窗口（误判一次）——已用窗口戳调和排除；该坏 task def（worker:120 等）仍在 family 中待其线程处理；(3)本地代理 env（source .env 的 HTTP_PROXY=127.0.0.1:1082）曾炸 heartbeat 一次；aws login 会话过期重登一次；(4)api 服务 platform_version 漂移（1.4.0 vs LATEST）terraform apply 归零一次。残余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）决策仍待用户。"
+        },
+        {
+          "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
         {
           "type": "test",
           "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
@@ -16750,7 +16816,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R8（本轮）完成：F1 cleanup 改为每容器单次查询、同果决定归属与目录删除（修复二次重查询两套判定反例）；F3 child B 合同拒绝改用专用退出码 42、断言失败仍 exit 1，父断言要求 42，并新增注入缺陷子进程 B-BUG 证明该缺陷会被检出而非误判通过。固定提交实测：真实模式 7 PASS、--self-check 父断言 14 PASS。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
+      "next_action": "R16（本轮）：rm 成功证据化（条件置位+CTRM 证据行）、S15d 断言 rm-succeeded 证据、S15e rm 失败独立验证（PARTIAL+ownership 保留）；sc32 单轮 34 PASS。待办：独立复验 R16；通过后 finalize PR#1435 收口 p2-188。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16762,10 +16828,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
         "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
       ],
-      "blockers": [
-        "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器路径验证（登录/深页刷新/退出/失效重登录/引导跳过）已全部完成，不再阻塞。"
-      ],
+      "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R16 rm 成功证据化 + rm 失败注入（固定提交实测 sc32）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验四项关闭条件全部落地：①WK_CTRM_OCCURRED 改为仅 docker rm -f 返回 0 时置位（原无条件 export 的缺陷已修）；②rm 成败写 CTRM-OK/CTRM-FAILED 证据行并随 rescue_assert 输出回传——S15d 现断言 CTRM-OK \u003cpg名> 存在且无 CTRM-FAILED，证明目标场景确在 rm 成功后触发查询故障；③新增 S15e（WK_CTRM_FORCE_FAIL=1 强制 rm 失败）：CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留（删除失败单独验证）+ 恢复完成；④sc32 单轮 34 PASS：S15(4)+S15b(3)+S15c(4)+S15d(5)+S15e(5)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 过期（''→明确 FAIL）其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码，跨轮拼接口径不变）。"
+        },
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
+        {
+          "type": "test",
+          "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验五项关闭条件全部落地并实测：①所有撤归属条件改为严格 state=absent——cleanup/rescue/rescue_assert 三处的重试后判定从 'gone&&!=present'（unknown 也会撤）改为 '=absent 否则 KEEPING+kept=1'；②rescue_assert 初始 unknown 分支现设置 kept=1；ownership 文件删除被 kept 门控（kept>0 → RESCUE-PARTIAL 保留 ownership）；③S15b（netquery2：rm 成功后查询全部 unknown，经 WK_NETQUERY_ARM_AFTER_RM+WK_RM_OCCURRED 两级旋钮实现）实测：net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成；④S15c（rescue 在查询全失败下运行）实测：ownership 存活、不报清理成功、恢复后清理完成；⑤S7 终态断言括号化 if 块——TimedOut/Cancelled/Failed → 明确 PASS，其余（含本环境会话过期的空状态）→ 明确 FAIL（本轮 sc27/28 的 '' → FAIL 即 else 分支实证）。本两轮（sc27/sc28）在会话时限内锁定 S15(4)+S15b(3)+S15c(2)+S16(2)+S1(2)+S2-S6(10)=23 PASS 全绿，其后场景如实 SEND-FAILED；S7/S8 于 sc26 轮全过（同功能代码），kill/race 于 sc24 轮全过（同功能代码）——AWS login 会话约 8-10 分钟、整套约 20 分钟，单会话无法一次跑完为已知环境限制，登记如实记录。"
+        },
+        {
+          "type": "test",
+          "label": "R13 网络查询三态 + 查询失败注入（固定提交实测，两轮拼接证据）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "本轮复验要求的全部关闭项均已实测：①统一 network_state()（present/absent/unknown，docker network ls 名单判定）应用于 cleanup/rescue/rescue_assert/preflight/assert_clean 五处，仅确认 absent 才撤归属；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动（S16 PASS：拒启+零残留）。②S15（WK_NETQUERY_FAIL=1 模拟 daemon 查询失败，资源确属本轮）实测：run 失败、到达 post-restore 触发点、网络 KEPT 未误删、归属文件保留 net: 标记、容器标记正常撤销、TEARDOWN-PARTIAL 不报成功；查询恢复后 rescue 完成清理（4/4 PASS）。③assert_clean 的 network ls 查询失败→'cannot verify absence' 记 miss，不误报零残留。同轮 S1/S2-S6/S8 亦全过。④kill 四边界+双 TOCTOU 竞态+S8 在 sc24 轮（同功能代码，其后仅诊断/顺序/fail-fast 改动）8+4+1 全过。⑤调试过程发现并修复两个载具缺陷：脚本顶层 S3_KEY=”” 覆盖环境变量导致 --self-check 模式 presign 签在桶根（HTTP 200+ListBucketResult XML，此前多轮 dump 依赖场景实为空转）→ 现要求 --key 显式传入否则 fail-fast；嵌套双引号截断 prelude 造成生成脚本语法损坏 → 已修。⑥环境限制如实记录：本机 AWS login 会话仅存活约 8-15 分钟，整套（含 4 次 app 引导）约 20 分钟无法单会话跑完；ssm_run 现在发送失败即清空状态并中止（SEND-FAILED），不再残留上一场景的 Status/Output 造成假象；场景重排为本轮必需覆盖优先。"
+        },
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
+        {
+          "type": "test",
+          "label": "R11 归属崩溃窗口关闭（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 29 PASS（S1 碰撞 2 + S2-S6 五故障 10 + S7 SSM 超时 3 + S8 dump 边界 2 + S9-S12 四 kill 边界 12）。修复：①归属标记改为创建前预登记（net/pg/redis/app 四处）——资源一旦创建即已有归属记录，窗口不存在；②rescue 先确定性删除本轮唯一命名的 dump（覆盖 stage 后、远端启动前的 SSM 失败窗口，此时无归属文件）；③S8 注入该窗口（stage 后不发远端，rescue nothing-owned 路径仍删 dump）；④S9-S12 以 kill -9 在四个创建边界自杀（跳过远端 trap，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，逐项 assert_clean=0。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK）。注：首轮 self-check 26/27，唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。"
+        },
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
