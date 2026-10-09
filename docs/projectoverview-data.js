@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T03:49:04Z",
-  "source_base_commit": "72bfc73af2fb5a1c97811009acaf42d159ac428e",
-  "registry_digest": "068e9990f4e8daf0fb211ea2704d7814e9bda7d13175a6b3b5f0302f2e50aab6",
+  "generated_at": "2026-10-09T09:24:21Z",
+  "source_base_commit": "4cc76f2673aa6d7ee71e61cb67db6ecb1338c436",
+  "registry_digest": "5528c59e2805c2dc4533f60e48975879194efb26f3eeb8c03480c7d2dc97be53",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4967,8 +4967,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 4,
+      "status": "active",
+      "task_count": 5,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -16888,6 +16888,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-191",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 回复长度优化 v1",
+      "summary": "为 Investigation 客户草稿和工程师 Slack 调查展示增加确定性长度契约：客户 draft（含 greeting）最多 1200 字符，Slack 调查消息最多 2000 字符；复用一次重生成，最终超长 fail-closed。",
+      "status": "active",
+      "next_action": "完成定向回归、全量相关套件和 diff 检查后，提交 Preproduction 发布与技术验收证据。",
+      "owner": "agent",
+      "created_at": "2026-10-09",
+      "updated_at": "2026-10-09",
+      "acceptance_criteria": [
+        "C1: engineer_investigation_reply 首次输出超长时触发现有第二次生成，prompt version 为 v2",
+        "C2: Investigation 完整客户 draft（含 greeting、引用拼接）超过 1200 字符时 reply_too_long，不能保存或发送",
+        "C3: Investigation result、ad-hoc result、review pending Slack 文本最多 2000 字符，summary/evidence/blockers/next_steps 有数量和单项上限",
+        "C4: 完整调查记录仍保存，Slack 只压缩展示；合法 draft 在审批消息中保持完整",
+        "C5: 相关单元、Hermes 工具入口和 Preproduction 技术检查通过；不重放 Ticket 13923，不发送真实客户回复，不发布 Production"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "legacy_ids": []
     },
     {
       "schema_version": 2,

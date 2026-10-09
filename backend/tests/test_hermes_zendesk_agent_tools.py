@@ -251,6 +251,28 @@ class TestInvestigationTool:
         assert binding["investigation"]["summary"].startswith("Reproduced")
         assert binding["direction"] != "investigation"
 
+    def test_save_investigation_keeps_full_record_for_bounded_slack_projection(self) -> None:
+        store, repository, turn_id = _setup_case()
+        summary = "Complete investigation record. " * 80
+        evidence = [{"source": f"source-{index}", "detail": "full evidence " * 30} for index in range(10)]
+        blockers = [f"blocker-{index}: " + ("detail " * 30) for index in range(10)]
+        next_steps = [f"step-{index}: " + ("detail " * 30) for index in range(10)]
+        result = tool_save_investigation_progress(
+            store,
+            repository,
+            turn_id=turn_id,
+            summary=summary,
+            evidence=evidence,
+            blockers=blockers,
+            next_steps=next_steps,
+        )
+        assert result["saved"] is True
+        investigation = store.get_hermes_case_binding("123")["investigation"]
+        assert investigation["summary"] == summary.strip()
+        assert investigation["evidence"] == evidence
+        assert investigation["blockers"] == blockers
+        assert investigation["next_steps"] == next_steps
+
     def test_empty_summary_rejected(self) -> None:
         store, repository, turn_id = _setup_case()
         with pytest.raises(HermesToolError):
@@ -285,6 +307,21 @@ class TestDraftTools:
                 basis={"summary": "investigating"},
             )
         assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "approved_for_final_engineer_review"
+
+    def test_investigation_draft_over_1200_chars_is_rejected_before_guardrail(self) -> None:
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        store._hermes_turns[turn_id]["direction"] = "investigation"
+        long_content = "Hi Customer,\n\n" + ("The verified finding remains unchanged. " * 40)
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+        ) as guardrail:
+            with pytest.raises(HermesToolError) as excinfo:
+                tool_save_reply_draft(
+                    store, repository, turn_id=turn_id, content=long_content, basis={}
+                )
+        assert excinfo.value.code == "reply_too_long"
+        guardrail.assert_not_called()
 
     def test_draft_readiness_derives_from_recorded_work(self) -> None:
         captured: dict[str, Any] = {}
