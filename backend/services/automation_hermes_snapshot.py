@@ -69,6 +69,7 @@ def build_case_snapshot(
             "public": (item.get("comment") or {}).get("public"),
             "author": (item.get("comment") or {}).get("author"),
             "body": (item.get("comment") or {}).get("body"),
+            "attachments": (item.get("comment") or {}).get("attachments") or [],
             "created_at": _snapshot_timestamp((item.get("comment") or {}).get("created_at")),
         }
         for item in comments

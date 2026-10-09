@@ -5098,6 +5098,10 @@ For each new entry, record:
   differing and failed candidate cases, candidate input isolation, CSV row
   completeness and pair denominators.
 
+## 2026-10-09 — Investigation 附件闭环 v1（p2-192）
+
+Hermes snapshot/model input 增加经过来源验证的工程师附件元数据，明确未读取文件、不自动读图。附件由 store 权威绑定当前 turn/draft，经审批后 delivery ledger 发送；不更改 route 或版本化 prompt 内容。见 [R1](plans/investigation-attachments-v1.md)。
+
 ## 2026-10-09 — Investigation 客户回复长度契约 v2（Investigation 回复长度优化 v1）
 
 - `engineer-investigation-persona` 从 v1 更新为 v2：只保留支持结论的事实，删除重复证据和内部调查过程，优先输出结论、关键限制/证据和下一步，最多三个短段落。

@@ -69,6 +69,22 @@ class AccountZendeskCommentSyncTests(unittest.TestCase):
             }
         )
 
+    def test_attachment_metadata_survives_normalization_and_inmemory_sync(self) -> None:
+        snapshot = normalize_snapshot(snapshot_payload({
+            "id": 21,
+            "public": True,
+            "author": {"id": 8, "role": "end-user", "is_agent": False},
+            "body": "See screenshot",
+            "created_at": "2026-08-16T02:01:00Z",
+            "attachments": [{"id": "att-1", "name": "screen.png", "content_type": "image/png", "size": 12, "inline": True}],
+        }))
+        self.repository.sync_account_case_comments(ticket_id=self.ticket_id, account_case_id=self.case_id, snapshot=snapshot, synced_at=SOURCE_UPDATED_AT)
+        comments = self.repository.get_account_case_comments(self.ticket_id)
+        assert comments[0]["attachments"] == [{
+            "attachment_id": "att-1", "file_name": "screen.png", "content_type": "image/png",
+            "size_bytes": 12, "inline": True, "source_comment_id": "21",
+        }]
+
     def test_normalizes_public_internal_comments_and_marks_initial(self) -> None:
         snapshot = normalize_snapshot(
             snapshot_payload(

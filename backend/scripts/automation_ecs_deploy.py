@@ -693,6 +693,8 @@ def render_initial_task_definition(
         )
     if role == "api" and hermes_case_workflow_mode != "disabled":
         secret_names[role]["HERMES_CALLBACK_TOKEN"] = "hermes-callback-token"
+        if environment == "preproduction":
+            secret_names[role]["ENGINEER_SLACK_ACCESS_TOKEN"] = "engineer-slack-access-token"
     if hermes_agent_enabled and role in {"api", "worker"}:
         secret_names[role].update(
             {
@@ -1012,6 +1014,8 @@ def render_task_definition(
                 **API_ZENDESK_READBACK_SECRET_SUFFIXES,
                 **API_RUNTIME_LLM_SECRET_SUFFIXES,
             }
+            if environment == "preproduction" and (hermes_case_workflow_mode or environment_values.get("HERMES_CASE_WORKFLOW_MODE", "disabled")) != "disabled":
+                required_api_secrets["ENGINEER_SLACK_ACCESS_TOKEN"] = "engineer-slack-access-token"
             for name, suffix in sorted(required_api_secrets.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
         if graph_efs_file_system_id and graph_efs_access_point_id:

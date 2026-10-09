@@ -576,8 +576,12 @@ def run_automation_worker() -> int:
     from backend import worker as account_worker
 
     account_worker.ticket_repository = repository
+    def account_cycle():
+        account_worker.process_account_automation_once()
+        from backend.services.automation_native_notifications import drain_customer_attachments
+        drain_customer_attachments(repository, store)
     background_cycle = AccountBackgroundCycle(
-        account_cycle=account_worker.process_account_automation_once,
+        account_cycle=account_cycle,
         outlook_cycle=account_worker.process_automation_request_replies_once,
         outlook_enabled=account_worker._billing_reply_poller_enabled_from_env,
         outlook_interval_seconds=account_worker._billing_reply_poll_interval_from_env,

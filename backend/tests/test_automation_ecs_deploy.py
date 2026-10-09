@@ -2325,3 +2325,19 @@ reconcile_schema_bootstrap_checkpoint
     rejected_calls = call_log.read_text(encoding="utf-8")
     assert "ecs stop-task" not in rejected_calls
     assert "ecs deregister-task-definition" not in rejected_calls
+
+
+def test_attachment_api_secret_is_only_added_for_preproduction_hermes(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    for env in ("production", "preproduction"):
+        if env == "preproduction":
+            current.write_text(current.read_text().replace("production", "preproduction"))
+        rendered = render_task_definition(role="api", current_path=current, manifest_path=manifest,
+            registry_id="123456789012", region="us-east-1", environment=env,
+            repository=f"supportportal/{env}", hermes_case_workflow_mode="real",
+            agent_model="test-model" if env == "preproduction" else None)
+        secrets = {item["name"]: item["valueFrom"] for item in rendered["containerDefinitions"][0]["secrets"]}
+        assert ("ENGINEER_SLACK_ACCESS_TOKEN" in secrets) == (env == "preproduction")
+        if env == "preproduction":
+            assert secrets["ENGINEER_SLACK_ACCESS_TOKEN"].endswith("/preproduction/engineer-slack-access-token")
