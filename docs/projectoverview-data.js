@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T16:38:31Z",
-  "source_base_commit": "272bb237c6efbd7605dedd2d889220fddb3a1698",
-  "registry_digest": "0b671fb33154668718fcdeae6c9583f1d50db8032963fa8bce9226c04a170f92",
+  "generated_at": "2026-10-09T17:16:44Z",
+  "source_base_commit": "30485f9ea4b2110dd303fea8400d1ac6b7d7b503",
+  "registry_digest": "59d7c5c7a86539f04b5be58c9165688f06d07e677996b777b55c2f884b5a7bca",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1516,6 +1516,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1 合同与执行证据"
         },
         {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_hermes_route_schema_normalizer_alignment.py：55 passed。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；待提交 HEAD 由独立验收线程读取。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1622,7 +1637,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 44,
+      "task_count": 45,
       "done_count": 23,
       "blocked_count": 0
     },
@@ -17142,6 +17157,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-attachments-v1.md",
           "label": "R1 合同与执行证据"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-193",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Hermes 固定 Case Task 与 Comment Message Action",
+      "summary": "按 r4 计划把新 Hermes case 的 Account Router 结果固化为 case_task，并让 customer comment 复用固定任务：Investigation 进入 investigation_feedback，其他任务进入严格 message_action；classification-only、幂等字段、Prompt Release pin 和 InMemory/PostgreSQL schema 已接入。本任务不包含三方 benchmark、PR 合并或 ECS 部署。",
+      "status": "review",
+      "owner": "codex",
+      "created_at": "2026-10-10",
+      "updated_at": "2026-10-10",
+      "next_action": "交给 Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c 独立验收；通过前不得 merge/deploy。",
+      "acceptance_criteria": [
+        "ticket.created 在 Hermes 引擎中只调用一次 Account Router；automation/investigation 固化为 hermes case_task，其他分类只保存 classification-only。",
+        "binding 持久化 case_task、case_task_prompt_release_id、case_task_prompt_snapshot、flow_version；route lock 后 comment 不可覆盖。",
+        "comment.created 不调用 Account Router；Investigation 走 investigation_feedback，普通固定任务走 message_action。",
+        "六个 message action 严格校验；多意图、非法 JSON、未知 action、无法判断进入 handoff_human；reply action 不执行 automation。",
+        "InMemory 与 PostgreSQL schema/迁移保持同名行为；重复事件和 active turn 保护保留。",
+        "不执行三方 benchmark、Prompt Release 创建、PR merge、Preproduction/Production deploy。"
+      ],
+      "blockers": [
+        "真实隔离 PostgreSQL 集成尚未运行：本机无 DSN，相关 27 项测试 skip。",
+        "独立验收尚未完成。"
+      ],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_hermes_route_schema_normalizer_alignment.py：55 passed。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；待提交 HEAD 由独立验收线程读取。"
         }
       ]
     },

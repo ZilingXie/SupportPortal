@@ -5108,3 +5108,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 客户可见 Investigation draft 的完整内容（含 greeting）限制为 1,200 字符；首次超限使用现有第二次生成机会要求重写，第二次仍超限则由服务端阻断保存。
 - Slack 调查展示层保留完整持久化记录，但限制单次消息为 2,000 字符，并限制 summary、evidence、blockers、next_steps 的条数和单项长度。
 - 普通 Automation 与 Engineer-guided reply 不改变既有长度行为；审批消息仍展示合法 draft 的完整内容。
+## 2026-10-10 - Hermes 固定 Case Task 与 Comment Message Action（r4，未发布）
+
+- 范围：Hermes 新 case 首轮复用 Production Account Router 一次并持久化锁定 `case_task`；customer comment 读取固定 task，Investigation 进入 `investigation_feedback`，其他任务进入严格 `message_action`。
+- Prompt：`hermes-support-agent-system` v3 增加 case task 锁定/不重路由不变量；新增 managed prompt `hermes-message-action-manual-v1`。本次只改源码 catalog，未创建或激活 Prompt Release。
+- Fail-closed：允许 `continue_task`、`answer_related_question`、`report_progress`、`acknowledge`、`request_clarification`、`handoff_human`；多意图、未知、非法 JSON 或无法判断统一人工接管。
+- 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。

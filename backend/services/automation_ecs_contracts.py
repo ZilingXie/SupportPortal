@@ -21,7 +21,7 @@ HEARTBEAT_CONTRACT_VERSION = "automation-heartbeat-v1"
 RELEASE_MANIFEST_VERSION = "automation-release-v1"
 REGISTRY_RELEASE_MANIFEST_VERSION = "automation-release-v2"
 PREPRODUCTION_PUBLISH_RECORD_VERSION = "automation-preproduction-publish-v1"
-SCHEMA_REVISION = "automation-ecs-014"
+SCHEMA_REVISION = "automation-ecs-015"
 
 DEFAULT_ZENDESK_INSTANCE = "agoraio.zendesk.com"
 
@@ -80,8 +80,10 @@ class AgentTurnStatus(StrEnum):
 
 class HermesTurnKind(StrEnum):
     NORMAL = "normal"
+    FIXED_TASK = "fixed_task"
     INVESTIGATION_FEEDBACK = "investigation_feedback"
     INVESTIGATION_REPLY = "investigation_reply"
+    MESSAGE_ACTION = "message_action"
 
 
 class HermesTurnPhase(StrEnum):
@@ -98,6 +100,8 @@ class HermesTurnPhase(StrEnum):
             return (cls.WORK,)
         if turn_kind == HermesTurnKind.INVESTIGATION_REPLY.value:
             return (cls.PERSONA,)
+        if turn_kind in {HermesTurnKind.FIXED_TASK.value, HermesTurnKind.MESSAGE_ACTION.value}:
+            return (cls.WORK, cls.PERSONA)
         return (cls.ROUTE, cls.WORK, cls.PERSONA)
 
 

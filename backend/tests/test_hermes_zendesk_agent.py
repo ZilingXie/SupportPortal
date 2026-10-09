@@ -6,8 +6,9 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -1677,25 +1678,42 @@ class TestExpiryRecovery:
 
 
 class TestRouteWorkerHandOff:
-    def test_hermes_engine_bypasses_legacy_route_llm(self) -> None:
+    def test_hermes_engine_uses_account_router_once_for_new_case(self) -> None:
         from backend.automation_ecs_route_worker import RouteWorker
 
         store = _store()
         store.accept_intake(_event(), _settings("route").provenance())
 
-        def _fail_decider(*args: Any, **kwargs: Any) -> Any:
-            raise AssertionError("legacy route LLM must not run for hermes cases")
+        decider = Mock(return_value=SimpleNamespace(
+            decision=SimpleNamespace(
+                scope_label="backend_operation", route_family="automated",
+                execution_action="enablement", route="enablement",
+                route_target="automation", reason="registered_enablement",
+                confidence=0.98, router_source="layered", matched_signals=[],
+                semantic_intent="enablement", automation_eligibility="eligible",
+                policy_decision="automate", not_automated_reason=None,
+                risk_flags=[], evidence_spans=[], intent_router_attempted=True,
+                intent_router_confidence_threshold=0.82,
+                intent_router_fallback_reason=None, intent_router_failure_type=None,
+                intent_router_failure_source=None,
+            ),
+            classification={"automation_handler": "enablement"},
+            prompt_snapshots={"route": {"version": "1"}},
+            stage_attempts=[],
+        ))
 
         worker = RouteWorker(
             settings=_settings("route"),
             store=store,
             persona_resolver=lambda _ticket_id: None,
-            route_decider=_fail_decider,
+            route_decider=decider,
             default_case_engine="hermes",
         )
         assert worker.process_once() is True
         binding = store.get_hermes_case_binding("123")
         assert binding is not None
+        assert binding["case_task"]["route"] == "enablement"
+        decider.assert_called_once()
         agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
         assert agent_job is not None
 

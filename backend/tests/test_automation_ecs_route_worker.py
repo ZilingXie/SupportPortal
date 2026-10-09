@@ -176,3 +176,83 @@ def test_route_context_is_chronological_and_stops_at_trigger_comment() -> None:
     assert "Later message" not in str(context)
     assert "Private note" not in str(context)
     assert "Unknown author" not in str(context)
+
+
+def test_hermes_new_case_routes_once_and_comment_reuses_fixed_task() -> None:
+    settings = _settings("route")
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    event = _event()
+    receipt = store.accept_intake(event, _settings("api").provenance())
+    decider = Mock(return_value=_decision())
+    worker = RouteWorker(
+        settings=settings,
+        store=store,
+        persona_resolver=Mock(),
+        route_decider=decider,
+        default_case_engine="hermes",
+    )
+
+    assert worker.process_once() is True
+    binding = store.get_hermes_case_binding(event.ticket.id)
+    assert binding is not None
+    assert binding["case_task"]["route"] == "enablement"
+    assert store.claim_job(JobKind.PROCESSING, worker_id="worker-1", lease_seconds=30) is None
+    agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=30)
+    assert agent_job is not None
+    first_turn = store.get_hermes_turn(agent_job.payload["turn_id"])
+    assert first_turn is not None
+    assert first_turn["turn_kind"] == "fixed_task"
+    assert first_turn["phase"] == "work"
+    assert first_turn["direction"] == "automation"
+
+    comment = event.model_validate({
+        **event.model_dump(mode="json"),
+        "event_id": "zendesk:ticket:123:comment:20",
+        "event_type": "comment.created",
+        "comment_snapshot": {
+            "source_updated_at": "2026-08-27T10:01:00Z",
+            "snapshot_complete": True,
+            "trigger_comment_id": "20",
+            "comments": [
+                {"id": "10", "public": True, "author": {"role": "end-user"}, "body": event.ticket.description, "created_at": "2026-08-27T10:00:00Z"},
+                {"id": "20", "public": True, "author": {"role": "end-user"}, "body": "What is the App ID?", "created_at": "2026-08-27T10:01:00Z"},
+            ],
+        },
+    })
+    comment_receipt = store.accept_intake(comment, _settings("api").provenance())
+    assert worker.process_once() is True
+    decider.assert_called_once()
+    comment_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=30)
+    assert comment_job is not None
+    comment_turn = store.get_hermes_turn(comment_job.payload["turn_id"])
+    assert comment_turn is not None
+    assert comment_turn["turn_kind"] == "message_action"
+    assert comment_turn["work_result"]["message_action"]["action"] == "answer_related_question"
+    assert comment_turn["case_revision"] == 2
+    assert comment_turn["execution_id"] == comment_receipt.execution_id
+
+
+def test_hermes_unregistered_case_is_classification_only() -> None:
+    settings = _settings("route")
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    receipt = store.accept_intake(_event("zendesk:ticket:999:created"), _settings("api").provenance())
+    result = _decision()
+    result.decision = SimpleNamespace(
+        **{**vars(result.decision), "route_family": "human_review", "route_target": "human_review", "execution_action": "human_review", "route": None}
+    )
+    worker = RouteWorker(
+        settings=settings,
+        store=store,
+        persona_resolver=Mock(),
+        route_decider=Mock(return_value=result),
+        default_case_engine="hermes",
+    )
+
+    assert worker.process_once() is True
+    execution = store.get_execution(receipt.execution_id)
+    assert execution is not None
+    assert execution["status"] == "completed"
+    assert execution["route"]["classification_only"] is True
+    assert store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=30) is None

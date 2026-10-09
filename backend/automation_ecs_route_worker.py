@@ -18,6 +18,7 @@ from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerH
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_schema import check_account_runtime_schema
 from backend.services.automation_ecs_store import AutomationEcsStore, create_automation_ecs_store
+from backend.services.hermes_case_task import build_case_task
 from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_route_worker")
@@ -151,13 +152,52 @@ class RouteWorker:
                 )
                 return True
             if self.resolve_case_engine(event.ticket.id) == "hermes":
-                # The case is bound to a Hermes native session: hand off before
-                # the legacy route LLM runs and never enter the old harness.
+                # Hermes new cases use Production Account Router exactly once.
+                # Existing customer comments reuse the immutable case_task and
+                # never call the Account Router again.
                 lease.stop()
-                self.store.hand_off_to_hermes_agent(
-                    job,
-                    prompt_release_id=str(prompt_runtime_info().get("release_id") or "") or None,
-                )
+                prompt_release_id = str(prompt_runtime_info().get("release_id") or "") or None
+                if event.event_type == IntakeEventType.TICKET_CREATED:
+                    context = _ticket_context(payload)
+                    case = self.case_loader(event.ticket.id) if self.case_loader else None
+                    context = understanding_messages(build_automation_context({
+                        "ticket_id": event.ticket.id,
+                        "status": event.ticket.status,
+                        "messages": context,
+                    }, case if isinstance(case, dict) else {}))
+                    result = self.route_decider(
+                        event.routing_text(),
+                        ticket_subject=event.ticket.subject,
+                        ticket_context=context,
+                        current_ticket_status=event.ticket.status,
+                        require_latest=True,
+                    )
+                    route = _route_payload(result)
+                    case_task = build_case_task(
+                        result,
+                        source_event_id=event.event_id,
+                        prompt_release_id=prompt_release_id,
+                    ).model_dump(mode="json")
+                    case_task["prompt_snapshot"] = dict(result.prompt_snapshots)
+                    route["case_task"] = case_task
+                    if not case_task["hermes_eligible"]:
+                        self.store.complete_classification_only(
+                            job,
+                            route=route,
+                            prompt_snapshots=dict(result.prompt_snapshots),
+                            provenance=self.settings.provenance(),
+                        )
+                        return True
+                    self.store.hand_off_to_hermes_agent(
+                        job,
+                        prompt_release_id=prompt_release_id,
+                        case_task=case_task,
+                    )
+                else:
+                    self.store.hand_off_to_hermes_agent(
+                        job,
+                        prompt_release_id=prompt_release_id,
+                    )
                 return True
             context = _ticket_context(payload)
             case = self.case_loader(event.ticket.id) if self.case_loader else None
