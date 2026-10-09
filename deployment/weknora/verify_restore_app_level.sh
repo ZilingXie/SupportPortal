@@ -181,14 +181,16 @@ fi
 echo "/tmp/wkr-\$RS.dump" >> "\$OWNED" | true
 sed -i "s|^/tmp/wkr-\$RS.dump\$|file:/tmp/wkr-\$RS.dump|" "\$OWNED"
 
+echo "net:\$NET" >> "\$OWNED"   # pre-register: no window between create and ownership
 sudo docker network create "\$NET" >/dev/null || { echo "network create failed" >&2; exit 82; }
-echo "net:\$NET" >> "\$OWNED"
+[ "\$FAULT" = killnet ] && kill -9 \$\$
 
 ECR=$ECR_REPO
+echo "container:\$PG" >> "\$OWNED"   # pre-register
 sudo docker run -d --name "\$PG" --network "\$NET" \\
   -e POSTGRES_USER='$WK_DB_USER' -e POSTGRES_PASSWORD='$WK_DB_PASSWORD' -e POSTGRES_DB=inittmp \\
   -e PGDATA=/var/lib/postgresql/data/pgdata "\$ECR":base-paradedb-v0.22.6-pg17 >/dev/null || exit 83
-echo "container:\$PG" >> "\$OWNED"
+[ "\$FAULT" = killpg ] && kill -9 \$\$
 for i in \$(seq 1 40); do sudo docker exec "\$PG" pg_isready -U '$WK_DB_USER' -d inittmp >/dev/null 2>&1 && break; sleep 3; done
 sleep 5
 sudo docker exec "\$PG" dropdb --if-exists -U '$WK_DB_USER' '$WK_DB_NAME' >/dev/null 2>&1 || true
@@ -198,12 +200,14 @@ sudo docker exec "\$PG" pg_restore -U '$WK_DB_USER' -d '$WK_DB_NAME' --no-owner 
 echo RESTORE-OK
 [ "\$FAULT" = restore ] && exit 85
 
+echo "container:\$RD" >> "\$OWNED"   # pre-register
 sudo docker run -d --name "\$RD" --network "\$NET" -e REDIS_PASSWORD='$WK_REDIS_PASSWORD' \\
   docker.io/library/redis:7.0-alpine sh -c "exec redis-server --appendonly yes --requirepass \\"\\\$REDIS_PASSWORD\\"" >/dev/null || exit 86
-echo "container:\$RD" >> "\$OWNED"
+[ "\$FAULT" = killredis ] && kill -9 \$\$
 
 [ "\$FAULT" = hang ] && { echo HANGING-FOR-TIMEOUT-TEST; sleep 600; }
 
+echo "container:\$AP" >> "\$OWNED"   # pre-register
 sudo docker run -d --name "\$AP" --network "\$NET" -p 18081:8080 \\
   -e DB_DRIVER=postgres -e DB_HOST="\$PG" -e DB_PORT=5432 \\
   -e DB_USER='$WK_DB_USER' -e DB_PASSWORD='$WK_DB_PASSWORD' -e DB_NAME='$WK_DB_NAME' -e DB_SSLMODE=disable \\
@@ -216,7 +220,7 @@ sudo docker run -d --name "\$AP" --network "\$NET" -p 18081:8080 \\
   -e DISABLE_REGISTRATION=true -e GIN_MODE=release -e LOG_LEVEL=info -e AUTO_MIGRATE=false \\
   -e FRONTEND_BASE_URL=http://localhost:18081 \\
   "\$ECR":$APP_IMAGE_TAG >/dev/null || exit 87
-echo "container:\$AP" >> "\$OWNED"
+[ "\$FAULT" = killapp ] && kill -9 \$\$
 
 for i in \$(seq 1 60); do
   curl -sS -o /dev/null --max-time 3 http://localhost:18081/health 2>/dev/null && { echo APP-HEALTHY; break; }
@@ -265,6 +269,9 @@ EOF
 # rescue <rs> — replay the remote ownership file (removes ONLY recorded
 # resources). Safe on success runs (ownership file already emptied/removed)
 # and after SIGKILL-style interruptions (file persists with markers).
+# The dump is removed deterministically FIRST: its path is unique to this
+# run, so it is unambiguously ours even when the remote script never started
+# (SSM failure between staging and launch — no ownership file exists then).
 rescue() {
   local rs="$1"
   local rscript; rscript="$(mktemp)"
@@ -272,7 +279,9 @@ rescue() {
 RS=$rs
 OWNED=/tmp/wkr-owned-\$RS
 CLEANLOG=/tmp/wkr-clean-\$RS.log
-[ -f "\$OWNED" ] || { echo "rescue: nothing owned"; echo "rescue-done kept=0"; exit 0; }
+DUMP=/tmp/wkr-\$RS.dump
+rm -f "\$DUMP"   # deterministic: unique per-run path, always ours
+[ -f "\$OWNED" ] || { echo "rescue: nothing owned (dump removed)"; echo "rescue-done kept=0"; exit 0; }
 container_state() {
   local names
   if names="\$(sudo docker ps -a --format "{{.Names}}" 2>/dev/null)"; then
@@ -435,6 +444,35 @@ PYEOF
     && ok "S7: SSM command ended in $st (killed mid-run)" || bad "S7: unexpected hang status $st"
   rescue "$rs7" && ok "S7: rescue replayed ownership file" || bad "S7: rescue failed"
   assert_clean "$rs7" && ok "S7: all resources cleaned after rescue" || bad "S7: resources left behind"
+
+  echo "== S8: dump staged, remote NEVER started → rescue must still remove it =="
+  local rs8="$base_rs-dumpwin"
+  stage_dump "$rs8" "$(presign_for "$S3_KEY")" >/dev/null 2>&1 || bad "S8: dump staging failed"
+  # Simulate an operator/SSM abort between staging and launch: no remote
+  # script ever runs, so no ownership file exists. The rescue's deterministic
+  # dump removal must still clean the per-run path.
+  rescue "$rs8" && ok "S8: rescue ran (nothing-owned path + deterministic dump)" || bad "S8: rescue failed"
+  assert_clean "$rs8" && ok "S8: dump removed, nothing else left" || bad "S8: leftovers after dump-boundary abort"
+
+  echo "== S9-S12: kill -9 at each create boundary (marker-first design) =="
+  local kf
+  for kf in killnet killpg killredis killapp; do
+    local rs="$base_rs-$kf"
+    stage_dump "$rs" "$(presign_for "$S3_KEY")" >/dev/null 2>&1 || { bad "$kf: dump staging failed"; continue; }
+    local sck; sck="$(mktemp)"
+    build_remote_script "$sck" "$rs" "$kf"
+    ssm_run "wkrestore sc $kf" 900 "$sck"
+    # kill -9 makes bash exit 137; SSM reports Failed. The trap is skipped,
+    # so ONLY the outer rescue (ownership file, markers written pre-create)
+    # can clean the already-created resource.
+    if [ "$REMOTE_STATUS" = "Success" ]; then
+      bad "$kf: unexpectedly succeeded"
+    else
+      ok "$kf: killed at boundary ($REMOTE_STATUS)"
+    fi
+    rescue "$rs" && ok "$kf: rescue cleaned recorded resources" || bad "$kf: rescue failed"
+    assert_clean "$rs" && ok "$kf: all resources cleaned" || bad "$kf: resources left behind"
+  done
 
   echo
   purge_sc_leftovers "$base_rs"

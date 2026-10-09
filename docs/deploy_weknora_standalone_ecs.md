@@ -236,3 +236,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 5. **--self-check 故障注入套件（17 PASS）**：S1 碰撞（既有容器存活）；S2-S6 restore/appstart/login/search/download 五故障（失败+资源全清）；S7 SSM 短超时杀远端（Failed）→ rescue → 资源全清。
 6. **新坑**：实例 docker 旧版无 `container exists` 子命令（打 usage、rc=1）→ 曾被误判 absent（S1 失效根因）；改 `docker ps -a` 名单三态判定。heredoc 非引用模式下 `\\x27` 不展开（字面反斜杠引号传入远端）→ 统一改双引号形式。
 7. **证据边界（复核意见采纳）**：应用层恢复验证读取现有 docs 桶对象——MD5 证明『独立恢复的 app 经数据库记录读取现有文件桶对象』，不单独证明文件对象在备份恢复链内；完整文件备份/恢复如需，另补对象存储证据。
+
+### R11 修复记录（2026-10-08，响应 R10 复验 F1：归属崩溃窗口；无镜像/服务变更）
+
+1. **预登记归属**：net/pg/redis/app 四处归属标记全部改为资源**创建前**写入 `/tmp/wkr-owned-<RS>`——资源一旦创建成功即已持有归属记录，"创建成功但登记前被杀"的窗口不存在；若创建失败，清理按 absent 处理自然撤销标记（幂等语义不变）。
+2. **dump 窗口**：rescue 首步**确定性删除**本轮唯一命名路径 `/tmp/wkr-<RS>.dump`（RS 唯一 ⇒ 无碰撞歧义），覆盖"dump 已下载、远端脚本尚未启动（无归属文件）"的 SSM 失败窗口。
+3. **新增故障注入（self-check 29 PASS）**：S8=stage 后不发远端直接 rescue（nothing-owned 路径+确定性删 dump，assert_clean=0）；S9-S12=killnet/killpg/killredis/killapp 以 kill -9 在四个创建边界自杀（远端 trap 被跳过，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，全部资源逐项为零。
+4. 首轮 self-check 26/27 唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。
+5. 真实模式复跑通过（APP-SEARCH PASS / DL-MD5 全等 / TEARDOWN-OK / assert_clean miss=0）。
