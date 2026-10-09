@@ -42,16 +42,27 @@ def bootstrap() -> dict[str, Any]:
 def check() -> dict[str, Any]:
     settings = AutomationEcsSettings.from_env("bootstrap")
     store = create_automation_ecs_store(settings)
-    store.check_schema()
-    account = check_account_runtime_schema()
-    return {
-        "ok": True,
-        "mode": "check",
-        "environment": settings.environment,
-        "coordination_schema": settings.db_schema,
-        "account_schema": account["schema"],
-        "schema_revision": settings.provenance().schema_revision,
-    }
+    repository = create_ticket_repository()
+    try:
+        store.check_schema()
+        account = check_account_runtime_schema()
+        # The release gate must validate the ticket repository schema too.
+        # initialize() is idempotent and skips DDL when the stored version is
+        # current; an older version is migrated before the gate returns.
+        repository.initialize()
+        return {
+            "ok": True,
+            "mode": "check",
+            "environment": settings.environment,
+            "coordination_schema": settings.db_schema,
+            "account_schema": account["schema"],
+            "ticket_schema": "current",
+            "schema_revision": settings.provenance().schema_revision,
+        }
+    finally:
+        close = getattr(repository, "close", None)
+        if callable(close):
+            close()
 
 
 def run(argv: list[str] | None = None) -> dict[str, Any]:

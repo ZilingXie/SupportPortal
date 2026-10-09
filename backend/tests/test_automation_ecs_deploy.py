@@ -27,6 +27,28 @@ from backend.services.automation_ecs_contracts import RELEASE_MANIFEST_VERSION, 
 from backend.services.automation_release_manifest import contract_versions
 
 
+def test_bootstrap_check_includes_ticket_repository_schema(monkeypatch) -> None:
+    from backend.scripts import automation_ecs_bootstrap
+
+    class FakeRepository:
+        initialized = False
+
+        def initialize(self):
+            self.initialized = True
+
+        def close(self):
+            pass
+
+    repository = FakeRepository()
+    monkeypatch.setattr(automation_ecs_bootstrap, "create_ticket_repository", lambda: repository)
+    monkeypatch.setattr(automation_ecs_bootstrap, "create_automation_ecs_store", lambda settings: type("Store", (), {"check_schema": lambda self: None})())
+    monkeypatch.setattr(automation_ecs_bootstrap, "check_account_runtime_schema", lambda: {"schema": "automation-account-v1"})
+    monkeypatch.setattr(automation_ecs_bootstrap.AutomationEcsSettings, "from_env", lambda role: type("Settings", (), {"environment": "preproduction", "db_schema": "supportportal_preproduction", "provenance": lambda self: type("P", (), {"schema_revision": "automation-ecs-014"})()})())
+    result = automation_ecs_bootstrap.check()
+    assert result["ticket_schema"] == "current"
+    assert repository.initialized is True
+
+
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SCRIPT = ROOT / "deployment/deploy_automation_ecs_release.sh"
 INITIAL_TASK_DEFINITIONS_SCRIPT = (
@@ -2325,3 +2347,19 @@ reconcile_schema_bootstrap_checkpoint
     rejected_calls = call_log.read_text(encoding="utf-8")
     assert "ecs stop-task" not in rejected_calls
     assert "ecs deregister-task-definition" not in rejected_calls
+
+
+def test_attachment_api_secret_is_only_added_for_preproduction_hermes(tmp_path: Path) -> None:
+    manifest = _manifest(tmp_path)
+    current = _task_definition(tmp_path, "api")
+    for env in ("production", "preproduction"):
+        if env == "preproduction":
+            current.write_text(current.read_text().replace("production", "preproduction"))
+        rendered = render_task_definition(role="api", current_path=current, manifest_path=manifest,
+            registry_id="123456789012", region="us-east-1", environment=env,
+            repository=f"supportportal/{env}", hermes_case_workflow_mode="real",
+            agent_model="test-model" if env == "preproduction" else None)
+        secrets = {item["name"]: item["valueFrom"] for item in rendered["containerDefinitions"][0]["secrets"]}
+        assert ("ENGINEER_SLACK_ACCESS_TOKEN" in secrets) == (env == "preproduction")
+        if env == "preproduction":
+            assert secrets["ENGINEER_SLACK_ACCESS_TOKEN"].endswith("/preproduction/engineer-slack-access-token")

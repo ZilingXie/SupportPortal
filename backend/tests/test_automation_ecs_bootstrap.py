@@ -31,14 +31,14 @@ def test_bootstrap_owns_ddl_and_closes_account_repository() -> None:
     assert result["schema_revision"] == "automation-ecs-001"
 
 
-def test_check_is_read_only() -> None:
+def test_check_validates_ticket_repository_schema_without_store_migration() -> None:
     settings = Mock(environment="preproduction", db_schema="coordination")
     settings.provenance.return_value.schema_revision = "automation-ecs-001"
     store = Mock()
     with patch.object(automation_ecs_bootstrap.AutomationEcsSettings, "from_env", return_value=settings), patch.object(
         automation_ecs_bootstrap, "create_automation_ecs_store", return_value=store
     ), patch.object(
-        automation_ecs_bootstrap, "create_ticket_repository", side_effect=AssertionError("no repository DDL")
+        automation_ecs_bootstrap, "create_ticket_repository", return_value=Mock()
     ), patch.object(
         automation_ecs_bootstrap,
         "check_account_runtime_schema",
