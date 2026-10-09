@@ -448,6 +448,7 @@ class AutomationEcsStore(Protocol):
     def hand_off_to_hermes_agent(self, job: ClaimedJob, *, zendesk_instance: str | None, prompt_release_id: str | None, case_task: dict[str, Any] | None = None) -> dict[str, Any]: ...
     def defer_job(self, job: ClaimedJob, *, delay_seconds: int) -> None: ...
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
+    def is_classification_only_case(self, zendesk_ticket_id: str) -> bool: ...
     def bind_hermes_case_thread(self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str) -> dict[str, Any]: ...
     def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None: ...
     def bind_hermes_case_persona(self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int) -> dict[str, Any]: ...
@@ -1522,6 +1523,14 @@ class InMemoryAutomationEcsStore:
     def get_hermes_case_binding(self, zendesk_ticket_id: str) -> dict[str, Any] | None:
         with self._lock:
             return self._binding_row(zendesk_ticket_id)
+
+    def is_classification_only_case(self, zendesk_ticket_id: str) -> bool:
+        with self._lock:
+            return any(
+                execution.get("zendesk_ticket_id") == str(zendesk_ticket_id)
+                and bool((execution.get("route") or {}).get("classification_only"))
+                for execution in self._executions.values()
+            )
 
     def bind_hermes_case_thread(
         self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str
@@ -4009,6 +4018,7 @@ class PostgresAutomationEcsStore:
         *,
         zendesk_instance: str | None = None,
         prompt_release_id: str | None = None,
+        case_task: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Atomically bind a Zendesk case to a Hermes session and queue its first turn.
 
@@ -4842,6 +4852,18 @@ class PostgresAutomationEcsStore:
                 )
                 row = cursor.fetchone()
         return dict(row) if row is not None else None
+
+    def is_classification_only_case(self, zendesk_ticket_id: str) -> bool:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s "
+                        "AND COALESCE(route->>'classification_only','false')='true' LIMIT 1"
+                    ).format(self._table("automation_executions")),
+                    (self.settings.job_namespace, str(zendesk_ticket_id)),
+                )
+                return cursor.fetchone() is not None
 
     def bind_hermes_case_thread(
         self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str

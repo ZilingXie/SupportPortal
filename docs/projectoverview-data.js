@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T17:54:02Z",
-  "source_base_commit": "65c37adf39ba37acbb8302376675d0eb0a9eed2e",
-  "registry_digest": "c6298e55c654ab7e07494f3f1bce0f9058183f6e54cda0709e766568f5743fe0",
+  "generated_at": "2026-10-09T18:19:55Z",
+  "source_base_commit": "8666ff0e75ef5e5bc50d35db99c4df2c8fbcc45f",
+  "registry_digest": "d3587ed489b307357cae5cf113f23ac1d9ee2a21d205d154ca1625e9b7a4e48c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1523,12 +1523,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "修复后 uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py：195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。PostgreSQL 27 项因本机无 DSN skip。"
+          "details": "r4-repair-2：Route Worker/store/handoff focused suite 95 passed、27 skipped（PostgreSQL 因本机无 DSN）；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件首轮证据仍为 195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。"
         },
         {
           "type": "document",
           "label": "Implementation branch",
-          "details": "codex/hermes-fixed-task-comment-action；待提交 HEAD 由独立验收线程读取。"
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
         },
         {
           "type": "test",
@@ -17172,7 +17172,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "owner": "codex",
       "created_at": "2026-10-10",
       "updated_at": "2026-10-10",
-      "next_action": "交给 Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c 独立验收；通过前不得 merge/deploy。",
+      "next_action": "r4-repair-2 已完成，提交同一 branch/PR 后交给 Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c 复核；通过前不得 merge/deploy。",
       "acceptance_criteria": [
         "ticket.created 在 Hermes 引擎中只调用一次 Account Router；automation/investigation 固化为 hermes case_task，其他分类只保存 classification-only。",
         "binding 持久化 case_task、case_task_prompt_release_id、case_task_prompt_snapshot、flow_version；route lock 后 comment 不可覆盖。",
@@ -17194,12 +17194,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "修复后 uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py：195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。PostgreSQL 27 项因本机无 DSN skip。"
+          "details": "r4-repair-2：Route Worker/store/handoff focused suite 95 passed、27 skipped（PostgreSQL 因本机无 DSN）；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件首轮证据仍为 195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。"
         },
         {
           "type": "document",
           "label": "Implementation branch",
-          "details": "codex/hermes-fixed-task-comment-action；待提交 HEAD 由独立验收线程读取。"
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
         }
       ]
     },

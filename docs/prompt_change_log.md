@@ -5115,3 +5115,4 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - Fail-closed：允许 `continue_task`、`answer_related_question`、`report_progress`、`acknowledge`、`request_clarification`、`handoff_human`；多意图、未知、非法 JSON 或无法判断统一人工接管。
 - 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。
 - r4-repair-1：移除 customer comment 的本地 message-action 分类，改由 Hermes 专用无工具 phase 输出并由服务端严格校验；固定 case 的完整 managed prompt catalog 在每个 Hermes phase 使用，comment 继承 case-level Prompt Release；澄清 `request_clarification` 与 contract 缺字段的边界。源码 catalog 仍未创建或激活 Prompt Release。
+- r4-repair-2：classification-only 结果现在作为 case 级路由锁持久化查询；后续 comment 继续只记录分类结果，不进入 Hermes，也不重新调用 Account Router。此修复未创建或激活 Prompt Release。

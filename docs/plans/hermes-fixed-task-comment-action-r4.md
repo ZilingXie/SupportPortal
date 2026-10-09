@@ -36,3 +36,14 @@
 | F3 `request_clarification` 契约冲突 | prompt 将所有 missing field 归为 handoff，和允许的 clarification action 冲突 | 明确区分“缺少 contract 字段”（handoff）与“客户明确询问所需业务信息”（允许 clarification）；新增 contract version 严格校验 | closed |
 
 修复后验证：`uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py`，195 passed；PostgreSQL 27 项因本机无 DSN skip。`compileall` 与 `git diff --check` 通过。待同一验收线程复核新的完整 HEAD。
+
+## 修复记录（r4-repair-2）
+
+独立验收第二轮结论为“未通过”，本轮继续在同一 branch/PR 修复，范围仍限于 classification-only 状态边界和 PostgreSQL handoff 参数链路：
+
+| Finding | 原因与边界 | 修复与关闭证据 | 状态 |
+|---|---|---|---|
+| F4 PostgreSQL handoff 参数缺失 | PostgreSQL `hand_off_to_hermes_agent()` 函数体使用 `case_task`，此前签名未接收该参数，真实 ticket.created handoff 会在绑定前失败 | 签名增加 `case_task: dict[str, Any] | None = None`，沿现有 binding JSONB 写入链路保存；compileall、store/PG handoff 测试入口通过（本机无 DSN 的 PG 项仍 skip） | closed（真实隔离 PostgreSQL 未验证） |
+| F5 classification-only 未形成 case 锁 | 首轮只结束当前 execution；后续 comment 无持久化查询依据，会按默认 Hermes engine 创建 turn | Store 增加 `is_classification_only_case()`；InMemory/PostgreSQL 从历史 execution route 查询锁；Route Worker 在 engine resolution 前优先锁定并调用 `complete_classification_only()`，后续 comment 不调用 Account Router、不创建 Hermes turn；新增 InMemory intake→comment 回归测试 | closed（真实隔离 PostgreSQL 未验证） |
+
+修复后验证：`PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_automation_ecs_store_postgres.py`，95 passed、27 skipped（PostgreSQL 无 DSN）；`compileall` 与 `git diff --check` 通过。待同一验收线程复核新的完整 HEAD。

@@ -118,6 +118,8 @@ class RouteWorker:
     default_case_engine: str = "legacy"
 
     def resolve_case_engine(self, ticket_id: str) -> str:
+        if self.store.is_classification_only_case(ticket_id):
+            return "classification_only"
         binding = self.store.get_hermes_case_binding(ticket_id)
         if binding is not None:
             return str(binding.get("engine") or "legacy")
@@ -154,7 +156,25 @@ class RouteWorker:
                     provenance=self.settings.provenance(),
                 )
                 return True
-            if self.resolve_case_engine(event.ticket.id) == "hermes":
+            case_engine = self.resolve_case_engine(event.ticket.id)
+            if case_engine == "classification_only":
+                # A classification-only case is a durable terminal routing
+                # decision.  Later comments are recorded independently, but
+                # must not invoke Account Router or create a Hermes turn.
+                lease.stop()
+                self.store.complete_classification_only(
+                    job,
+                    route={
+                        "engine": "hermes",
+                        "classification_only": True,
+                        "reason": "case_locked_classification_only",
+                        "event_type": event.event_type.value,
+                    },
+                    prompt_snapshots={},
+                    provenance=self.settings.provenance(),
+                )
+                return True
+            if case_engine == "hermes":
                 # Hermes new cases use Production Account Router exactly once.
                 # Existing customer comments reuse the immutable case_task and
                 # never call the Account Router again.
