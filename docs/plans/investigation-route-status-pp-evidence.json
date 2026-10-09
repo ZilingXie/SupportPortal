@@ -190,11 +190,11 @@
     "real_slack_test_message_sent": false
   },
   "local_stack": {
-    "status": "human_decision_pending",
+    "status": "waived_by_user_ecs_preproduction_acceptance",
     "inspect_exit": 1,
     "inspect_result": "Official single-host stack is not running (missing deployment_api_1).",
     "restart_executed": false,
-    "reason": "Default official stack starts real reply pollers; this task excludes real business writes."
+    "reason": "User confirmed ECS Preproduction technical acceptance on 2026-10-09; local restart is waived because the default official stack starts real reply pollers and this task excludes real business writes."
   },
   "n8n": {
     "readback": [

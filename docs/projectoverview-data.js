@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-08T14:02:32Z",
-  "source_base_commit": "501aa8ec66f64522e5c6a9fe1296dfba5f161339",
-  "registry_digest": "15b392eea27b3d9befdf3d3737aff969e122e05a443bdab64e56b1b5f094dbd4",
+  "generated_at": "2026-10-09T03:24:20Z",
+  "source_base_commit": "179b7d7125128fc4104a9ed22d90ae590fe9acb4",
+  "registry_digest": "c5edee1f56a0c2305fc8d6e95987e16d2302139d11eb7d1575f337e638f27fe0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1507,6 +1507,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Hermes close plugin/skill 已合并，构建源 e5c2f119"
         },
         {
+          "type": "decision",
+          "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1614,8 +1618,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 43,
-      "done_count": 22,
-      "blocked_count": 1
+      "done_count": 23,
+      "blocked_count": 0
     },
     {
       "schema_version": 2,
@@ -16808,11 +16812,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "title": "Investigation 路由固定与状态同步修复（Ticket 13923）",
       "summary": "计划 v1.1：C1 首次 Investigation 客户续轮固定 work；C2 原文进入原 Slack thread；C3 原生接管及真实告警；C4 原生状态事务通知与 n8n PP 分支；C5 工程师明确 close tool/skill。仅 Preproduction 发布，禁止真实13923重放或客户回复。",
-      "status": "blocked",
-      "next_action": "SP/Hermes/n8n PP 技术部署与实际版本/tool/skill/graph 回读已通过。等待用户确认按 ECS-only 验收豁免本地官方栈重启，或另行设计零业务写入本地验证；确认前保留任务工作区。自然业务样本缺口保留，不重放真实13923。",
+      "status": "done",
+      "next_action": "ECS Preproduction 技术验收已获用户确认并完成；本地官方栈重启按授权豁免。自然业务样本缺口保留，不重放真实13923、不发送客户回复或真实 Slack 测试消息。",
       "owner": "agent",
       "created_at": "2026-10-08",
-      "updated_at": "2026-10-08",
+      "updated_at": "2026-10-09",
       "acceptance_criteria": [
         "C1: 真实客户 intake/work-only，身份/fence/session/thread不丢失，Automation边界保留",
         "C2: 当前客户原文带来源身份引用进入原thread，可审计幂等投递",
@@ -16821,9 +16825,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C5: 可信工程师明确close授权驱动tool/plugin/skill，只solve绑定票且无客户回复",
         "隔离PG与真实入口验证；正常merge与PP运行证据，Production不变"
       ],
-      "blockers": [
-        "本地官方栈未运行；默认 compose 开启真实 reply poller，与本任务禁止真实业务写入冲突。已直接请求用户决定本次运行验收方式，尚未答复。"
-      ],
+      "blockers": [],
       "evidence": [
         {
           "type": "document",
@@ -16844,6 +16846,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "pr",
           "url": "https://github.com/ZilingXie/heremes-deploy/pull/33",
           "label": "Hermes close plugin/skill 已合并，构建源 e5c2f119"
+        },
+        {
+          "type": "decision",
+          "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
         }
       ]
     },
