@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T16:36:54Z",
-  "source_base_commit": "2ea159c84b3bb5d02156b0e1cc72a298d3d46995",
-  "registry_digest": "e3d15854e47a244deb4ef6f9fd140c07c54f2fb3e66ecbe98617e9835338cde1",
+  "generated_at": "2026-10-09T16:38:31Z",
+  "source_base_commit": "272bb237c6efbd7605dedd2d889220fddb3a1698",
+  "registry_digest": "0b671fb33154668718fcdeae6c9583f1d50db8032963fa8bce9226c04a170f92",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5620,9 +5620,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "deployment/weknora/"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 1,
-      "done_count": 0,
+      "done_count": 1,
       "blocked_count": 0
     }
   ],
@@ -16808,15 +16808,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-188",
       "title": "WeKnora 并行建设（阶段一：独立部署与 Web 可用）",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "weknora-standalone-deployment",
       "created_at": "2026-10-07",
-      "updated_at": "2026-10-08",
-      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R16（本轮）：rm 成功证据化（条件置位+CTRM 证据行）、S15d 断言 rm-succeeded 证据、S15e rm 失败独立验证（PARTIAL+ownership 保留）；sc32 单轮 34 PASS。待办：独立复验 R16；通过后 finalize PR#1435 收口 p2-188。",
+      "updated_at": "2026-10-09",
+      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。【收口 2026-10-09】R16 独立复验=通过（rm 成功证据化/S15d rm-proof/S15e rm 失败保留全确认；sc32 34 PASS + 跨轮 S7/S8/kill/race 证据边界已登记）；PR#1435 已 finalize 合入 main（a3a9c2dd，含 origin/main 冲突再生成解决 33c9e1a5），CodeSight 已刷新，worktree 已清理。阶段一八项验收全部有证据闭环。",
+      "next_action": "阶段一已收口 done（R16 复验通过→PR#1435 合入 a3a9c2dd→codesight 刷新→worktree 清理）。交接提醒：WeKnora 管理员密码建议轮换（SSM /supportportal/weknora/admin_password，历轮浏览器会话中出现过）；知识链依赖 SiliconFlow（与 AgentMemory 共享 key）与 OpenAI 额度；文件桶备份/恢复链为登记边界（如需完整对象备份另立任务）。阶段二（n8n 接入/治理链恢复/Hermes 切换/历史迁移）另行规划。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
