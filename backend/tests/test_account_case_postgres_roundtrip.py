@@ -1186,3 +1186,122 @@ class AccountCasePostgresRoundTripTests(unittest.TestCase):
             with psycopg.connect(dsn, autocommit=True) as connection:
                 with connection.cursor() as cursor:
                     cursor.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+    def test_reply_job_chain_lookup_reuses_and_unique_index_blocks_duplicates(self) -> None:
+        """13922 F4 PostgreSQL evidence: find_account_reply_job_by_chain
+        round-trips the TIMESTAMPTZ trigger (Z-suffix input) and finds the
+        chain-bound job across statuses, while a second insert with a fresh
+        job_id on the same chain identity violates
+        idx_support_account_reply_jobs_ticket_trigger_rerun — the exact
+        reason the Hermes helper must find-and-reuse instead of
+        cancel-and-recreate."""
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        if not dsn:
+            self.skipTest("TICKET_DB_DSN is required")
+        schema = f"account_contract_{uuid.uuid4().hex[:12]}"
+        repository = PostgresTicketRepository(dsn=dsn, schema=schema, migration_dsn=dsn)
+        from backend.services.account_reply_jobs import create_account_reply_job
+        from backend.services.account_suspension_automation import closing_reply_facts
+        from backend.services.account_automation_delivery import (
+            ensure_account_delivery_key,
+        )
+
+        ticket_id = "T-REPLY-CHAIN"
+        case_id = "AC-REPLY-CHAIN"
+        trigger = "2026-10-08T10:00:00Z"
+        try:
+            repository.initialize()
+            repository.save_ticket(
+                {
+                    "ticket_id": ticket_id,
+                    "customer_id": "chain@example.com",
+                    "requester": "chain@example.com",
+                    "subject": "Account suspended",
+                    "status": "open",
+                    "created_at": "2026-10-08T09:59:00+00:00",
+                    "updated_at": "2026-10-08T09:59:00+00:00",
+                },
+                new_messages=[],
+            )
+            repository.save_account_case(
+                {
+                    "account_case_id": case_id,
+                    "billing_ticket_id": case_id,
+                    "client_ticket_id": ticket_id,
+                    "zendesk_ticket_id": ticket_id,
+                    "processing_profile": "preproduction",
+                    "automation_status": "automation",
+                    "route": "account_suspension",
+                    "execution_action": "account_suspension",
+                    "route_family": "automated",
+                    "updated_at": "2026-10-08T10:00:00+00:00",
+                }
+            )
+            delivery_key = str(
+                ensure_account_delivery_key(
+                    {"action": "account_suspension"},
+                    handler="account_suspension",
+                    account_case_id=case_id,
+                ).get("delivery_key")
+            )
+            job = create_account_reply_job(
+                repository,
+                ticket_id=ticket_id,
+                trigger_message_created_at=trigger,
+                created_at="2026-10-08T10:00:05+00:00",
+                delay_seconds=30,
+                draft_content="",
+                reply_facts=closing_reply_facts(
+                    confirmed_email="chain@example.com",
+                    customer_name="Chain",
+                ),
+                asked_field_keys=[],
+                persona_assignment=None,
+                automation_delivery_key=delivery_key,
+                close_after_publish=False,
+                reply_intent="account_suspension_handoff_and_close",
+            )
+            original_job_id = str(job.get("job_id") or "")
+            self.assertTrue(original_job_id)
+
+            # Chain lookup round-trips the Z-suffix trigger through
+            # TIMESTAMPTZ and finds the job.
+            found = repository.find_account_reply_job_by_chain(
+                ticket_id,
+                trigger_message_created_at=trigger,
+                automation_delivery_key=delivery_key,
+            )
+            self.assertIsNotNone(found)
+            self.assertEqual(found["job_id"], original_job_id)
+            # The lookup is delivery-key specific and rerun-scoped.
+            self.assertIsNone(
+                repository.find_account_reply_job_by_chain(
+                    ticket_id,
+                    trigger_message_created_at=trigger,
+                    automation_delivery_key="billing:OTHER:v1",
+                )
+            )
+            self.assertIsNone(
+                repository.find_account_reply_job_by_chain(
+                    ticket_id,
+                    trigger_message_created_at="2026-10-08T11:00:00Z",
+                    automation_delivery_key=delivery_key,
+                )
+            )
+            # A duplicate insert on the same chain identity is blocked by
+            # the covering unique index (all statuses) — cancel does not
+            # free the slot.
+            repository.cancel_pending_account_reply_jobs(
+                ticket_id, updated_at="2026-10-08T10:01:00+00:00"
+            )
+            duplicate = dict(job)
+            duplicate["job_id"] = "account-reply-duplicate"
+            duplicate["status"] = "queued"
+            duplicate["payload"] = {**dict(duplicate.get("payload") or {})}
+            with self.assertRaises(psycopg.errors.UniqueViolation):
+                repository.save_account_reply_job(duplicate)
+        finally:
+            repository.close()
+            with psycopg.connect(dsn, autocommit=True) as connection:
+                with connection.cursor() as cursor:
+                    cursor.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')

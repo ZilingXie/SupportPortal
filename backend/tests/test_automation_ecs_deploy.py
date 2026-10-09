@@ -219,6 +219,110 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     assert values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] == "1"
 
 
+def test_render_task_definition_api_attaches_graph_mail_configuration(
+    tmp_path: Path,
+) -> None:
+    # 13922 email execution chain: an observed api definition that
+    # predates the API Graph mount still renders with the full mail
+    # configuration — env, recipient secrets, EFS volume, and mount.
+    current = _task_definition(tmp_path, "api")
+    _as_preproduction(current)
+    rendered = render_task_definition(
+        role="api",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert (
+        values["BILLING_AUTOMATION_GRAPH_TOKEN_CACHE"]
+        == "/app/.msgraph/billing-automation-token.json"
+    )
+    assert (
+        values["BILLING_AUTOMATION_REPLY_RECORD_PATH"]
+        == "/app/.msgraph/billing-request-replies.jsonl"
+    )
+    assert (
+        values["BILLING_AUTOMATION_GRAPH_TENANT_ID"]
+        == "60275374-3eaa-49c2-83c3-cc189d126981"
+    )
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert secrets["BILLING_AUTOMATION_GRAPH_CLIENT_SECRET"].endswith(
+        "parameter/supportportal/preproduction/billing-graph-client-secret"
+    )
+    assert secrets["FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"].endswith(
+        "parameter/supportportal/preproduction/fraud-internal-email-recipients"
+    )
+    assert secrets["ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON"].endswith(
+        "parameter/supportportal/preproduction/account-suspension-internal-email-recipients"
+    )
+    graph_volume = next(
+        item for item in rendered["volumes"] if item["name"] == "graph-token-cache"
+    )
+    assert graph_volume["efsVolumeConfiguration"]["fileSystemId"] == "fs-preproduction"
+    assert (
+        graph_volume["efsVolumeConfiguration"]["authorizationConfig"]["accessPointId"]
+        == "fsap-preproduction"
+    )
+    assert any(
+        str(item.get("sourceVolume") or "") == "graph-token-cache"
+        for item in container["mountPoints"]
+    )
+
+
+def test_render_task_definition_graph_efs_args_are_api_scoped(tmp_path: Path) -> None:
+    worker_current = _task_definition(tmp_path, "worker")
+    _as_preproduction(worker_current)
+    with pytest.raises(ValueError, match="only valid for api renders"):
+        render_task_definition(
+            role="worker",
+            current_path=worker_current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            graph_efs_file_system_id="fs-preproduction",
+            graph_efs_access_point_id="fsap-preproduction",
+        )
+    api_current = _task_definition(tmp_path, "api")
+    _as_preproduction(api_current)
+    with pytest.raises(ValueError, match="both the file system and access point"):
+        render_task_definition(
+            role="api",
+            current_path=api_current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            graph_efs_file_system_id="fs-preproduction",
+        )
+
+
+def test_pipeline_and_initial_registration_wire_api_graph_efs() -> None:
+    # 13922: the release pipeline reads the Graph EFS IDs from the
+    # worker's live definition and passes them to the api render; the
+    # initial registration script hands them to api and worker alike.
+    pipeline = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert "worker.graph-efs.json" in pipeline
+    assert '--graph-efs-file-system-id "${GRAPH_EFS_FILE_SYSTEM_ID}"' in pipeline
+    assert '--graph-efs-access-point-id "${GRAPH_EFS_ACCESS_POINT_ID}"' in pipeline
+    assert "cannot render the api Graph mail configuration" in pipeline
+    registration = INITIAL_TASK_DEFINITIONS_SCRIPT.read_text(encoding="utf-8")
+    assert 'if [[ "${role}" != "route" ]]; then' in registration
+    assert 'if [[ "${role}" = "worker" ]]; then' not in registration
+
+
 def _as_preproduction(current: Path) -> None:
     payload = json.loads(current.read_text(encoding="utf-8"))
     container = payload["taskDefinition"]["containerDefinitions"][0]
@@ -886,11 +990,27 @@ def test_render_initial_preproduction_worker_is_environment_isolated(
             "parameter/supportportal/preproduction"
         ),
         hermes_case_workflow_mode="real",
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
         agent_model="gpt-6-sol",
     )
     assert "HERMES_CALLBACK_TOKEN" in {
         item["name"] for item in api["containerDefinitions"][0]["secrets"]
     }
+    # 13922 email execution chain: the api role mounts the shared Graph
+    # token-cache EFS volume just like the worker.
+    api_graph_volume = next(
+        item for item in api["volumes"] if item["name"] == "graph-token-cache"
+    )
+    assert api_graph_volume["efsVolumeConfiguration"]["fileSystemId"] == "fs-preproduction"
+    assert (
+        api_graph_volume["efsVolumeConfiguration"]["authorizationConfig"]["accessPointId"]
+        == "fsap-preproduction"
+    )
+    assert any(
+        str(item.get("sourceVolume") or "") == "graph-token-cache"
+        for item in api["containerDefinitions"][0]["mountPoints"]
+    )
     health_check = api["containerDefinitions"][0]["healthCheck"]
     health_command = health_check["command"][1]
     assert "python -c" in health_command
@@ -916,6 +1036,8 @@ def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Pa
         ),
         hermes_case_workflow_mode="disabled",
         hermes_persona_enabled=True,
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
         agent_model="gpt-6-sol",
     )
     container = rendered["containerDefinitions"][0]

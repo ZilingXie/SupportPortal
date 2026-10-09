@@ -2041,6 +2041,32 @@ def _engineer_case_record_to_header_payload(
     }
 
 
+def _parse_account_reply_trigger(value: Any) -> Any:
+    """Parse a trigger timestamp to an aware datetime (None on failure)."""
+    from datetime import datetime, timezone as _timezone
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_timezone.utc)
+    return parsed
+
+
+def _normalize_account_reply_trigger(value: Any) -> str:
+    """Canonical UTC ISO string for trigger comparisons ("" on failure)."""
+    parsed = _parse_account_reply_trigger(value)
+    if parsed is None:
+        return ""
+    from datetime import timezone as _timezone
+
+    return parsed.astimezone(_timezone.utc).isoformat()
+
+
 class TicketRepository(Protocol):
     def initialize(self) -> None:
         ...
@@ -2473,6 +2499,13 @@ class TicketRepository(Protocol):
     ) -> int: ...
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None: ...
     def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None: ...
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None: ...
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]
     ) -> dict[str, dict[str, Any]]: ...
@@ -5181,6 +5214,43 @@ class InMemoryTicketRepository(
         if not jobs:
             return None
         return max(jobs, key=lambda item: str(item.get("created_at") or ""))
+
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None:
+        """Find the reply job bound to one automation email chain.
+
+        Mirrors the unique index identity (ticket_id, trigger timestamp,
+        empty rerun_job_id) plus the automation delivery key, across ALL
+        statuses — the caller decides whether the found job is reusable.
+        """
+        normalized_trigger = _normalize_account_reply_trigger(trigger_message_created_at)
+        normalized_key = str(automation_delivery_key or "").strip()
+        if not normalized_trigger or not normalized_key:
+            return None
+        matches: list[dict[str, Any]] = []
+        with self._assignment_lock:
+            for job in self._account_reply_jobs.values():
+                if str(job.get("ticket_id") or "") != str(ticket_id):
+                    continue
+                payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+                if str(payload.get("rerun_job_id") or "").strip():
+                    continue
+                if str(payload.get("automation_delivery_key") or "") != normalized_key:
+                    continue
+                if (
+                    _normalize_account_reply_trigger(job.get("trigger_message_created_at"))
+                    != normalized_trigger
+                ):
+                    continue
+                matches.append(copy.deepcopy(job))
+        if not matches:
+            return None
+        return max(matches, key=lambda item: str(item.get("created_at") or ""))
 
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]
@@ -19236,6 +19306,45 @@ class PostgresTicketRepository(
                 row = cur.fetchone()
                 return self._account_reply_job_from_row(row) if row is not None else None
         return self._run_with_connection_retry("get_latest_account_reply_job", _operation)
+
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None:
+        """PostgreSQL twin: one indexed lookup by chain identity.
+
+        Uses the exact unique-index identity (ticket_id, trigger
+        timestamp, empty rerun_job_id) plus the automation delivery key
+        so a retry reuses the persisted job instead of colliding with
+        idx_support_account_reply_jobs_ticket_trigger_rerun.
+        """
+        normalized_key = str(automation_delivery_key or "").strip()
+        parsed_trigger = _parse_account_reply_trigger(trigger_message_created_at)
+        if parsed_trigger is None or not normalized_key:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,scheduled_for,"
+                        "payload,attempt_count,claimed_at,published_at,created_at,updated_at "
+                        "FROM {} WHERE ticket_id=%s AND trigger_message_created_at=%s "
+                        "AND COALESCE(payload->>'rerun_job_id', '') = '' "
+                        "AND payload->>'automation_delivery_key' = %s "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (str(ticket_id), parsed_trigger, normalized_key),
+                )
+                row = cur.fetchone()
+                return self._account_reply_job_from_row(row) if row is not None else None
+
+        return self._run_with_connection_retry(
+            "find_account_reply_job_by_chain", _operation
+        )
 
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]

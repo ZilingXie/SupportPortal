@@ -388,6 +388,264 @@ def _correct_classification_to_human(
     return corrected
 
 
+# Hermes-automation email prepare statuses: excludes awaiting_public_reply
+# (F1) — that gate is only released by the public-reply readback, never by
+# a Hermes tool re-prepare.
+_HERMES_EMAIL_PREPARABLE = (
+    "archer_pending", "not_applicable", "not_ready", "pending", "retry", "failed",
+)
+
+
+async def _execute_hermes_internal_email(
+    *,
+    store: Any,
+    repository: Any,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    turn_id: str,
+    automation_handler: str | None,
+    normalized_route: str,
+    environment: str | None,
+    payload: dict[str, Any],
+    sender: Any,
+    trigger_message_created_at: str | None,
+    collected_fields: dict[str, Any] | None,
+    ticket: dict[str, Any] | None,
+    executed_actions: list[str],
+    reply_intent: str,
+) -> dict[str, Any]:
+    """Unified prepare→claim→send→propagate→reply-job helper for Hermes
+    Account Suspension/Fraud internal email execution.
+
+    F1: prepare uses restricted statuses that EXCLUDE awaiting_public_reply.
+    F2: on prepare failure, re-reads the authoritative repository state.
+    F3: on delivery failure, checks if escalation already ran (no double).
+    F4: on success/reuse, idempotently creates the reply job and returns
+    skip_persona so the tool result prevents a second customer reply.
+
+    Returns a dict with keys: status, reason, account_case, reply_job_id,
+    skip_persona, _return (set when the caller must return immediately).
+    """
+    from backend.services.account_automation_delivery import (
+        ensure_account_delivery_key,
+    )
+    from backend.services.automation_account_intake import (
+        _run_internal_email_delivery,
+    )
+    from datetime import datetime, timezone
+
+    account_case_id = str(
+        account_case.get("account_case_id")
+        or account_case.get("billing_ticket_id")
+        or ""
+    )
+    payload = ensure_account_delivery_key(
+        payload, handler=automation_handler or "billing",
+        account_case_id=account_case_id,
+    )
+    delivery_key = str(payload.get("delivery_key") or "")
+
+    # F1: prepare with restricted statuses (awaiting_public_reply excluded).
+    prepared = bool(repository.prepare_account_internal_email_delivery(
+        account_case_id,
+        delivery_key=delivery_key,
+        payload=payload,
+        prepared_at=datetime.now(timezone.utc).isoformat(),
+        allowed_statuses=_HERMES_EMAIL_PREPARABLE,
+        target_status="pending",
+    ))
+
+    if not prepared:
+        # F2: re-read authoritative state from the repository, not the
+        # potentially stale in-memory account_case.
+        fresh = repository.get_account_case_by_ticket_id(ticket_id) or account_case
+        persisted_status = str(fresh.get("internal_email_send_status") or "")
+        persisted_key = str(
+            (fresh.get("internal_email_payload") or {}).get("delivery_key") or ""
+        )
+        if persisted_status == "sent" and persisted_key == delivery_key:
+            email_status = "sent"
+            email_reason = "reused_existing_delivery"
+            executed_actions.append("internal_email_reused")
+            # Continue from the authoritative case (F2): the caller's
+            # in-memory snapshot may lag the delivered state.
+            account_case = fresh
+        elif persisted_status == "awaiting_public_reply":
+            return {
+                "status": "awaiting_public_reply",
+                "reason": "manual review gate not released",
+                "account_case": fresh, "reply_job_id": "",
+                "skip_persona": False,
+                "_return": {"status": "awaiting_public_reply",
+                            "reason_code": f"{normalized_route}_email_awaiting_public_reply",
+                            "detail": "Internal email is gated on public-reply readback."},
+            }
+        else:
+            return {
+                "status": "prepare_failed",
+                "reason": f"status={persisted_status!r}",
+                "account_case": fresh, "reply_job_id": "",
+                "skip_persona": False,
+                "_return": _escalate_uncompleted_automation(
+                    store=store, repository=repository,
+                    account_case=fresh, ticket_id=ticket_id, turn_id=turn_id,
+                    automation_handler=automation_handler,
+                    reason_code=f"{normalized_route}_email_prepare_failed",
+                    detail=(
+                        f"Internal email prepare failed: status={persisted_status!r}, "
+                        f"persisted_key={persisted_key!r}, payload_key={delivery_key!r}"
+                    ),
+                    environment=environment,
+                ),
+            }
+    else:
+        delivery_result, account_case = await _run_internal_email_delivery(
+            repository=repository, account_case=account_case,
+            ticket_id=ticket_id, handler=automation_handler or "billing",
+            payload=payload, sender=sender,
+        )
+        email_status = str(delivery_result.status)
+        email_reason = str(delivery_result.reason)
+
+        if email_status != "sent":
+            # F3: _run_internal_email_delivery already escalated via
+            # _record_execution_failure.  Check the authoritative state to
+            # avoid a second escalation (double notification + incident).
+            fresh = repository.get_account_case_by_ticket_id(ticket_id) or account_case
+            already_escalated = str(
+                fresh.get("automation_status") or ""
+            ) == "human_review_required"
+            if not already_escalated:
+                return {
+                    "status": email_status, "reason": email_reason,
+                    "account_case": fresh, "reply_job_id": "",
+                    "skip_persona": False,
+                    "_return": _escalate_uncompleted_automation(
+                        store=store, repository=repository,
+                        account_case=fresh, ticket_id=ticket_id, turn_id=turn_id,
+                        automation_handler=automation_handler,
+                        reason_code=f"{normalized_route}_email_{email_status}",
+                        detail=f"Internal email delivery returned {email_status}: {email_reason}",
+                        environment=environment,
+                    ),
+                }
+            # Already escalated: record the final work result (single
+            # escalation, single incident) and signal immediate return.
+            escalation_result = {
+                "status": "human_review_required",
+                "reason_code": f"{normalized_route}_email_{email_status}",
+                "detail": email_reason,
+            }
+            try:
+                store.record_hermes_turn_work(turn_id, work_result=escalation_result)
+            except Exception:
+                pass
+            return {
+                "status": email_status, "reason": email_reason,
+                "account_case": fresh, "reply_job_id": "",
+                "skip_persona": False,
+                "_return": escalation_result,
+            }
+        executed_actions.append("internal_email_submitted")
+
+    # F4: success or reuse → create reply job idempotently + skip_persona.
+    from backend.services.account_suspension_automation import (
+        SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+        update_direct_handoff_workflow,
+        closing_reply_facts,
+    )
+    from backend.services.automation_account_intake import _reply_facts
+    from backend.services.account_reply_jobs import (
+        account_reply_delay_seconds_for_profile,
+        create_account_reply_job,
+    )
+
+    customer_email = str((ticket or {}).get("customer_id") or "") or ""
+    customer_name = str(
+        (collected_fields or {}).get("name")
+        or (ticket or {}).get("requester") or ""
+    ) or ""
+
+    if normalized_route == "account_suspension":
+        account_case = update_direct_handoff_workflow(
+            account_case,
+            state=SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            handoff_delivery_key=delivery_key,
+        )
+        confirmation_facts = closing_reply_facts(
+            confirmed_email=customer_email,
+            customer_name=customer_name or None,
+        )
+    else:
+        confirmation_facts = _reply_facts(
+            handler=automation_handler or "billing",
+            action=normalized_route,
+            missing_fields=[],
+            collected_fields=dict(collected_fields or {}),
+            submitted=True,
+            customer_name=customer_name or None,
+        )
+
+    resolved_trigger = str(
+        trigger_message_created_at
+        or datetime.now(timezone.utc).isoformat()
+    )
+    # Idempotency (13922 repair): a retry whose earlier attempt already
+    # wrote the reply job (but died before the turn result landed) must
+    # REUSE that job. create_account_reply_job would cancel-and-reinsert
+    # with a fresh job_id — duplicating the business reply and colliding
+    # with the unique index (ticket_id, trigger_message_created_at,
+    # COALESCE(rerun_job_id, '')). Terminal-failed chain jobs are NOT
+    # reused: the re-insert attempt surfaces honestly (PG: unique
+    # violation -> unified escalation) instead of silently resurrecting a
+    # cancelled reply.
+    chain_job = repository.find_account_reply_job_by_chain(
+        ticket_id,
+        trigger_message_created_at=resolved_trigger,
+        automation_delivery_key=delivery_key,
+    )
+    reusable = bool(chain_job) and str(chain_job.get("status") or "") not in {
+        "cancelled", "failed", "manual_attention",
+    }
+    if reusable:
+        reply_job_id = str(chain_job.get("job_id") or "")
+        executed_actions.append("reply_job_reused")
+    else:
+        reply_job_result = create_account_reply_job(
+            repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at=resolved_trigger,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delay_seconds=account_reply_delay_seconds_for_profile(environment or "production"),
+            draft_content="",
+            reply_facts=confirmation_facts,
+            asked_field_keys=[],
+            persona_assignment=None,
+            automation_delivery_key=delivery_key,
+            close_after_publish=False,
+            reply_intent=reply_intent,
+        )
+        reply_job_id = str(reply_job_result.get("job_id") or "")
+    if reply_job_id and normalized_route == "account_suspension":
+        account_case = update_direct_handoff_workflow(
+            account_case,
+            state=SUSPENSION_STATE_CLOSING_REPLY_PENDING,
+            updated_at=datetime.now(timezone.utc).isoformat(),
+            closing_reply_job_id=reply_job_id,
+        )
+    if reply_job_id:
+        repository.save_account_case(account_case)
+        if not reusable:
+            executed_actions.append(f"reply_job_created:{reply_intent}")
+
+    return {
+        "status": email_status, "reason": email_reason,
+        "account_case": account_case, "reply_job_id": reply_job_id,
+        "skip_persona": bool(reply_job_id),
+    }
+
+
 async def tool_execute_automation_action(
     store: AutomationEcsStore,
     repository: Any,
@@ -413,10 +671,8 @@ async def tool_execute_automation_action(
         _build_suspension_direct_handoff_attempt,
         _build_verification_attempt,
         _run_enablement_workflow,
-        _run_internal_email_delivery,
         _zendesk_ticket_url,
         send_billing_internal_email,
-        send_enablement_internal_email,
     )
     from backend.services.automation_context import build_automation_context
 
@@ -662,6 +918,7 @@ async def tool_execute_automation_action(
         requires_human_review = bool(attempt.get("requires_human_review"))
         executed_actions: list[str] = []
         internal_email_status = "not_applicable"
+        skip_persona = False
         internal_email_reason = ""
 
         account_case["route"] = normalized_route
@@ -719,17 +976,29 @@ async def tool_execute_automation_action(
             and not missing_fields
             and zendesk_side_effects_enabled
         ):
-            delivery_result, account_case = await _run_internal_email_delivery(
+            suspension_outcome = await _execute_hermes_internal_email(
+                store=store,
                 repository=repository,
                 account_case=account_case,
                 ticket_id=ticket_id,
-                handler=automation_handler or "billing",
+                turn_id=turn_id,
+                automation_handler=automation_handler,
+                normalized_route=normalized_route,
+                environment=environment,
                 payload=suspension_handoff_payload,
                 sender=send_billing_internal_email,
+                trigger_message_created_at=trigger_message_created_at,
+                collected_fields=collected_fields,
+                ticket=ticket,
+                executed_actions=executed_actions,
+                reply_intent="account_suspension_handoff_and_close",
             )
-            executed_actions.append("internal_email_submitted")
-            internal_email_status = str(delivery_result.status)
-            internal_email_reason = str(delivery_result.reason)
+            if suspension_outcome.get("_return"):
+                return suspension_outcome["_return"]
+            internal_email_status = suspension_outcome.get("status", "not_applicable")
+            internal_email_reason = suspension_outcome.get("reason", "")
+            account_case = suspension_outcome.get("account_case", account_case)
+            skip_persona = bool(suspension_outcome.get("skip_persona"))
         elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
             if automation_handler == "enablement":
                 try:
@@ -791,22 +1060,38 @@ async def tool_execute_automation_action(
                 )
                 return skip_persona_result
             else:
-                sender = (
-                    send_enablement_internal_email
-                    if automation_handler == "enablement"
-                    else send_billing_internal_email
-                )
-                delivery_result, account_case = await _run_internal_email_delivery(
+                # Fraud/detailed_invoice take the same unified
+                # prepare→claim→send→propagate→reply-job chain as suspension
+                # (F1-F4); the Hermes mirror also starts at not_applicable.
+                fraud_outcome = await _execute_hermes_internal_email(
+                    store=store,
                     repository=repository,
                     account_case=account_case,
                     ticket_id=ticket_id,
-                    handler=automation_handler or "billing",
+                    turn_id=turn_id,
+                    automation_handler=automation_handler,
+                    normalized_route=normalized_route,
+                    environment=environment,
                     payload=dict(attempt["internal_email_to_send"]),
-                    sender=sender,
+                    sender=send_billing_internal_email,
+                    trigger_message_created_at=trigger_message_created_at,
+                    collected_fields=collected_fields,
+                    ticket=ticket,
+                    executed_actions=executed_actions,
+                    reply_intent=(
+                        "fraud_handoff_confirmation"
+                        if normalized_route == "fraud_account"
+                        else "submission_confirmation"
+                        if normalized_route == "detailed_invoice"
+                        else None
+                    ),
                 )
-                executed_actions.append("internal_email_submitted")
-                internal_email_status = str(delivery_result.status)
-                internal_email_reason = str(delivery_result.reason)
+                if fraud_outcome.get("_return"):
+                    return fraud_outcome["_return"]
+                internal_email_status = fraud_outcome.get("status", "not_applicable")
+                internal_email_reason = fraud_outcome.get("reason", "")
+                account_case = fraud_outcome.get("account_case", account_case)
+                skip_persona = bool(fraud_outcome.get("skip_persona"))
         elif attempt.get("internal_email_to_send"):
             # A blocked business action is a failure handoff, never a fake
             # success the model would narrate to the customer (ticket 13567).
@@ -854,6 +1139,9 @@ async def tool_execute_automation_action(
         "executed_actions": executed_actions,
         "internal_email_send_status": internal_email_status,
         "internal_email_send_reason": internal_email_reason,
+        # A reply job created by the tool (fresh send or sent-reuse) is the
+        # SOLE customer reply; persona must not draft a second one (F4).
+        "skip_persona": bool(skip_persona),
     }
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result

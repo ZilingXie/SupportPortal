@@ -97,7 +97,7 @@ main() {
       --hermes-case-workflow-mode "${HERMES_MODE}"
       --output "${OUTPUT_DIR}/${role}.register.json"
     )
-    if [[ "${role}" = "worker" ]]; then
+    if [[ "${role}" != "route" ]]; then
       common_args+=(
         --graph-efs-file-system-id "$(jq -r '.graph_efs_file_system_id' <<<"${bootstrap_json}")"
         --graph-efs-access-point-id "$(jq -r '.graph_efs_access_point_id' <<<"${bootstrap_json}")"
