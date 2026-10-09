@@ -5078,3 +5078,14 @@ For each new entry, record:
 - Native ticket status changes use the existing atomic status+notification ledger; ambiguous Slack submissions are retained for message-identity readback. Handoff mail shows independently recorded actions without assuming success.
 - No route Prompt catalog or Automation routing change. Runtime Hermes overlay retains the live :44 route plugin schema; source-only canonical close registration is tested separately.
 - Local evidence and PP release boundaries: [p2-190 current record](plans/investigation-route-status-fix.md). Production and real ticket 13923 replay remain outside this task.
+# 2026-10-09 — Hermes 分类与续轮动作评估基准 v1.2
+
+- Route alignment experiment now carries `conversation_subcategory` through
+  the Hermes structured schema, validation, normalization, frozen results and
+  three-way comparison report. The new `three_way_comparison.csv` preserves
+  every case, including candidate failures; `summary.json` uses valid,
+  field-present samples as each Production–Hermes, Production–Jev and
+  Hermes–Jev agreement denominator.
+- Verification: fixture CLI run and targeted route-alignment tests cover equal,
+  differing and failed candidate cases, candidate input isolation, CSV row
+  completeness and pair denominators.
