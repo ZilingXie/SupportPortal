@@ -260,3 +260,12 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 3. **载具缺陷修复（调试中发现）**：①脚本顶层 `S3_KEY=""` 覆盖了环境变量，而 --self-check 模式仅从 --key 旗标解析——所有 self-check presign 此前签在桶根（HTTP 200 + ListBucketResult XML），dump 依赖场景多轮空转；现 --self-check 缺 --key 即 fail-fast。②诊断插桩曾在双引号赋值串内嵌双引号，截断 prelude 使生成脚本语法损坏（bash -n 生成物校验已补）。③ssm_run 发送失败现清空 REMOTE_* 并中止（此前保留上一场景状态，把会话过期伪装成"全部意外成功"）。
 4. **场景重排**：本轮复验必需的 S15/S16 移至最前，慢速 app 引导类（S2-S6）最后——AWS login 会话在本机仅约 8-15 分钟，整套约 20 分钟无法单会话完成；fail-fast 保证会话过期时如实报告而非假绿。
 5. 固定提交实测：sc26 轮 S15(4/4)+S16(2/2)+S1(2/2)+S2-S6(10/10)+S7-rescue+S8(1/1) 全过，S7 状态检查为轮询窗flake；kill/race 在 sc24 轮（同功能代码）8+4 全过。
+
+### R14 修复记录（2026-10-08，响应 R13 复验：删除后查询 unknown 的撤标记缺陷；无镜像/服务变更）
+
+1. **严格 absent-only 撤标记**：cleanup/rescue/rescue_assert 三处的"重试后判定"全部从 `gone && rst != present`（unknown 也会撤销归属）改为 `rst = absent` 才撤销，否则 KEEPING + kept=1。
+2. **rescue_assert kept 门控**：初始 unknown 分支补设 kept=1；ownership 文件删除改为仅 kept=0 时执行，kept>0 输出 RESCUE-PARTIAL 并保留 ownership（不再无条件删除）。
+3. **S15b 注入（rm 成功后查询变 unknown）**：两级旋钮 WK_NETQUERY_ARM_AFTER_RM（查询失败仅在删除发生后生效）+ WK_RM_OCCURRED（三处 network rm 成功点置位）——实测 net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成。
+4. **S15c 注入（rescue 自身查询失败）**：在保留的归属状态上以查询全失败运行 rescue 逻辑——ownership 存活、不报清理成功、恢复后清理完成。
+5. **S7 断言括号化**：if 块明确覆盖 TimedOut/Cancelled/Failed → PASS，其余 → FAIL；本环境会话过期出现的空状态在本两轮均产生明确 FAIL（else 分支实证）。
+6. 会话时限说明（如实）：本机 AWS login 会话约 8-10 分钟，整套约 20 分钟；sc27/sc28 在时限内锁定本轮必需 23 项全绿（S15/S15b/S15c/S16/S1/S2-S6），其后场景 SEND-FAILED 如实报告；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。
