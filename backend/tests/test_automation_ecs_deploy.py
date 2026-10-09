@@ -27,6 +27,28 @@ from backend.services.automation_ecs_contracts import RELEASE_MANIFEST_VERSION, 
 from backend.services.automation_release_manifest import contract_versions
 
 
+def test_bootstrap_check_includes_ticket_repository_schema(monkeypatch) -> None:
+    from backend.scripts import automation_ecs_bootstrap
+
+    class FakeRepository:
+        initialized = False
+
+        def initialize(self):
+            self.initialized = True
+
+        def close(self):
+            pass
+
+    repository = FakeRepository()
+    monkeypatch.setattr(automation_ecs_bootstrap, "create_ticket_repository", lambda: repository)
+    monkeypatch.setattr(automation_ecs_bootstrap, "create_automation_ecs_store", lambda settings: type("Store", (), {"check_schema": lambda self: None})())
+    monkeypatch.setattr(automation_ecs_bootstrap, "check_account_runtime_schema", lambda: {"schema": "automation-account-v1"})
+    monkeypatch.setattr(automation_ecs_bootstrap.AutomationEcsSettings, "from_env", lambda role: type("Settings", (), {"environment": "preproduction", "db_schema": "supportportal_preproduction", "provenance": lambda self: type("P", (), {"schema_revision": "automation-ecs-014"})()})())
+    result = automation_ecs_bootstrap.check()
+    assert result["ticket_schema"] == "current"
+    assert repository.initialized is True
+
+
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY_SCRIPT = ROOT / "deployment/deploy_automation_ecs_release.sh"
 INITIAL_TASK_DEFINITIONS_SCRIPT = (
