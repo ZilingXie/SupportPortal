@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T10:01:06Z",
-  "source_base_commit": "00b493e2eb6580a9e1f02a83fd2327d595d5f743",
-  "registry_digest": "fee8fd7574b1633a4ca3b9f804c94834d80f97d4716269f5b05e51a1513403b2",
+  "generated_at": "2026-10-09T16:32:18Z",
+  "source_base_commit": "a3b253febdf9ef64284e9b90a9a5b6c634fae095",
+  "registry_digest": "cf4e68719b50202914e4219c368710446e8ec7d2742ed3386a3b0aa546e55c37",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5457,6 +5457,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R16 rm 成功证据化 + rm 失败注入（固定提交实测 sc32）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验四项关闭条件全部落地：①WK_CTRM_OCCURRED 改为仅 docker rm -f 返回 0 时置位（原无条件 export 的缺陷已修）；②rm 成败写 CTRM-OK/CTRM-FAILED 证据行并随 rescue_assert 输出回传——S15d 现断言 CTRM-OK \u003cpg名> 存在且无 CTRM-FAILED，证明目标场景确在 rm 成功后触发查询故障；③新增 S15e（WK_CTRM_FORCE_FAIL=1 强制 rm 失败）：CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留（删除失败单独验证）+ 恢复完成；④sc32 单轮 34 PASS：S15(4)+S15b(3)+S15c(4)+S15d(5)+S15e(5)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 过期（''→明确 FAIL）其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码，跨轮拼接口径不变）。"
+        },
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
+        {
+          "type": "test",
+          "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验五项关闭条件全部落地并实测：①所有撤归属条件改为严格 state=absent——cleanup/rescue/rescue_assert 三处的重试后判定从 'gone&&!=present'（unknown 也会撤）改为 '=absent 否则 KEEPING+kept=1'；②rescue_assert 初始 unknown 分支现设置 kept=1；ownership 文件删除被 kept 门控（kept>0 → RESCUE-PARTIAL 保留 ownership）；③S15b（netquery2：rm 成功后查询全部 unknown，经 WK_NETQUERY_ARM_AFTER_RM+WK_RM_OCCURRED 两级旋钮实现）实测：net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成；④S15c（rescue 在查询全失败下运行）实测：ownership 存活、不报清理成功、恢复后清理完成；⑤S7 终态断言括号化 if 块——TimedOut/Cancelled/Failed → 明确 PASS，其余（含本环境会话过期的空状态）→ 明确 FAIL（本轮 sc27/28 的 '' → FAIL 即 else 分支实证）。本两轮（sc27/sc28）在会话时限内锁定 S15(4)+S15b(3)+S15c(2)+S16(2)+S1(2)+S2-S6(10)=23 PASS 全绿，其后场景如实 SEND-FAILED；S7/S8 于 sc26 轮全过（同功能代码），kill/race 于 sc24 轮全过（同功能代码）——AWS login 会话约 8-10 分钟、整套约 20 分钟，单会话无法一次跑完为已知环境限制，登记如实记录。"
+        },
+        {
+          "type": "test",
+          "label": "R13 网络查询三态 + 查询失败注入（固定提交实测，两轮拼接证据）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "本轮复验要求的全部关闭项均已实测：①统一 network_state()（present/absent/unknown，docker network ls 名单判定）应用于 cleanup/rescue/rescue_assert/preflight/assert_clean 五处，仅确认 absent 才撤归属；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动（S16 PASS：拒启+零残留）。②S15（WK_NETQUERY_FAIL=1 模拟 daemon 查询失败，资源确属本轮）实测：run 失败、到达 post-restore 触发点、网络 KEPT 未误删、归属文件保留 net: 标记、容器标记正常撤销、TEARDOWN-PARTIAL 不报成功；查询恢复后 rescue 完成清理（4/4 PASS）。③assert_clean 的 network ls 查询失败→'cannot verify absence' 记 miss，不误报零残留。同轮 S1/S2-S6/S8 亦全过。④kill 四边界+双 TOCTOU 竞态+S8 在 sc24 轮（同功能代码，其后仅诊断/顺序/fail-fast 改动）8+4+1 全过。⑤调试过程发现并修复两个载具缺陷：脚本顶层 S3_KEY=”” 覆盖环境变量导致 --self-check 模式 presign 签在桶根（HTTP 200+ListBucketResult XML，此前多轮 dump 依赖场景实为空转）→ 现要求 --key 显式传入否则 fail-fast；嵌套双引号截断 prelude 造成生成脚本语法损坏 → 已修。⑥环境限制如实记录：本机 AWS login 会话仅存活约 8-15 分钟，整套（含 4 次 app 引导）约 20 分钟无法单会话跑完；ssm_run 现在发送失败即清空状态并中止（SEND-FAILED），不再残留上一场景的 Status/Output 造成假象；场景重排为本轮必需覆盖优先。"
+        },
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
+        {
+          "type": "test",
+          "label": "R11 归属崩溃窗口关闭（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 29 PASS（S1 碰撞 2 + S2-S6 五故障 10 + S7 SSM 超时 3 + S8 dump 边界 2 + S9-S12 四 kill 边界 12）。修复：①归属标记改为创建前预登记（net/pg/redis/app 四处）——资源一旦创建即已有归属记录，窗口不存在；②rescue 先确定性删除本轮唯一命名的 dump（覆盖 stage 后、远端启动前的 SSM 失败窗口，此时无归属文件）；③S8 注入该窗口（stage 后不发远端，rescue nothing-owned 路径仍删 dump）；④S9-S12 以 kill -9 在四个创建边界自杀（跳过远端 trap，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，逐项 assert_clean=0。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK）。注：首轮 self-check 26/27，唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。"
+        },
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
@@ -16720,7 +16768,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R8（本轮）完成：F1 cleanup 改为每容器单次查询、同果决定归属与目录删除（修复二次重查询两套判定反例）；F3 child B 合同拒绝改用专用退出码 42、断言失败仍 exit 1，父断言要求 42，并新增注入缺陷子进程 B-BUG 证明该缺陷会被检出而非误判通过。固定提交实测：真实模式 7 PASS、--self-check 父断言 14 PASS。剩余仅模型相关项：模型凭据答复→配置→文档闭环→异常表现→含知识数据的任务重建持久化→独立恢复环境应用层检索与文件回读→复验收口。",
+      "next_action": "R16（本轮）：rm 成功证据化（条件置位+CTRM 证据行）、S15d 断言 rm-succeeded 证据、S15e rm 失败独立验证（PARTIAL+ownership 保留）；sc32 单轮 34 PASS。待办：独立复验 R16；通过后 finalize PR#1435 收口 p2-188。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16732,10 +16780,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常",
         "阶段一通过后停止：不把结论扩大到 n8n 接入或治理链"
       ],
-      "blockers": [
-        "知识处理链（文档闭环/异常表现/知识持久化/恢复后应用层检索回读）需要 WeKnora 自管 LLM+embedding 模型凭据（OpenAI 兼容，固定维度，核对额度）：已提问（复用 preproduction 既有 SSM 参数 vs 新 key vs 暂不配置），用户尚未答复。浏览器路径验证（登录/深页刷新/退出/失效重登录/引导跳过）已全部完成，不再阻塞。"
-      ],
+      "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R16 rm 成功证据化 + rm 失败注入（固定提交实测 sc32）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验四项关闭条件全部落地：①WK_CTRM_OCCURRED 改为仅 docker rm -f 返回 0 时置位（原无条件 export 的缺陷已修）；②rm 成败写 CTRM-OK/CTRM-FAILED 证据行并随 rescue_assert 输出回传——S15d 现断言 CTRM-OK \u003cpg名> 存在且无 CTRM-FAILED，证明目标场景确在 rm 成功后触发查询故障；③新增 S15e（WK_CTRM_FORCE_FAIL=1 强制 rm 失败）：CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留（删除失败单独验证）+ 恢复完成；④sc32 单轮 34 PASS：S15(4)+S15b(3)+S15c(4)+S15d(5)+S15e(5)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 过期（''→明确 FAIL）其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码，跨轮拼接口径不变）。"
+        },
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
+        {
+          "type": "test",
+          "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验五项关闭条件全部落地并实测：①所有撤归属条件改为严格 state=absent——cleanup/rescue/rescue_assert 三处的重试后判定从 'gone&&!=present'（unknown 也会撤）改为 '=absent 否则 KEEPING+kept=1'；②rescue_assert 初始 unknown 分支现设置 kept=1；ownership 文件删除被 kept 门控（kept>0 → RESCUE-PARTIAL 保留 ownership）；③S15b（netquery2：rm 成功后查询全部 unknown，经 WK_NETQUERY_ARM_AFTER_RM+WK_RM_OCCURRED 两级旋钮实现）实测：net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成；④S15c（rescue 在查询全失败下运行）实测：ownership 存活、不报清理成功、恢复后清理完成；⑤S7 终态断言括号化 if 块——TimedOut/Cancelled/Failed → 明确 PASS，其余（含本环境会话过期的空状态）→ 明确 FAIL（本轮 sc27/28 的 '' → FAIL 即 else 分支实证）。本两轮（sc27/sc28）在会话时限内锁定 S15(4)+S15b(3)+S15c(2)+S16(2)+S1(2)+S2-S6(10)=23 PASS 全绿，其后场景如实 SEND-FAILED；S7/S8 于 sc26 轮全过（同功能代码），kill/race 于 sc24 轮全过（同功能代码）——AWS login 会话约 8-10 分钟、整套约 20 分钟，单会话无法一次跑完为已知环境限制，登记如实记录。"
+        },
+        {
+          "type": "test",
+          "label": "R13 网络查询三态 + 查询失败注入（固定提交实测，两轮拼接证据）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "本轮复验要求的全部关闭项均已实测：①统一 network_state()（present/absent/unknown，docker network ls 名单判定）应用于 cleanup/rescue/rescue_assert/preflight/assert_clean 五处，仅确认 absent 才撤归属；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动（S16 PASS：拒启+零残留）。②S15（WK_NETQUERY_FAIL=1 模拟 daemon 查询失败，资源确属本轮）实测：run 失败、到达 post-restore 触发点、网络 KEPT 未误删、归属文件保留 net: 标记、容器标记正常撤销、TEARDOWN-PARTIAL 不报成功；查询恢复后 rescue 完成清理（4/4 PASS）。③assert_clean 的 network ls 查询失败→'cannot verify absence' 记 miss，不误报零残留。同轮 S1/S2-S6/S8 亦全过。④kill 四边界+双 TOCTOU 竞态+S8 在 sc24 轮（同功能代码，其后仅诊断/顺序/fail-fast 改动）8+4+1 全过。⑤调试过程发现并修复两个载具缺陷：脚本顶层 S3_KEY=”” 覆盖环境变量导致 --self-check 模式 presign 签在桶根（HTTP 200+ListBucketResult XML，此前多轮 dump 依赖场景实为空转）→ 现要求 --key 显式传入否则 fail-fast；嵌套双引号截断 prelude 造成生成脚本语法损坏 → 已修。⑥环境限制如实记录：本机 AWS login 会话仅存活约 8-15 分钟，整套（含 4 次 app 引导）约 20 分钟无法单会话跑完；ssm_run 现在发送失败即清空状态并中止（SEND-FAILED），不再残留上一场景的 Status/Output 造成假象；场景重排为本轮必需覆盖优先。"
+        },
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
+        {
+          "type": "test",
+          "label": "R11 归属崩溃窗口关闭（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 29 PASS（S1 碰撞 2 + S2-S6 五故障 10 + S7 SSM 超时 3 + S8 dump 边界 2 + S9-S12 四 kill 边界 12）。修复：①归属标记改为创建前预登记（net/pg/redis/app 四处）——资源一旦创建即已有归属记录，窗口不存在；②rescue 先确定性删除本轮唯一命名的 dump（覆盖 stage 后、远端启动前的 SSM 失败窗口，此时无归属文件）；③S8 注入该窗口（stage 后不发远端，rescue nothing-owned 路径仍删 dump）；④S9-S12 以 kill -9 在四个创建边界自杀（跳过远端 trap，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，逐项 assert_clean=0。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK）。注：首轮 self-check 26/27，唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。"
+        },
+        {
+          "type": "test",
+          "label": "R10 恢复脚本资源归属修复 + 故障注入套件（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 17 PASS：S1 名称碰撞（预先存在的同名容器被拒绝触碰且存活）+S2-S6 五类故障注入（restore/appstart/login/search/download 各自按设计失败且全部资源清零）+S7 SSM 超时 SIGKILL 路径（命令被杀后外层 rescue 按归属文件重放清理，全部资源清零）。修复内容：删除无条件预清理（碰撞直接失败不触碰）；远端脚本 EXIT trap 单查询三态清理（无法确认撤除→KEEPING 保留并报告）；归属文件记录本轮创建的全部资源；外层 EXIT trap rescue 重放归属文件（覆盖 SSM 中断/超时 SIGKILL 跳过远端 trap 的场景）；docker 旧版无 container exists 子命令（曾打 usage rc=1 被误判 absent）→ 改用 ps -a 名单判定；heredoc 引号展开修复。真实模式复跑通过（APP-SEARCH PASS、DL-MD5 全等、TEARDOWN-OK、assert_clean miss=0）。另记证据边界（复核意见）：应用层恢复脚本读取现有 docs 桶对象，MD5 证明『独立恢复的 app 能经数据库记录读取现有文件桶对象』，不单独证明文件对象包含在备份恢复链；如需完整文件备份恢复须另补对象存储备份/恢复证据（边界已记 Runbook）。"
+        },
+        {
+          "type": "deployment",
+          "label": "R9 知识链验收（2026-10-08 16:3x-18:2x 北京，用户授权凭据）",
+          "command": "WeKnora 管理 API + 浏览器 + ECS；backup/restore_verify/verify_restore_app_level（固定提交实测）",
+          "result": "①模型：gpt-6-sol（OpenAI，openai-responses）与 BAAI/bge-m3（SiliconFlow，1024 维）经 /models/:id/debug 实调全过（用户充值后 embedding 连通恢复；旧 key 失效、-v2 余额不足为前置确认）。②文档闭环：KB 008d2bab 绑定模型（PUT /initialization/config/:kbId）→ 样本『泽塔七号咖啡种植指南』上传（963f59b0）→ completed → hybrid-search 命中（LLM 摘要块+原文块）→ 事实 ZETA-7-IRRIGATE-42 回读 PASS → /knowledge/:id/download 与本地参考字节一致。③异常表现：模型未绑定时首样本（bd125801）parse_status=failed+error_message『failed to get embedding model: model ID cannot be empty』，未误报 ready。④持久化：paradedb+app 双强制重建（守卫在既有数据上放行）→ 检索 PASS+下载字节一致。⑤备份：db/weknora-…-20261008T090954Z.dump（310,112B，manifest：users=1/kb=1/knowledges=2/chunks=2/embeddings=2）；DB 层恢复 countsMatchBaseline=true+『泽塔七号咖啡种植指南-验收样本』2 chunks 全文回读。⑥应用层恢复验证（verify_restore_app_level.sh，容量实例 amd64 三容器+template0 恢复+唯一资源清理）：RESTORE-OK→APP-HEALTHY→hybrid 检索命中故障码 PASS→文件下载 HTTP 200+MD5 e53ce21a…与参考全等。附带教训：本地 qemu 仿真 amd64 app 镜像段错误→改实例侧执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复须 createdb -T template0；长会话 STS 凭据过期需在脚本内刷新。"
+        },
         {
           "type": "test",
           "label": "R8 cleanup 一致判定与退出码区分（固定提交实测）",
