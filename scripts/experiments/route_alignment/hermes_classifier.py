@@ -42,6 +42,7 @@ HERMES_ROUTE_EXPERIMENT_SCHEMA_VERSION = "hermes-route-experiment-schema-v1"
 _ALLOWED_ROLES = frozenset({"user", "assistant"})
 _ALLOWED_INTENTS = frozenset({"conversation", "agora", "uncertain"})
 _ALLOWED_CONVERSATION_ACTIONS = frozenset({"resolve", "follow_up", "human_review"})
+_ALLOWED_CONVERSATION_SUBCATEGORIES = frozenset({"knowledge_question", "progress_inquiry", "priority_request"})
 _ALLOWED_AGORA_ROUTES = frozenset(
     {"technical", "security_compliance", "account_billing", "backend_operation", "uncategorized"}
 )
@@ -200,6 +201,7 @@ def _classification_schema() -> dict[str, Any]:
         "required": [
             "intent_class",
             "conversation_action",
+            "conversation_subcategory",
             "intent_confidence",
             "agora_confidence",
             "action_confidence",
@@ -216,6 +218,10 @@ def _classification_schema() -> dict[str, Any]:
             "conversation_action": {
                 "type": ["string", "null"],
                 "enum": [None, *sorted(_ALLOWED_CONVERSATION_ACTIONS)],
+            },
+            "conversation_subcategory": {
+                "type": ["string", "null"],
+                "enum": [None, *sorted(_ALLOWED_CONVERSATION_SUBCATEGORIES)],
             },
             "intent_confidence": confidence_number,
             "agora_confidence": confidence_number,
@@ -354,10 +360,15 @@ def _finite_confidence(value: Any) -> bool:
 
 
 def _clean_classification(value: Any) -> dict[str, Any]:
-    if not isinstance(value, Mapping) or set(value) != set(_classification_schema()["required"]):
+    required = set(_classification_schema()["required"])
+    # Older fixture responses predate the explicit subcategory field.  Keep
+    # those fixtures readable as null while the provider schema requires it.
+    compatible_required = required - {"conversation_subcategory"}
+    if not isinstance(value, Mapping) or (set(value) != required and set(value) != compatible_required):
         raise HermesExperimentError("invalid_model_classification")
     intent = value.get("intent_class")
     conversation_action = value.get("conversation_action")
+    conversation_subcategory = value.get("conversation_subcategory")
     agora_route = value.get("agora_route")
     billing = value.get("account_billing_subcategory")
     backend = value.get("backend_operation_subcategory")
@@ -366,6 +377,11 @@ def _clean_classification(value: Any) -> dict[str, Any]:
         raise HermesExperimentError("invalid_model_classification")
     if conversation_action is not None and (
         not isinstance(conversation_action, str) or conversation_action not in _ALLOWED_CONVERSATION_ACTIONS
+    ):
+        raise HermesExperimentError("invalid_model_classification")
+    if conversation_subcategory is not None and (
+        not isinstance(conversation_subcategory, str)
+        or conversation_subcategory not in _ALLOWED_CONVERSATION_SUBCATEGORIES
     ):
         raise HermesExperimentError("invalid_model_classification")
     if agora_route is not None and (not isinstance(agora_route, str) or agora_route not in _ALLOWED_AGORA_ROUTES):
@@ -404,6 +420,7 @@ def _clean_classification(value: Any) -> dict[str, Any]:
     return {
         "intent_class": intent,
         "conversation_action": conversation_action,
+        "conversation_subcategory": conversation_subcategory,
         "intent_confidence": value.get("intent_confidence"),
         "agora_confidence": value.get("agora_confidence"),
         "action_confidence": value.get("action_confidence"),

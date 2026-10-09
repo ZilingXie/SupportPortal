@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .adapters import fetch_production_snapshots, fixture_candidate, gateway_capabilities, http_candidate, load_fixture_snapshots
-from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, result_to_dict, review_context_record, snapshot_manifest_record, write_candidate_error_csv, write_disagreement_csv, write_jsonl
+from .core import CandidateResult, CaseSnapshot, classification_artifact_view, compare_case, pair_field_comparison, result_to_dict, review_context_record, snapshot_manifest_record, write_candidate_error_csv, write_disagreement_csv, write_jsonl, write_three_way_csv
 from .dataset import dataset_id_for, load_frozen_dataset, write_frozen_dataset
 from .provenance import source_code_commit
 
@@ -56,6 +56,38 @@ def _field_agreement(results: list[Any], snapshots: list[CaseSnapshot]) -> dict[
                         scopes["same_input"][field]["agreed"] += 1
         output[name] = scopes
     return output
+
+
+def _pair_agreement(results: list[Any], left_name: str, right_name: str) -> dict[str, Any]:
+    from .core import THREE_WAY_FIELDS
+
+    field_counts = {field: {"compared": 0, "agreed": 0} for field in THREE_WAY_FIELDS}
+    comparable_samples = 0
+    for result in results:
+        left = result.baseline if left_name == "production" else (result.candidates.get(left_name).normalized if result.candidates.get(left_name) and result.candidates[left_name].status == "ok" else None)
+        right = result.baseline if right_name == "production" else (result.candidates.get(right_name).normalized if result.candidates.get(right_name) and result.candidates[right_name].status == "ok" else None)
+        comparable, differences = pair_field_comparison(left, right)
+        if comparable:
+            comparable_samples += 1
+        for field in comparable:
+            field_counts[field]["compared"] += 1
+            if field not in differences:
+                field_counts[field]["agreed"] += 1
+    compared_fields = sum(item["compared"] for item in field_counts.values())
+    agreed_fields = sum(item["agreed"] for item in field_counts.values())
+    for item in field_counts.values():
+        item["agreement_rate"] = round(item["agreed"] / item["compared"], 6) if item["compared"] else None
+    return {
+        "left": left_name,
+        "right": right_name,
+        "comparable_sample_count": comparable_samples,
+        "valid_sample_count": comparable_samples,
+        "field_compared_count": compared_fields,
+        "field_agreed_count": agreed_fields,
+        "agreement_rate": round(agreed_fields / compared_fields, 6) if compared_fields else None,
+        "field_agreement_rate": round(agreed_fields / compared_fields, 6) if compared_fields else None,
+        "fields": field_counts,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -327,8 +359,27 @@ def main(argv: list[str] | None = None) -> int:
     candidate_error_filename = f"candidate_error_report.{run_id}.csv"
     write_disagreement_csv(args.output_dir / disagreement_filename, results, run_id=run_id, dataset_id=dataset_id)
     write_candidate_error_csv(args.output_dir / candidate_error_filename, results, run_id=run_id, dataset_id=dataset_id)
+    three_way_filename = "three_way_comparison.csv"
+    write_three_way_csv(args.output_dir / three_way_filename, results)
     candidate_names = sorted({name for item in results for name in item.candidates})
     candidate_summaries = {name: _candidate_summary(results, name) for name in candidate_names}
+    failure_reasons = {
+        name: {
+            code: sum(
+                1 for result in results
+                for candidate in [result.candidates.get(name)]
+                if candidate is not None and candidate.status != "ok"
+                and (candidate.error_code or candidate.error or candidate.status) == code
+            )
+            for code in sorted({
+                candidate.error_code or candidate.error or candidate.status
+                for result in results
+                for candidate in [result.candidates.get(name)]
+                if candidate is not None and candidate.status != "ok"
+            })
+        }
+        for name in candidate_names
+    }
     alignment_counts = {state: sum(item.metadata.get("baseline_input_alignment", "unknown") == state for item in snapshots) for state in ("matched", "mismatch", "unknown")}
     summary = {
         "run_id": run_id,
@@ -341,6 +392,7 @@ def main(argv: list[str] | None = None) -> int:
         "artifacts": {
             "disagreement_report": disagreement_filename,
             "candidate_error_report": candidate_error_filename,
+            "three_way_comparison": three_way_filename,
         },
         "case_count": len(results),
         "review_required_count": sum(item.review_required for item in results),
@@ -349,6 +401,7 @@ def main(argv: list[str] | None = None) -> int:
         "same_input_agreement_available": alignment_counts["matched"] > 0,
         "candidate_names": candidate_names,
         "candidates": candidate_summaries,
+        "failure_reasons": failure_reasons,
         "provenance": {
             "runner_code_commit": _code_commit(),
             "candidate_implementation_commits": {
@@ -376,6 +429,11 @@ def main(argv: list[str] | None = None) -> int:
             for summary in candidate_summaries.values()
         ),
         "field_agreement": _field_agreement(results, snapshots),
+        "three_way_agreement": {
+            "production_hermes": _pair_agreement(results, "production", "hermes"),
+            "production_jev": _pair_agreement(results, "production", "jev"),
+            "hermes_jev": _pair_agreement(results, "hermes", "jev"),
+        },
         "sampling_note": "stratified experiment sample; not Production prevalence or model accuracy",
     }
     summary_path = args.output_dir / "summary.json"
