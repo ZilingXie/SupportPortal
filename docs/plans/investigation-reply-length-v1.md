@@ -18,3 +18,11 @@
 - 集成验证：相关 Hermes follow-up、Zendesk draft/approval 和 worker 套件。
 - Preproduction：使用隔离测试入口验证长调查与长 draft，不重放已关闭 Ticket 13923，不发送真实客户回复或真实 Slack 测试消息。
 - Production 发布和自然业务样本不在本任务授权内。
+
+## R1 完成证据（2026-10-10）
+
+- 代码提交 `42a2da282973195edf4fb53730f96e4b117011bd` 已合入当前 `main`；受影响四个测试文件合计 **181 passed、92 subtests passed**，`compileall` 与 `git diff --check` 通过。
+- Preproduction release `r20261009-1a7b6e5`（source `1a7b6e511d3a670ac3b471bc5c42a291b6042760`，Prompt Release `pr-ee28a3c51d44`）正式 evidence 为 `complete`。API/Route/Worker 为 `:121/:120/:121`，三角色 digest 与 manifest 一致；Prompt active/sync、CloudWatch、provider probe、public health、Terraform pre/post zero-drift 全通过。
+- 只读 live release endpoint 与 `scripts.testing.preproduction --check` 均通过，确认 DB/Zendesk/SMTP/Relay/Pilot 连通；未创建工单、未发送客户或 Slack 内容。
+- 长度合同由隔离测试入口证明：Persona v2 首次超长只使用现有一次重生成，第二次仍超长阻断；完整 draft（含 greeting）超过 1,200 字符返回 `reply_too_long`；Investigation Slack 展示不超过 2,000 字符且调查记录保持完整。
+- 真实客户/Slack 样本和 Ticket 13923 重放仍按授权边界不执行，Production 不发布。
