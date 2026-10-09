@@ -1011,6 +1011,24 @@ def _plan_account_zendesk_status_transition(
     }
 
 
+def _native_status_watermark(source: Any, stored: Any) -> str:
+    # Native events require a real, timezone-bearing source revision.
+    timestamp = datetime.fromisoformat(str(source or "").replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("native status source_updated_at requires timezone")
+    if stored is None:
+        return "newer"
+    incoming = _canonical_account_revision_timestamp(source)
+    previous = _canonical_account_revision_timestamp(stored)
+    return "older" if incoming < previous else "same" if incoming == previous else "newer"
+
+
+def _native_status_intent(notification: dict[str, Any], prior: Any, current: str) -> dict[str, Any]:
+    payload = dict(notification["payload"])
+    payload.update(prior_status=str(prior or "unknown").lower(), current_status=current)
+    return {"scope": notification["scope"], "key": notification["key"], "payload": payload}
+
+
 def _account_case_detail_revision(
     account_case: dict[str, Any],
     ticket: dict[str, Any] | None,
@@ -3001,6 +3019,7 @@ class TicketRepository(Protocol):
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -4149,6 +4168,7 @@ class InMemoryTicketRepository(
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -4173,6 +4193,14 @@ class InMemoryTicketRepository(
                 stored_status_updated_at=account_case.get("zendesk_status_updated_at"),
                 synced_at=synced_at,
             )
+            if native_notification is not None:
+                watermark = _native_status_watermark(source_updated_at, account_case.get("zendesk_status_updated_at"))
+                if watermark == "older":
+                    plan = {"outcome": "stale_ignored"}
+                elif plan["outcome"] == "unchanged" and watermark == "newer":
+                    account_case["zendesk_status_updated_at"] = str(source_updated_at)
+                    account_case["zendesk_status_synced_at"] = synced_at
+                    self._billing_tickets[billing_ticket_id or stored_key] = _normalize_account_case_record(account_case)
             if plan["outcome"] != "updated":
                 return {
                     "status": plan["outcome"],
@@ -4223,6 +4251,9 @@ class InMemoryTicketRepository(
                 },
                 created_at=synced_at,
             )
+            if native_notification is not None:
+                intent = _native_status_intent(native_notification, plan["prior_zendesk_status"], normalized_status)
+                self.enqueue_native_notification(**intent, created_at=synced_at)
             engineer_slack_event_queued = False
             if (
                 isinstance(engineer_slack_event, dict)
@@ -6831,6 +6862,49 @@ class InMemoryTicketRepository(
     def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 100), 1000))
         return [copy.deepcopy(item) for item in reversed(self._workspace_audit_events[-safe_limit:])]
+
+    def enqueue_native_notification(self, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> dict[str, Any]:
+        with self._assignment_lock:
+            self._idempotency_records.setdefault((scope, key), {"scope": scope, "idempotency_key": key, "state": "pending", "response_payload": copy.deepcopy(payload), "created_at": created_at, "updated_at": created_at})
+            return copy.deepcopy(self._idempotency_records[(scope, key)])
+
+    def get_native_notification(self, scope: str, key: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            return copy.deepcopy(self._idempotency_records.get((scope, key)))
+
+    def claim_native_notification(self, *, scope: str, key: str, claim_token: str, updated_at: str) -> dict[str, Any] | None:
+        if not claim_token:
+            raise ValueError("notification claim requires processing fence")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] not in {"pending", "failed"}:
+                return None
+            row["state"] = "sending"
+            row["updated_at"] = updated_at
+            row["response_payload"]["claim_token"] = claim_token
+            return copy.deepcopy(row)
+
+    def finish_native_notification(self, *, scope: str, key: str, claim_token: str, state: str, result: dict[str, Any], updated_at: str) -> bool:
+        if state not in {"completed", "failed", "outcome_unknown"}:
+            raise ValueError("invalid native notification outcome")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] != "sending" or row["response_payload"].get("claim_token") != claim_token:
+                return False
+            row.update(state=state, updated_at=updated_at)
+            row["response_payload"]["delivery"] = copy.deepcopy(result)
+            return True
+
+    def confirm_native_close_readback(self, *, scope: str, key: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not scope.startswith("native-hermes-close:") or result.get("ticket_status") not in {"solved", "closed"}:
+            raise ValueError("terminal native close readback required")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] not in {"sending", "outcome_unknown"}:
+                return False
+            row.update(state="completed", updated_at=updated_at)
+            row["response_payload"]["delivery"] = copy.deepcopy(result)
+            return True
 
     def begin_idempotent_request(
         self,
@@ -9935,6 +10009,7 @@ class PostgresTicketRepository(
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -9983,6 +10058,12 @@ class PostgresTicketRepository(
                     stored_status_updated_at=stored_status_updated_at,
                     synced_at=synced_at,
                 )
+                if native_notification is not None:
+                    watermark = _native_status_watermark(normalized_source_updated_at, stored_status_updated_at)
+                    if watermark == "older":
+                        plan = {"outcome": "stale_ignored"}
+                    elif plan["outcome"] == "unchanged" and watermark == "newer":
+                        cur.execute(sql.SQL("UPDATE {} SET zendesk_status_updated_at=%s,zendesk_status_synced_at=%s WHERE account_case_id=%s").format(self._table("support_account_cases")), (normalized_source_updated_at, synced_at, stored_key))
                 if plan["outcome"] != "updated":
                     return {
                         "status": plan["outcome"],
@@ -10045,6 +10126,9 @@ class PostgresTicketRepository(
                         synced_at,
                     ),
                 )
+                if native_notification is not None:
+                    intent = _native_status_intent(native_notification, plan["prior_zendesk_status"], normalized_status)
+                    self._insert_native_notification(cur, **intent, created_at=synced_at)
                 engineer_slack_event_queued = False
                 if (
                     normalized_slack_event is not None
@@ -14958,6 +15042,54 @@ class PostgresTicketRepository(
                 ]
 
         return self._run_with_connection_retry("list_workspace_audit_events", _operation)
+
+    def _insert_native_notification(self, cur: Any, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> None:
+        cur.execute(sql.SQL("INSERT INTO {} (scope,idempotency_key,state,response_payload,created_at,updated_at) VALUES (%s,%s,'pending',%s,%s,%s) ON CONFLICT (scope,idempotency_key) DO NOTHING").format(self._table("support_idempotency_records")), (scope, key, Json(payload), created_at, created_at))
+
+    def enqueue_native_notification(self, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> dict[str, Any]:
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                self._insert_native_notification(cur, scope=scope, key=key, payload=payload, created_at=created_at)
+                cur.execute(sql.SQL("SELECT state,response_payload FROM {} WHERE scope=%s AND idempotency_key=%s").format(self._table("support_idempotency_records")), (scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": row[0], "response_payload": row[1]}
+        return self._run_with_connection_retry("enqueue_native_notification", operation)
+
+    def get_native_notification(self, scope: str, key: str) -> dict[str, Any] | None:
+        def operation(conn):
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT state,response_payload FROM {} WHERE scope=%s AND idempotency_key=%s").format(self._table("support_idempotency_records")), (scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": row[0], "response_payload": row[1]} if row else None
+        return self._run_with_connection_retry("get_native_notification", operation)
+
+    def claim_native_notification(self, *, scope: str, key: str, claim_token: str, updated_at: str) -> dict[str, Any] | None:
+        if not claim_token:
+            raise ValueError("notification claim requires processing fence")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state='sending',response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state IN ('pending','failed') RETURNING response_payload").format(self._table("support_idempotency_records")), (Json({"claim_token": claim_token}), updated_at, scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": "sending", "response_payload": row[0]} if row else None
+        return self._run_with_connection_retry("claim_native_notification", operation)
+
+    def finish_native_notification(self, *, scope: str, key: str, claim_token: str, state: str, result: dict[str, Any], updated_at: str) -> bool:
+        if state not in {"completed", "failed", "outcome_unknown"}:
+            raise ValueError("invalid native notification outcome")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state=%s,response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state='sending' AND response_payload->>'claim_token'=%s").format(self._table("support_idempotency_records")), (state, Json({"delivery": result}), updated_at, scope, key, claim_token))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("finish_native_notification", operation)
+
+    def confirm_native_close_readback(self, *, scope: str, key: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not scope.startswith("native-hermes-close:") or result.get("ticket_status") not in {"solved", "closed"}:
+            raise ValueError("terminal native close readback required")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state='completed',response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state IN ('sending','outcome_unknown')").format(self._table("support_idempotency_records")), (Json({"delivery": result}), updated_at, scope, key))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("confirm_native_close_readback", operation)
 
     def begin_idempotent_request(
         self,

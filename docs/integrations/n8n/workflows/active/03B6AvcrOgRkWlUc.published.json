@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-10-08T13:59:48.795Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "03B6AvcrOgRkWlUc",
     "workflowName": "[case]Sync Status",
     "snapshotKind": "published",
-    "versionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
-    "draftVersionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
-    "publishedVersionId": "6cfb5781-11bf-4596-bd99-64c092969b92",
-    "updatedAt": "2026-09-16T07:07:19.764Z",
+    "versionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+    "draftVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+    "publishedVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+    "updatedAt": "2026-10-08T13:55:49.494Z",
     "parentFolderId": "m6g0McsPdron3eH9"
   },
   "workflow": {
     "name": "[case]Sync Status",
-    "description": "监听 Zendesk 状态变化，获取工单并按 Case 归属把状态同步到旧主栈与旧 Production（仅旧 EC2 环境）。原 ECS 分支调用的 /api/integrations 端点在 ECS 上不存在、从未成功，已于 2026-09-16 移除；ECS 由 /v1/intake 事件驱动，不做状态联动。属于 SupportPortal 状态联动流程。",
+    "description": "监听 Zendesk 状态变化，保留旧 EC2 归属分支；仅对已有 ECS Preproduction Case 发送使用真实源时间及稳定身份的 ticket.updated，由 SP 同步到原 Hermes Slack thread。",
     "nodes": [
       {
         "parameters": {
@@ -295,6 +295,111 @@
             "name": "2_SupportPortal"
           }
         }
+      },
+      {
+        "id": "p2190-status-membership",
+        "name": "ECS Preproduction status membership",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          768,
+          512
+        ],
+        "parameters": {
+          "url": "=https://supportcenter.stellarix.space/automation/preproduction/v1/cases/{{ $('get_case_info').item.json.ticket.id }}/executions",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": false,
+          "options": {}
+        },
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "id": "p2190-status-membership-if",
+        "name": "Is ECS Preproduction Case",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          992,
+          512
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "2b2c7e47-0766-4a22-8382-9fc60d25a7a8",
+                "leftValue": "={{ Array.isArray($json.executions) && $json.executions.length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "p2190-status-intake",
+        "name": "Build ECS ticket.updated intake",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1216,
+          512
+        ],
+        "parameters": {
+          "mode": "runOnceForEachItem",
+          "jsCode": "const ticket = $('get_case_info').item.json.ticket;\nif (!ticket || !/^\\d+$/.test(String(ticket.id || ''))) throw new Error('Zendesk ticket id missing');\nconst status = String(ticket.status || '').trim().toLowerCase();\nif (!['new','open','pending','hold','solved','closed'].includes(status)) throw new Error('Invalid source ticket status');\nconst source = String(ticket.updated_at || '').trim();\nif (!/(Z|[+-]\\d{2}:\\d{2})$/.test(source) || !Number.isFinite(Date.parse(source))) throw new Error('Valid source updated_at with timezone required');\nconst version = new Date(source).toISOString();\nconst requester = ticket.requester || {};\nconst fields = Array.isArray(ticket.custom_fields) ? Object.fromEntries(ticket.custom_fields.map(f => [String(f.id), f.value])) : (ticket.custom_fields || {});\nreturn {json: {schema_version:'automation-intake-v1',event_id:'zendesk:automation.preproduction:ticket:'+ticket.id+':updated:'+version+':'+status,event_type:'ticket.updated',occurred_at:version,ticket:{id:String(ticket.id),status,subject:String(ticket.subject || ''),description:String(ticket.description || ''),requester:{id:ticket.requester_id == null ? null : String(ticket.requester_id),name:requester.name || null,email:requester.email || null,role:'end-user',is_agent:false},tags:Array.isArray(ticket.tags)?ticket.tags:[],custom_fields:fields,updated_at:version}}};"
+        }
+      },
+      {
+        "id": "p2190-status-send",
+        "name": "Send status to ECS Preproduction",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1440,
+          512
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/intake",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ $json }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
       }
     ],
     "connections": {
@@ -319,6 +424,11 @@
             },
             {
               "node": "prodCase membership check",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "ECS Preproduction status membership",
               "type": "main",
               "index": 0
             }
@@ -379,6 +489,39 @@
             }
           ]
         ]
+      },
+      "ECS Preproduction status membership": {
+        "main": [
+          [
+            {
+              "node": "Is ECS Preproduction Case",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Is ECS Preproduction Case": {
+        "main": [
+          [
+            {
+              "node": "Build ECS ticket.updated intake",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build ECS ticket.updated intake": {
+        "main": [
+          [
+            {
+              "node": "Send status to ECS Preproduction",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
       }
     },
     "settings": {
@@ -394,11 +537,11 @@
     "redactedValues": [
       {
         "nodeName": "get_case_info",
-        "path": "nodes.get_case_info.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.7.parameters.headerParameters.parameters.1.value",
         "field": "authorization",
         "reason": "secret_named_field"
       }
     ],
-    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+    "credentials": "Credential references retained; rebind redacted literals before restore."
   }
 }

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T06:15:17Z",
+  "capturedAt": "2026-10-08T13:59:48.798Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "kyiA0QuiVx6JJ03i",
@@ -1368,41 +1368,41 @@
     "redactedValues": [
       {
         "nodeName": "create_ticket",
-        "path": "nodes.create_ticket.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.0.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "create_ticket",
-        "path": "nodes.create_ticket.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.1.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "create_ticket",
-        "path": "nodes.create_ticket.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.2.value",
         "field": "cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Add_Comment",
-        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.0.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Add_Comment",
-        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.1.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Add_Comment",
-        "path": "nodes.Add_Comment.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.2.value",
         "field": "cookie",
         "reason": "secret_named_field"
       }
     ],
-    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+    "credentials": "Credential references retained; rebind redacted literals before restore."
   }
 }

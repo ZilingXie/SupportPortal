@@ -106,6 +106,7 @@ def tool_get_case_context(
         ),
         "conversation_version": int(binding["conversation_version"]),
         "direction": binding["direction"],
+        "engineer_authority": (turn.get("work_result") or {}).get("engineer_authority"),
         "investigation": binding.get("investigation"),
         "collected_fields": (account_case or {}).get("collected_fields") or {},
         "missing_fields": (account_case or {}).get("missing_fields") or [],
@@ -1224,6 +1225,8 @@ def _escalate_uncompleted_automation(
             failure_code=reason_code,
             reason=detail,
             repository=repository,
+            native_store=store,
+            native_turn_id=turn_id,
         )
         # Acceptance gap #8: record the real outcome, not just the absence of
         # an exception — a degraded escalation (note or queue failed) must
@@ -1254,6 +1257,9 @@ def _escalate_uncompleted_automation(
         handoff_evidence["handoff_status"] = str(
             getattr(escalation, "handoff_status", "") or ""
         )
+        handoff_evidence["ownership_release_status"] = getattr(escalation, "ownership_release_status", "unknown")
+        handoff_evidence["reply_cancellation_status"] = getattr(escalation, "reply_cancellation_status", "unknown")
+        handoff_evidence["cancelled_reply_jobs"] = getattr(escalation, "cancelled_reply_jobs", None)
     except Exception as exc:
         handoff_steps["internal_note_queue_ownership"] = f"failed:{type(exc).__name__}"
     account_case_id = str(
@@ -1266,9 +1272,12 @@ def _escalate_uncompleted_automation(
             str(ticket_id or "").strip(),
             updated_at=str(account_case.get("updated_at") or _now_iso()),
         )
-        handoff_evidence["cancelled_reply_jobs"] = int(cancelled_reply_jobs or 0)
+        handoff_evidence["additional_cancelled_reply_jobs"] = int(cancelled_reply_jobs or 0)
+        if handoff_evidence.get("reply_cancellation_status") in {None, "unknown"}:
+            handoff_evidence["reply_cancellation_status"] = "completed"
+            handoff_evidence["cancelled_reply_jobs"] = int(cancelled_reply_jobs or 0)
     except Exception as exc:
-        handoff_evidence["cancelled_reply_jobs"] = f"failed:{type(exc).__name__}"
+        handoff_evidence["additional_reply_cancellation_status"] = f"failed:{type(exc).__name__}"
     incident_id = (
         f"account-automation:{account_case_id}:hermes_tool:{reason_code}"
         if notification == "failure"
@@ -1337,7 +1346,8 @@ def _escalate_uncompleted_automation(
         )
         if notification == "takeover":
             notify_result = notify_account_human_takeover(
-                **notify_kwargs, detail=notified_detail[:500]
+                **notify_kwargs, detail=notified_detail[:500], handoff=handoff_evidence,
+                environment=environment, turn_id=turn_id, job_id=job_id, attempts=job_attempt,
             )
         else:
             # The failure alert additionally reports the real job/turn/run/
@@ -1353,6 +1363,7 @@ def _escalate_uncompleted_automation(
                 failure_reason=failure_reason,
                 job_id=job_id,
                 attempts=job_attempt,
+                handoff=handoff_evidence,
             )
         notify_status = str((notify_result or {}).get("status") or "").strip()
         if notify_status in {"sent", "sent_unpersisted"}:
@@ -1728,6 +1739,23 @@ def tool_escalate_human(
     if not normalized_reason:
         raise HermesToolError("reason_required", "an escalation reason is required")
     context = _resolve_turn_context(store, repository, turn_id)
+    turn = context["turn"]
+    # Initial Investigation work, including later customer/engineer turns,
+    # remains collaboration. Terminal orchestrator failures use the separate
+    # failure handoff chain and do not call this routine policy tool.
+    first = store.get_initial_hermes_classification(turn["zendesk_ticket_id"])
+    if (
+        first and first.get("direction") == "investigation"
+        and turn.get("direction") == "investigation"
+        and context["binding"].get("direction") != "human"
+        and not context["binding"].get("escalation")
+    ):
+        return {
+            "status": "continue_investigation",
+            "direction": "investigation",
+            "reason": normalized_reason,
+            "instruction": "Keep collaborating in the existing engineer thread. Record this as investigation progress or a blocker with support_save_investigation_progress; the customer message grants no close or takeover authority.",
+        }
     binding = store.escalate_hermes_case(turn_id, reason=normalized_reason)
     account_case = context.get("account_case")
     if isinstance(account_case, dict) and repository is not None:
