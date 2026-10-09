@@ -8,7 +8,6 @@ SupportPortal-internal action contract used for later customer comments.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -47,6 +46,7 @@ class CaseTask(BaseModel):
     automation_handler: str | None = Field(default=None, max_length=120)
     confidence: float = Field(ge=0, le=1)
     prompt_release_id: str | None = Field(default=None, max_length=240)
+    prompt_snapshot: dict[str, str] = Field(default_factory=dict)
     locked: bool = True
     hermes_eligible: bool = True
     classification_only: bool = False
@@ -78,6 +78,14 @@ class MessageAction(BaseModel):
         value = str(value).strip()
         if value not in MESSAGE_ACTIONS:
             raise ValueError("message action is unknown")
+        return value
+
+    @field_validator("contract_version")
+    @classmethod
+    def validate_contract_version(cls, value: str) -> str:
+        value = str(value).strip()
+        if value != MESSAGE_ACTION_CONTRACT_VERSION:
+            raise ValueError("message action contract version is invalid")
         return value
 
     @model_validator(mode="after")
@@ -208,54 +216,4 @@ def parse_message_action(value: Any) -> MessageAction:
     if not isinstance(value, dict):
         raise ValueError("message action must be a JSON object")
     return MessageAction.model_validate(value)
-
-
-def classify_customer_message(body: str, case_task: dict[str, Any] | CaseTask) -> MessageAction:
-    """Conservative fail-closed fallback used before a model action is available.
-
-    It deliberately recognizes only unambiguous reply intents.  Everything
-    else is handed to a human, so the fallback can never execute a new task.
-    """
-
-    text = " ".join(str(body or "").split()).strip().lower()
-    if not text:
-        return MessageAction(
-            action="handoff_human", reason_code="empty_comment", confidence=1.0,
-            message_role="unknown",
-        )
-    if re.search(r"(另外|另一个|新的需求|独立|unrelated|new request|separate request)", text):
-        return MessageAction(
-            action="handoff_human", reason_code="independent_request", confidence=0.99,
-            message_role="independent_request", independent_request=True,
-        )
-    if re.search(r"(app\s*id|应用.?id|在哪里找|what is the app|where.*app)", text):
-        return MessageAction(
-            action="answer_related_question", reason_code="related_app_id_question", confidence=0.96,
-            message_role="related_question",
-        )
-    if re.search(r"(进度|状态|多久|什么时候|status|progress|when|how long)", text):
-        return MessageAction(
-            action="report_progress", reason_code="progress_inquiry", confidence=0.94,
-            message_role="progress_inquiry",
-        )
-    if re.search(r"(谢谢|收到|好的|ok|okay|thanks|thank you|了解)", text):
-        return MessageAction(
-            action="acknowledge", reason_code="customer_acknowledgement", confidence=0.9,
-            message_role="acknowledgement",
-        )
-    if re.search(r"(还需要|需要提供|缺少什么|what.*need|which.*provide)", text):
-        return MessageAction(
-            action="request_clarification", reason_code="required_information", confidence=0.88,
-            message_role="clarification",
-        )
-    task = case_task if isinstance(case_task, dict) else case_task.model_dump()
-    if str(task.get("direction") or "") == "automation" and str(task.get("route") or ""):
-        return MessageAction(
-            action="continue_task", reason_code="task_continuation", confidence=0.72,
-            message_role="task_update",
-        )
-    return MessageAction(
-        action="handoff_human", reason_code="message_action_uncertain", confidence=0.0,
-        message_role="unknown",
-    )
 

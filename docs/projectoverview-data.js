@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T17:16:44Z",
-  "source_base_commit": "30485f9ea4b2110dd303fea8400d1ac6b7d7b503",
-  "registry_digest": "59d7c5c7a86539f04b5be58c9165688f06d07e677996b777b55c2f884b5a7bca",
+  "generated_at": "2026-10-09T17:54:02Z",
+  "source_base_commit": "65c37adf39ba37acbb8302376675d0eb0a9eed2e",
+  "registry_digest": "c6298e55c654ab7e07494f3f1bce0f9058183f6e54cda0709e766568f5743fe0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1523,7 +1523,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_hermes_route_schema_normalizer_alignment.py：55 passed。"
+          "details": "修复后 uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py：195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。PostgreSQL 27 项因本机无 DSN skip。"
         },
         {
           "type": "document",
@@ -17194,7 +17194,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_hermes_route_schema_normalizer_alignment.py：55 passed。"
+          "details": "修复后 uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py：195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。PostgreSQL 27 项因本机无 DSN skip。"
         },
         {
           "type": "document",

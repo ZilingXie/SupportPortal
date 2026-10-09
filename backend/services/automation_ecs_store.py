@@ -38,7 +38,6 @@ from backend.services.automation_ecs_contracts import (
     canonical_payload_digest,
 )
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
-from backend.services.hermes_case_task import classify_customer_message
 
 # Deployment-pinned agent model (single-model tiering). The release render
 # injects AGENT_MODEL_ID from SSM /supportportal/<env>/agent-model; an absent
@@ -1404,11 +1403,6 @@ class InMemoryAutomationEcsStore:
                 and inherited is None
                 and fixed_task is not None
             )
-            message_action_payload = (
-                classify_customer_message(event.routing_text(), fixed_task).model_dump(mode="json")
-                if message_action
-                else None
-            )
             now_value = _iso()
             turn_id = _new_id("turn")
             request_id = _new_id("hmreq")
@@ -1423,10 +1417,10 @@ class InMemoryAutomationEcsStore:
                 "case_revision": current_revision,
                 "turn_kind": "investigation_feedback" if inherited else ("message_action" if message_action else ("fixed_task" if initial_fixed_task else "normal")),
                 "phase": "work" if inherited or message_action or initial_fixed_task else None,
-                "direction": "investigation" if inherited else ("human" if message_action and message_action_payload and message_action_payload.get("action") == "handoff_human" else (fixed_task.get("direction") if message_action or initial_fixed_task else None)),
+                "direction": "investigation" if inherited else (fixed_task.get("direction") if message_action or initial_fixed_task else None),
                 "route": fixed_task.get("route") if message_action or initial_fixed_task else None,
                 "direction_reason": inherited["direction_reason"] if inherited else ("message_action_pending" if message_action else (fixed_task.get("reason_code") if initial_fixed_task else None)),
-                "work_result": {"status": "executed", "message_action": message_action_payload} if message_action_payload else None,
+                "work_result": None,
                 "input_snapshot": None,
                 "request_id": request_id,
                 "prompt_release_id": str(prompt_release_id or binding.get("case_task_prompt_release_id") or "") or None,
@@ -1805,7 +1799,7 @@ class InMemoryAutomationEcsStore:
             if turn is None or turn["status"] not in {"pending", "running", "cancel_requested"}:
                 raise HermesTurnStateError(turn_id, "turn is not active")
             work_result = copy.deepcopy(work_result)
-            for field in ("reviewer_feedback", "engineer_authority", "attachments"):
+            for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action"):
                 if field in (turn.get("work_result") or {}):
                     work_result[field] = copy.deepcopy(turn["work_result"][field])
             turn.update(work_result=work_result, updated_at=_iso())
@@ -4189,11 +4183,6 @@ class PostgresAutomationEcsStore:
                     and inherited is None
                     and fixed_task is not None
                 )
-                message_action_payload = (
-                    classify_customer_message(event.routing_text(), fixed_task).model_dump(mode="json")
-                    if message_action
-                    else None
-                )
                 turn_id = _new_id("turn")
                 request_id = _new_id("hmreq")
                 cursor.execute(
@@ -4215,7 +4204,7 @@ class PostgresAutomationEcsStore:
                         current_revision,
                         "investigation_feedback" if inherited else ("message_action" if message_action else ("fixed_task" if initial_fixed_task else "normal")),
                         "work" if inherited or message_action or initial_fixed_task else None,
-                        "investigation" if inherited else ("human" if message_action and message_action_payload and message_action_payload.get("action") == "handoff_human" else (fixed_task.get("direction") if message_action or initial_fixed_task else None)),
+                        "investigation" if inherited else (fixed_task.get("direction") if message_action or initial_fixed_task else None),
                         inherited["direction_reason"] if inherited else ("message_action_pending" if message_action else (fixed_task.get("reason_code") if initial_fixed_task else None)),
                         request_id,
                         str(prompt_release_id or binding.get("case_task_prompt_release_id") or "") or None,
@@ -4227,13 +4216,6 @@ class PostgresAutomationEcsStore:
                     ),
                     (JobStatus.COMPLETED.value, job.job_id),
                 )
-                if message_action_payload is not None:
-                    cursor.execute(
-                        sql.SQL("UPDATE {} SET work_result=%s WHERE turn_id=%s").format(
-                            self._table("automation_hermes_agent_turns")
-                        ),
-                        (Jsonb({"status": "executed", "message_action": message_action_payload}), turn_id),
-                    )
                 handoff_route = {
                     "engine": "hermes",
                     "logical_conversation_key": binding["logical_conversation_key"],
@@ -4491,7 +4473,7 @@ class PostgresAutomationEcsStore:
                 if str(turn["status"]) not in {"pending", "running", "cancel_requested"}:
                     raise HermesTurnStateError(turn_id, "turn is not active")
                 work_result = copy.deepcopy(work_result)
-                for field in ("reviewer_feedback", "engineer_authority", "attachments"):
+                for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action"):
                     if field in (turn.get("work_result") or {}):
                         work_result[field] = copy.deepcopy(turn["work_result"][field])
                 cursor.execute(

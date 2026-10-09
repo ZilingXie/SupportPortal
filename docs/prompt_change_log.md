@@ -5114,3 +5114,4 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - Prompt：`hermes-support-agent-system` v3 增加 case task 锁定/不重路由不变量；新增 managed prompt `hermes-message-action-manual-v1`。本次只改源码 catalog，未创建或激活 Prompt Release。
 - Fail-closed：允许 `continue_task`、`answer_related_question`、`report_progress`、`acknowledge`、`request_clarification`、`handoff_human`；多意图、未知、非法 JSON 或无法判断统一人工接管。
 - 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。
+- r4-repair-1：移除 customer comment 的本地 message-action 分类，改由 Hermes 专用无工具 phase 输出并由服务端严格校验；固定 case 的完整 managed prompt catalog 在每个 Hermes phase 使用，comment 继承 case-level Prompt Release；澄清 `request_clarification` 与 contract 缺字段的边界。源码 catalog 仍未创建或激活 Prompt Release。

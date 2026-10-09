@@ -48,8 +48,11 @@ Allowed actions are continue_task, answer_related_question, report_progress,
 acknowledge, request_clarification, and handoff_human. The case_task route and
 direction are fixed facts. Never emit a new route, execute a business action,
 or claim a persisted result during this phase. Any independent request,
-multiple intent, missing field, invalid JSON, or uncertainty must become
-handoff_human. The server validates this contract and ignores model prose."""
+multiple intent, missing contract field, invalid JSON, or uncertainty must
+become handoff_human. `request_clarification` is valid only when the customer
+explicitly asks which information is still required for the locked task;
+missing business information by itself is not a reason to invent an action.
+The server validates this contract and ignores model prose."""
 
 
 HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v5"

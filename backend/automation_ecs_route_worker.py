@@ -19,7 +19,10 @@ from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_schema import check_account_runtime_schema
 from backend.services.automation_ecs_store import AutomationEcsStore, create_automation_ecs_store
 from backend.services.hermes_case_task import build_case_task
-from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info
+from backend.services.prompt_runtime import (
+    current_prompt_runtime_snapshot,
+    initialize_prompt_runtime,
+)
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_route_worker")
 
@@ -156,8 +159,9 @@ class RouteWorker:
                 # Existing customer comments reuse the immutable case_task and
                 # never call the Account Router again.
                 lease.stop()
-                prompt_release_id = str(prompt_runtime_info().get("release_id") or "") or None
                 if event.event_type == IntakeEventType.TICKET_CREATED:
+                    prompt_snapshot = current_prompt_runtime_snapshot()
+                    prompt_release_id = str(prompt_snapshot.release_id or "") or None
                     context = _ticket_context(payload)
                     case = self.case_loader(event.ticket.id) if self.case_loader else None
                     context = understanding_messages(build_automation_context({
@@ -178,7 +182,11 @@ class RouteWorker:
                         source_event_id=event.event_id,
                         prompt_release_id=prompt_release_id,
                     ).model_dump(mode="json")
-                    case_task["prompt_snapshot"] = dict(result.prompt_snapshots)
+                    # Pin the complete managed catalog used by Hermes for this
+                    # case.  The route-stage snapshots remain in route audit
+                    # output; this case snapshot is the immutable source for
+                    # every later Hermes phase.
+                    case_task["prompt_snapshot"] = dict(prompt_snapshot.prompts)
                     route["case_task"] = case_task
                     if not case_task["hermes_eligible"]:
                         self.store.complete_classification_only(
@@ -194,9 +202,12 @@ class RouteWorker:
                         case_task=case_task,
                     )
                 else:
+                    # Comments inherit the case-level Prompt Release pinned
+                    # on the immutable task; they must not adopt the worker's
+                    # current global release.
                     self.store.hand_off_to_hermes_agent(
                         job,
-                        prompt_release_id=prompt_release_id,
+                        prompt_release_id=None,
                     )
                 return True
             context = _ticket_context(payload)

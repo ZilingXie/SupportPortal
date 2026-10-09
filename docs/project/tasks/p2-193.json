@@ -32,7 +32,7 @@
     {
       "type": "test",
       "label": "Contract and route worker focused tests",
-      "details": "uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_hermes_route_schema_normalizer_alignment.py：55 passed。"
+      "details": "修复后 uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py：195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。PostgreSQL 27 项因本机无 DSN skip。"
     },
     {
       "type": "document",

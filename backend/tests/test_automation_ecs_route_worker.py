@@ -228,7 +228,11 @@ def test_hermes_new_case_routes_once_and_comment_reuses_fixed_task() -> None:
     comment_turn = store.get_hermes_turn(comment_job.payload["turn_id"])
     assert comment_turn is not None
     assert comment_turn["turn_kind"] == "message_action"
-    assert comment_turn["work_result"]["message_action"]["action"] == "answer_related_question"
+    # Classification is delegated to the Hermes message-action phase.  The
+    # route worker must persist no locally inferred action.
+    assert comment_turn["work_result"] is None
+    assert binding["case_task"]["prompt_snapshot"]
+    assert comment_turn["prompt_release_id"] == binding["case_task_prompt_release_id"]
     assert comment_turn["case_revision"] == 2
     assert comment_turn["execution_id"] == comment_receipt.execution_id
 

@@ -24,3 +24,15 @@
 - PostgreSQL 测试入口已收集但本机无 DSN，27 项按仓库约定 skip；真实隔离 PostgreSQL 仍是验收前置。
 - Hermes follow-up 套件保留 5 个既有预生产 handoff 断言失败：当前既有逻辑在 `environment=preproduction` 将内部 note/route back 标记为 `skipped_not_production`，本实施未改变该边界。
 - 未创建 Prompt Release、未合并 PR、未部署 Preproduction、未运行 `scripts.testing.preproduction`，因此不声明运行时或业务完成。
+
+## 修复记录（r4-repair-1）
+
+独立验收首轮结论为“未通过”，本轮按用户授权在同一 branch/PR 修复：
+
+| Finding | 原因与边界 | 修复与关闭证据 | 状态 |
+|---|---|---|---|
+| F1 customer comment 本地分类 | InMemory/PostgreSQL `hand_off_to_hermes_agent()` 曾直接调用本地 `classify_customer_message()`，未经过 Hermes | 删除生产路径本地分类；新增 `message_action` 专用 Hermes phase，使用无业务工具集提交固定 task + 当前 comment，严格解析 Hermes JSON；`test_message_action_is_submitted_to_hermes_and_validated` 断言实际 client 输入、无工具集和持久化 action | closed |
+| F2 Prompt Release 未驱动运行时 | binding 只保存 release/snapshot，Hermes phase 仍读全局 runtime | 新 case 固化完整 managed prompt catalog；每个 fixed/message/investigation phase 使用 `use_prompt_runtime_snapshot()`；comment 继承 case-level release，不接受当前全局 release 漂移 | closed（真实 ECS/Prompt Release 未验证） |
+| F3 `request_clarification` 契约冲突 | prompt 将所有 missing field 归为 handoff，和允许的 clarification action 冲突 | 明确区分“缺少 contract 字段”（handoff）与“客户明确询问所需业务信息”（允许 clarification）；新增 contract version 严格校验 | closed |
+
+修复后验证：`uv run pytest -q backend/tests/test_hermes_case_task.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_prompt_modules.py backend/tests/test_agent_config.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_route_schema_normalizer_alignment.py backend/tests/test_automation_ecs_deploy.py`，195 passed；PostgreSQL 27 项因本机无 DSN skip。`compileall` 与 `git diff --check` 通过。待同一验收线程复核新的完整 HEAD。

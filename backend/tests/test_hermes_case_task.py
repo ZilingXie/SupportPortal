@@ -7,7 +7,6 @@ import pytest
 from backend.services.hermes_case_task import (
     CaseTask,
     build_case_task,
-    classify_customer_message,
     parse_message_action,
 )
 
@@ -72,9 +71,13 @@ def test_message_action_is_strict_and_independent_request_fails_closed() -> None
                 "message_role": "x",
             }
         )
-
-
-def test_customer_action_fallback_recognizes_related_question_and_defaults_to_handoff() -> None:
-    task = build_case_task(_result(), source_event_id="zendesk:ticket:3:created")
-    assert classify_customer_message("What is the App ID?", task).action == "answer_related_question"
-    assert classify_customer_message("Please also handle our unrelated billing issue", task).action == "handoff_human"
+    with pytest.raises(ValueError):
+        parse_message_action(
+            {
+                "contract_version": "old-contract",
+                "action": "acknowledge",
+                "reason_code": "ack",
+                "confidence": 0.5,
+                "message_role": "acknowledgement",
+            }
+        )

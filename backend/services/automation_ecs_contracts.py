@@ -88,6 +88,7 @@ class HermesTurnKind(StrEnum):
 
 class HermesTurnPhase(StrEnum):
     ROUTE = "route"
+    MESSAGE_ACTION = "message_action"
     WORK = "work"
     PERSONA = "persona"
 
@@ -101,6 +102,8 @@ class HermesTurnPhase(StrEnum):
         if turn_kind == HermesTurnKind.INVESTIGATION_REPLY.value:
             return (cls.PERSONA,)
         if turn_kind in {HermesTurnKind.FIXED_TASK.value, HermesTurnKind.MESSAGE_ACTION.value}:
+            if turn_kind == HermesTurnKind.MESSAGE_ACTION.value:
+                return (cls.MESSAGE_ACTION, cls.WORK, cls.PERSONA)
             return (cls.WORK, cls.PERSONA)
         return (cls.ROUTE, cls.WORK, cls.PERSONA)
 
