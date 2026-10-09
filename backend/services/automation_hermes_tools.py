@@ -1144,6 +1144,16 @@ async def tool_execute_automation_action(
         # SOLE customer reply; persona must not draft a second one (F4).
         "skip_persona": bool(skip_persona),
     }
+    if normalized_route == "fraud_account":
+        # Option B (fraud reply style alignment): the structured parts of
+        # the ask/confirmation are server-built and deterministic; the
+        # persona renders them verbatim and only composes narrative.
+        from backend.services.account_fraud_reply_basis import build_fraud_reply_basis
+
+        result["reply_basis"] = build_fraud_reply_basis(
+            missing_fields=missing_fields,
+            collected_fields=collected_fields,
+        )
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result
 
