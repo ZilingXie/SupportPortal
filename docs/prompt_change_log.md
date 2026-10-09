@@ -1,5 +1,13 @@
 # Prompt Change Log
 
+## 2026-10-09 - hermes-persona-manual v4 + hermes-reply-contract v4：fraud 回复风格对齐（p2-187，未发布）
+
+- 范围：`backend/services/prompts/hermes_support_agent.py` 两份提示词迭代（三轮，发布前收敛于第三轮）。**未进入 Prompt Release、未部署**——阶段五离线验证未达全过门槛，发布决策待定。
+- 背景：PP-A4 工单 13939 的 hermes ask 草稿与 Production fraud 回复风格（13710/13616/13426/13548 样本）差距：意译字段标签、合并列表项、泛化收尾（"move the request forward"）、中文镜像、完整资料缺转交+24h 承诺。生成源已实证绑定 Hermes Persona 路径（persona 阶段 prompt=hermes-persona-manual，零 automation-persona-v32 reply job）。
+- v4 变更：persona manual 增加零/部分/完整字段三段结构选择、逐字标准标签、"- " 连字符列表、"continue coordinating the review" 收尾锚点、禁空泛道歉与 meta 句式、英文草稿不镜像客户语言；reply contract fraud 节增加七字段 canonical display labels、保存前六点核对清单、结构形状参考（防逐字复制）。
+- 验证：test_hermes_fraud_reply_style.py 12 项（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+结构化 C1-C8 判定器 9 场景正反例）；离线真实模型评估（gpt-6-sol@medium，与 13939 实跑 usage 记录同模型）三轮五样本，证据 /tmp/fraud_reply_style_results_round3.json 形态（脱敏）。
+- 离线结论：硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5）；措辞锚点在部署档位不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5——中文镜像 1 例）。提示词层已达合理强化上限；后续路径（接受残余风格偏移×工程师评审门 / 服务端确定性 reply basis / 提升 persona 档位）待用户决策。
+
 ## 2026-10-08 - 计划交接收敛：共享角色规则、PR 证据与版本校验
 
 - 范围：Codex/ZCode 全局规则模板、项目 AGENTS、implementation-handoff 与 review-implemented-plan；仅开发工具行为，无应用 Prompt catalog 或部署变更。
