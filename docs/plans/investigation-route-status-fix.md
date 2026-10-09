@@ -90,6 +90,8 @@ n8n 准备基线：Status 03B6AvcrOgRkWlUc active=draft 6cfb5781-11bf-4596-bd99-
 - Comments active=draft=`30a88a17-aea8-44f2-a7f6-7d603daf68f3` 未变；上游 Route Support published=`ba9403ed-0989-4319-9661-d021df3b20e4` / draft=`c41c09db-3924-40ed-9d48-f51c571e584e`，两图均与操作前一致，未发布其分歧草稿。
 - 发布后 SDK graph validation 均 valid=true。与准备阶段不同，最新校验另报 HTTP/subworkflow 输出字段推断警告：Status 7 项（既有 hardcoded authorization 1 项 + 字段推断 6 项），Forward 字段推断 6 项。HTTP/subworkflow 未提供静态输出 schema；新增 ticket.id 来自既有 Zendesk ticket GET，executions 明确由 SP `/v1/cases/{id}/executions` 返回（API 源码 989–996），Input 是既有 caller 的透传合同，真实 JS 身份/时间测试已通过。未为消除启发式警告加入 pinData 或改非目标分支；真实执行样本仍缺失，不能据 SDK valid 宣称完整业务通过。
 
-## 待完成
+## 收尾状态
 
-补版本化 operations/Task/Overview → 正常 evidence/test-fixture follow-up finalize → 用户确认本地官方栈验收方式 → 适用收尾和任务 cleanup。未收到该确认前保留工作区；业务样本缺口如实保留，不伪造业务 PASS。
+- 用户于 2026-10-09 确认采用 ECS Preproduction 技术验收，并豁免本地官方栈重启；该决定解除本任务的本地运行门禁，不改变真实业务写入限制。
+- p2-190 已登记为 `done`。SP/Hermes/n8n 的合并、Preproduction 发布、版本/digest/tool/skill/graph 回读和定向回归作为技术验收证据保留。
+- 自然业务样本仍未取得：不重放 Ticket 13923，不发送客户回复或真实 Slack 测试消息；该边界不被记录为业务 PASS。
