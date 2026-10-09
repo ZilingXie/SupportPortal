@@ -160,8 +160,12 @@ class _Chain:
     the real runner's _record_execution_failure contract).
     """
 
-    def __init__(self, *, route: str, delivery=None) -> None:
+    def __init__(self, *, route: str, delivery=None, real_reply_jobs: bool = False,
+                 real_delivery: bool = False, sender=None) -> None:
         self.route = route
+        self.real_reply_jobs = real_reply_jobs
+        self.real_delivery = real_delivery
+        self.sender = sender
         if delivery is None:
             delivered = _account_case(route=route, status="sent")
             delivered["internal_email_payload"] = {
@@ -207,17 +211,32 @@ class _Chain:
                 f"backend.services.automation_account_intake.{builder}",
                 return_value=_attempt(self.route),
             ),
-            patch(
-                "backend.services.automation_account_intake._run_internal_email_delivery",
-                self.delivery,
-            ),
-            patch(
-                "backend.services.account_reply_jobs.create_account_reply_job",
-                MagicMock(
-                    side_effect=lambda repository, **kwargs: self.reply_jobs.append(kwargs)
-                    or {"job_id": f"job-{len(self.reply_jobs)}"}
-                ),
-            ),
+        ]
+        if not self.real_delivery:
+            patches.append(
+                patch(
+                    "backend.services.automation_account_intake._run_internal_email_delivery",
+                    self.delivery,
+                )
+            )
+        elif self.sender is not None:
+            patches.append(
+                patch(
+                    "backend.services.automation_account_intake.send_billing_internal_email",
+                    self.sender,
+                )
+            )
+        if not self.real_reply_jobs:
+            patches.append(
+                patch(
+                    "backend.services.account_reply_jobs.create_account_reply_job",
+                    MagicMock(
+                        side_effect=lambda repository, **kwargs: self.reply_jobs.append(kwargs)
+                        or {"job_id": f"job-{len(self.reply_jobs)}"}
+                    ),
+                )
+            )
+        patches.extend([
             patch(
                 "backend.services.account_human_review_escalation."
                 "escalate_account_case_to_human_review",
@@ -229,7 +248,21 @@ class _Chain:
                 side_effect=lambda **kw: self.notifications.append(kw)
                 or {"status": "sent"},
             ),
-        ]
+            # The delivery runner (_record_execution_failure) binds these
+            # names at intake module import time — patch that namespace too
+            # so BOTH the runner's and the helper's escalations are visible.
+            patch(
+                "backend.services.automation_account_intake."
+                "escalate_account_case_to_human_review",
+                side_effect=lambda **kw: self.escalations.append(kw)
+                or NS(status="completed"),
+            ),
+            patch(
+                "backend.services.automation_account_intake.notify_account_failure",
+                side_effect=lambda **kw: self.notifications.append(kw)
+                or {"status": "sent"},
+            ),
+        ])
         for patch_obj in patches:
             patch_obj.start()
         try:
@@ -544,6 +577,159 @@ class FraudChainTests(unittest.TestCase):
         self.assertTrue(result["skip_persona"])
         self.assertIn("internal_email_reused", result["executed_actions"])
         self.assertEqual(chain.escalations, [])
+
+
+class CrashRecoveryTests(unittest.TestCase):
+    """13922 repair (F4 idempotency): a retry whose earlier attempt wrote the
+    reply job but lost the turn work result must REUSE the job — the real
+    create_account_reply_job cancel-and-reinsert behavior must not run."""
+
+    def test_retry_after_work_result_loss_reuses_reply_job(self):
+        store = _store()
+        handoff = _seed_turn(store, route="account_suspension")
+        repository = _repository(
+            _account_case(route="account_suspension", status="not_applicable")
+        )
+        delivery_key = _expected_key("account_suspension")
+
+        async def delivering_run(**kwargs):
+            delivered = _account_case(
+                route="account_suspension",
+                status="sent",
+                payload={"delivery_key": delivery_key, "action": "account_suspension"},
+            )
+            repository.save_account_case(delivered)
+            return NS(status="sent", reason=""), delivered
+
+        chain = _Chain(route="account_suspension", delivery=delivering_run, real_reply_jobs=True)
+
+        first = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
+        self.assertEqual(first["status"], "executed")
+        jobs_after_first = dict(repository._account_reply_jobs)
+        self.assertEqual(len(jobs_after_first), 1)
+        original_job_id = next(iter(jobs_after_first))
+        original_status = str(jobs_after_first[original_job_id].get("status") or "")
+
+        # Crash simulation: the turn's terminal work result never landed, so
+        # the idempotent replay gate cannot fire on the retry.
+        with store._lock:
+            store._hermes_turns[handoff["turn_id"]]["work_result"] = None
+
+        second = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
+
+        # The email delivery is reused (one send total)…
+        self.assertEqual(chain.delivery.await_count, 1)
+        self.assertIn("internal_email_reused", second["executed_actions"])
+        # …and the reply job is REUSED, not cancelled-and-recreated.
+        self.assertIn("reply_job_reused", second["executed_actions"])
+        self.assertNotIn(
+            "reply_job_created:account_suspension_handoff_and_close",
+            second["executed_actions"],
+        )
+        jobs_after_retry = dict(repository._account_reply_jobs)
+        self.assertEqual(len(jobs_after_retry), 1)
+        self.assertIn(original_job_id, jobs_after_retry)
+        self.assertEqual(
+            str(jobs_after_retry[original_job_id].get("status") or ""),
+            original_status,
+        )
+        self.assertEqual(second["status"], "executed")
+        self.assertTrue(second["skip_persona"])
+        self.assertEqual(chain.escalations, [])
+
+
+class PrepareRaceTests(unittest.TestCase):
+    """F2 race evidence: prepare refuses the in-flight state, and the
+    authoritative re-read then observes the concurrently completed send."""
+
+    def test_prepare_refusal_then_concurrent_sent_completion_reuses(self):
+        store = _store()
+        handoff = _seed_turn(store, route="account_suspension")
+        # delivery_unknown: mid-flight residue of an earlier crashed attempt —
+        # NOT in the Hermes preparable set, so the real prepare refuses.
+        repository = _repository(
+            _account_case(route="account_suspension", status="delivery_unknown")
+        )
+        delivery_key = _expected_key("account_suspension")
+
+        real_read = repository.get_account_case_by_ticket_id
+        reads = {"count": 0}
+
+        def racing_read(ticket_id):
+            if reads["count"] == 0:
+                reads["count"] += 1
+                return real_read(ticket_id)
+            # Between the refused prepare and the helper's authoritative
+            # re-read, the earlier attempt's delivery commits as sent.
+            delivered = _account_case(
+                route="account_suspension",
+                status="sent",
+                payload={"delivery_key": delivery_key, "action": "account_suspension"},
+            )
+            repository.save_account_case(delivered)
+            return real_read(ticket_id)
+
+        repository.get_account_case_by_ticket_id = racing_read
+        chain = _Chain(route="account_suspension")
+
+        result = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
+
+        # The real prepare refused the in-flight state…
+        self.assertEqual(chain.prepare_returns, [False])
+        # …the re-read observed the concurrent completion (F2)…
+        self.assertEqual(result["internal_email_send_status"], "sent")
+        self.assertEqual(result["internal_email_send_reason"], "reused_existing_delivery")
+        # …no second send happened, and the reply job is still created once.
+        self.assertEqual(chain.delivery.await_count, 0)
+        self.assertEqual(len(chain.reply_jobs), 1)
+        self.assertTrue(result["skip_persona"])
+        self.assertEqual(chain.escalations, [])
+
+
+class RealRunnerFailureCompositionTests(unittest.TestCase):
+    """F3 composition: the REAL delivery runner (real prepare/claim protocol,
+    failing sender) escalates through _record_execution_failure, and the
+    helper's already-escalated check composes with it — one escalation, one
+    notification total."""
+
+    def test_real_runner_failure_escalates_exactly_once(self):
+        store = _store()
+        handoff = _seed_turn(store, route="account_suspension")
+        repository = _repository(
+            _account_case(route="account_suspension", status="not_applicable")
+        )
+
+        async def failing_sender(payload):
+            return {"status": "failed", "reason": "smtp_down"}
+
+        chain = _Chain(
+            route="account_suspension",
+            real_delivery=True,
+            sender=failing_sender,
+        )
+
+        result = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
+
+        # The runner's own escalation ran exactly once…
+        self.assertEqual(len(chain.escalations), 1)
+        self.assertEqual(chain.escalations[0].get("failure_stage"), "internal_email")
+        self.assertEqual(len(chain.notifications), 1)
+        # …and the helper did NOT escalate a second time: the authoritative
+        # case now carries human_review_required from the runner's save.
+        persisted = repository.get_account_case("AC-123")
+        self.assertEqual(persisted.get("automation_status"), "human_review_required")
+        self.assertEqual(persisted.get("internal_email_send_status"), "failed")
+        # The tool result and turn work result both reflect the single
+        # escalation with the original failure surface.
+        self.assertEqual(result["status"], "human_review_required")
+        self.assertEqual(result["reason_code"], "account_suspension_email_failed")
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        self.assertEqual(turn["work_result"]["status"], "human_review_required")
+        self.assertEqual(
+            turn["work_result"]["reason_code"], "account_suspension_email_failed"
+        )
+        # No reply job on a failed delivery.
+        self.assertEqual(len(chain.reply_jobs), 0)
 
 
 if __name__ == "__main__":

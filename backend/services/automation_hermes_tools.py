@@ -586,24 +586,46 @@ async def _execute_hermes_internal_email(
             customer_name=customer_name or None,
         )
 
-    reply_job_result = create_account_reply_job(
-        repository,
-        ticket_id=ticket_id,
-        trigger_message_created_at=str(
-            trigger_message_created_at
-            or datetime.now(timezone.utc).isoformat()
-        ),
-        created_at=datetime.now(timezone.utc).isoformat(),
-        delay_seconds=account_reply_delay_seconds_for_profile(environment or "production"),
-        draft_content="",
-        reply_facts=confirmation_facts,
-        asked_field_keys=[],
-        persona_assignment=None,
-        automation_delivery_key=delivery_key,
-        close_after_publish=False,
-        reply_intent=reply_intent,
+    resolved_trigger = str(
+        trigger_message_created_at
+        or datetime.now(timezone.utc).isoformat()
     )
-    reply_job_id = str(reply_job_result.get("job_id") or "")
+    # Idempotency (13922 repair): a retry whose earlier attempt already
+    # wrote the reply job (but died before the turn result landed) must
+    # REUSE that job. create_account_reply_job would cancel-and-reinsert
+    # with a fresh job_id — duplicating the business reply and colliding
+    # with the unique index (ticket_id, trigger_message_created_at,
+    # COALESCE(rerun_job_id, '')). Terminal-failed chain jobs are NOT
+    # reused: the re-insert attempt surfaces honestly (PG: unique
+    # violation -> unified escalation) instead of silently resurrecting a
+    # cancelled reply.
+    chain_job = repository.find_account_reply_job_by_chain(
+        ticket_id,
+        trigger_message_created_at=resolved_trigger,
+        automation_delivery_key=delivery_key,
+    )
+    reusable = bool(chain_job) and str(chain_job.get("status") or "") not in {
+        "cancelled", "failed", "manual_attention",
+    }
+    if reusable:
+        reply_job_id = str(chain_job.get("job_id") or "")
+        executed_actions.append("reply_job_reused")
+    else:
+        reply_job_result = create_account_reply_job(
+            repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at=resolved_trigger,
+            created_at=datetime.now(timezone.utc).isoformat(),
+            delay_seconds=account_reply_delay_seconds_for_profile(environment or "production"),
+            draft_content="",
+            reply_facts=confirmation_facts,
+            asked_field_keys=[],
+            persona_assignment=None,
+            automation_delivery_key=delivery_key,
+            close_after_publish=False,
+            reply_intent=reply_intent,
+        )
+        reply_job_id = str(reply_job_result.get("job_id") or "")
     if reply_job_id and normalized_route == "account_suspension":
         account_case = update_direct_handoff_workflow(
             account_case,
@@ -613,7 +635,8 @@ async def _execute_hermes_internal_email(
         )
     if reply_job_id:
         repository.save_account_case(account_case)
-        executed_actions.append(f"reply_job_created:{reply_intent}")
+        if not reusable:
+            executed_actions.append(f"reply_job_created:{reply_intent}")
 
     return {
         "status": email_status, "reason": email_reason,
