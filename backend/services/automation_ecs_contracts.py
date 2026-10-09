@@ -146,6 +146,17 @@ class ZendeskIdentity(BaseModel):
     is_agent: bool | None = None
 
 
+class ZendeskAttachment(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    attachment_id: str = Field(min_length=1, max_length=128)
+    file_name: str = Field(min_length=1, max_length=255)
+    content_type: str = Field(default="application/octet-stream", max_length=160)
+    size_bytes: int = Field(default=0, ge=0)
+    inline: bool = False
+    source_comment_id: str = Field(min_length=1, max_length=128)
+
+
 class ZendeskComment(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -155,6 +166,14 @@ class ZendeskComment(BaseModel):
     body: str = Field(default="", max_length=100_000)
     via_channel: str | None = Field(default=None, max_length=160)
     created_at: datetime
+    attachments: list[ZendeskAttachment] = Field(default_factory=list, max_length=100)
+
+    @model_validator(mode="after")
+    def validate_attachments(self) -> "ZendeskComment":
+        ids = [item.attachment_id for item in self.attachments]
+        if len(ids) != len(set(ids)) or any(item.source_comment_id != self.id for item in self.attachments):
+            raise ValueError("attachment source comment or duplicate identity is invalid")
+        return self
 
     @field_validator("id")
     @classmethod

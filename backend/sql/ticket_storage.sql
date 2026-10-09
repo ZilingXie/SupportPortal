@@ -129,10 +129,13 @@ CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     draft_version INTEGER,
     comments_revision TEXT,
     immutable_content TEXT,
+    attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (account_case_id, message_id)
 );
+
+ALTER TABLE support_account_zendesk_comment_deliveries ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS support_account_slack_deliveries (
     event_id TEXT PRIMARY KEY,
@@ -1121,10 +1124,14 @@ CREATE TABLE IF NOT EXISTS support_account_case_comments (
     author_kind TEXT NOT NULL DEFAULT 'unknown',
     body TEXT NOT NULL,
     via_channel TEXT,
+    attachments JSONB NOT NULL DEFAULT '[]'::jsonb,
     created_at TIMESTAMPTZ NOT NULL,
     synced_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (client_ticket_id, zendesk_comment_id)
 );
+
+ALTER TABLE support_account_case_comments
+    ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb;
 
 CREATE TABLE IF NOT EXISTS support_account_case_comment_sync_state (
     client_ticket_id TEXT PRIMARY KEY REFERENCES support_tickets(ticket_id) ON DELETE CASCADE,

@@ -96,7 +96,8 @@ class AccountZendeskCommentPostgresTests(unittest.TestCase):
         )
         self.assertIsNotNone(comment_insert)
         assert comment_insert is not None
-        self.assertEqual(len(comment_insert), 12)
+        self.assertEqual(len(comment_insert), 13)
+        self.assertEqual(comment_insert[11].obj, [])
         state_insert = next(
             (params for query, params in connection.cursor_instance.calls if "support_account_case_comment_sync_state" in query and "INSERT INTO" in query),
             None,

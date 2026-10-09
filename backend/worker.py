@@ -2235,6 +2235,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         from backend.services.automation_ecs_store import create_automation_ecs_store
         from backend.services.automation_ecs_runtime import AutomationEcsSettings
 
+        coordination = None
         try:
             coordination = create_automation_ecs_store(
                 AutomationEcsSettings.from_env("worker")  # type: ignore[arg-type]
@@ -2529,23 +2530,64 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         )
         if not bool(claimed.get("claimed")):
             return
+        attachments = [dict(ref) for ref in delivery.get("attachments") or []]
+        submitted = False
         try:
-            result = add_ticket_comment(
-                ticket_id=zendesk_ticket_id,
-                body=content,
-                public=True,
-                solve=False,
-            )
-        except ZendeskCommentError as exc:
-            next_status = "outcome_unknown" if exc.category == "outcome_unknown" else "failed"
+            uploads = []
+            if attachments:
+                from backend.services.investigation_attachments import download_slack_attachment
+                from backend.services.zendesk_comments import upload_ticket_attachment
+                current_draft = coordination.get_hermes_draft(message_id) if coordination else None
+                if not current_draft or current_draft.get("status") != "queued":
+                    raise ZendeskCommentError("permanent", error_code="attachment_draft_stale")
+                for ref in attachments:
+                    data = download_slack_attachment(ref)
+                    receipt = upload_ticket_attachment(filename=ref["file_name"], data=data, content_type=ref["content_type"], return_receipt=True)
+                    uploads.append(receipt["token"])
+                    ref["zendesk_attachment_id"] = receipt["attachment_id"]
+                if not ticket_repository.checkpoint_zendesk_delivery_attachments(account_case_id=account_case_id, message_id=message_id, attachments=attachments):
+                    raise ZendeskCommentError("permanent", error_code="attachment_receipt_unpersisted")
+                current_draft = coordination.get_hermes_draft(message_id)
+                current_mirror = coordination.get_case_mirror(zendesk_ticket_id) or {}
+                if not current_draft or current_draft.get("status") != "queued" or int(current_mirror.get("case_revision") or 0) != int(current_draft.get("case_revision") or 0):
+                    raise ZendeskCommentError("permanent", error_code="attachment_draft_stale")
+            from contextlib import nullcontext
+            with coordination.attachment_delivery_guard(message_id) if attachments else nullcontext():
+                submitted = True
+                result = add_ticket_comment(
+                    ticket_id=zendesk_ticket_id,
+                    body=content,
+                    public=True,
+                    solve=False,
+                    **({"uploads": uploads, "expected_attachment_ids": [ref["zendesk_attachment_id"] for ref in attachments]} if attachments else {}),
+                )
+        except Exception as exc:
+            if not attachments and not isinstance(exc, ZendeskCommentError):
+                raise
+            next_status = "outcome_unknown" if (exc.category == "outcome_unknown" if not attachments else submitted and (not isinstance(exc, ZendeskCommentError) or exc.category == "outcome_unknown" or (exc.status_code or 0) >= 500)) else "failed"
             ticket_repository.complete_account_zendesk_comment_delivery(
                 account_case_id=account_case_id,
                 message_id=message_id,
                 status=next_status,
                 zendesk_comment_id=None,
-                failure_code=exc.error_code,
+                failure_code=getattr(exc, "error_code", getattr(exc, "code", "attachment_source_unavailable_please_reattach")),
                 completed_at=now_iso(),
             )
+            if attachments and coordination:
+                try:
+                    from backend.services.automation_native_notifications import deliver_native_notification
+                    binding = coordination.get_hermes_case_binding(zendesk_ticket_id) or {}
+                    scope = f"native-hermes-notification:{coordination.settings.job_namespace}"
+                    key = f"draft-attachment-failure:{message_id}"
+                    ticket_repository.enqueue_native_notification(scope=scope, key=key, created_at=now_iso(), payload={
+                        "kind": "attachment_failure", "ticket_id": zendesk_ticket_id,
+                        "channel_id": binding.get("slack_channel_id"), "thread_ts": binding.get("slack_thread_ts"),
+                        "file_name": ", ".join(ref["file_name"] for ref in attachments),
+                        "failure_code": getattr(exc, "error_code", getattr(exc, "code", "source_unavailable_please_reattach"))})
+                    deliver_native_notification(ticket_repository, scope=scope, key=key,
+                        claim_token=message_id, before_external=lambda: None)
+                except Exception:
+                    LOGGER.exception("attachment_failure_notification_failed draft_id=%s", message_id)
             return
         ticket_repository.complete_account_zendesk_comment_delivery(
             account_case_id=account_case_id,
@@ -2562,6 +2604,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
             ticket_id=zendesk_ticket_id,
             body=content,
             public=True,
+            **({"attachments": delivery["attachments"], "not_before": delivery.get("created_at")} if delivery.get("attachments") else {}),
         )
     except ZendeskCommentError:
         return

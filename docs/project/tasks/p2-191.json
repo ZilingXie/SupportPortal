@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-191",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "title": "Investigation 附件闭环 v1",
+  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
+  "status": "in_progress",
+  "next_action": "完成 C1-C7 真实入口与隔离 PG 验证，再按正常流程合并并部署 Preproduction。",
+  "owner": "agent",
+  "created_at": "2026-10-09",
+  "updated_at": "2026-10-09",
+  "acceptance_criteria": [
+    "C1-C7 见 docs/plans/investigation-attachments-v1.md"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-attachments-v1.md",
+      "label": "R1 合同与执行证据"
+    }
+  ]
+}

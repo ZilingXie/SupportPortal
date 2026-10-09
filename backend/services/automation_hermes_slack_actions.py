@@ -205,6 +205,32 @@ def handle_slack_hermes_message(
     source_event_id = str(payload.get("source_event_id") or payload.get("event_id") or "").strip()
     actor = str(payload.get("slack_user_id") or "").strip()
     message_ts = str(payload.get("message_ts") or "").strip()
+    from backend.services.investigation_attachments import validate_slack_files
+    from backend.services.engineer_slack import EngineerSlackDeliveryError
+    if payload.get("files"):
+        binding = store.get_hermes_case_binding(ticket_id) or {}
+        if binding.get("direction") != "investigation" or binding.get("session_kind", "case") != "case":
+            return _invalid("attachments require a bound Investigation case")
+    try:
+        attachments = validate_slack_files(payload.get("files", []), channel_id=channel_id,
+            thread_ts=thread_ts, message_ts=message_ts, actor=actor, source_event_id=source_event_id)
+        from backend.services.investigation_attachments import download_slack_attachment
+        for ref in attachments:
+            download_slack_attachment(ref)  # Availability check only; bytes are not retained or read by the model.
+    except (ValueError, OSError, EngineerSlackDeliveryError) as exc:
+        if repository is not None and source_event_id and actor and message_ts:
+            from backend.services.automation_native_notifications import deliver_native_notification, now
+            scope = f"native-hermes-notification:{store.settings.job_namespace}"
+            key = f"incoming-attachment-failure:{ticket_id}:{source_event_id}"
+            repository.enqueue_native_notification(scope=scope, key=key, created_at=now(), payload={
+                "kind": "attachment_failure", "ticket_id": ticket_id, "channel_id": channel_id,
+                "thread_ts": thread_ts, "file_name": "Slack attachment", "failure_code": str(exc)})
+            deliver_native_notification(repository, scope=scope, key=key, claim_token=source_event_id, before_external=lambda: None)
+        return _invalid(str(exc))
+    if attachments:
+        binding = store.get_hermes_case_binding(ticket_id) or {}
+        if binding.get("session_kind", "case") != "case":
+            return _invalid("attachments require a bound Investigation case")
     if close_requested and (not source_event_id or not actor or not message_ts):
         return _invalid("close requires the authenticated Slack source event, actor, and message timestamp")
     if close_requested and (not expected_team_id or not expected_channel_id):
@@ -250,6 +276,7 @@ def handle_slack_hermes_message(
                     "source_event_id": source_event_id or None, "actor_id": actor or None,
                     "channel_id": channel_id, "thread_ts": thread_ts, "message_ts": message_ts or None},
                 "source_event_id": source_event_id,
+                "attachments": attachments,
                 **({"engineer_authority": authority} if authority else {}),
             },
         )
