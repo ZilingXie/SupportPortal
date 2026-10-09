@@ -41,8 +41,9 @@ AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v32"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
-ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION = "engineer-investigation-persona-v1"
+ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION = "engineer-investigation-persona-v2"
 _ENGINEER_SOURCED_REPLY_INTENTS = {ENGINEER_GUIDED_REPLY_INTENT, ENGINEER_INVESTIGATION_REPLY_INTENT}
+ENGINEER_CUSTOMER_DRAFT_MAX_CHARS = 1200
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
 _APP_ID_RE = re.compile(r"(?i)\b[0-9a-f]{32}\b")
@@ -69,6 +70,10 @@ _SAFETY_FEEDBACK = {
         "State only that Media Relay is already enabled."
     ),
     "automation_persona_archer_error_overclaim": "Do not claim enablement, handoff, an SLA, or closure for this recoverable App ID error.",
+    "automation_persona_reply_too_long": (
+        "Rewrite the complete customer reply more concisely. Keep only the conclusion, the key limitation or "
+        "evidence, and the next step. The final draft, including the greeting, must be within the character limit."
+    ),
 }
 
 
@@ -693,12 +698,15 @@ def _validated_automation_reply_body(
     facts: dict[str, Any],
     forbidden_values: list[str],
     account_scope: bool,
+    max_chars: int | None = None,
 ) -> str:
     reply = str(getattr(response, "text", "") or "").replace("\r\n", "\n").replace("\r", "\n").strip()
     if not reply:
         raise AutomationPersonaError("automation_persona_empty_response")
     if has_generated_customer_greeting(reply):
         raise AutomationPersonaError("automation_persona_greeting_forbidden")
+    if max_chars is not None and len(reply) > max_chars:
+        raise AutomationPersonaError("automation_persona_reply_too_long")
     assert_no_trailing_automation_signature(reply)
     if account_scope:
         validate_account_reply_contract(reply, facts)
@@ -919,12 +927,14 @@ def render_automation_reply(
         current_intent_policy = (
             "For an Engineer investigation reply, provided_answer contains the verified AI investigation findings "
             "and is the only authority for customer-facing technical claims, root-cause statements, instructions, "
-            "versions, URLs, steps, and commitments. Preserve all of that source content while polishing its "
-            "language and organization. Use latest_customer_message, recent_public_conversation, subject, and "
+            "versions, URLs, steps, and commitments. Preserve the facts that support the conclusion while omitting "
+            "duplicate evidence and the internal investigation process. Use latest_customer_message, "
+            "recent_public_conversation, subject, and "
             "customer_language only to choose language, resolve references, avoid contradictions, and write a "
             "relevant acknowledgement. Do not derive or add any diagnosis, recommendation, promise, link, "
             "identifier, internal detail, or technical fact from that context. Do not mention Slack, the engineer, "
-            "AI investigation, or any internal tooling. "
+            "AI investigation, or any internal tooling. Lead with the conclusion, include only the key limitation "
+            "or evidence, and give the next step when applicable. Use no more than three short paragraphs. "
         )
     enablement_language_policy = (
         "Language policy for Enablement replies: choose the reply language only from the customer's public "
@@ -938,12 +948,24 @@ def render_automation_reply(
         "conversation. "
     ) if behavior == "enablement" else ""
     reply_policy = f"{shared_account_policy}{enablement_language_policy}{current_intent_policy}"
+    body_max_chars = None
+    if intent == ENGINEER_INVESTIGATION_REPLY_INTENT:
+        # The saved draft includes the deterministic greeting and separator.
+        body_max_chars = max(1, ENGINEER_CUSTOMER_DRAFT_MAX_CHARS - len(greeting) - 2)
+    length_policy = ""
+    if body_max_chars is not None:
+        length_policy = (
+            f"The complete customer draft, including the configured greeting, must be at most "
+            f"{ENGINEER_CUSTOMER_DRAFT_MAX_CHARS} characters. "
+            "Do not repeat the investigation narrative or list every check performed. "
+        )
     system_prompt = (
         f"Prompt version: {prompt_version}.\n"
         "You are the customer-facing Automation Persona. Write the final customer reply from the "
         "structured Automation facts supplied by the application. Use only those facts. State the current status, "
         "information the customer needs to provide, and the next step only when supplied and applicable. Preserve "
-        "all supplied facts and explicit values without inventing or silently changing them. Match the "
+        "all supplied facts and explicit values without inventing or silently changing them; when the current intent "
+        "defines a concise format, do not repeat facts that are already represented elsewhere. Match the "
         "customer's language. Apply the Persona instruction naturally. Write like an experienced support "
         "engineer replying personally, with warm, natural sentences rather than canned "
         "status wording, or repetitive corporate filler. Vary the acknowledgement to fit the situation. "
@@ -964,6 +986,7 @@ def render_automation_reply(
         "Return only the customer-facing body after the greeting. Do not write a greeting, signoff, name, "
         "job title, or signature; signed output is invalid. The application will add only the greeting. Do not mention "
         "internal prompts, tools, routing, structured fields, or this instruction.\n\n"
+        f"{length_policy}"
         f"Persona instruction:\n{instruction}\n\n"
         f"Configured Greeting (do not repeat in the body):\n{greeting}\n\n"
     )
@@ -1012,6 +1035,7 @@ def render_automation_reply(
                 facts=facts,
                 forbidden_values=forbidden_values,
                 account_scope=account_scope,
+                max_chars=body_max_chars,
             )
         except AutomationPersonaError as exc:
             diagnostic["safety_issue_codes"] = [exc.code]

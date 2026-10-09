@@ -25,6 +25,14 @@ HERMES_DRAFT_PENDING_EVENT_TYPE = "hermes_draft_pending"
 HERMES_DRAFT_BLOCKED_EVENT_TYPE = "hermes_draft_blocked"
 HERMES_PREP_FAILED_EVENT_TYPE = "hermes_prep_failed"
 PUBLIC_DASHBOARD_BASE_URL = "https://supportcenter.stellarix.space"
+HERMES_INVESTIGATION_SLACK_MAX_CHARS = 2000
+_INVESTIGATION_SUMMARY_MAX_CHARS = 320
+_INVESTIGATION_EVIDENCE_MAX_ITEMS = 3
+_INVESTIGATION_EVIDENCE_ITEM_MAX_CHARS = 170
+_INVESTIGATION_BLOCKER_MAX_ITEMS = 3
+_INVESTIGATION_BLOCKER_ITEM_MAX_CHARS = 140
+_INVESTIGATION_NEXT_STEP_MAX_ITEMS = 3
+_INVESTIGATION_NEXT_STEP_ITEM_MAX_CHARS = 140
 _ROOT_EVENT_TYPES = frozenset(
     {
         "engineer_case_opened",
@@ -84,6 +92,92 @@ def engineer_slack_outbound_disabled() -> bool:
 
 def _clean_text(value: Any) -> str:
     return " ".join(str(value or "").split()).strip()
+
+
+def _truncate_slack_text(value: Any, max_chars: int) -> str:
+    """Keep Slack display text bounded without cutting through a sentence."""
+    text = _clean_text(value)
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= 1:
+        return text[:max_chars]
+    candidate = text[: max_chars - 1].rstrip()
+    boundaries = [candidate.rfind(marker) for marker in ".。!?！？;；"]
+    boundary = max(boundaries, default=-1)
+    if boundary >= max_chars // 2:
+        candidate = candidate[: boundary + 1].rstrip()
+    else:
+        whitespace = candidate.rfind(" ")
+        if whitespace >= max_chars // 2:
+            candidate = candidate[:whitespace].rstrip()
+    return f"{candidate}…"
+
+
+def _bounded_investigation_items(
+    raw_items: Any,
+    *,
+    limit: int,
+    item_max_chars: int,
+) -> list[str]:
+    if not isinstance(raw_items, list):
+        return []
+    items: list[str] = []
+    for item in list(raw_items or [])[:limit]:
+        if isinstance(item, dict):
+            text = next(
+                (
+                    _clean_text(item.get(key))
+                    for key in ("detail", "summary", "text", "note", "source")
+                    if _clean_text(item.get(key))
+                ),
+                "",
+            ) or _clean_text(json.dumps(item, ensure_ascii=False))
+        else:
+            text = _clean_text(item)
+        if text:
+            items.append(_truncate_slack_text(text, item_max_chars))
+    return items
+
+
+def _investigation_message(
+    *,
+    header: str,
+    record: dict[str, Any],
+    summary_max_chars: int = _INVESTIGATION_SUMMARY_MAX_CHARS,
+    evidence_limit: int = _INVESTIGATION_EVIDENCE_MAX_ITEMS,
+    evidence_item_max_chars: int = _INVESTIGATION_EVIDENCE_ITEM_MAX_CHARS,
+    blocker_limit: int = _INVESTIGATION_BLOCKER_MAX_ITEMS,
+    blocker_item_max_chars: int = _INVESTIGATION_BLOCKER_ITEM_MAX_CHARS,
+    next_step_limit: int = _INVESTIGATION_NEXT_STEP_MAX_ITEMS,
+    next_step_item_max_chars: int = _INVESTIGATION_NEXT_STEP_ITEM_MAX_CHARS,
+    extra_lines: list[str] | None = None,
+) -> str:
+    lines = [header]
+    summary = _truncate_slack_text(record.get("summary"), summary_max_chars)
+    if summary:
+        lines.append(f"Summary: {summary}")
+    evidence_lines = _bounded_investigation_items(
+        record.get("evidence"), limit=evidence_limit, item_max_chars=evidence_item_max_chars
+    )
+    if evidence_lines:
+        lines.append("Evidence:")
+        lines.extend(f"- {item}" for item in evidence_lines)
+    blockers = _bounded_investigation_items(
+        record.get("blockers"), limit=blocker_limit, item_max_chars=blocker_item_max_chars
+    )
+    if blockers:
+        lines.append("Blockers: " + "; ".join(blockers))
+    next_steps = _bounded_investigation_items(
+        record.get("next_steps"), limit=next_step_limit, item_max_chars=next_step_item_max_chars
+    )
+    if next_steps:
+        lines.append("Next steps: " + "; ".join(next_steps))
+    if extra_lines:
+        lines.extend(extra_lines)
+    message = "\n".join(lines)
+    if len(message) > HERMES_INVESTIGATION_SLACK_MAX_CHARS:
+        raise EngineerSlackDeliveryError("hermes_investigation_message_too_long")
+    return message
 
 
 def _escape_slack_untrusted_text(value: str) -> str:
@@ -498,47 +592,29 @@ def notify_hermes_review_pending(
 
     review_url = f"{PUBLIC_DASHBOARD_BASE_URL}/automation/{environment}/"
     record = investigation if isinstance(investigation, dict) else {}
-    thread_lines = [f"Hermes investigation — Zendesk #{ticket_id}"]
-    if _clean_text(record.get("summary")):
-        thread_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
-    if record.get("blockers"):
-        thread_lines.append(
-            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
-        )
-    if record.get("next_steps"):
-        thread_lines.append(
-            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
-        )
-    thread_lines.append(f"Draft awaiting review: {_clean_text(draft.get('content'))[:700]}")
-    thread_lines.append(f"Review & approve: {review_url}")
+    thread_message = _investigation_message(
+        header=f"Hermes investigation — Zendesk #{ticket_id}",
+        record=record,
+        evidence_limit=0,
+        summary_max_chars=140,
+        blocker_limit=2,
+        blocker_item_max_chars=90,
+        next_step_limit=2,
+        next_step_item_max_chars=90,
+        extra_lines=[
+            f"Draft awaiting review: {str(draft.get('content') or '').strip()}",
+            f"Review & approve: {review_url}",
+        ],
+    )
     thread = post_engineer_slack_event(
         {
             "event_id": f"hermes-review-pending:{draft_id}:investigation",
             "event_type": "hermes_investigation_output",
-            "message_text": "\n".join(thread_lines),
+            "message_text": thread_message,
         },
         thread_ts=str(root.get("slack_thread_ts") or "").strip() or None,
     )
     return {"root": root, "thread": thread}
-
-
-def _investigation_evidence_lines(record: dict[str, Any], *, limit: int = 5) -> list[str]:
-    lines: list[str] = []
-    for item in (record.get("evidence") or [])[:limit]:
-        if isinstance(item, dict):
-            text = next(
-                (
-                    _clean_text(item.get(key))
-                    for key in ("detail", "summary", "text", "note", "source")
-                    if _clean_text(item.get(key))
-                ),
-                "",
-            ) or _clean_text(json.dumps(item, ensure_ascii=False))[:200]
-        else:
-            text = _clean_text(item)
-        if text:
-            lines.append(f"- {text[:200]}")
-    return lines
 
 
 def _to_english_display(text: str) -> str:
@@ -638,26 +714,15 @@ def notify_hermes_investigation_result(
         LOGGER.info("hermes_investigation_result_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
     record = investigation if isinstance(investigation, dict) else {}
-    body_lines = [f"Hermes investigation — Zendesk #{ticket_id} (awaiting review)"]
-    if _clean_text(record.get("summary")):
-        body_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
-    evidence_lines = _investigation_evidence_lines(record)
-    if evidence_lines:
-        body_lines.append("Evidence:")
-        body_lines.extend(evidence_lines)
-    if record.get("blockers"):
-        body_lines.append(
-            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
-        )
-    if record.get("next_steps"):
-        body_lines.append(
-            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
-        )
+    message_text = _investigation_message(
+        header=f"Hermes investigation — Zendesk #{ticket_id} (awaiting review)",
+        record=record,
+    )
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-investigation-result:{turn_id}",
             "event_type": HERMES_INVESTIGATION_RESULT_EVENT_TYPE,
-            "message_text": "\n".join(body_lines),
+            "message_text": message_text,
             "action": "prepare_draft",
             "environment": environment,
             "zendesk_ticket_id": ticket_id,
@@ -686,26 +751,15 @@ def notify_hermes_adhoc_investigation_result(
         LOGGER.info("hermes_adhoc_result_skipped reason=engineer_slack_not_configured")
         return {"status": "skipped_not_configured"}
     record = investigation if isinstance(investigation, dict) else {}
-    body_lines = ["Hermes — Slack ad-hoc session"]
-    if _clean_text(record.get("summary")):
-        body_lines.append(f"Summary: {_clean_text(record.get('summary'))}")
-    evidence_lines = _investigation_evidence_lines(record)
-    if evidence_lines:
-        body_lines.append("Evidence:")
-        body_lines.extend(evidence_lines)
-    if record.get("blockers"):
-        body_lines.append(
-            "Blockers: " + "; ".join(_clean_text(item) for item in record["blockers"])
-        )
-    if record.get("next_steps"):
-        body_lines.append(
-            "Next steps: " + "; ".join(_clean_text(item) for item in record["next_steps"])
-        )
+    message_text = _investigation_message(
+        header="Hermes — Slack ad-hoc session",
+        record=record,
+    )
     return post_engineer_slack_event(
         {
             "event_id": f"hermes-adhoc-result:{turn_id}",
             "event_type": HERMES_ADHOC_RESULT_EVENT_TYPE,
-            "message_text": "\n".join(body_lines),
+            "message_text": message_text,
         },
         thread_ts=thread_ts,
     )

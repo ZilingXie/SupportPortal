@@ -148,7 +148,7 @@ def _case_context_after_append(result: dict[str, Any]) -> dict[str, Any]:
 
 
 class _FakeResult:
-    def __init__(self, content: str, prompt_version: str = "engineer-investigation-persona-v1") -> None:
+    def __init__(self, content: str, prompt_version: str = "engineer-investigation-persona-v2") -> None:
         self.content = content
         self.model = "gpt-5.6-luna"
         self.prompt_version = prompt_version

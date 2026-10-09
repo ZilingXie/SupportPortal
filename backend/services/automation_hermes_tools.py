@@ -19,6 +19,7 @@ from backend.services.automation_ecs_store import (
 )
 from backend.services.enablement_automation import enablement_workflow_mode
 from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
+from backend.services.automation_persona import ENGINEER_CUSTOMER_DRAFT_MAX_CHARS
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
 
@@ -1143,6 +1144,16 @@ async def tool_execute_automation_action(
         # SOLE customer reply; persona must not draft a second one (F4).
         "skip_persona": bool(skip_persona),
     }
+    if normalized_route == "fraud_account":
+        # Option B (fraud reply style alignment): the structured parts of
+        # the ask/confirmation are server-built and deterministic; the
+        # persona renders them verbatim and only composes narrative.
+        from backend.services.account_fraud_reply_basis import build_fraud_reply_basis
+
+        result["reply_basis"] = build_fraud_reply_basis(
+            missing_fields=missing_fields,
+            collected_fields=collected_fields,
+        )
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result
 
@@ -1516,6 +1527,14 @@ def tool_save_reply_draft(
             str(item) for item in list(work_result.get("references") or []) if str(item).strip()
         ]
         normalized_content = normalized_content + format_rag_fallback_references(references)
+    if (
+        str(turn.get("direction") or "") == "investigation"
+        and len(normalized_content) > ENGINEER_CUSTOMER_DRAFT_MAX_CHARS
+    ):
+        raise HermesToolError(
+            "reply_too_long",
+            "customer reply draft exceeds the 1200-character limit",
+        )
     guardrail = run_engineer_guardrail_final(
         draft_customer_reply=normalized_content,
         reply_readiness={

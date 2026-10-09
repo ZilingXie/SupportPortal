@@ -1317,7 +1317,7 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
             "backend.services.automation_persona.invoke_responses_text", return_value=response
-        ):
+        ) as invoke:
             result = render_automation_reply(
                 reply_facts={
                     "behavior": "engineer_support",
@@ -1331,7 +1331,59 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm"}},
             )
         self.assertTrue(result.content.startswith("Hi Ziling,"))
-        self.assertEqual(result.prompt_version, "engineer-investigation-persona-v1")
+        self.assertEqual(result.prompt_version, "engineer-investigation-persona-v2")
+        self.assertIn("at most 1200 characters", invoke.call_args.kwargs["system_prompt"])
+        self.assertIn("three short paragraphs", invoke.call_args.kwargs["system_prompt"])
+
+    def test_engineer_investigation_reply_retries_once_when_body_is_too_long(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        long_body = "Conclusion: confirmed. " + ("The same evidence was reviewed repeatedly. " * 80)
+        responses = [
+            SimpleNamespace(text=long_body, model_name="persona-model"),
+            SimpleNamespace(
+                text="The issue is confirmed. Please provide the requested logs so we can continue.",
+                model_name="persona-model",
+            ),
+        ]
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", side_effect=responses
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts={
+                    "behavior": "engineer_support",
+                    "reply_intent": "engineer_investigation_reply",
+                    "provided_answer": "Conclusion: the issue is confirmed.",
+                    "customer_first_name": "Ziling Xie",
+                },
+                persona_assignment={"content": {"instruction": "Warm"}},
+            )
+        self.assertEqual(invoke.call_count, 2)
+        self.assertLessEqual(len(result.content), 1200)
+        self.assertEqual(result.generation_attempts, 2)
+        self.assertEqual(result.safety_issue_codes, ("automation_persona_reply_too_long",))
+        revision = json.loads(invoke.call_args_list[1].kwargs["user_prompt"])["revision"]
+        self.assertEqual(revision["issue_codes"], ["automation_persona_reply_too_long"])
+
+    def test_engineer_investigation_reply_blocks_when_both_attempts_are_too_long(self) -> None:
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text="The same evidence was reviewed repeatedly. " * 100,
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            with self.assertRaisesRegex(AutomationPersonaError, "automation_persona_reply_too_long"):
+                render_automation_reply(
+                    reply_facts={
+                        "behavior": "engineer_support",
+                        "reply_intent": "engineer_investigation_reply",
+                        "provided_answer": "Conclusion: the issue is confirmed.",
+                        "customer_first_name": "Ziling Xie",
+                    },
+                    persona_assignment={"content": {"instruction": "Warm"}},
+                )
+        self.assertEqual(invoke.call_count, 2)
 
     def test_engineer_investigation_reply_requires_provided_answer(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")

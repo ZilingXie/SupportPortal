@@ -321,6 +321,40 @@ class EngineerSlackContractTests(unittest.TestCase):
         self.assertEqual(result["thread"]["slack_message_ts"], "100.301")
         self.assertEqual(result["root"]["event_id"], "hermes-review-pending:draft-abc123")
 
+    def test_hermes_review_pending_bounds_investigation_context_but_keeps_draft(self) -> None:
+        draft_content = "Hi Ziling,\n\n" + ("The verified finding is documented. " * 30)
+        self.assertLessEqual(len(draft_content), 1200)
+        investigation = {
+            "summary": "Summary detail. " * 80,
+            "evidence": [{"detail": "This evidence should not be included in review pending."}],
+            "blockers": ["blocker detail " * 30 for _ in range(10)],
+            "next_steps": ["next step detail " * 30 for _ in range(10)],
+        }
+        draft = {
+            "draft_id": "draft-long",
+            "zendesk_ticket_id": "13413",
+            "content": draft_content,
+        }
+        responses = [
+            _Response({"ok": True, "channel": "C-TEST", "ts": "100.302"}),
+            _Response({"ok": True, "channel": "C-TEST", "ts": "100.303"}),
+        ]
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen", side_effect=responses
+        ) as urlopen:
+            notify_hermes_review_pending(
+                draft=draft,
+                title="Long investigation",
+                question="Please review this case.",
+                route_result="investigation",
+                investigation=investigation,
+                environment="preproduction",
+            )
+        thread_payload = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertLessEqual(len(thread_payload["text"]), 2000)
+        self.assertIn(f"Draft awaiting review: {draft_content.strip()}", thread_payload["text"])
+        self.assertNotIn("This evidence should not be included", thread_payload["text"])
+
     def test_hermes_review_pending_skips_when_not_configured(self) -> None:
         cleared = {key: "" for key in DIRECT_ENV}
         with patch.dict(os.environ, cleared, clear=False), patch(
@@ -1230,6 +1264,34 @@ class EngineerSlackWorkerTests(unittest.TestCase):
             },
         )
         self.assertEqual(result["slack_message_ts"], "100.400")
+
+    def test_hermes_investigation_result_bounds_all_sections(self) -> None:
+        investigation = {
+            "summary": "Summary detail. " * 80,
+            "evidence": [
+                {"detail": f"Evidence item {index}: " + ("observed signal. " * 30)}
+                for index in range(10)
+            ],
+            "blockers": ["blocker detail " * 30 for _ in range(10)],
+            "next_steps": ["next step detail " * 30 for _ in range(10)],
+        }
+        with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
+            "backend.services.engineer_slack.urllib.request.urlopen",
+            return_value=_Response({"ok": True, "channel": "C-TEST", "ts": "100.401"}),
+        ) as urlopen:
+            notify_hermes_investigation_result(
+                ticket_id="13424",
+                turn_id="turn-long",
+                investigation=investigation,
+                environment="preproduction",
+                thread_ts="100.000",
+            )
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        text = payload["text"]
+        self.assertLessEqual(len(text), 2000)
+        self.assertEqual(text.count("- Evidence item"), 3)
+        self.assertEqual(text.count("Blockers:") , 1)
+        self.assertEqual(text.count("Next steps:"), 1)
 
     def test_hermes_draft_pending_root_carries_approve_button(self) -> None:
         with patch.dict(os.environ, DIRECT_ENV, clear=False), patch(
