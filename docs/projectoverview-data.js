@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T13:28:28Z",
-  "source_base_commit": "52d80ddeac01d3927e6c30ea0c4509cb58edde76",
-  "registry_digest": "d7c13450dfb2df9d192cb32ca8367788ced04ffcd3fe19b26378d79481228ccd",
+  "generated_at": "2026-10-09T15:10:14Z",
+  "source_base_commit": "724922a44fee1c92e2025d476b75f138cf80aebb",
+  "registry_digest": "da1ec64bbfd1839ba62c15ac029174827b419ca6dcdfcb500a9264fe545ae163",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5404,6 +5404,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
         {
           "type": "test",
           "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",
@@ -16679,7 +16685,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R14（本轮）：三处删除后判定改严格 absent-only；rescue_assert 补 kept 维护与 ownership 门控；新增 S15b（rm 后 unknown 不撤标记）与 S15c（rescue 查询失败保归属）注入全过；S7 断言括号化并实证空状态产生明确 FAIL。待办：独立复验 R14；通过后 finalize PR#1435 收口 p2-188。",
+      "next_action": "R15（本轮）：rescue_assert 容器分支三态化（unknown 置 kept+KEEPING+ownership 保留）；真实路径可注入；S15c（真实 rescueAssert 容器查询失败→PARTIAL+标记存活+恢复）与 S15d（容器 rm 后 unknown→标记保留+恢复）全过。待办：独立复验 R15；通过后 finalize PR#1435 收口 p2-188。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16693,6 +16699,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R15 rescueAssert 容器 unknown 修复 + 真实路径注入（固定提交实测 sc31）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check --key \u003cdump>",
+          "result": "复验两项关闭条件全部落地：①rescue_assert 容器分支重写为显式三态 case——absent 撤标记 / unknown 记 KEEPING+kept=1（修复此前只保留 marker 不置 kept、最终仍删 ownership 的缺陷）/ present 经标签证明删除，删除后非 absent 同样 kept=1；ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。②S15c 改为驱动真实 rescue_assert 生成的远端脚本（新增 env 前缀注入 + WK_CTQUERY_FAIL/WK_CTQUERY_ARM_AFTER_RM/WK_CTRM_OCCURRED 容器查询故障钩子，弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态 → 容器查询全失败下 rescue_assert 报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复后清理完成（4/4 PASS）。③新增 S15d（容器 rm 成功后查询 unknown）：PARTIAL + 容器标记保留（严格 absent-only）+ 恢复完成（3/3 PASS）。sc31 单轮 28 PASS：S15(4)+S15b(3)+S15c(4)+S15d(3)+S16(2)+S1(2)+S2-S6(10) 全绿，会话在 S7 处过期（'' 状态），其后场景如实 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）——会话时限拼接证据口径不变。"
+        },
         {
           "type": "test",
           "label": "R14 删除后查询 unknown 严格 absent-only + rescueAssert kept 门控（固定提交实测）",

@@ -269,3 +269,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 4. **S15c 注入（rescue 自身查询失败）**：在保留的归属状态上以查询全失败运行 rescue 逻辑——ownership 存活、不报清理成功、恢复后清理完成。
 5. **S7 断言括号化**：if 块明确覆盖 TimedOut/Cancelled/Failed → PASS，其余 → FAIL；本环境会话过期出现的空状态在本两轮均产生明确 FAIL（else 分支实证）。
 6. 会话时限说明（如实）：本机 AWS login 会话约 8-10 分钟，整套约 20 分钟；sc27/sc28 在时限内锁定本轮必需 23 项全绿（S15/S15b/S15c/S16/S1/S2-S6），其后场景 SEND-FAILED 如实报告；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。
+
+### R15 修复记录（2026-10-08，响应 R14 复验：rescue_assert 容器 unknown 不置 kept；无镜像/服务变更）
+
+1. **rescue_assert 容器分支三态化**：重写为显式 case——absent 撤标记；**unknown 记 KEEPING + kept=1**（修复此前只保留 marker 不置 kept、循环结束后仍因 kept=0 删除 ownership 的缺陷）；present 经标签证明删除，删除后重查非 absent 同样 kept=1 + KEEPING。ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。
+2. **真实 rescue_assert 可注入**：函数新增 env 前缀参数；container_state 增 WK_CTQUERY_FAIL（全程 unknown）与 WK_CTQUERY_ARM_AFTER_RM+WK_CTRM_OCCURRED（仅容器删除后 unknown）钩子；容器 rm 成功点置位 WK_CTRM_OCCURRED。
+3. **S15c 重写在真实路径上**（弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态（file+net+container 三标记+活 pg 容器），随后以 WK_CTQUERY_FAIL=1 驱动真实 rescue_assert——报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复 rescue 完成（4/4 PASS）。
+4. **S15d（容器 rm 成功后查询 unknown）**：PARTIAL + 容器标记保留（严格 absent-only 撤销）+ 恢复完成（3/3 PASS）。
+5. sc31 单轮 28 PASS（S15/S15b/S15c/S15d/S16/S1/S2-S6 全绿）；会话在 S7 过期，其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。

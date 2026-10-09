@@ -485,10 +485,11 @@ EOF
 }
 
 # rescue_assert <rs> — rescue + full clean-check in ONE remote command.
-rescue_assert() {
-  local rs="$1"
+rescue_assert() {  # rescue_assert <rs> [env-prefix]
+  local rs="$1" envpfx="${2:-}"
   local s; s="$(mktemp)"
-  cat > "$s" <<EOF
+  printf "%s\n" "${envpfx}" > "$s"
+  cat >> "$s" <<EOF
 RS=$rs
 OWNED=/tmp/wkr-owned-\$RS
 CLEANLOG=/tmp/wkr-clean-\$RS.log
@@ -497,6 +498,8 @@ rm -f "\$DUMP"
 if [ -f "\$OWNED" ]; then
   kept=0
   container_state() {
+    [ "\${WK_CTQUERY_FAIL:-0}" = "1" ] && { echo unknown; return; }
+    [ "\${WK_CTQUERY_ARM_AFTER_RM:-0}" = "1" ] && [ "\${WK_CTRM_OCCURRED:-0}" = "1" ] && { echo unknown; return; }
     local names
     if names="\$(sudo docker ps -a --format "{{.Names}}" 2>/dev/null)"; then
       if printf "%s
@@ -523,17 +526,29 @@ if [ -f "\$OWNED" ]; then
     case "\$kind" in
       container)
         st="\$(container_state "\$name")"
-        if [ "\$st" != present ]; then
-          [ "\$st" = absent ] && sed -i "\|^container:\$name\$|d" "\$OWNED"
-        else
-          lbl="\$(owner_of_container "\$name")"
-          if [ "\$lbl" != "\$RS" ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
-          else
-            sudo docker rm -f "\$name" >/dev/null 2>&1 || true
-            st="\$(container_state "\$name")"
-            [ "\$st" = absent ] && sed -i "\|^container:\$name\$|d" "\$OWNED"
-          fi
-        fi ;;
+        case "\$st" in
+          absent)
+            sed -i "\|^container:\$name\$|d" "\$OWNED" ;;
+          unknown)
+            echo "rescue: container \$name state unknown (query failed); KEEPING" >> "\$CLEANLOG"
+            kept=1 ;;
+          present)
+            lbl="\$(owner_of_container "\$name")"
+            if [ "\$lbl" != "\$RS" ]; then
+              # foreign same-named container (racer or inspect failure) — never delete
+              sed -i "\|^container:\$name\$|d" "\$OWNED"
+            else
+              sudo docker rm -f "\$name" >/dev/null 2>&1 || true
+              export WK_CTRM_OCCURRED=1
+              st="\$(container_state "\$name")"
+              if [ "\$st" = absent ]; then
+                sed -i "\|^container:\$name\$|d" "\$OWNED"
+              else
+                echo "rescue: container \$name is \$st after removal; KEEPING" >> "\$CLEANLOG"
+                kept=1
+              fi
+            fi ;;
+        esac ;;
       net)
         nst="\$(network_state "\$name")"
         case "\$nst" in
@@ -711,72 +726,60 @@ EOF
   fi
   rescue_assert "$rs15b" && ok "netquery2: rescue completed after query recovery" || bad "netquery2: rescue after recovery failed"
 
-  echo "== S15c: rescue_assert itself queried under failure → PARTIAL, ownership kept =="
-  # Drive rescue_assert's remote script with WK_NETQUERY_FAIL=1: it must NOT
-  # delete the ownership file and must report RESCUE-PARTIAL instead of a
-  # clean miss=0. Reuse the S15 kept-state by re-running its scenario? Simpler:
-  # create a fresh kept state via netquery, then rescue under failure.
+  echo "== S15c: REAL rescue_assert under CONTAINER query failure → kept, ownership retained =="
+  # killpg leaves OWNED with file+net+container markers and a live pg
+  # container (SIGKILL skips the remote trap). Then drive the ACTUAL
+  # rescue_assert remote script with WK_CTQUERY_FAIL=1: every container
+  # query returns unknown. Expect: container marker KEEPING, RESCUE-PARTIAL,
+  # ownership file SURVIVES; recovery rescue finishes the job.
   local rs15c="$base_rs-nqc"
   local sc15c; sc15c="$(mktemp)"
-  build_remote_script "$sc15c" "$rs15c" netquery "$(presign_for "$S3_KEY")"
-  ssm_run "wkrestore sc nqc" 900 "$sc15c" || true
-  # Now run the rescue_assert script body with WK_NETQUERY_FAIL=1 injected.
-  local rac; rac="$(mktemp)"
-  sed -n '/^rescue_assert() {/,/^}$/p' "$0" >/dev/null 2>&1 || true
-  # Build inline: fetch the generated rescue+assert script the same way the
-  # function does, but prefix WK_NETQUERY_FAIL=1.
-  local rscript15c; rscript15c="$(mktemp)"
-  # Reuse rescue_assert's heredoc by calling it once normally is complex; emit
-  # the equivalent remote script directly here (kept-marker state already on
-  # the instance from the netquery run).
-  cat > "$rscript15c" <<EOF
-RS=$rs15c
-OWNED=/tmp/wkr-owned-\$RS
-CLEANLOG=/tmp/wkr-clean-\$RS.log
-DUMP=/tmp/wkr-\$RS.dump
-rm -f "\$DUMP"
-if [ -f "\$OWNED" ]; then
-  export WK_NETQUERY_FAIL=1
-  network_state() { echo unknown; }
-  container_state() {
-    local names
-    if names="\$(sudo docker ps -a --format "{{.Names}}" 2>/dev/null)"; then
-      if printf "%s\n" "\$names" | grep -qx "\$1"; then echo present; else echo absent; fi
-    else
-      echo unknown
-    fi
-  }
-  kept=0
-  while IFS= read -r line; do
-    [ -n "\$line" ] || continue
-    kind="\${line%%:*}"; name="\${line#*:}"
-    case "\$kind" in
-      container)
-        st="\$(container_state "\$name")"
-        if [ "\$st" = absent ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
-        else echo "rescue: container \$name \$st; KEEPING" >> "\$CLEANLOG"; kept=1; fi ;;
-      net)
-        nst="\$(network_state "\$name")"
-        case "\$nst" in
-          absent) sed -i "\|^net:\$name\$|d" "\$OWNED" ;;
-          *) echo "rescue: network \$name \$nst; KEEPING" >> "\$CLEANLOG"; kept=1 ;;
-        esac ;;
-      file) rm -f "\$name"; sed -i "\|^file:\$name\$|d" "\$OWNED" ;;
-    esac
-  done < "\$OWNED"
-  if [ "\$kept" = 0 ]; then rm -f "\$OWNED" "\$CLEANLOG" 2>/dev/null
-  else echo "RESCUE-PARTIAL (ownership kept)"; fi
-fi
-ls /tmp/wkr-owned-\$RS >/dev/null 2>&1 && echo "OWNERSHIP-SURVIVED" || echo "OWNERSHIP-REMOVED"
-EOF
-  ssm_run "wkrestore rescue-under-unknown" 240 "$rscript15c"
-  if [ "$REMOTE_STATUS" = "Success" ] && echo "$REMOTE_OUT" | grep -q "OWNERSHIP-SURVIVED"; then
-    ok "S15c: rescue under query failure kept ownership (no false clean)"
+  build_remote_script "$sc15c" "$rs15c" killpg "$(presign_for "$S3_KEY")"
+  ssm_run "wkrestore sc nqc" 300 "$sc15c" || true
+  local pre15c; pre15c="$(mktemp)"
+  printf "%s\n" "grep -q '^container:$rs15c-pg' /tmp/wkr-owned-$rs15c 2>/dev/null && echo CT-PRESENT || echo CT-MISSING" > "$pre15c"
+  ssm_run "wkrestore nqc-precheck" 120 "$pre15c"
+  if echo "$REMOTE_OUT" | grep -q CT-PRESENT; then
+    ok "S15c precheck: kept-state carries a container marker"
   else
-    bad "S15c: ownership lost or rescue failed ($(echo "$REMOTE_OUT" | grep -vE '^$' | tr '\n' ';'))"
+    bad "S15c precheck: no container marker to test on ($(echo "$REMOTE_OUT" | tr '\n' ';'))"
   fi
-  # Recover with healthy queries afterwards.
-  rescue_assert "$rs15c" >/dev/null 2>&1 && ok "S15c: recovery rescue completed" || bad "S15c: recovery rescue failed"
+  rescue_assert "$rs15c" "export WK_CTQUERY_FAIL=1"
+  if echo "$REMOTE_OUT" | grep -q "RESCUE-PARTIAL"; then
+    ok "S15c: rescue_assert under container-query failure reported PARTIAL"
+  else
+    bad "S15c: expected RESCUE-PARTIAL, got ($(echo "$REMOTE_OUT" | grep -vE '^$' | tail -2 | tr '\n' ';'))"
+  fi
+  local post15c; post15c="$(mktemp)"
+  printf "%s\n" "grep -q '^container:$rs15c-pg' /tmp/wkr-owned-$rs15c 2>/dev/null && echo CT-MARKER-SURVIVED || echo CT-MARKER-LOST" > "$post15c"
+  ssm_run "wkrestore nqc-postcheck" 120 "$post15c"
+  if echo "$REMOTE_OUT" | grep -q CT-MARKER-SURVIVED; then
+    ok "S15c: container marker + ownership retained under container unknown"
+  else
+    bad "S15c: container marker/ownership lost under container query failure"
+  fi
+  rescue_assert "$rs15c" && ok "S15c: recovery rescue completed" || bad "S15c: recovery rescue failed"
+
+  echo "== S15d: container rm succeeded, then container query unknown → marker stays =="
+  local rs15d="$base_rs-nqd"
+  local sc15d; sc15d="$(mktemp)"
+  build_remote_script "$sc15d" "$rs15d" killpg "$(presign_for "$S3_KEY")"
+  ssm_run "wkrestore sc nqd" 300 "$sc15d" || true
+  rescue_assert "$rs15d" "export WK_CTQUERY_ARM_AFTER_RM=1"
+  if echo "$REMOTE_OUT" | grep -q "RESCUE-PARTIAL"; then
+    ok "S15d: post-rm container unknown reported PARTIAL"
+  else
+    bad "S15d: expected RESCUE-PARTIAL ($(echo "$REMOTE_OUT" | grep -vE '^$' | tail -2 | tr '\n' ';'))"
+  fi
+  local post15d; post15d="$(mktemp)"
+  printf "%s\n" "grep -q '^container:$rs15d-pg' /tmp/wkr-owned-$rs15d 2>/dev/null && echo CT-MARKER-KEPT || echo CT-MARKER-LOST" > "$post15d"
+  ssm_run "wkrestore nqd-postcheck" 120 "$post15d"
+  if echo "$REMOTE_OUT" | grep -q CT-MARKER-KEPT; then
+    ok "S15d: container marker retained under post-rm unknown (strict absent-only)"
+  else
+    bad "S15d: container marker lost after post-rm unknown"
+  fi
+  rescue_assert "$rs15d" && ok "S15d: recovery rescue completed" || bad "S15d: recovery rescue failed"
 
   echo "== S16: network query fails at preflight → refuse to start =="
   local rs16="$base_rs-netpreflight"
