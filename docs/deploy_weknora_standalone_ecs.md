@@ -277,3 +277,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 3. **S15c 重写在真实路径上**（弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态（file+net+container 三标记+活 pg 容器），随后以 WK_CTQUERY_FAIL=1 驱动真实 rescue_assert——报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复 rescue 完成（4/4 PASS）。
 4. **S15d（容器 rm 成功后查询 unknown）**：PARTIAL + 容器标记保留（严格 absent-only 撤销）+ 恢复完成（3/3 PASS）。
 5. sc31 单轮 28 PASS（S15/S15b/S15c/S15d/S16/S1/S2-S6 全绿）；会话在 S7 过期，其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。
+
+### R16 修复记录（2026-10-08，响应 R15 复验：rm 成功证据化；无镜像/服务变更）
+
+1. **条件置位**：WK_CTRM_OCCURRED 仅在 `docker rm -f` 返回 0 时 export（修复原无条件置位、无法证明 rm 成功的缺陷）。
+2. **rm 成败证据行**：成功写 `CTRM-OK <name>`、失败写 `CTRM-FAILED <name>` 至 CLEANLOG，并随 rescue_assert 输出回传（grep CTRM- 于 kept 门控前、ownership 删除前输出，两种终态都可见）。
+3. **S15d 增证据断言**：要求输出含 `CTRM-OK <pg名>` 且不含 `CTRM-FAILED`——证明"rm 成功后查询 unknown"确为目标场景。
+4. **S15e（rm 失败独立验证）**：`WK_CTRM_FORCE_FAIL=1` 强制 rm 失败（钩子不臂）——CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留 + 恢复完成。
+5. sc32 单轮 34 PASS（S15/S15b/S15c/S15d/S15e/S16/S1/S2-S6 全绿）；会话在 S7 过期，其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。

@@ -538,8 +538,12 @@ if [ -f "\$OWNED" ]; then
               # foreign same-named container (racer or inspect failure) — never delete
               sed -i "\|^container:\$name\$|d" "\$OWNED"
             else
-              sudo docker rm -f "\$name" >/dev/null 2>&1 || true
-              export WK_CTRM_OCCURRED=1
+              if [ "\${WK_CTRM_FORCE_FAIL:-0}" != "1" ] && sudo docker rm -f "\$name" >/dev/null 2>&1; then
+                export WK_CTRM_OCCURRED=1
+                echo "CTRM-OK \$name" >> "\$CLEANLOG"
+              else
+                echo "CTRM-FAILED \$name" >> "\$CLEANLOG"
+              fi
               st="\$(container_state "\$name")"
               if [ "\$st" = absent ]; then
                 sed -i "\|^container:\$name\$|d" "\$OWNED"
@@ -578,6 +582,8 @@ if [ -f "\$OWNED" ]; then
       file) rm -f "\$name"; sed -i "\|^file:\$name\$|d" "\$OWNED" ;;
     esac
   done < "\$OWNED"
+  # Surface rm-outcome evidence (kept or not) for outer assertions.
+  grep -h "^CTRM-" "\$CLEANLOG" 2>/dev/null || true
   if [ "\$kept" = 0 ]; then
     rm -f "\$OWNED" "\$CLEANLOG" 2>/dev/null
   else
@@ -771,6 +777,14 @@ EOF
   else
     bad "S15d: expected RESCUE-PARTIAL ($(echo "$REMOTE_OUT" | grep -vE '^$' | tail -2 | tr '\n' ';'))"
   fi
+  if echo "$REMOTE_OUT" | grep -q "CTRM-OK $rs15d-pg"; then
+    ok "S15d: docker rm -f PROVEN to succeed (CTRM-OK evidence)"
+  else
+    bad "S15d: no rm-succeeded evidence (CTRM lines: $(echo "$REMOTE_OUT" | grep '^CTRM-' | tr '\n' ';'))"
+  fi
+  if echo "$REMOTE_OUT" | grep -q "CTRM-FAILED"; then
+    bad "S15d: rm reported FAILED — scenario did not exercise rm-success path"
+  fi
   local post15d; post15d="$(mktemp)"
   printf "%s\n" "grep -q '^container:$rs15d-pg' /tmp/wkr-owned-$rs15d 2>/dev/null && echo CT-MARKER-KEPT || echo CT-MARKER-LOST" > "$post15d"
   ssm_run "wkrestore nqd-postcheck" 120 "$post15d"
@@ -780,6 +794,37 @@ EOF
     bad "S15d: container marker lost after post-rm unknown"
   fi
   rescue_assert "$rs15d" && ok "S15d: recovery rescue completed" || bad "S15d: recovery rescue failed"
+
+  echo "== S15e: container rm FAILS → KEEPING + ownership kept regardless of hook =="
+  local rs15e="$base_rs-nqe"
+  local sc15e; sc15e="$(mktemp)"
+  build_remote_script "$sc15e" "$rs15e" killpg "$(presign_for "$S3_KEY")"
+  ssm_run "wkrestore sc nqe" 300 "$sc15e" || true
+  # rm forced to fail; post-rm query hook armed anyway must NOT fire (it only
+  # arms on rm success), and the still-present container keeps the marker.
+  rescue_assert "$rs15e" "export WK_CTRM_FORCE_FAIL=1"
+  if echo "$REMOTE_OUT" | grep -q "CTRM-FAILED $rs15e-pg"; then
+    ok "S15e: rm failure evidenced (CTRM-FAILED)"
+  else
+    bad "S15e: expected CTRM-FAILED evidence ($(echo "$REMOTE_OUT" | grep '^CTRM-' | tr '\n' ';'))"
+  fi
+  if echo "$REMOTE_OUT" | grep -q "CTRM-OK"; then
+    bad "S15e: unexpected rm success in forced-fail scenario"
+  fi
+  if echo "$REMOTE_OUT" | grep -q "RESCUE-PARTIAL"; then
+    ok "S15e: PARTIAL reported under rm failure"
+  else
+    bad "S15e: expected RESCUE-PARTIAL ($(echo "$REMOTE_OUT" | grep -vE '^$' | tail -2 | tr '\n' ';'))"
+  fi
+  local post15e; post15e="$(mktemp)"
+  printf "%s\n" "grep -q '^container:$rs15e-pg' /tmp/wkr-owned-$rs15e 2>/dev/null && echo CT-MARKER-KEPT || echo CT-MARKER-LOST" > "$post15e"
+  ssm_run "wkrestore nqe-postcheck" 120 "$post15e"
+  if echo "$REMOTE_OUT" | grep -q CT-MARKER-KEPT; then
+    ok "S15e: container marker + ownership retained under rm failure"
+  else
+    bad "S15e: ownership lost under rm failure"
+  fi
+  rescue_assert "$rs15e" && ok "S15e: recovery rescue completed" || bad "S15e: recovery rescue failed"
 
   echo "== S16: network query fails at preflight → refuse to start =="
   local rs16="$base_rs-netpreflight"
