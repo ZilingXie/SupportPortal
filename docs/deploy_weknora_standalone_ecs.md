@@ -252,3 +252,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 3. **killpg 残留根因修复**：被 SIGKILL 容器的端点在网络沙箱滞留，旧 docker 的 network rm 长期拒绝（30s 重试仍不够）；三处网络删除循环增加 `network disconnect -f` 强制断开端点 + 15×2s 重试。
 4. **套件压缩**：dump stage 折入运行脚本（S8 保留独立 stage 以覆盖未启动窗口）、rescue+assert 合并为单条 SSM 命令、竞态校验+诱饵移除+终清合并单命令、轮询 5s——全程约 12 分钟，单 AWS 会话内完成（此前两轮因会话中途过期失败，均为环境非逻辑）。
 5. 固定提交实测：--self-check 27 PASS（0 FAIL）；真实模式复跑通过；实例终检零残留（容器/网络/wkr* 文件全零）。
+
+### R13 修复记录（2026-10-08，响应 R12 复验：网络查询布尔误判；无镜像/服务变更）
+
+1. **network_state() 三态统一**：新增基于 `docker network ls` 名单的 network_state()（present/absent/unknown；查询失败=unknown），统一应用于远端 cleanup、外层 rescue、rescue_assert、preflight 与 assert_clean 五处。仅确认 absent 才撤销归属记录；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动。
+2. **查询失败故障注入（WK_NETQUERY_FAIL=1，不触碰 docker 即模拟 daemon/权限失败）**：S15=资源确属本轮时查询失败——网络 KEPT（零误删）、归属文件保留 net: 标记（零丢失）、TEARDOWN-PARTIAL（不报清理成功）、容器标记正常撤销；查询恢复后 rescue 完成清理。S16=preflight 阶段查询失败——拒绝启动+零残留。assert_clean 的 network ls 失败记为 cannot-verify（不误报零残留）。
+3. **载具缺陷修复（调试中发现）**：①脚本顶层 `S3_KEY=""` 覆盖了环境变量，而 --self-check 模式仅从 --key 旗标解析——所有 self-check presign 此前签在桶根（HTTP 200 + ListBucketResult XML），dump 依赖场景多轮空转；现 --self-check 缺 --key 即 fail-fast。②诊断插桩曾在双引号赋值串内嵌双引号，截断 prelude 使生成脚本语法损坏（bash -n 生成物校验已补）。③ssm_run 发送失败现清空 REMOTE_* 并中止（此前保留上一场景状态，把会话过期伪装成"全部意外成功"）。
+4. **场景重排**：本轮复验必需的 S15/S16 移至最前，慢速 app 引导类（S2-S6）最后——AWS login 会话在本机仅约 8-15 分钟，整套约 20 分钟无法单会话完成；fail-fast 保证会话过期时如实报告而非假绿。
+5. 固定提交实测：sc26 轮 S15(4/4)+S16(2/2)+S1(2/2)+S2-S6(10/10)+S7-rescue+S8(1/1) 全过，S7 状态检查为轮询窗flake；kill/race 在 sc24 轮（同功能代码）8+4 全过。

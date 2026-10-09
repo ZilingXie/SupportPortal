@@ -57,6 +57,9 @@ log() { echo "[wkrestore-appverify] $*" >&2; }
 ssm_run() {
   local comment="$1" tmo="$2" script="$3" envpfx="${4:-}"
   local b64 params cid
+  # Reset per-call state: a send failure must never leave the PREVIOUS
+  # scenario's Status/Output standing (that illusion masked session expiry).
+  REMOTE_STATUS=""; REMOTE_OUT=""; REMOTE_ERR=""
   b64="$(base64 -i "$script")"
   params="$(mktemp).json"
   python3 - "$b64" "$envpfx" "$INSTANCE_ID" "$comment" "$tmo" > "$params" <<'PYEOF'
@@ -68,7 +71,7 @@ print(json.dumps({"InstanceIds": [inst], "DocumentName": "AWS-RunShellScript",
                   "Parameters": {"commands": [cmd]}}))
 PYEOF
   cid="$("$AWS_CLI_BIN" ssm send-command --cli-input-json "file://$params" --query "Command.CommandId" --output text)" \
-    || { echo "send failed" >&2; return 1; }
+    || { echo "SEND-FAILED ($comment): AWS session/credential problem — aborting suite to avoid stale-state illusions" >&2; REMOTE_STATUS="SendFailed"; return 1; }
   CID="$cid"
   local st="InProgress"
   for _ in $(seq 1 220); do
@@ -101,7 +104,8 @@ build_remote_script() {
   local out="$1" rs="$2" fault="${3:-}" presign="${4:-}"
   local prelude=""
   if [ -n "$presign" ]; then
-    prelude="curl -sS '$presign' -o /tmp/wkr-$rs.dump || { echo 'dump fetch failed' >&2; exit 80; }
+    prelude="curl -sSf '$presign' -o /tmp/wkr-$rs.dump || curl -sSf '$presign' -o /tmp/wkr-$rs.dump || { echo 'dump fetch failed' >&2; exit 80; }
+[ \"\$(head -c 5 /tmp/wkr-$rs.dump)\" = PGDMP ] || { echo 'dump is not a valid pg archive (bad fetch?)' >&2; od -c -N 64 /tmp/wkr-$rs.dump >&2; stat -c 'DBG-size=%s' /tmp/wkr-$rs.dump >&2; exit 80; }
 "
   fi
   cat > "$out" <<EOF
@@ -139,6 +143,21 @@ owner_of_network() {
 }
 OWNED_LABEL="\$RS"
 
+network_state() {  # present|absent|unknown  (single query, fail-closed)
+  # Fault-injection hook: WK_NETQUERY_FAIL=1 simulates a daemon/permission
+  # failure WITHOUT calling docker, so the unknown path is exercisable.
+  [ "\${WK_NETQUERY_FAIL:-0}" = "1" ] && { echo unknown; return; }
+  # A boolean `network inspect` check conflates "absent" with daemon/permission
+  # failures; derive the state from the name list so only a CONFIRMED miss
+  # reads absent and any docker failure reads unknown (KEEPING).
+  local nets
+  if nets="\$(sudo docker network ls --format "{{.Name}}" 2>/dev/null)"; then
+    if printf "%s\n" "\$nets" | grep -qx "\$1"; then echo present; else echo absent; fi
+  else
+    echo unknown
+  fi
+}
+
 # release_foreign <kind> <name>: a pre-registered name exists but carries a
 # foreign/absent owner label — drop OUR marker (we never owned the object)
 # and record the decision; never delete.
@@ -148,7 +167,7 @@ release_foreign() {
 }
 
 cleanup() {
-  local kept=0 line kind name st lbl
+  local kept=0 line kind name st lbl nst
   # Pass 1: containers and files (containers first so network endpoints go).
   while IFS= read -r line; do
     [ -n "\$line" ] || continue
@@ -190,19 +209,29 @@ cleanup() {
     [ -n "\$line" ] || continue
     kind="\${line%%:*}"; name="\${line#*:}"
     [ "\$kind" = net ] || continue
-    if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then
-      sed -i "\|^net:\$name\$|d" "\$OWNED"
-      continue
-    fi
+    nst="\$(network_state "\$name")"
+    case "\$nst" in
+      absent)
+        sed -i "\|^net:\$name\$|d" "\$OWNED"
+        continue
+        ;;
+      unknown)
+        echo "[cleanup] network \$name state unknown (query failed); KEEPING" >> "\$CLEANLOG"
+        kept=1
+        continue
+        ;;
+    esac
     lbl="\$(owner_of_network "\$name")"
     if [ "\$lbl" != "\$OWNED_LABEL" ]; then
       release_foreign net "\$name"
       continue
     fi
-    local gone=0 ep
+    local gone=0 ep rst
     for _ in \$(seq 1 15); do
       if sudo docker network rm "\$name" >/dev/null 2>&1; then gone=1; break; fi
-      sudo docker network inspect "\$name" >/dev/null 2>&1 || { gone=1; break; }
+      rst="\$(network_state "\$name")"
+      if [ "\$rst" = absent ]; then gone=1; break; fi
+      if [ "\$rst" = unknown ]; then break; fi
       # stale endpoints from killed containers block network rm on this old
       # docker; force-disconnect whatever the network still references.
       for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
@@ -210,10 +239,11 @@ cleanup() {
       done
       sleep 2
     done
-    if [ "\$gone" = 1 ]; then
+    rst="\$(network_state "\$name")"
+    if [ "\$gone" = 1 ] && [ "\$rst" != present ]; then
       sed -i "\|^net:\$name\$|d" "\$OWNED"
     else
-      echo "[cleanup] network \$name still exists after retries; KEEPING" >> "\$CLEANLOG"
+      echo "[cleanup] network \$name is \${rst:-present} after removal; KEEPING" >> "\$CLEANLOG"
       kept=1
     fi
   done < "\$OWNED"
@@ -227,14 +257,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# FAULT=netpreflight: every network query fails from the very start, so the
+# PREFLIGHT must refuse (unknown != absent) instead of creating anything.
+if [ "\$FAULT" = netpreflight ]; then export WK_NETQUERY_FAIL=1; fi
+
 # --- preflight: fail-closed on ANY name/network collision; never pre-delete ---
 for n in "\$PG" "\$RD" "\$AP"; do
   st="\$(container_state "\$n")"
   [ "\$st" = absent ] || { echo "COLLISION: container \$n is \$st; refusing to touch it" >&2; exit 81; }
 done
-if sudo docker network inspect "\$NET" >/dev/null 2>&1; then
-  echo "COLLISION: network \$NET exists; refusing to reuse it" >&2; exit 81
-fi
+nst="\$(network_state "\$NET")"
+[ "\$nst" = absent ] || { echo "COLLISION: network \$NET is \$nst (present or query failed); refusing to start" >&2; exit 81; }
 echo "/tmp/wkr-\$RS.dump" >> "\$OWNED" | true
 sed -i "s|^/tmp/wkr-\$RS.dump\$|file:/tmp/wkr-\$RS.dump|" "\$OWNED"
 
@@ -261,6 +294,10 @@ sudo docker cp "/tmp/wkr-\$RS.dump" "\$PG":/tmp/r.dump >/dev/null
 sudo docker exec "\$PG" pg_restore -U '$WK_DB_USER' -d '$WK_DB_NAME' --no-owner --no-privileges --role='$WK_DB_USER' --exit-on-error /tmp/r.dump >/dev/null || exit 84
 echo RESTORE-OK
 [ "\$FAULT" = restore ] && exit 85
+# FAULT=netquery: resources exist and are OURS; now the daemon "fails" — the
+# EXIT cleanup must KEEP the network (unknown), retain ownership, and report
+# TEARDOWN-PARTIAL instead of claiming success.
+[ "\$FAULT" = netquery ] && { export WK_NETQUERY_FAIL=1; exit 85; }
 
 echo "container:\$RD" >> "\$OWNED"   # pre-register
 sudo docker run -d --name "\$RD" --network "\$NET" --label wkrestore-owner="\$RS" -e REDIS_PASSWORD='$WK_REDIS_PASSWORD' \\
@@ -358,6 +395,15 @@ owner_of_container() {
 owner_of_network() {
   sudo docker inspect -f "{{index .Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null
 }
+network_state() {
+  [ "\${WK_NETQUERY_FAIL:-0}" = "1" ] && { echo unknown; return; }
+  local nets
+  if nets="\$(sudo docker network ls --format "{{.Name}}" 2>/dev/null)"; then
+    if printf "%s\n" "\$nets" | grep -qx "\$1"; then echo present; else echo absent; fi
+  else
+    echo unknown
+  fi
+}
 kept=0
 # containers + files first; label proof before any delete
 while IFS= read -r line; do
@@ -390,25 +436,32 @@ while IFS= read -r line; do
   [ -n "\$line" ] || continue
   kind="\${line%%:*}"; name="\${line#*:}"
   [ "\$kind" = net ] || continue
-  if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then
-    sed -i "\|^net:\$name\$|d" "\$OWNED"; continue
-  fi
+  nst="\$(network_state "\$name")"
+  case "\$nst" in
+    absent) sed -i "\|^net:\$name\$|d" "\$OWNED"; continue ;;
+    unknown)
+      echo "rescue: network \$name state unknown (query failed); KEEPING" >> "\$CLEANLOG"
+      kept=1; continue ;;
+  esac
   lbl="\$(owner_of_network "\$name")"
   if [ "\$lbl" != "\$RS" ]; then
     echo "rescue: network \$name owner label mismatch; FOREIGN — not touching" >> "\$CLEANLOG"
     sed -i "\|^net:\$name\$|d" "\$OWNED"; continue
   fi
-  gone=0
+  gone=0 rst2
   for _ in \$(seq 1 15); do
     sudo docker network rm "\$name" >/dev/null 2>&1 && { gone=1; break; }
-    sudo docker network inspect "\$name" >/dev/null 2>&1 || { gone=1; break; }
+    rst2="\$(network_state "\$name")"
+    [ "\$rst2" = absent ] && { gone=1; break; }
+    [ "\$rst2" = unknown ] && break
     for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
       sudo docker network disconnect -f "\$name" "\$ep" >/dev/null 2>&1 || true
     done
     sleep 2
   done
-  if [ "\$gone" = 1 ]; then sed -i "\|^net:\$name\$|d" "\$OWNED"
-  else echo "rescue: network \$name kept" >> "\$CLEANLOG"; kept=1; fi
+  rst2="\$(network_state "\$name")"
+  if [ "\$gone" = 1 ] && [ "\$rst2" != present ]; then sed -i "\|^net:\$name\$|d" "\$OWNED"
+  else echo "rescue: network \$name is \${rst2:-present}; KEEPING" >> "\$CLEANLOG"; kept=1; fi
 done < "\$OWNED"
 [ "\$kept" = 0 ] && rm -f "\$OWNED" "\$CLEANLOG" 2>/dev/null
 echo "rescue-done kept=\$kept"
@@ -441,6 +494,15 @@ if [ -f "\$OWNED" ]; then
   }
   owner_of_container() { sudo docker inspect -f "{{index .Config.Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null; }
   owner_of_network() { sudo docker inspect -f "{{index .Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null; }
+  network_state() {
+    [ "\${WK_NETQUERY_FAIL:-0}" = "1" ] && { echo unknown; return; }
+    local nets
+    if nets="\$(sudo docker network ls --format "{{.Name}}" 2>/dev/null)"; then
+      if printf "%s\n" "\$nets" | grep -qx "\$1"; then echo present; else echo absent; fi
+    else
+      echo unknown
+    fi
+  }
   while IFS= read -r line; do
     [ -n "\$line" ] || continue
     kind="\${line%%:*}"; name="\${line#*:}"
@@ -459,18 +521,26 @@ if [ -f "\$OWNED" ]; then
           fi
         fi ;;
       net)
-        if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then sed -i "\|^net:\$name\$|d" "\$OWNED"; continue; fi
+        nst="\$(network_state "\$name")"
+        case "\$nst" in
+          absent) sed -i "\|^net:\$name\$|d" "\$OWNED"; continue ;;
+          unknown) echo "rescue: network \$name state unknown; KEEPING" >> "\$CLEANLOG"; continue ;;
+        esac
         lbl="\$(owner_of_network "\$name")"
         if [ "\$lbl" != "\$RS" ]; then sed -i "\|^net:\$name\$|d" "\$OWNED"; continue; fi
+        rst3=""
         for _ in \$(seq 1 15); do
           sudo docker network rm "\$name" >/dev/null 2>&1 && break
-          sudo docker network inspect "\$name" >/dev/null 2>&1 || break
+          rst3="\$(network_state "\$name")"
+          [ "\$rst3" = absent ] && break
+          [ "\$rst3" = unknown ] && break
           for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
             sudo docker network disconnect -f "\$name" "\$ep" >/dev/null 2>&1 || true
           done
           sleep 2
         done
-        sudo docker network inspect "\$name" >/dev/null 2>&1 || sed -i "\|^net:\$name\$|d" "\$OWNED" ;;
+        rst3="\$(network_state "\$name")"
+        [ "\$rst3" != present ] && sed -i "\|^net:\$name\$|d" "\$OWNED" ;;
       file) rm -f "\$name"; sed -i "\|^file:\$name\$|d" "\$OWNED" ;;
     esac
   done < "\$OWNED"
@@ -480,7 +550,9 @@ miss=0
 for n in \$RS-pg \$RS-redis \$RS-app; do
   if sudo docker ps -a --format "{{.Names}}" | grep -qx "\$n"; then echo "LEFT container \$n"; miss=1; fi
 done
-if sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
+if ! nl_out="\$(sudo docker network ls --format "{{.Name}}" 2>/dev/null)"; then
+  echo "LEFT network-query FAILED (cannot verify absence of \$RS-net)"; miss=1
+elif printf "%s\n" "\$nl_out" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
 for f in /tmp/wkr-\$RS.dump /tmp/wkr-owned-\$RS /tmp/wkr-clean-\$RS.log; do
   [ -e "\$f" ] && { echo "LEFT file \$f"; miss=1; }
 done
@@ -511,7 +583,9 @@ miss=0
 for n in \$RS-pg \$RS-redis \$RS-app; do
   if sudo docker ps -a --format '{{.Names}}' | grep -qx "\$n"; then echo "LEFT container \$n"; miss=1; fi
 done
-if sudo docker network ls --format '{{.Name}}' | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
+if ! nl_out="\$(sudo docker network ls --format "{{.Name}}" 2>/dev/null)"; then
+  echo "LEFT network-query FAILED (cannot verify absence of \$RS-net)"; miss=1
+elif printf "%s\n" "\$nl_out" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
 for f in /tmp/wkr-\$RS.dump /tmp/wkr-owned-\$RS /tmp/wkr-clean-\$RS.log; do
   [ -e "\$f" ] && { echo "LEFT file \$f"; miss=1; }
 done
@@ -544,6 +618,60 @@ self_check() {
   common_setup
   local base_rs="wksc$$$(date +%s)"
   local pass=0
+
+  echo "== S15: network query fails at cleanup → KEEP, retain ownership, report PARTIAL =="
+  local rs15="$base_rs-netquery"
+  local sc15; sc15="$(mktemp)"
+  build_remote_script "$sc15" "$rs15" netquery "$(presign_for "$S3_KEY")"
+  ssm_run "wkrestore sc netquery" 900 "$sc15"
+  local nq_run_out="$REMOTE_OUT" nq_run_err="$REMOTE_ERR" nq_run_status="$REMOTE_STATUS"
+  if [ "$REMOTE_STATUS" = "Success" ]; then
+    bad "netquery: unexpectedly succeeded"
+  else
+    ok "netquery: run failed as designed ($REMOTE_STATUS)"
+  fi
+  # The fault must fire AFTER restore: RESTORE-OK in stdout proves the run
+  # reached the intended trigger point (failures before it are scenario bugs).
+  if echo "$nq_run_out" | grep -q "RESTORE-OK"; then
+    ok "netquery: reached the post-restore trigger point"
+  else
+    bad "netquery: failed BEFORE the trigger (out=[$(echo "$nq_run_out" | grep -vE '^$' | tr '\n' ';')] err=[$(echo "$nq_run_err" | grep -vE '^$' | tail -4 | tr '\n' ';')])"
+  fi
+  # Under the simulated daemon failure NOTHING is deleted: our labeled network
+  # must survive, the ownership file must RETAIN the net: marker, and stderr
+  # must report TEARDOWN-PARTIAL (never TEARDOWN-OK). The pg container IS
+  # removed (container queries still work), dropping its marker.
+  local q15; q15="$(mktemp)"
+  cat > "$q15" <<EOF
+RS=$rs15
+verdict=ok
+if ! sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "NET-DELETED-UNDER-UNKNOWN"; verdict=fail; fi
+if [ ! -f /tmp/wkr-owned-\$RS ]; then echo "OWNERSHIP-LOST"; verdict=fail; fi
+if grep -q "^net:\$RS-net" /tmp/wkr-owned-\$RS 2>/dev/null; then :; else echo "NET-MARKER-LOST"; verdict=fail; fi
+if grep -q "^container:" /tmp/wkr-owned-\$RS 2>/dev/null; then echo "CONTAINER-MARKER-KEPT"; verdict=fail; fi
+echo "NETQUERY-CHECK \$verdict"
+EOF
+  ssm_run "wkrestore netquery-verify" 120 "$q15"
+  if [ "$REMOTE_STATUS" = "Success" ] && echo "$REMOTE_OUT" | grep -q "NETQUERY-CHECK ok"; then
+    ok "netquery: network KEPT, ownership retained, container marker dropped"
+  else
+    bad "netquery: fail-closed contract violated; check-out=[$(echo "$REMOTE_OUT" | grep -vE '^$' | tr '\n' ';')] run-err=[$(echo "$nq_run_err" | grep -vE '^$' | tail -3 | tr '\n' ';')]"
+  fi
+  # With the query healthy again, a normal rescue must finish the cleanup.
+  rescue_assert "$rs15" && ok "netquery: rescue completed after query recovery" \
+    || bad "netquery: rescue after recovery failed ($(echo "$REMOTE_OUT" | grep -vE '^$' | tail -3 | tr '\n' ';'))"
+
+  echo "== S16: network query fails at preflight → refuse to start =="
+  local rs16="$base_rs-netpreflight"
+  local sc16; sc16="$(mktemp)"
+  build_remote_script "$sc16" "$rs16" netpreflight "$(presign_for "$S3_KEY")"
+  ssm_run "wkrestore sc netpreflight" 300 "$sc16"
+  if [ "$REMOTE_STATUS" != "Success" ] && echo "$REMOTE_ERR" | grep -q "network .* is unknown"; then
+    ok "netpreflight: refused to start under unknown network state"
+  else
+    bad "netpreflight: did not refuse (status=$REMOTE_STATUS err=[$(echo "$REMOTE_ERR" | grep -vE '^$' | tail -2 | tr '\n' ';')])"
+  fi
+  rescue_assert "$rs16" && ok "netpreflight: nothing left behind" || bad "netpreflight: leftovers"
 
   echo "== S1: name collision refuses and preserves the existing container =="
   local rs1="$base_rs-c1"
@@ -596,7 +724,7 @@ PYEOF
   local cid
   cid="$("$AWS_CLI_BIN" ssm send-command --cli-input-json "file://$params" --query "Command.CommandId" --output text)" || bad "S7: send failed"
   local st="InProgress"
-  for _ in $(seq 1 12); do
+  for _ in $(seq 1 30); do
     sleep 10
     st="$("$AWS_CLI_BIN" ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null)"
     case "$st" in Success|Failed|TimedOut|Cancelled) break ;; esac
@@ -736,6 +864,11 @@ EOF
 }
 
 presign_for() {  # <key> -> presigned GET URL (stdout)
+  # Re-export credentials on EVERY presign: the CLI login session may have
+  # rotated since common_setup, and a presign signed with a dead token
+  # downloads S3's XML error instead of the dump (seen as "not a valid
+  # archive" in pg_restore).
+  eval "$("$AWS_CLI_BIN" configure export-credentials --format env)"
   python3 - "$BACKUP_BUCKET" "$1" "$REGION" <<'PYEOF'
 import datetime, hashlib, hmac, os, sys, urllib.parse
 bucket, key, region = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -831,6 +964,10 @@ if [ "$MODE" = "self-check" ]; then
       *) shift ;;
     esac
   done
+  # Fail fast: without a real object key every presign signs the bucket ROOT
+  # (HTTP 200 + ListBucketResult XML), and dump-dependent scenarios silently
+  # degrade into vacuous passes.
+  [ -n "$S3_KEY" ] || { echo "ERROR: --self-check requires --key <backup-object-key> (dump-dependent scenarios otherwise run vacuously)" >&2; exit 2; }
   self_check
 else
   real_run "$@"
