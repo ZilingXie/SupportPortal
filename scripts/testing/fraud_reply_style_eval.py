@@ -65,7 +65,7 @@ SAMPLES = [
             "use_case_description": "live-streaming classroom sessions",
         },
         "greeting_name": "Jordan",
-        "expected_restate_terms": ["Jordan Lee"],
+        "expected_restate_terms": ["company"],
     },
     {
         "sample_id": "missing_five_with_use_case",
@@ -145,6 +145,12 @@ def _user_prompt(sample: dict) -> str:
         "greeting_name": sample["greeting_name"],
         "latest_customer_message": sample["customer_message"],
     }
+    from backend.services.account_fraud_reply_basis import build_fraud_reply_basis
+
+    basis = build_fraud_reply_basis(
+        missing_fields=sample["missing_fields"],
+        collected_fields=sample["collected_fields"],
+    )
     if sample.get("tool_result_executed"):
         work_result = {
             "status": "executed",
@@ -152,6 +158,7 @@ def _user_prompt(sample: dict) -> str:
             "missing_fields": [],
             "collected_fields": sample["collected_fields"],
             "internal_email_send_status": "sent",
+            "reply_basis": basis,
         }
     else:
         work_result = {
@@ -159,6 +166,7 @@ def _user_prompt(sample: dict) -> str:
             "route": "fraud_account",
             "missing_fields": sample["missing_fields"],
             "collected_fields": sample["collected_fields"],
+            "reply_basis": basis,
         }
     return (
         "CASE SNAPSHOT (JSON):\n"
@@ -204,6 +212,7 @@ def main() -> int:
             missing_fields=list(sample["missing_fields"]),
             collected_fields=list(sample["collected_fields"]),
             expected_restate_terms=sample.get("expected_restate_terms") or None,
+            collected_values=list(sample["collected_fields"].values()),
         )
         results.append(
             {

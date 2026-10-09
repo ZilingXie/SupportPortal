@@ -28,7 +28,7 @@ FRAUD_FIELD_LABELS: dict[str, tuple[str, ...]] = {
     "office_address": (r"\boffice address\b",),
     "contact_number": (r"\b(?:official )?contact number\b",),
     "contact_email": (r"\b(?:official )?contact email\b",),
-    "use_case_description": (r"\buse case\b",),
+    "use_case_description": (r"\buse[- ]case\b",),
     "console_configuration": (r"\bconsole configuration\b",),
 }
 
@@ -84,12 +84,15 @@ def judge_fraud_reply_style(
     missing_fields: list[str],
     collected_fields: list[str] | None = None,
     expected_restate_terms: list[str] | None = None,
+    collected_values: list[str] | None = None,
 ) -> dict[str, Any]:
     """Return a structured C1-C8 verdict for one fraud_account reply draft.
 
     ``missing_fields``/``collected_fields`` are canonical field keys from the
     server work result. ``expected_restate_terms`` (optional) are substrings
-    the partial-info structure must restate (scenario-controlled facts).
+    the partial-info structure must restate; when ``collected_values`` is
+    supplied, restating ANY one collected value or expected term satisfies
+    the check (Production restates the salient subset, not every field).
     """
     collected = list(collected_fields or [])
     missing = list(missing_fields or [])
@@ -136,17 +139,23 @@ def judge_fraud_reply_style(
     # C2 — restate collected facts when partial.
     if collected and missing:
         terms = [str(t) for t in (expected_restate_terms or []) if str(t).strip()]
-        if terms:
-            absent = [t for t in terms if t.casefold() not in lowered]
-            checks["c2_restate_collected"] = {
-                "passed": not absent,
-                "detail": f"restate terms missing: {absent}" if absent else "collected facts restated",
-            }
+        values = [str(v) for v in (collected_values or []) if str(v).strip()]
+        term_hit = any(t.casefold() in lowered for t in terms)
+        value_hit = any(v.casefold() in lowered for v in values)
+        if not terms and not values:
+            passed = True  # nothing scenario-controlled to check
+        elif terms and not values:
+            passed = term_hit
         else:
-            checks["c2_restate_collected"] = {
-                "passed": True,
-                "detail": "no expected restate terms supplied (skipped)",
-            }
+            passed = term_hit or value_hit
+        checks["c2_restate_collected"] = {
+            "passed": passed,
+            "detail": (
+                "collected facts restated"
+                if passed
+                else "no collected fact or expected term restated"
+            ),
+        }
 
     # C3 — list format for 3+ items.
     if len(missing) >= 3:
