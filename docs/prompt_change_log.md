@@ -5097,3 +5097,10 @@ For each new entry, record:
 - Verification: fixture CLI run and targeted route-alignment tests cover equal,
   differing and failed candidate cases, candidate input isolation, CSV row
   completeness and pair denominators.
+
+## 2026-10-09 — Investigation 客户回复长度契约 v2（Investigation 回复长度优化 v1）
+
+- `engineer-investigation-persona` 从 v1 更新为 v2：只保留支持结论的事实，删除重复证据和内部调查过程，优先输出结论、关键限制/证据和下一步，最多三个短段落。
+- 客户可见 Investigation draft 的完整内容（含 greeting）限制为 1,200 字符；首次超限使用现有第二次生成机会要求重写，第二次仍超限则由服务端阻断保存。
+- Slack 调查展示层保留完整持久化记录，但限制单次消息为 2,000 字符，并限制 summary、evidence、blockers、next_steps 的条数和单项长度。
+- 普通 Automation 与 Engineer-guided reply 不改变既有长度行为；审批消息仍展示合法 draft 的完整内容。
