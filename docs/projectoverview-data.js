@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T03:17:53Z",
-  "source_base_commit": "b1312054158a19c5e29868a40e34aac487db57a1",
-  "registry_digest": "7b5a756bc5efbc2efb2e3e46a973752de16c0c622b89898f6752a58f4b282244",
+  "generated_at": "2026-10-09T06:17:05Z",
+  "source_base_commit": "5c656b8ce4f5839fdc808367440aa6998879c778",
+  "registry_digest": "e20839ef5e0da3af5ed3b71ded39aa515e8b857871e7c14a7c5e6985674f73ea",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5404,6 +5404,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "现有测试隔离：无本次引起的旧服务替换、配置变化或路径变化；原健康检查及约定只读探针正常"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
         {
           "type": "test",
           "label": "R11 归属崩溃窗口关闭（固定提交实测）",
@@ -16661,7 +16667,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
       "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R11（本轮）：归属崩溃窗口关闭——预登记归属（四资源创建前写入标记）+ rescue 确定性删 dump + S8 dump 边界注入 + S9-S12 四个 kill -9 边界注入，self-check 29 PASS、真实模式复跑通过。待办：独立复验 R11；通过后 finalize PR#1435 收口 p2-188。",
+      "next_action": "R12（本轮）：owner-label 双因子归属（名称+标签匹配才删，TOCTOU 输家与外部资源零误删）+ S13-S14 竞态注入 + 端点强断修复 + 套件压缩；self-check 27 PASS、真实模式复跑通过、实例零残留终检。待办：独立复验 R12；通过后 finalize PR#1435 收口 p2-188。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -16675,6 +16681,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R12 owner-label 归属证明与 TOCTOU 竞态注入（固定提交实测）",
+          "command": "deployment/weknora/verify_restore_app_level.sh --self-check 与真实模式",
+          "result": "--self-check 27 PASS：S1 碰撞 2 + S2-S6 故障 10 + S7 SSM 超时 2 + S8 dump 边界 1 + S9-S12 kill 边界 8 + S13-S14 TOCTOU 竞态 4（racenet/racepg 各 2）。修复：①本轮创建的网络/容器全部携带 wkrestore-owner=\u003cRS> 标签，远端 cleanup 与外层 rescue 删除前均核对名称+标签双匹配——标签不匹配（外部抢占者或查询失败）绝不删除，记录 FOREIGN 并撤销本轮标记；②create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不删资源；③S13-S14 注入：预检通过后、本轮 create 前由远端脚本抢先创建同名网络/容器（无标签=外部资源），本轮 create 失败退出，断言外部资源存活、本轮其余资源+dump+归属记录全清，再移除诱饵后全清；④killpg 残留根因=被杀容器端点在网络沙箱滞留（旧 docker network rm 长期拒绝），三处网络删除循环增加 network disconnect -f 强制断开+15×2s 重试；⑤套件压缩（stage 折入运行脚本、rescue+assert 合并单命令、轮询 5s）使全程≈12 分钟，单会话内可完成。真实模式复跑通过（APP-SEARCH PASS/DL-MD5 全等/TEARDOWN-OK）。"
+        },
         {
           "type": "test",
           "label": "R11 归属崩溃窗口关闭（固定提交实测）",

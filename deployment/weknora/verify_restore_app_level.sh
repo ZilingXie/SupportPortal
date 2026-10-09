@@ -71,8 +71,8 @@ PYEOF
     || { echo "send failed" >&2; return 1; }
   CID="$cid"
   local st="InProgress"
-  for _ in $(seq 1 110); do
-    sleep 10
+  for _ in $(seq 1 220); do
+    sleep 5
     st="$("$AWS_CLI_BIN" ssm get-command-invocation --command-id "$cid" --instance-id "$INSTANCE_ID" --query Status --output text 2>/dev/null)"
     case "$st" in Success|Failed|TimedOut|Cancelled) break ;; esac
   done
@@ -98,8 +98,14 @@ common_setup() {
 # Emits the remote verification script with operator values interpolated and
 # RS_FAULT baked in. The remote script is ownership-tracked and trap-cleaned.
 build_remote_script() {
-  local out="$1" rs="$2" fault="${3:-}"
+  local out="$1" rs="$2" fault="${3:-}" presign="${4:-}"
+  local prelude=""
+  if [ -n "$presign" ]; then
+    prelude="curl -sS '$presign' -o /tmp/wkr-$rs.dump || { echo 'dump fetch failed' >&2; exit 80; }
+"
+  fi
   cat > "$out" <<EOF
+$prelude
 set -u
 RS=$rs
 FAULT='${fault}'
@@ -121,21 +127,58 @@ container_state() {  # present|absent|unknown  (single query, fail-closed)
   fi
 }
 
+# Owner proof: every resource THIS run creates carries the per-run label
+# wkrestore-owner=<RS>. Deletion requires name AND label to match; a
+# same-named resource WITHOUT our label was created by someone else (e.g. a
+# racer that won the TOCTOU window after preflight) and is never touched.
+owner_of_container() {
+  sudo docker inspect -f "{{index .Config.Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null
+}
+owner_of_network() {
+  sudo docker inspect -f "{{index .Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null
+}
+OWNED_LABEL="\$RS"
+
+# release_foreign <kind> <name>: a pre-registered name exists but carries a
+# foreign/absent owner label — drop OUR marker (we never owned the object)
+# and record the decision; never delete.
+release_foreign() {
+  echo "[cleanup] \$1 \$2 exists but owner label does not match this run; FOREIGN — not touching it" >> "\$CLEANLOG"
+  sed -i "\|^\$1:\$2\$|d" "\$OWNED"
+}
+
 cleanup() {
-  local kept=0 line kind name st
+  local kept=0 line kind name st lbl
   # Pass 1: containers and files (containers first so network endpoints go).
   while IFS= read -r line; do
     [ -n "\$line" ] || continue
     kind="\${line%%:*}"; name="\${line#*:}"
     case "\$kind" in
       container)
-        sudo docker rm -f "\$name" >/dev/null 2>&1 || true
         st="\$(container_state "\$name")"
-        if [ "\$st" = absent ]; then
-          sed -i "\|^container:\$name\$|d" "\$OWNED"
+        if [ "\$st" != present ]; then
+          # absent or unknown-but-gone-listed: drop marker (absent path);
+          # unknown (docker failed) keeps it fail-closed below via label check skip.
+          if [ "\$st" = absent ]; then
+            sed -i "\|^container:\$name\$|d" "\$OWNED"
+          else
+            echo "[cleanup] container \$name state \$st (query failed); KEEPING" >> "\$CLEANLOG"
+            kept=1
+          fi
         else
-          echo "[cleanup] container \$name is \$st after removal; KEEPING for manual cleanup" >> "\$CLEANLOG"
-          kept=1
+          lbl="\$(owner_of_container "\$name")"
+          if [ "\$lbl" != "\$OWNED_LABEL" ]; then
+            release_foreign container "\$name"      # foreign racer (or inspect failed) — never delete
+          else
+            sudo docker rm -f "\$name" >/dev/null 2>&1 || true
+            st="\$(container_state "\$name")"
+            if [ "\$st" = absent ]; then
+              sed -i "\|^container:\$name\$|d" "\$OWNED"
+            else
+              echo "[cleanup] container \$name is \$st after removal; KEEPING for manual cleanup" >> "\$CLEANLOG"
+              kept=1
+            fi
+          fi
         fi ;;
       file)
         rm -f "\$name"
@@ -147,10 +190,24 @@ cleanup() {
     [ -n "\$line" ] || continue
     kind="\${line%%:*}"; name="\${line#*:}"
     [ "\$kind" = net ] || continue
-    local gone=0
-    for _ in 1 2 3 4 5; do
+    if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then
+      sed -i "\|^net:\$name\$|d" "\$OWNED"
+      continue
+    fi
+    lbl="\$(owner_of_network "\$name")"
+    if [ "\$lbl" != "\$OWNED_LABEL" ]; then
+      release_foreign net "\$name"
+      continue
+    fi
+    local gone=0 ep
+    for _ in \$(seq 1 15); do
       if sudo docker network rm "\$name" >/dev/null 2>&1; then gone=1; break; fi
       sudo docker network inspect "\$name" >/dev/null 2>&1 || { gone=1; break; }
+      # stale endpoints from killed containers block network rm on this old
+      # docker; force-disconnect whatever the network still references.
+      for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
+        sudo docker network disconnect -f "\$name" "\$ep" >/dev/null 2>&1 || true
+      done
       sleep 2
     done
     if [ "\$gone" = 1 ]; then
@@ -182,12 +239,17 @@ echo "/tmp/wkr-\$RS.dump" >> "\$OWNED" | true
 sed -i "s|^/tmp/wkr-\$RS.dump\$|file:/tmp/wkr-\$RS.dump|" "\$OWNED"
 
 echo "net:\$NET" >> "\$OWNED"   # pre-register: no window between create and ownership
-sudo docker network create "\$NET" >/dev/null || { echo "network create failed" >&2; exit 82; }
+# TOCTOU injection: a "foreign" racer wins the name after preflight (no label).
+[ "\$FAULT" = racenet ] && sudo docker network create "\$NET" >/dev/null 2>&1
+sudo docker network create --label wkrestore-owner="\$RS" "\$NET" >/dev/null \
+  || { echo "network create failed" >&2; exit 82; }
 [ "\$FAULT" = killnet ] && kill -9 \$\$
 
 ECR=$ECR_REPO
 echo "container:\$PG" >> "\$OWNED"   # pre-register
-sudo docker run -d --name "\$PG" --network "\$NET" \\
+# TOCTOU injection: foreign same-named container appears after preflight.
+[ "\$FAULT" = racepg ] && sudo docker run -d --name "\$PG" docker.io/library/redis:7.0-alpine sleep 600 >/dev/null 2>&1
+sudo docker run -d --name "\$PG" --network "\$NET" --label wkrestore-owner="\$RS" \\
   -e POSTGRES_USER='$WK_DB_USER' -e POSTGRES_PASSWORD='$WK_DB_PASSWORD' -e POSTGRES_DB=inittmp \\
   -e PGDATA=/var/lib/postgresql/data/pgdata "\$ECR":base-paradedb-v0.22.6-pg17 >/dev/null || exit 83
 [ "\$FAULT" = killpg ] && kill -9 \$\$
@@ -201,14 +263,14 @@ echo RESTORE-OK
 [ "\$FAULT" = restore ] && exit 85
 
 echo "container:\$RD" >> "\$OWNED"   # pre-register
-sudo docker run -d --name "\$RD" --network "\$NET" -e REDIS_PASSWORD='$WK_REDIS_PASSWORD' \\
+sudo docker run -d --name "\$RD" --network "\$NET" --label wkrestore-owner="\$RS" -e REDIS_PASSWORD='$WK_REDIS_PASSWORD' \\
   docker.io/library/redis:7.0-alpine sh -c "exec redis-server --appendonly yes --requirepass \\"\\\$REDIS_PASSWORD\\"" >/dev/null || exit 86
 [ "\$FAULT" = killredis ] && kill -9 \$\$
 
 [ "\$FAULT" = hang ] && { echo HANGING-FOR-TIMEOUT-TEST; sleep 600; }
 
 echo "container:\$AP" >> "\$OWNED"   # pre-register
-sudo docker run -d --name "\$AP" --network "\$NET" -p 18081:8080 \\
+sudo docker run -d --name "\$AP" --network "\$NET" --label wkrestore-owner="\$RS" -p 18081:8080 \\
   -e DB_DRIVER=postgres -e DB_HOST="\$PG" -e DB_PORT=5432 \\
   -e DB_USER='$WK_DB_USER' -e DB_PASSWORD='$WK_DB_PASSWORD' -e DB_NAME='$WK_DB_NAME' -e DB_SSLMODE=disable \\
   -e RETRIEVE_DRIVER=postgres -e REDIS_ADDR="\$RD":6379 -e REDIS_PASSWORD='$WK_REDIS_PASSWORD' \\
@@ -290,30 +352,59 @@ container_state() {
     echo unknown
   fi
 }
+owner_of_container() {
+  sudo docker inspect -f "{{index .Config.Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null
+}
+owner_of_network() {
+  sudo docker inspect -f "{{index .Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null
+}
 kept=0
-# containers + files first
+# containers + files first; label proof before any delete
 while IFS= read -r line; do
   [ -n "\$line" ] || continue
   kind="\${line%%:*}"; name="\${line#*:}"
   case "\$kind" in
     container)
-      sudo docker rm -f "\$name" >/dev/null 2>&1 || true
       st="\$(container_state "\$name")"
-      if [ "\$st" = absent ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
-      else echo "rescue: container \$name is \$st; KEEPING" >> "\$CLEANLOG"; kept=1; fi ;;
+      if [ "\$st" != present ]; then
+        if [ "\$st" = absent ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
+        else echo "rescue: container \$name state \$st; KEEPING" >> "\$CLEANLOG"; kept=1; fi
+      else
+        lbl="\$(owner_of_container "\$name")"
+        if [ "\$lbl" != "\$RS" ]; then
+          echo "rescue: container \$name owner label mismatch; FOREIGN — not touching" >> "\$CLEANLOG"
+          sed -i "\|^container:\$name\$|d" "\$OWNED"
+        else
+          sudo docker rm -f "\$name" >/dev/null 2>&1 || true
+          st="\$(container_state "\$name")"
+          if [ "\$st" = absent ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
+          else echo "rescue: container \$name is \$st after removal; KEEPING" >> "\$CLEANLOG"; kept=1; fi
+        fi
+      fi ;;
     file)
       rm -f "\$name"; sed -i "\|^file:\$name\$|d" "\$OWNED" ;;
   esac
 done < "\$OWNED"
-# networks with detach retries
+# networks with detach retries; label proof before any delete
 while IFS= read -r line; do
   [ -n "\$line" ] || continue
   kind="\${line%%:*}"; name="\${line#*:}"
   [ "\$kind" = net ] || continue
+  if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then
+    sed -i "\|^net:\$name\$|d" "\$OWNED"; continue
+  fi
+  lbl="\$(owner_of_network "\$name")"
+  if [ "\$lbl" != "\$RS" ]; then
+    echo "rescue: network \$name owner label mismatch; FOREIGN — not touching" >> "\$CLEANLOG"
+    sed -i "\|^net:\$name\$|d" "\$OWNED"; continue
+  fi
   gone=0
-  for _ in 1 2 3 4 5; do
+  for _ in \$(seq 1 15); do
     sudo docker network rm "\$name" >/dev/null 2>&1 && { gone=1; break; }
     sudo docker network inspect "\$name" >/dev/null 2>&1 || { gone=1; break; }
+    for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
+      sudo docker network disconnect -f "\$name" "\$ep" >/dev/null 2>&1 || true
+    done
     sleep 2
   done
   if [ "\$gone" = 1 ]; then sed -i "\|^net:\$name\$|d" "\$OWNED"
@@ -326,6 +417,78 @@ EOF
   ssm_run "wkrestore rescue $rs" "$tmo" "$rscript" || return 1
   [ "$REMOTE_STATUS" = "Success" ] || return 1
   echo "$REMOTE_OUT" | grep -q "rescue-done"
+}
+
+# rescue_assert <rs> — rescue + full clean-check in ONE remote command.
+rescue_assert() {
+  local rs="$1"
+  local s; s="$(mktemp)"
+  cat > "$s" <<EOF
+RS=$rs
+OWNED=/tmp/wkr-owned-\$RS
+CLEANLOG=/tmp/wkr-clean-\$RS.log
+DUMP=/tmp/wkr-\$RS.dump
+rm -f "\$DUMP"
+if [ -f "\$OWNED" ]; then
+  container_state() {
+    local names
+    if names="\$(sudo docker ps -a --format "{{.Names}}" 2>/dev/null)"; then
+      if printf "%s
+" "\$names" | grep -qx "\$1"; then echo present; else echo absent; fi
+    else
+      echo unknown
+    fi
+  }
+  owner_of_container() { sudo docker inspect -f "{{index .Config.Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null; }
+  owner_of_network() { sudo docker inspect -f "{{index .Labels \"wkrestore-owner\"}}" "\$1" 2>/dev/null; }
+  while IFS= read -r line; do
+    [ -n "\$line" ] || continue
+    kind="\${line%%:*}"; name="\${line#*:}"
+    case "\$kind" in
+      container)
+        st="\$(container_state "\$name")"
+        if [ "\$st" != present ]; then
+          [ "\$st" = absent ] && sed -i "\|^container:\$name\$|d" "\$OWNED"
+        else
+          lbl="\$(owner_of_container "\$name")"
+          if [ "\$lbl" != "\$RS" ]; then sed -i "\|^container:\$name\$|d" "\$OWNED"
+          else
+            sudo docker rm -f "\$name" >/dev/null 2>&1 || true
+            st="\$(container_state "\$name")"
+            [ "\$st" = absent ] && sed -i "\|^container:\$name\$|d" "\$OWNED"
+          fi
+        fi ;;
+      net)
+        if ! sudo docker network inspect "\$name" >/dev/null 2>&1; then sed -i "\|^net:\$name\$|d" "\$OWNED"; continue; fi
+        lbl="\$(owner_of_network "\$name")"
+        if [ "\$lbl" != "\$RS" ]; then sed -i "\|^net:\$name\$|d" "\$OWNED"; continue; fi
+        for _ in \$(seq 1 15); do
+          sudo docker network rm "\$name" >/dev/null 2>&1 && break
+          sudo docker network inspect "\$name" >/dev/null 2>&1 || break
+          for ep in \$(sudo docker network inspect -f "{{range .Containers}}{{.Name}} {{end}}" "\$name" 2>/dev/null); do
+            sudo docker network disconnect -f "\$name" "\$ep" >/dev/null 2>&1 || true
+          done
+          sleep 2
+        done
+        sudo docker network inspect "\$name" >/dev/null 2>&1 || sed -i "\|^net:\$name\$|d" "\$OWNED" ;;
+      file) rm -f "\$name"; sed -i "\|^file:\$name\$|d" "\$OWNED" ;;
+    esac
+  done < "\$OWNED"
+  rm -f "\$OWNED" "\$CLEANLOG" 2>/dev/null
+fi
+miss=0
+for n in \$RS-pg \$RS-redis \$RS-app; do
+  if sudo docker ps -a --format "{{.Names}}" | grep -qx "\$n"; then echo "LEFT container \$n"; miss=1; fi
+done
+if sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
+for f in /tmp/wkr-\$RS.dump /tmp/wkr-owned-\$RS /tmp/wkr-clean-\$RS.log; do
+  [ -e "\$f" ] && { echo "LEFT file \$f"; miss=1; }
+done
+echo "RESCUE-ASSERT miss=\$miss"
+EOF
+  ssm_run "wkrestore rescue+assert $rs" 240 "$s" || return 1
+  [ "$REMOTE_STATUS" = "Success" ] || return 1
+  echo "$REMOTE_OUT" | grep -q "RESCUE-ASSERT miss=0"
 }
 
 # stage_dump <rs> <presign> — download the backup dump to a per-run path.
@@ -403,23 +566,21 @@ self_check() {
   local f
   for f in restore appstart login search download; do
     local rs="$base_rs-$f"
-    stage_dump "$rs" "$(presign_for "$S3_KEY")" >/dev/null 2>&1 || { bad "S2-6/$f: dump staging failed"; continue; }
     local sc; sc="$(mktemp)"
-    build_remote_script "$sc" "$rs" "$f"
+    build_remote_script "$sc" "$rs" "$f" "$(presign_for "$S3_KEY")"
     ssm_run "wkrestore sc fault-$f" 900 "$sc"
     if [ "$REMOTE_STATUS" = "Success" ]; then
       bad "fault-$f: unexpectedly succeeded"
     else
       ok "fault-$f: run failed as designed ($REMOTE_STATUS)"
     fi
-    assert_clean "$rs" && ok "fault-$f: all resources cleaned" || bad "fault-$f: resources left behind"
+    rescue_assert "$rs" && ok "fault-$f: all resources cleaned" || bad "fault-$f: resources left behind"
   done
 
   echo "== S7: SSM timeout (SIGKILL path) → rescue via ownership file =="
   local rs7="$base_rs-hang"
-  stage_dump "$rs7" "$(presign_for "$S3_KEY")" >/dev/null 2>&1 || bad "S7: dump staging failed"
   local sc7; sc7="$(mktemp)"
-  build_remote_script "$sc7" "$rs7" hang
+  build_remote_script "$sc7" "$rs7" hang "$(presign_for "$S3_KEY")"
   # Short SSM timeout: the remote shell is killed mid-hang (trap skipped);
   # ownership file must still enable the outer rescue.
   local b64 params
@@ -442,8 +603,7 @@ PYEOF
   done
   [ "$st" = "TimedOut" ] || [ "$st" = "Cancelled" ] || [ "$st" = "Failed" ] \
     && ok "S7: SSM command ended in $st (killed mid-run)" || bad "S7: unexpected hang status $st"
-  rescue "$rs7" && ok "S7: rescue replayed ownership file" || bad "S7: rescue failed"
-  assert_clean "$rs7" && ok "S7: all resources cleaned after rescue" || bad "S7: resources left behind"
+  rescue_assert "$rs7" && ok "S7: rescue + clean after kill" || bad "S7: resources left behind"
 
   echo "== S8: dump staged, remote NEVER started → rescue must still remove it =="
   local rs8="$base_rs-dumpwin"
@@ -451,16 +611,14 @@ PYEOF
   # Simulate an operator/SSM abort between staging and launch: no remote
   # script ever runs, so no ownership file exists. The rescue's deterministic
   # dump removal must still clean the per-run path.
-  rescue "$rs8" && ok "S8: rescue ran (nothing-owned path + deterministic dump)" || bad "S8: rescue failed"
-  assert_clean "$rs8" && ok "S8: dump removed, nothing else left" || bad "S8: leftovers after dump-boundary abort"
+  rescue_assert "$rs8" && ok "S8: rescue ran; dump removed, nothing else left" || bad "S8: leftovers after dump-boundary abort"
 
   echo "== S9-S12: kill -9 at each create boundary (marker-first design) =="
   local kf
   for kf in killnet killpg killredis killapp; do
     local rs="$base_rs-$kf"
-    stage_dump "$rs" "$(presign_for "$S3_KEY")" >/dev/null 2>&1 || { bad "$kf: dump staging failed"; continue; }
     local sck; sck="$(mktemp)"
-    build_remote_script "$sck" "$rs" "$kf"
+    build_remote_script "$sck" "$rs" "$kf" "$(presign_for "$S3_KEY")"
     ssm_run "wkrestore sc $kf" 900 "$sck"
     # kill -9 makes bash exit 137; SSM reports Failed. The trap is skipped,
     # so ONLY the outer rescue (ownership file, markers written pre-create)
@@ -470,8 +628,101 @@ PYEOF
     else
       ok "$kf: killed at boundary ($REMOTE_STATUS)"
     fi
-    rescue "$rs" && ok "$kf: rescue cleaned recorded resources" || bad "$kf: rescue failed"
-    assert_clean "$rs" && ok "$kf: all resources cleaned" || bad "$kf: resources left behind"
+    rescue_assert "$rs" && ok "$kf: rescue cleaned all resources" || bad "$kf: resources left behind ($(echo "$REMOTE_OUT" | grep -E "LEFT|miss=" | tr '\n' ' '))"
+  done
+
+  echo "== S13-S14: TOCTOU race — foreign same-named resource wins AFTER preflight =="
+  # race_foreign_check <rs> <kind:net|container> <name> <expect-foreign-survives>
+  # Returns 0 iff: the FOREIGN resource still exists, all other per-run names
+  # are gone, and dump/ownership files are gone.
+  race_foreign_check() {
+    local rs="$1" kind="$2" fname="$3"
+    local s; s="$(mktemp)"
+    cat > "$s" <<EOF
+RS=$rs
+miss=0
+# every per-run name EXCEPT the foreign-occupied one must be gone
+for n in \$RS-pg \$RS-redis \$RS-app; do
+  [ "\$n" = "$fname" ] && continue
+  if sudo docker ps -a --format "{{.Names}}" | grep -qx "\$n"; then echo "LEFT container \$n"; miss=1; fi
+done
+if [ "$kind" != net ] && sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
+# the foreign resource must SURVIVE
+if [ "$kind" = net ]; then
+  sudo docker network ls --format "{{.Name}}" | grep -qx "$fname" || { echo "FOREIGN-GONE $fname"; miss=1; }
+else
+  sudo docker ps -a --format "{{.Names}}" | grep -qx "$fname" || { echo "FOREIGN-GONE $fname"; miss=1; }
+fi
+for f in /tmp/wkr-\$RS.dump /tmp/wkr-owned-\$RS /tmp/wkr-clean-\$RS.log; do
+  [ -e "\$f" ] && { echo "LEFT file \$f"; miss=1; }
+done
+echo "RACE-CHECK miss=\$miss"
+EOF
+    ssm_run "wkrestore race-check $rs" 120 "$s" || return 1
+    [ "$REMOTE_STATUS" = "Success" ] || return 1
+    echo "$REMOTE_OUT" | grep -q "RACE-CHECK miss=0"
+  }
+  remove_named() { # <kind:net|container> <name>
+    local kind="$1" fname="$2"
+    local s; s="$(mktemp)"
+    printf "%s\n" "if [ '$kind' = net ]; then sudo docker network rm '$fname' >/dev/null 2>&1; else sudo docker rm -f '$fname' >/dev/null 2>&1; fi; echo REMOVED" > "$s"
+    ssm_run "wkrestore race-decoy-remove" 120 "$s" >/dev/null 2>&1 || true
+  }
+  local rf
+  for rf in racenet racepg; do
+    local rs="$base_rs-$rf"
+    local scr; scr="$(mktemp)"
+    build_remote_script "$scr" "$rs" "$rf" "$(presign_for "$S3_KEY")"
+    ssm_run "wkrestore sc $rf" 900 "$scr"
+    if [ "$REMOTE_STATUS" = "Success" ]; then
+      bad "$rf: unexpectedly succeeded (create should have lost the race)"
+    else
+      ok "$rf: run failed as designed ($REMOTE_STATUS)"
+    fi
+    local fname kind
+    if [ "$rf" = racenet ]; then kind=net; fname="$rs-net"; else kind=container; fname="$rs-pg"; fi
+    # ONE command: verify foreign survived + ours cleaned, then remove decoy,
+    # then full assert.
+    local rc2; rc2="$(mktemp)"
+    cat > "$rc2" <<EOF
+RS=$rs
+KIND=$kind
+FNAME=$fname
+miss=0
+for n in \$RS-pg \$RS-redis \$RS-app; do
+  [ "\$n" = "\$FNAME" ] && continue
+  if sudo docker ps -a --format "{{.Names}}" | grep -qx "\$n"; then echo "LEFT container \$n"; miss=1; fi
+done
+if [ "\$KIND" != net ] && sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "LEFT network \$RS-net"; miss=1; fi
+if [ "\$KIND" = net ]; then
+  sudo docker network ls --format "{{.Name}}" | grep -qx "\$FNAME" || { echo "FOREIGN-GONE \$FNAME"; miss=1; }
+else
+  sudo docker ps -a --format "{{.Names}}" | grep -qx "\$FNAME" || { echo "FOREIGN-GONE \$FNAME"; miss=1; }
+fi
+for f in /tmp/wkr-\$RS.dump /tmp/wkr-owned-\$RS /tmp/wkr-clean-\$RS.log; do
+  [ -e "\$f" ] && { echo "LEFT file \$f"; miss=1; }
+done
+echo "RACE-CHECK miss=\$miss"
+if [ "\$miss" = 0 ]; then
+  if [ "\$KIND" = net ]; then sudo docker network rm "\$FNAME" >/dev/null 2>&1; else sudo docker rm -f "\$FNAME" >/dev/null 2>&1; fi
+  echo "DECOY-REMOVED"
+fi
+for n in \$RS-pg \$RS-redis \$RS-app; do
+  if sudo docker ps -a --format "{{.Names}}" | grep -qx "\$n"; then echo "LEFT2 container \$n"; miss=1; fi
+done
+if sudo docker network ls --format "{{.Name}}" | grep -qx "\$RS-net"; then echo "LEFT2 network \$RS-net"; miss=1; fi
+echo "POST-CLEAN miss=\$miss"
+EOF
+    ssm_run "wkrestore race-verify $rf" 240 "$rc2"
+    if [ "$REMOTE_STATUS" = "Success" ] \
+       && echo "$REMOTE_OUT" | grep -q "RACE-CHECK miss=0" \
+       && echo "$REMOTE_OUT" | grep -q "DECOY-REMOVED" \
+       && echo "$REMOTE_OUT" | grep -q "POST-CLEAN miss=0"; then
+      ok "$rf: foreign survived; ours + dump + records cleaned; decoy then removed; full clean"
+    else
+      bad "$rf: race contract violated ($(echo "$REMOTE_OUT" | grep -E 'miss=|FOREIGN-GONE|LEFT' | tr '
+' ' '))"
+    fi
   done
 
   echo

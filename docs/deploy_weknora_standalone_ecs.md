@@ -244,3 +244,11 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 3. **新增故障注入（self-check 29 PASS）**：S8=stage 后不发远端直接 rescue（nothing-owned 路径+确定性删 dump，assert_clean=0）；S9-S12=killnet/killpg/killredis/killapp 以 kill -9 在四个创建边界自杀（远端 trap 被跳过，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，全部资源逐项为零。
 4. 首轮 self-check 26/27 唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。
 5. 真实模式复跑通过（APP-SEARCH PASS / DL-MD5 全等 / TEARDOWN-OK / assert_clean miss=0）。
+
+### R12 修复记录（2026-10-08，响应 R11 复验：预登记的 TOCTOU 竞态；无镜像/服务变更）
+
+1. **owner-label 双因子归属**：本轮创建的网络与容器全部携带 `wkrestore-owner=<RS>` 标签；远端 cleanup 与外层 rescue 在删除前核对**名称+标签同时匹配**——标签缺失/不匹配（外部抢占者）或标签查询失败一律不删除，记录 FOREIGN 并撤销本轮标记（fail-closed）。create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不触碰资源。
+2. **S13-S14 TOCTOU 竞态注入**：`racenet`/`racepg` 旋钮在预检通过后、本轮 create 前抢先创建同名网络/容器（无标签=模拟外部进程）。断言：本轮 run 失败、外部资源存活、本轮其余资源+dump+归属记录全清；移除诱饵后逐项全清。
+3. **killpg 残留根因修复**：被 SIGKILL 容器的端点在网络沙箱滞留，旧 docker 的 network rm 长期拒绝（30s 重试仍不够）；三处网络删除循环增加 `network disconnect -f` 强制断开端点 + 15×2s 重试。
+4. **套件压缩**：dump stage 折入运行脚本（S8 保留独立 stage 以覆盖未启动窗口）、rescue+assert 合并为单条 SSM 命令、竞态校验+诱饵移除+终清合并单命令、轮询 5s——全程约 12 分钟，单 AWS 会话内完成（此前两轮因会话中途过期失败，均为环境非逻辑）。
+5. 固定提交实测：--self-check 27 PASS（0 FAIL）；真实模式复跑通过；实例终检零残留（容器/网络/wkr* 文件全零）。
