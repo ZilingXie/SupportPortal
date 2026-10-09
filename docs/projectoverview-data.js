@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T10:01:06Z",
-  "source_base_commit": "00b493e2eb6580a9e1f02a83fd2327d595d5f743",
-  "registry_digest": "fee8fd7574b1633a4ca3b9f804c94834d80f97d4716269f5b05e51a1513403b2",
+  "generated_at": "2026-10-09T16:31:04Z",
+  "source_base_commit": "860d94c0a9bb11a95f1bc12ea7eca95ee1860de3",
+  "registry_digest": "9dc7b2d23879f26925eee24296195ed2f5d2147c38b219ab786e39276c6b310f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4971,6 +4971,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for persona-assembled replies",
           "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_engineer_execute_agent.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_api.py backend/tests/test_prompt_modules.py -q",
           "details": "314 passed + 48 subtests。新增：collab 组装三用例（awaiting 组装含 facts 蒸馏/persona_meta/事件 Persona 前缀+guardrail 按钮；persona 失败落事件 502；active 不触发）；persona 新 intent 四用例（渲染/prompt 版本/provided_answer 必填/防幻觉标识符/客户名缺失）；investigation_flow awaiting 无 draft 正例（schema 放宽）；prompt_modules 断言更新至 v10 纯调查语义（含三条已删客户文案规则的 NotIn）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation length contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_persona.py backend/tests/test_engineer_slack.py backend/tests/test_hermes_zendesk_agent_tools.py",
+          "details": "181 passed，92 subtests passed；覆盖 Persona v2 首次超长触发一次重生成、两次超长阻断、draft 含 greeting 超过 1200 字符 reply_too_long 且 guardrail 前拒绝、Investigation 记录完整保存而 Slack 投影受限、investigation/ad-hoc/review pending Slack 文本不超过 2000 字符。"
+        },
+        {
+          "type": "test",
+          "label": "Build and diff checks",
+          "command": ".venv/bin/python -m compileall -q \u003cchanged Python files>; git diff --check 42a2da28^ 42a2da28",
+          "details": "compileall exit 0；git diff --check exit 0。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release evidence",
+          "command": "release pipeline for r20261009-1a7b6e5 from source 1a7b6e511d3a670ac3b471bc5c42a291b6042760",
+          "details": "正式 evidence status=complete；CodeBuild、preflight、schema bootstrap、Route/Worker/API rollout、heartbeats、collector、Prompt activation/sync、provider probe、public health、CloudWatch（三角色 error_count=0）、Terraform pre/post zero-drift、runtime digest verification 全通过。API/Route/Worker task definitions 为 :121/:120/:121，digest 分别 sha256:5aabff9d、sha256:3cb47613、sha256:4ecf7c05；Prompt Release pr-ee28a3c51d44 active。证据：.deployments/ecs-pipeline-r20261009-1a7b6e5/preproduction-deploy/evidence.json。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live release and connectivity readback",
+          "command": "GET https://supportcenter.stellarix.space/automation/preproduction/health/release; .venv/bin/python -m scripts.testing.preproduction --check",
+          "details": "release endpoint 返回 status=ok、release_id=r20261009-1a7b6e5、git_commit=1a7b6e511d3a、schema_revision=automation-ecs-014、prompt_release_id=pr-ee28a3c51d44、Hermes case workflow=real；Preproduction check 的 DB/Zendesk/SMTP/Relay/Pilot connectivity 全通过。该检查未创建工单、未发送客户消息或 Slack 消息。"
+        },
+        {
+          "type": "decision",
+          "label": "Explicit non-goals",
+          "command": "",
+          "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
         }
       ],
       "source_refs": [
@@ -4978,9 +5008,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 5,
-      "done_count": 4,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -16914,8 +16944,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "Investigation 回复长度优化 v1",
       "summary": "为 Investigation 客户草稿和工程师 Slack 调查展示增加确定性长度契约：客户 draft（含 greeting）最多 1200 字符，Slack 调查消息最多 2000 字符；复用一次重生成，最终超长 fail-closed。",
-      "status": "active",
-      "next_action": "完成定向回归、全量相关套件和 diff 检查后，提交 Preproduction 发布与技术验收证据。",
+      "status": "done",
+      "next_action": "已完成 Preproduction 技术验收与隔离长度回归；不重放 Ticket 13923、不发送真实客户或 Slack 消息、不发布 Production。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-09",
@@ -16927,8 +16957,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C5: 相关单元、Hermes 工具入口和 Preproduction 技术检查通过；不重放 Ticket 13923，不发送真实客户回复，不发布 Production"
       ],
       "blockers": [],
-      "evidence": [],
-      "legacy_ids": []
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Investigation length contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_persona.py backend/tests/test_engineer_slack.py backend/tests/test_hermes_zendesk_agent_tools.py",
+          "details": "181 passed，92 subtests passed；覆盖 Persona v2 首次超长触发一次重生成、两次超长阻断、draft 含 greeting 超过 1200 字符 reply_too_long 且 guardrail 前拒绝、Investigation 记录完整保存而 Slack 投影受限、investigation/ad-hoc/review pending Slack 文本不超过 2000 字符。"
+        },
+        {
+          "type": "test",
+          "label": "Build and diff checks",
+          "command": ".venv/bin/python -m compileall -q \u003cchanged Python files>; git diff --check 42a2da28^ 42a2da28",
+          "details": "compileall exit 0；git diff --check exit 0。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release evidence",
+          "command": "release pipeline for r20261009-1a7b6e5 from source 1a7b6e511d3a670ac3b471bc5c42a291b6042760",
+          "details": "正式 evidence status=complete；CodeBuild、preflight、schema bootstrap、Route/Worker/API rollout、heartbeats、collector、Prompt activation/sync、provider probe、public health、CloudWatch（三角色 error_count=0）、Terraform pre/post zero-drift、runtime digest verification 全通过。API/Route/Worker task definitions 为 :121/:120/:121，digest 分别 sha256:5aabff9d、sha256:3cb47613、sha256:4ecf7c05；Prompt Release pr-ee28a3c51d44 active。证据：.deployments/ecs-pipeline-r20261009-1a7b6e5/preproduction-deploy/evidence.json。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live release and connectivity readback",
+          "command": "GET https://supportcenter.stellarix.space/automation/preproduction/health/release; .venv/bin/python -m scripts.testing.preproduction --check",
+          "details": "release endpoint 返回 status=ok、release_id=r20261009-1a7b6e5、git_commit=1a7b6e511d3a、schema_revision=automation-ecs-014、prompt_release_id=pr-ee28a3c51d44、Hermes case workflow=real；Preproduction check 的 DB/Zendesk/SMTP/Relay/Pilot connectivity 全通过。该检查未创建工单、未发送客户消息或 Slack 消息。"
+        },
+        {
+          "type": "decision",
+          "label": "Explicit non-goals",
+          "command": "",
+          "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/engineer_slack.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_hermes_zendesk_agent_tools.py",
+        "backend/tests/test_engineer_slack.py",
+        "docs/plans/investigation-reply-length-v1.md",
+        "docs/prompt_change_log.md"
+      ],
+      "legacy_ids": [],
+      "history": [
+        {
+          "at": "2026-10-10",
+          "event": "completed",
+          "summary": "代码验收、Preproduction 正式发布和隔离长度回归完成；release r20261009-1a7b6e5 evidence=complete，三角色 runtime digest 与 Prompt/flags 对账一致。"
+        }
+      ]
     },
     {
       "schema_version": 2,
