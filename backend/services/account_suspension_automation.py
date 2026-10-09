@@ -196,7 +196,12 @@ def closing_reply_facts(*, confirmed_email: str, customer_name: Any = None) -> d
         "reply_intent": SUSPENSION_REPLY_INTENT_HANDOFF_AND_CLOSE,
         "known_information": {},
         "missing_information": [],
-        "performed_actions": ["Submitted the request for internal review."],
+        # The closing reply must confirm the handoff actually happened
+        # (the internal email was sent); "internal review" wording alone
+        # fails the customer-facing handoff-confirmation contract (PP-A5).
+        "performed_actions": [
+            "Forwarded the account suspension review to the relevant internal team."
+        ],
         "next_step": "We will get back to the customer within 24 hours.",
         "resolution_status": "internal_handoff_sent",
         "customer_language": "en",

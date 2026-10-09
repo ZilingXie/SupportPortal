@@ -61,6 +61,24 @@ API_ZENDESK_READBACK_SECRET_SUFFIXES = {
 API_RUNTIME_LLM_SECRET_SUFFIXES = {
     "OPENAI_API_KEY": "openai-api-key",
 }
+# Graph mail execution chain (13922): the hermes automation tool sends
+# the suspension/fraud internal email from the API container, so API task
+# definitions carry the Graph identity, token-cache/reply-record paths,
+# and the internal-email recipient secrets — mirroring worker config.
+API_GRAPH_MAIL_ENV = {
+    "BILLING_AUTOMATION_GRAPH_TENANT_ID": "60275374-3eaa-49c2-83c3-cc189d126981",
+    "BILLING_AUTOMATION_GRAPH_CLIENT_ID": "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80",
+    "BILLING_AUTOMATION_GRAPH_USERNAME": "ai-support-agent@agora.io",
+    "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
+    "BILLING_AUTOMATION_REPLY_RECORD_PATH": "/app/.msgraph/billing-request-replies.jsonl",
+}
+API_GRAPH_MAIL_SECRET_SUFFIXES = {
+    "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "billing-graph-client-secret",
+    "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "fraud-internal-email-recipients",
+    "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": (
+        "account-suspension-internal-email-recipients"
+    ),
+}
 # Enablement execution mode switch (p2-152): "manual" keeps the p2-149 human
 # review flow; "archer" restores the Archer auto-enablement workflow.
 ENABLEMENT_WORKFLOW_MODES = {"manual", "archer"}
@@ -488,16 +506,9 @@ def _base_environment(
         # this flag every action is silently blocked and reports a fake
         # success (ticket 13567). Mirrors the worker value.
         values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] = "1"
-        # Graph mail config for the failure-alert email from tool escalation
-        # (ticket 13580: the api container could not send mail).
-        values.update(
-            {
-                "BILLING_AUTOMATION_GRAPH_TENANT_ID": "60275374-3eaa-49c2-83c3-cc189d126981",
-                "BILLING_AUTOMATION_GRAPH_CLIENT_ID": "cb5aaefe-2ee2-4ac9-a3ee-5490ddf70d80",
-                "BILLING_AUTOMATION_GRAPH_USERNAME": "ai-support-agent@agora.io",
-                "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
-            }
-        )
+        # Graph mail config for tool escalation alerts (ticket 13580) and
+        # the suspension/fraud internal email execution chain (13922).
+        values.update(API_GRAPH_MAIL_ENV)
     if role == "worker":
         values.update(
             {
@@ -519,6 +530,47 @@ def _base_environment(
             }
         )
     return [{"name": name, "value": values[name]} for name in sorted(values)]
+
+
+def _ensure_graph_efs_volume(
+    task_definition: dict[str, Any],
+    container: dict[str, Any],
+    *,
+    file_system_id: str,
+    access_point_id: str,
+) -> None:
+    """Attach the shared Graph token-cache EFS volume and mount (13922).
+
+    Idempotent: an existing graph-token-cache volume or mount point is
+    left untouched so repeat renders never duplicate or reset live IDs.
+    """
+    volume = {
+        "name": "graph-token-cache",
+        "efsVolumeConfiguration": {
+            "fileSystemId": file_system_id,
+            "rootDirectory": "/",
+            "transitEncryption": "ENABLED",
+            "authorizationConfig": {
+                "accessPointId": access_point_id,
+                "iam": "ENABLED",
+            },
+        },
+    }
+    volumes = task_definition.setdefault("volumes", [])
+    if not any(str(item.get("name") or "") == "graph-token-cache" for item in volumes):
+        volumes.append(volume)
+    mount_points = container.setdefault("mountPoints", [])
+    if not any(
+        str(item.get("sourceVolume") or "") == "graph-token-cache"
+        for item in mount_points
+    ):
+        mount_points.append(
+            {
+                "sourceVolume": "graph-token-cache",
+                "containerPath": "/app/.msgraph",
+                "readOnly": False,
+            }
+        )
 
 
 def render_initial_task_definition(
@@ -562,8 +614,8 @@ def render_initial_task_definition(
         raise ValueError("enablement workflow mode must be manual or archer")
     if automation_case_engine == "hermes" and not hermes_agent_enabled:
         raise ValueError("the hermes engine requires hermes agent credentials")
-    if role == "worker" and not (graph_efs_file_system_id and graph_efs_access_point_id):
-        raise ValueError("Worker initial task definition requires Graph EFS inputs")
+    if role in {"api", "worker"} and not (graph_efs_file_system_id and graph_efs_access_point_id):
+        raise ValueError(f"{role} initial task definition requires Graph EFS inputs")
 
     manifest = read_manifest(Path(manifest_path))
     component = manifest.components[role]
@@ -600,6 +652,11 @@ def render_initial_task_definition(
             # Graph mail credentials for the failure-alert email sent by
             # hermes tool escalation (the tool runs on the api role).
             "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET": "billing-graph-client-secret",
+            # Internal email recipients for the Hermes automation execution
+            # (the tool sends the suspension/fraud handoff email from the
+            # api container, not the worker).
+            "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "fraud-internal-email-recipients",
+            "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON": "account-suspension-internal-email-recipients",
         },
         "route": {
             "AUTOMATION_DB_DSN": "automation-db-dsn",
@@ -636,6 +693,8 @@ def render_initial_task_definition(
         )
     if role == "api" and hermes_case_workflow_mode != "disabled":
         secret_names[role]["HERMES_CALLBACK_TOKEN"] = "hermes-callback-token"
+        if environment == "preproduction":
+            secret_names[role]["ENGINEER_SLACK_ACCESS_TOKEN"] = "engineer-slack-access-token"
     if hermes_agent_enabled and role in {"api", "worker"}:
         secret_names[role].update(
             {
@@ -698,28 +757,6 @@ def render_initial_task_definition(
             "startPeriod": 60,
         }
     volumes: list[dict[str, Any]] = []
-    if role == "worker":
-        container["mountPoints"] = [
-            {
-                "sourceVolume": "graph-token-cache",
-                "containerPath": "/app/.msgraph",
-                "readOnly": False,
-            }
-        ]
-        volumes = [
-            {
-                "name": "graph-token-cache",
-                "efsVolumeConfiguration": {
-                    "fileSystemId": graph_efs_file_system_id,
-                    "rootDirectory": "/",
-                    "transitEncryption": "ENABLED",
-                    "authorizationConfig": {
-                        "accessPointId": graph_efs_access_point_id,
-                        "iam": "ENABLED",
-                    },
-                },
-            }
-        ]
     rendered = {
         "family": f"supportportal-{environment}-{role}",
         "taskRoleArn": task_role_arn,
@@ -736,6 +773,15 @@ def render_initial_task_definition(
         },
     }
     _set_environment_value(container, AGENT_MODEL_ENV_NAME, normalized_agent_model)
+    if role in {"api", "worker"}:
+        # Graph EFS requirement validated above; attach the shared volume
+        # and mount for both mail-sending roles (13922).
+        _ensure_graph_efs_volume(
+            rendered,
+            container,
+            file_system_id=str(graph_efs_file_system_id),
+            access_point_id=str(graph_efs_access_point_id),
+        )
     if role == "worker":
         validate_worker_contract(rendered)
     return rendered
@@ -803,6 +849,8 @@ def render_task_definition(
     hermes_agent_enabled: bool | None = None,
     enablement_workflow_mode: str | None = None,
     agent_model: str | None = None,
+    graph_efs_file_system_id: str | None = None,
+    graph_efs_access_point_id: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -825,6 +873,10 @@ def render_task_definition(
         and enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES
     ):
         raise ValueError("enablement workflow mode must be manual or archer")
+    if bool(graph_efs_file_system_id) != bool(graph_efs_access_point_id):
+        raise ValueError("api Graph EFS render requires both the file system and access point IDs")
+    if (graph_efs_file_system_id or graph_efs_access_point_id) and role != "api":
+        raise ValueError("Graph EFS inputs are only valid for api renders")
     source = _read_json(current_path)
     task_definition = source.get("taskDefinition") if "taskDefinition" in source else source
     if not isinstance(task_definition, dict):
@@ -962,8 +1014,28 @@ def render_task_definition(
                 **API_ZENDESK_READBACK_SECRET_SUFFIXES,
                 **API_RUNTIME_LLM_SECRET_SUFFIXES,
             }
+            if environment == "preproduction" and (hermes_case_workflow_mode or environment_values.get("HERMES_CASE_WORKFLOW_MODE", "disabled")) != "disabled":
+                required_api_secrets["ENGINEER_SLACK_ACCESS_TOKEN"] = "engineer-slack-access-token"
             for name, suffix in sorted(required_api_secrets.items()):
                 _set_secret_reference(container, name, _parameter_arn(prefix_arn, suffix))
+        if graph_efs_file_system_id and graph_efs_access_point_id:
+            # Email execution chain (13922): render the Graph mail config
+            # and the shared token-cache EFS volume onto every API
+            # revision the pipeline produces — the observed definition
+            # predates the API mount and must not gate the injection.
+            for name, value in API_GRAPH_MAIL_ENV.items():
+                _set_environment_value(container, name, value)
+            if prefix_arn:
+                for name, suffix in sorted(API_GRAPH_MAIL_SECRET_SUFFIXES.items()):
+                    _set_secret_reference(
+                        container, name, _parameter_arn(prefix_arn, suffix)
+                    )
+            _ensure_graph_efs_volume(
+                rendered,
+                container,
+                file_system_id=graph_efs_file_system_id,
+                access_point_id=graph_efs_access_point_id,
+            )
     if role == "worker":
         # Ensure the AgentRelay transport identity is present on every rendered
         # worker revision (p2-163), in both enablement modes so late relay
@@ -1229,6 +1301,8 @@ def build_parser() -> argparse.ArgumentParser:
         choices=sorted(ENABLEMENT_WORKFLOW_MODES),
     )
     render.add_argument("--agent-model", default=None)
+    render.add_argument("--graph-efs-file-system-id", default=None)
+    render.add_argument("--graph-efs-access-point-id", default=None)
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -1314,6 +1388,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             hermes_agent_enabled=args.hermes_agent_enabled,
             enablement_workflow_mode=args.enablement_workflow_mode,
             agent_model=args.agent_model,
+            graph_efs_file_system_id=args.graph_efs_file_system_id,
+            graph_efs_access_point_id=args.graph_efs_access_point_id,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",

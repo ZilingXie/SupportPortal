@@ -1,0 +1,317 @@
+{
+  "schema_version": "p2190-preproduction-evidence-v1",
+  "plan": "Investigation 路由固定与状态同步修复计划（Ticket 13923）",
+  "contract_revision": "v1.1",
+  "task": "p2-190",
+  "captured_at": "2026-10-08T14:00:33.543513+00:00",
+  "supportportal": {
+    "status": "complete",
+    "environment": "preproduction",
+    "release_id": "r20261008-435811e",
+    "git_commit": "435811e4139786a843a45c7dfa50d7bec808af62",
+    "components": {
+      "api": {
+        "expected_digest": "sha256:bbf57f608897f436d666b7fafae291940f328572764495ed80ebbcc3eafa50ab",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:112",
+        "observed_digest": "sha256:bbf57f608897f436d666b7fafae291940f328572764495ed80ebbcc3eafa50ab",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:111",
+        "runtime_verified": true
+      },
+      "route": {
+        "expected_digest": "sha256:8f6a80c7563329067420da6e31058fcfcc28e8d825ae261a4091de6da1c31e93",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:111",
+        "observed_digest": "sha256:8f6a80c7563329067420da6e31058fcfcc28e8d825ae261a4091de6da1c31e93",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:110",
+        "runtime_verified": true
+      },
+      "worker": {
+        "expected_digest": "sha256:2e1d8611c7800ee65535b61297cbb8bbac5cb9c41303517e8074b72834c7939f",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:113",
+        "observed_digest": "sha256:2e1d8611c7800ee65535b61297cbb8bbac5cb9c41303517e8074b72834c7939f",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:112",
+        "runtime_verified": true
+      }
+    },
+    "checks": {
+      "cloudwatch": "passed",
+      "ec2_backup": "passed",
+      "ecr": "passed",
+      "heartbeats": "passed",
+      "prompt_activation": "active",
+      "prompt_sync": "active",
+      "provider_probe": "passed",
+      "public_health": "passed",
+      "rollback": "not_started",
+      "schema_bootstrap": "skipped_current",
+      "source_prompt": "passed",
+      "suspension_recipients": "passed",
+      "terraform_post_deploy_zero_drift": "passed",
+      "terraform_zero_drift": "passed"
+    },
+    "prompt_release": {
+      "build_ref": "07cac14469723c6e1039fe55aed16ae5ecf17c81",
+      "content_fingerprint": "sha256:8909a9067a923153d6d2f08e8b7e08aeba2f7ccab867905b0cd9bb0c2398a976",
+      "release_id": "pr-43cee390c4b7"
+    },
+    "heartbeats": {
+      "roles": [
+        "route",
+        "worker"
+      ],
+      "status": "ok"
+    },
+    "target_health": {
+      "blocking": 0,
+      "draining": 1,
+      "healthy": 1,
+      "target_id": "172.31.16.61",
+      "target_state": "healthy",
+      "total": 2
+    }
+  },
+  "hermes": {
+    "status": "technical_verification_passed",
+    "source_commit": "e5c2f1192c1f5f96eb6a1b5895eee775bd180a67",
+    "deployment_request": {
+      "timestamp": "2026-10-08T13:38:39.084475+00:00",
+      "source_commit": "e5c2f1192c1f5f96eb6a1b5895eee775bd180a67",
+      "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:44",
+      "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45",
+      "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99",
+      "only_image_changed": true,
+      "pp_access_points": [
+        "fsap-068e530f8cd61c854",
+        "fsap-08b6d677bb6c9a516",
+        "fsap-0d4aad34f871f18b1",
+        "fsap-0dacd4cd505ea9c32"
+      ],
+      "production_access_points": [
+        "fsap-0113bfd836b288932",
+        "fsap-0544cfad40e8bb591",
+        "fsap-0547c9d8a2242ff78"
+      ],
+      "production_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-production-hermes:3"
+    },
+    "runtime": {
+      "timestamp": "2026-10-08T13:51:07.206028+00:00",
+      "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45",
+      "counts": [
+        1,
+        1,
+        0
+      ],
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "rollout": "COMPLETED",
+          "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45"
+        }
+      ],
+      "tasks": [
+        {
+          "arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/93bda8af0fcb4ae7b333ac3f230ff240",
+          "health": "HEALTHY",
+          "lastStatus": "RUNNING",
+          "taskDefinition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45",
+          "containers": [
+            {
+              "name": "ui-proxy",
+              "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+              "health": "HEALTHY",
+              "lastStatus": "RUNNING"
+            },
+            {
+              "name": "memory-panel",
+              "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+              "health": "HEALTHY",
+              "lastStatus": "RUNNING"
+            },
+            {
+              "name": "hermes",
+              "digest": "sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99",
+              "health": "HEALTHY",
+              "lastStatus": "RUNNING"
+            },
+            {
+              "name": "memory-core",
+              "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+              "health": "HEALTHY",
+              "lastStatus": "RUNNING"
+            },
+            {
+              "name": "knowledge",
+              "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+              "health": "HEALTHY",
+              "lastStatus": "RUNNING"
+            }
+          ]
+        }
+      ],
+      "production_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-production-hermes:3",
+      "production_counts": [
+        1,
+        1,
+        0
+      ]
+    },
+    "skill_drop": {
+      "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/c7634adcfd6649808c01fbaf92c1a727",
+      "lastStatus": "STOPPED",
+      "exitCode": 0,
+      "stoppedReason": "Essential container in task exited",
+      "digest": "sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99",
+      "proof": {
+        "p2190_skill_drop": "passed",
+        "skill_sha256": "7bad479e58edf9317c3092e2811ef1efc8381bfd73d57daa6f43cd5e0250c88e",
+        "actual_skill_view": true
+      }
+    },
+    "gateway": {
+      "p2190_runtime_probe": "passed",
+      "health_http": 200,
+      "toolsets_http": 200,
+      "skills_http": 200,
+      "close_in_work_toolset": true,
+      "work_enabled": true,
+      "work_configured": true,
+      "actual_skill_view": true,
+      "skill_sha256": "7bad479e58edf9317c3092e2811ef1efc8381bfd73d57daa6f43cd5e0250c88e",
+      "plugin_sha256": "bbab36cd476c270fb3662d326fe4b4be527b584d1df8ba6dc43d0cdbf48bb59b",
+      "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/93bda8af0fcb4ae7b333ac3f230ff240",
+      "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45"
+    },
+    "cli_waiter": "max_attempts_exceeded_before_subsequent_ECS_completed_readback"
+  },
+  "business_verification": {
+    "status": "sample_unavailable",
+    "isolated_official_fixture_found": false,
+    "real_ticket_replayed": false,
+    "customer_reply_sent": false,
+    "real_slack_test_message_sent": false
+  },
+  "local_stack": {
+    "status": "waived_by_user_ecs_preproduction_acceptance",
+    "inspect_exit": 1,
+    "inspect_result": "Official single-host stack is not running (missing deployment_api_1).",
+    "restart_executed": false,
+    "reason": "User confirmed ECS Preproduction technical acceptance on 2026-10-09; local restart is waived because the default official stack starts real reply pollers and this task excludes real business writes."
+  },
+  "n8n": {
+    "readback": [
+      {
+        "id": "03B6AvcrOgRkWlUc",
+        "draft": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+        "published": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+        "active": true,
+        "nodes": 13,
+        "graphVerified": true
+      },
+      {
+        "id": "r1HIW8UNuCabiOPn",
+        "draft": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
+        "published": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
+        "active": true,
+        "nodes": 9,
+        "graphVerified": true
+      },
+      {
+        "id": "zc2ndUDqDAS0uX1Y",
+        "draft": "30a88a17-aea8-44f2-a7f6-7d603daf68f3",
+        "published": "30a88a17-aea8-44f2-a7f6-7d603daf68f3",
+        "active": true,
+        "nodes": 22,
+        "graphVerified": true
+      },
+      {
+        "id": "kyiA0QuiVx6JJ03i",
+        "draft": "c41c09db-3924-40ed-9d48-f51c571e584e",
+        "published": "ba9403ed-0989-4319-9661-d021df3b20e4",
+        "active": true,
+        "nodes": 32,
+        "graphVerified": true
+      }
+    ],
+    "status_validation": {
+      "valid": true,
+      "nodeCount": 13,
+      "warnings": [
+        {
+          "code": "HARDCODED_CREDENTIALS",
+          "message": "'get_case_info' has a hardcoded value for sensitive header \"authorization\". Should create credentials, setting genericAuthType to httpTemplatedCustomAuth (or reuse an existing httpHeaderAuth/httpBearerAuth credential).",
+          "nodeName": "get_case_info"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Is Account Case' parameter 'conditions.conditions[0].leftValue' uses $json.is_account_case but no predecessor outputs this field.",
+          "nodeName": "Is Account Case"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'HTTP Request2' parameter 'bodyParameters.parameters[0].value' uses $('get_case_info').item.json.ticket.status but 'get_case_info' doesn't output this field.",
+          "nodeName": "HTTP Request2"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'ECS Preproduction status membership' parameter 'url' uses $('get_case_info').item.json.ticket.id but 'get_case_info' doesn't output this field.",
+          "nodeName": "ECS Preproduction status membership"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Is prodCase' parameter 'conditions.conditions[0].leftValue' uses $json.is_account_case but no predecessor outputs this field.",
+          "nodeName": "Is prodCase"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'HTTP Request1' parameter 'bodyParameters.parameters[0].value' uses $('get_case_info').item.json.ticket.status but 'get_case_info' doesn't output this field.",
+          "nodeName": "HTTP Request1"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Is ECS Preproduction Case' parameter 'conditions.conditions[0].leftValue' uses $json.executions but no predecessor outputs this field.",
+          "nodeName": "Is ECS Preproduction Case"
+        }
+      ]
+    },
+    "forward_validation": {
+      "valid": true,
+      "nodeCount": 9,
+      "warnings": [
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Validate Slack Mention' parameter 'conditions.conditions[0].leftValue' uses $json.Input.type but no predecessor outputs this field.",
+          "nodeName": "Validate Slack Mention"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Bound Case Thread1' parameter 'conditions.conditions[0].leftValue' uses $json.status but no predecessor outputs this field.",
+          "nodeName": "Bound Case Thread1"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Resolve Hermes Binding' parameter 'queryParameters.parameters[2].value' uses $('When Executed by Another Workflow').item.json.Input.thread_ts but 'When Executed by Another Workflow' doesn't output this field.",
+          "nodeName": "Resolve Hermes Binding"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Hermes Bound Thread' parameter 'conditions.conditions[0].leftValue' uses $json.status but no predecessor outputs this field.",
+          "nodeName": "Hermes Bound Thread"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Send Hermes Message' parameter 'body' uses $('When Executed by Another Workflow').item.json.Input but 'When Executed by Another Workflow' doesn't output this field.",
+          "nodeName": "Send Hermes Message"
+        },
+        {
+          "code": "INVALID_EXPRESSION_PATH",
+          "message": "'Send Adhoc Session' parameter 'body' uses $('When Executed by Another Workflow').item.json.Input.thread_ts but 'When Executed by Another Workflow' doesn't output this field.",
+          "nodeName": "Send Adhoc Session"
+        }
+      ]
+    },
+    "published": true,
+    "non_target_graphs_unchanged": true,
+    "status_credentials_verified": true,
+    "forward_only_pp_body_changed": true,
+    "mutation_recovery": "setNodeParameter path body was rejected before mutation; updateNodeParameters replace=false changed only body."
+  }
+}

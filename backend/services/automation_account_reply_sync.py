@@ -1385,6 +1385,7 @@ async def sync_account_case_ticket_status(
     normalized_ticket_id: str,
     zendesk_status: str,
     source_updated_at: str | None,
+    native_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Port of the old /production PUT .../status semantics (p2-112 Phase D)."""
     import asyncio
@@ -1436,6 +1437,12 @@ async def sync_account_case_ticket_status(
                 investigation_id=str(active_investigation.get("id") or "").strip() or None,
             )
 
+    native_intent = None
+    if native_context is not None:
+        from backend.services.automation_native_notifications import status_notification
+        native_intent = status_notification(binding=native_context["binding"],
+            event_id=native_context["event_id"], execution_id=native_context["execution_id"],
+            source_updated_at=str(source_updated_at or ""), status=zendesk_status)
     try:
         result = await _sync(
             repository.update_account_case_zendesk_status,
@@ -1444,9 +1451,16 @@ async def sync_account_case_ticket_status(
             synced_at=sync_timestamp,
             source_updated_at=source_updated_at,
             engineer_slack_event=engineer_slack_event,
+            **({"native_notification": native_intent} if native_intent is not None else {}),
         )
     except KeyError as exc:
         raise ReplySyncError(404, "Account Case not found") from exc
+    if native_intent is not None:
+        from backend.services.automation_native_notifications import deliver_native_notification
+        delivery = await _sync(deliver_native_notification, repository,
+            scope=native_intent["scope"], key=native_intent["key"],
+            claim_token=native_context["claim_token"], before_external=native_context["before_external"])
+        result["native_notification"] = delivery
     engineer_case_closed = False
     normalized_zendesk_status = str(zendesk_status or "").strip().lower()
     hermes_lifecycle_status: str | None = None
@@ -1621,6 +1635,7 @@ async def sync_account_case_ticket_status(
         "engineer_case_closed": engineer_case_closed,
         "hermes_lifecycle_status": hermes_lifecycle_status,
         "engineer_slack_event_queued": bool(result.get("engineer_slack_event_queued")),
+        **({"native_notification": result["native_notification"]} if "native_notification" in result else {}),
         "source_updated_at": source_updated_at,
         "synced_at": result.get("zendesk_status_synced_at") or result.get("synced_at"),
     }

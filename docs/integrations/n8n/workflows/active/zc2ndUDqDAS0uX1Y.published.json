@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-10-09T09:56:02.096Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "zc2ndUDqDAS0uX1Y",
@@ -885,77 +885,77 @@
     "redactedValues": [
       {
         "nodeName": "Get_Case_Comment",
-        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.5.parameters.headerParameters.parameters.0.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_Case_Comment",
-        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.5.parameters.headerParameters.parameters.1.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_Case_Comment",
-        "path": "nodes.Get_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.5.parameters.headerParameters.parameters.2.value",
         "field": "cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_Case_Comment2",
-        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.9.parameters.headerParameters.parameters.0.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_Case_Comment2",
-        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.9.parameters.headerParameters.parameters.1.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_Case_Comment2",
-        "path": "nodes.Get_Case_Comment2.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.9.parameters.headerParameters.parameters.2.value",
         "field": "cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment",
-        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.13.parameters.headerParameters.parameters.0.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment",
-        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.13.parameters.headerParameters.parameters.1.value",
         "field": "cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment",
-        "path": "nodes.Get_ECS_Case_Comment.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.13.parameters.headerParameters.parameters.2.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment1",
-        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.0.value",
+        "path": "workflow.nodes.19.parameters.headerParameters.parameters.0.value",
         "field": "Cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment1",
-        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.1.value",
+        "path": "workflow.nodes.19.parameters.headerParameters.parameters.1.value",
         "field": "cookie",
         "reason": "secret_named_field"
       },
       {
         "nodeName": "Get_ECS_Case_Comment1",
-        "path": "nodes.Get_ECS_Case_Comment1.parameters.headerParameters.parameters.2.value",
+        "path": "workflow.nodes.19.parameters.headerParameters.parameters.2.value",
         "field": "Authorization",
         "reason": "secret_named_field"
       }
     ],
-    "credentials": "Credential references are retained when n8n returned them; every redacted literal must be rebound before restore."
+    "credentials": "Credential references retained; rebind redacted literals before restore."
   }
 }

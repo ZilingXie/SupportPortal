@@ -533,6 +533,7 @@ def queue_hermes_draft_delivery(
         draft_version=int(draft.get("case_revision") or draft.get("conversation_version") or 0),
         comments_revision=comments_revision,
         immutable_content=delivery_content,
+        attachments=list((draft.get("basis") or {}).get("attachments") or []),
     )
     queued = store.mark_hermes_draft_queued(draft_id, delivery_message_id=draft_id)
     LOGGER.info(

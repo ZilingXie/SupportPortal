@@ -1,0 +1,166 @@
+{
+  "plan": "Investigation 路由固定与状态同步修复计划（Ticket 13923）",
+  "revision": "v1.1",
+  "statusWorkflow": {
+    "id": "03B6AvcrOgRkWlUc",
+    "baselineVersion": "6cfb5781-11bf-4596-bd99-64c092969b92",
+    "operations": [
+      {
+        "type": "addNode",
+        "node": {
+          "parameters": {
+            "url": "=https://supportcenter.stellarix.space/automation/preproduction/v1/cases/{{ $('get_case_info').item.json.ticket.id }}/executions",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "sendHeaders": false,
+            "options": {}
+          },
+          "id": "p2190-status-membership",
+          "name": "ECS Preproduction status membership",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [
+            768,
+            512
+          ],
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "toE81efBqb60KXsy",
+              "name": "automation_production"
+            }
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "parameters": {
+            "conditions": {
+              "options": {
+                "caseSensitive": true,
+                "leftValue": "",
+                "typeValidation": "strict",
+                "version": 2
+              },
+              "conditions": [
+                {
+                  "id": "2b2c7e47-0766-4a22-8382-9fc60d25a7a8",
+                  "leftValue": "={{ Array.isArray($json.executions) && $json.executions.length > 0 }}",
+                  "rightValue": true,
+                  "operator": {
+                    "type": "boolean",
+                    "operation": "equals"
+                  }
+                }
+              ],
+              "combinator": "and"
+            },
+            "options": {}
+          },
+          "id": "p2190-status-membership-if",
+          "name": "Is ECS Preproduction Case",
+          "type": "n8n-nodes-base.if",
+          "typeVersion": 2.2,
+          "position": [
+            992,
+            512
+          ]
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "id": "p2190-status-intake",
+          "name": "Build ECS ticket.updated intake",
+          "type": "n8n-nodes-base.code",
+          "typeVersion": 2,
+          "position": [
+            1216,
+            512
+          ],
+          "parameters": {
+            "mode": "runOnceForEachItem",
+            "jsCode": "const ticket = $('get_case_info').item.json.ticket;\nif (!ticket || !/^\\d+$/.test(String(ticket.id || ''))) throw new Error('Zendesk ticket id missing');\nconst status = String(ticket.status || '').trim().toLowerCase();\nif (!['new','open','pending','hold','solved','closed'].includes(status)) throw new Error('Invalid source ticket status');\nconst source = String(ticket.updated_at || '').trim();\nif (!/(Z|[+-]\\d{2}:\\d{2})$/.test(source) || !Number.isFinite(Date.parse(source))) throw new Error('Valid source updated_at with timezone required');\nconst version = new Date(source).toISOString();\nconst requester = ticket.requester || {};\nconst fields = Array.isArray(ticket.custom_fields) ? Object.fromEntries(ticket.custom_fields.map(f => [String(f.id), f.value])) : (ticket.custom_fields || {});\nreturn {json: {schema_version:'automation-intake-v1',event_id:'zendesk:automation.preproduction:ticket:'+ticket.id+':updated:'+version+':'+status,event_type:'ticket.updated',occurred_at:version,ticket:{id:String(ticket.id),status,subject:String(ticket.subject || ''),description:String(ticket.description || ''),requester:{id:ticket.requester_id == null ? null : String(ticket.requester_id),name:requester.name || null,email:requester.email || null,role:'end-user',is_agent:false},tags:Array.isArray(ticket.tags)?ticket.tags:[],custom_fields:fields,updated_at:version}}};"
+          }
+        }
+      },
+      {
+        "type": "addNode",
+        "node": {
+          "parameters": {
+            "method": "POST",
+            "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/intake",
+            "authentication": "genericCredentialType",
+            "genericAuthType": "httpBearerAuth",
+            "sendHeaders": true,
+            "headerParameters": {
+              "parameters": [
+                {
+                  "name": "Content-Type",
+                  "value": "application/json"
+                }
+              ]
+            },
+            "sendBody": true,
+            "specifyBody": "json",
+            "jsonBody": "={{ $json }}",
+            "options": {}
+          },
+          "id": "p2190-status-send",
+          "name": "Send status to ECS Preproduction",
+          "type": "n8n-nodes-base.httpRequest",
+          "typeVersion": 4.2,
+          "position": [
+            1440,
+            512
+          ],
+          "credentials": {
+            "httpBearerAuth": {
+              "id": "toE81efBqb60KXsy",
+              "name": "automation_production"
+            }
+          }
+        }
+      },
+      {
+        "type": "addConnection",
+        "source": "Execution Data",
+        "target": "ECS Preproduction status membership"
+      },
+      {
+        "type": "addConnection",
+        "source": "ECS Preproduction status membership",
+        "target": "Is ECS Preproduction Case"
+      },
+      {
+        "type": "addConnection",
+        "source": "Is ECS Preproduction Case",
+        "sourceIndex": 0,
+        "target": "Build ECS ticket.updated intake"
+      },
+      {
+        "type": "addConnection",
+        "source": "Build ECS ticket.updated intake",
+        "target": "Send status to ECS Preproduction"
+      },
+      {
+        "type": "setWorkflowMetadata",
+        "description": "监听 Zendesk 状态变化，保留旧 EC2 归属分支；仅对已有 ECS Preproduction Case 发送使用真实源时间及稳定身份的 ticket.updated，由 SP 同步到原 Hermes Slack thread。"
+      }
+    ]
+  },
+  "slackWorkflow": {
+    "id": "r1HIW8UNuCabiOPn",
+    "baselineVersion": "ddf01d26-7ecf-4c93-a806-ff1729ea0230",
+    "operations": [
+      {
+        "type": "updateNodeParameters",
+        "nodeName": "Send Hermes Message",
+        "parameters": {
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts }); })() }}"
+        },
+        "replace": false
+      }
+    ]
+  }
+}

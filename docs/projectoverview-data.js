@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T15:42:24Z",
-  "source_base_commit": "396bb5ace85de96dd09706860e440ebbcd932763",
-  "registry_digest": "fbb661eaa1b00282ce876f47610f808d66e9e1625e105749bee93030b9781dcf",
+  "generated_at": "2026-10-09T16:32:18Z",
+  "source_base_commit": "a3b253febdf9ef64284e9b90a9a5b6c634fae095",
+  "registry_digest": "cf4e68719b50202914e4219c368710446e8ec7d2742ed3386a3b0aa546e55c37",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1476,7 +1476,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（api_rollout 观察窗口 103s 不足+回滚竞争，正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
+          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（失败阶段 api_rollout 实际耗时 103s、脚本等待上限 900s；回滚未完成、其后服务收敛；具体根因待定待原始错误日志；正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
         },
         {
           "type": "deployment",
@@ -1485,6 +1485,35 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "镜像内隔离验收 43 项全过 + hermes_state 500 通过 + SP 全链测试（round-2/3 验收方独立复跑 95 项）"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-fix.md",
+          "label": "当前合同 v1.1 与执行证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-pp-evidence.json",
+          "label": "SP complete / Hermes actual gateway and skill / n8n published graph sanitized PP evidence"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1437",
+          "label": "SP C1-C5 已合并，运行源 435811e4"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/heremes-deploy/pull/33",
+          "label": "Hermes close plugin/skill 已合并，构建源 e5c2f119"
+        },
+        {
+          "type": "decision",
+          "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-attachments-v1.md",
+          "label": "R1 合同与执行证据"
         },
         {
           "type": "test",
@@ -1593,8 +1622,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 42,
-      "done_count": 22,
+      "task_count": 44,
+      "done_count": 23,
       "blocked_count": 0
     },
     {
@@ -4399,6 +4428,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复轮二（F4 幂等）：reply job 链路身份查找复用+崩溃恢复/竞态/PG 证据（同 PR #1436 追加，待独立验收）",
+          "command": "pytest test_hermes_email_execution.py(12)+test_account_case_postgres_roundtrip.py(RUN_POSTGRES_INTEGRATION=1 本机 PG14 隔离 schema，12 passed/1 存量失败)+test_account_reply_publication_postgres/test_automation_reply_claims_postgres(12)+相关 InMemory 444；bash -n 部署脚本",
+          "result": "F4 阻断修复：新增 repository.find_account_reply_job_by_chain(ticket_id, trigger_message_created_at, automation_delivery_key)（Protocol+InMemory+PG 三实现；PG 查询精确对齐唯一索引身份(ticket_id, trigger, COALESCE(rerun_job_id,''))+delivery key，TIMESTAMPTZ 规范化比较）；helper F4 段先查链路身份，命中且状态非 cancelled/failed/manual_attention 即复用原 job（executed_actions 记 reply_job_reused，suspension 仍补 workflow/closing_reply_job_id 持久化），未命中才走 create_account_reply_job——消除 cancel+随机新 job_id 重建（既重复业务 reply 又撞唯一索引）。新测试 3 项：崩溃恢复（真实 create_account_reply_job 首写→清 turn work_result 模拟结果落库失败→重试：邮件复用+同 job_id 同状态零重建）；F2 竞态（真实 prepare 拒绝 delivery_unknown→fresh read 前并发提交 sent→复用零重发）；F3 组合（真实 _run_internal_email_delivery+真实 prepare/claim 协议+失败 sender→_record_execution_failure 经 intake 模块绑定名升级恰一次，helper 查权威 human_review_required 不二次升级，case 落库 failed+human_review_required）。PG 证据：新增 test_reply_job_chain_lookup_reuses_and_unique_index_blocks_duplicates——Z 后缀 trigger 经 TIMESTAMPTZ round-trip 命中、错误 key/trigger 不命中、cancel 后同链路新 job_id 插入触发 UniqueViolation（证明必须 find-first）。披露：PG 套件 test_enablement_failure_workflow_prepares_and_sends_on_postgres 为存量失败（HEAD 无本 diff 同败，patch 目标 execute_enablement_archer 早已移除，默认 skip 掩盖）；test_worker.py 14 项 investigation ownership 存量失败维持披露。本轮 PR 内文件共 11 个 tracked（v1 6+修复轮一 8+修复轮二 4，并集去重）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复轮（评审 F1-F7）：统一 helper+真实入口测试+增量渲染 API Graph 注入（同 PR #1436 追加，待独立验收）",
+          "command": "pytest test_hermes_email_execution.py(9)+test_automation_ecs_deploy.py(68)+test_hermes_tool_failure_handoff/test_account_automation_delivery(37)+test_account_intake/test_automation_account_intake/test_account_automation_ownership(224)+test_automation_routing/test_automation_ecs_api(42)+test_hermes_zendesk_agent；bash -n 两部署脚本",
+          "result": "评审 7 项阻断全部修复：F1 新增 _HERMES_EMAIL_PREPARABLE（排除 awaiting_public_reply），helper 直接调 repository.prepare_account_internal_email_delivery 传受限 allowed_statuses，人工门禁不再被 Hermes re-prepare 释放；F2 prepare 失败与 sent 复用路径均改读 repository.get_account_case_by_ticket_id 权威状态（复用路径并回写 account_case=fresh）；F3 delivery 失败先查权威 automation_status==human_review_required（_run_internal_email_delivery 已升级过则仅记 work_result，不再二次 escalation/通知/incident）；F4 成功与复用两路统一创建幂等 reply job（create_account_reply_job 内建 cancel-pending），返回 skip_persona 并入工具结果与 turn work_result；F5 增量 render_task_definition 新增 graph-efs 参数（api 专属、成对校验），注入 API_GRAPH_MAIL_ENV 五环境变量+Graph/收件人三 secrets+_ensure_graph_efs_volume 幂等挂载，发布管线 preproduction 从 worker 现行 task definition 提取 EFS 真实 ID 传给 api 渲染；F6 register_automation_ecs_initial_task_definitions.sh 的 --graph-efs 参数从 worker-only 扩为非 route 全传；F7 test_hermes_email_execution.py 全量重写为真实入口测试（tool_execute_automation_action + InMemory store/repo，prepare/claim 协议真实运行仅 spy，外部边界=attempt 构建/delivery runner/reply job 写入/ownership 门禁/升级通知），9 测试覆盖：受限 prepare+成功链、sent 复用不重发仍建 reply job、awaiting_public_reply 门禁保持（经真实协议拒绝且持久状态不翻转）、冲突 key 单次升级、delivery 失败已升级不二次/未升级则工具升级一次、fraud 双路径对等、重复调用重放无新副作用。披露：test_worker.py 14 项失败为存量（stash 对比在本 PR HEAD 同样失败，investigation ownership 资格断言，与本 diff 无关）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复（F1-F4）：prepare+failure传播+reply链+API配置（Draft PR 待独立验收）",
+          "command": "py_compile+全量 259+2 回归 + 8 项新定向测试 test_hermes_email_execution.py",
+          "result": "F1（delivery claim unavailable）：Hermes suspension/fraud 工具入口在 _run_internal_email_delivery 前增加 prepare_account_internal_email 调用（将 not_applicable 原子转为 pending+delivery_key），复用既有 prepare 原语；prepare 失败时检查已发送同 key 复用或冲突升级。F3（work_result=executed 掩盖邮件失败）：delivery 返回非 sent 时立即 _escalate_uncompleted_automation，保留原始失败码（如 suspension_email_delivery_unknown），不再以 ownership_lost 作为主要原因。C5/C6（reply 链）：suspension 成功后 update workflow→closing_reply_pending + create account_suspension_handoff_and_close reply job（绑定 automation_delivery_key，close_after_publish=False）；fraud 成功后 create fraud_handoff_confirmation reply job。F2/F4（API Graph 配置）：Terraform API 子网改 [var.efs_subnet_id]（加入 1b 单可用区）；deploy 渲染 API 增加 Graph EFS volume mount（/app/.msgraph）+ REPLY_RECORD_PATH + FRAUD/SUSPENSION recipients SSM secrets。8 项新测试（test_hermes_email_execution.py）验证：prepare 在 delivery 前、not_applicable 可 prepare、claim 不含 not_applicable、失败传播触发 escalation、suspension/fraud reply job 创建、prepare 失败复用/冲突分支。259+2 全量回归零回归。"
+        },
+        {
+          "type": "test",
           "label": "离线真实模型分类验证：v5 manual + 3 样本 → o3-mini → 叶子原因码全过",
           "command": "/tmp/offline_classify.py（OpenAI o3-mini-2025-01-31，v5 build_hermes_route_manual() 作 system prompt）+ normalize_hermes_route_classification 归一化",
           "result": "3/3 全绿。模型 o3-mini-2025-01-31 在 v5 manual 下输出：13903_suspension_original→account_suspension+registered_account_suspension（PASS）；13905_suspension_clear→account_suspension+registered_account_suspension（PASS）；fraud_four_group_template（含四组模板引用）→fraud_account+registered_fraud_account（PASS）。全部三例 agora_route=account_billing、additional_intents=[]。服务器归一化后：direction=automation、route/action 与子类一致（account_suspension/fraud_account）。manual 版本 hermes-route-manual-v5 含 ROUTING CLUE ONLY、NEVER the generic、registered_account_suspension/registered_fraud_account 关键标记。完整输出（模型参数/原始分类 JSON/token 使用量/归一化结果）保存 /tmp/offline_classification_results.json。此验证无业务写入、不创建工单、不发送邮件。"
@@ -4925,8 +4978,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 4,
+      "status": "active",
+      "task_count": 5,
       "done_count": 4,
       "blocked_count": 0
     },
@@ -16514,7 +16567,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "A4/A5 路由修复（hermes-route-manual v5）已实施，合同测试全过，等待独立验收。验收通过后：Preprod prompt schedule 新版本→正式发布→回读→新工单 A4/A5 实测（完整业务链：字段收集→邮件/分派→客户投递→终态）。A4/A5 场景代码已在 worktree auto-agent-a45 就绪。",
+      "next_action": "fraud 回复风格对齐停在阶段五决策点（离线评估未达全过门槛，发布未执行）：待用户选 A（接受残余偏移×评审门）/B（服务端确定性 reply basis）/C（提升 persona 档位）后继续阶段六发布与实测；A4/A4b 场景实测与 ask 投递通道决策一并待定。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16527,6 +16580,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复轮二（F4 幂等）：reply job 链路身份查找复用+崩溃恢复/竞态/PG 证据（同 PR #1436 追加，待独立验收）",
+          "command": "pytest test_hermes_email_execution.py(12)+test_account_case_postgres_roundtrip.py(RUN_POSTGRES_INTEGRATION=1 本机 PG14 隔离 schema，12 passed/1 存量失败)+test_account_reply_publication_postgres/test_automation_reply_claims_postgres(12)+相关 InMemory 444；bash -n 部署脚本",
+          "result": "F4 阻断修复：新增 repository.find_account_reply_job_by_chain(ticket_id, trigger_message_created_at, automation_delivery_key)（Protocol+InMemory+PG 三实现；PG 查询精确对齐唯一索引身份(ticket_id, trigger, COALESCE(rerun_job_id,''))+delivery key，TIMESTAMPTZ 规范化比较）；helper F4 段先查链路身份，命中且状态非 cancelled/failed/manual_attention 即复用原 job（executed_actions 记 reply_job_reused，suspension 仍补 workflow/closing_reply_job_id 持久化），未命中才走 create_account_reply_job——消除 cancel+随机新 job_id 重建（既重复业务 reply 又撞唯一索引）。新测试 3 项：崩溃恢复（真实 create_account_reply_job 首写→清 turn work_result 模拟结果落库失败→重试：邮件复用+同 job_id 同状态零重建）；F2 竞态（真实 prepare 拒绝 delivery_unknown→fresh read 前并发提交 sent→复用零重发）；F3 组合（真实 _run_internal_email_delivery+真实 prepare/claim 协议+失败 sender→_record_execution_failure 经 intake 模块绑定名升级恰一次，helper 查权威 human_review_required 不二次升级，case 落库 failed+human_review_required）。PG 证据：新增 test_reply_job_chain_lookup_reuses_and_unique_index_blocks_duplicates——Z 后缀 trigger 经 TIMESTAMPTZ round-trip 命中、错误 key/trigger 不命中、cancel 后同链路新 job_id 插入触发 UniqueViolation（证明必须 find-first）。披露：PG 套件 test_enablement_failure_workflow_prepares_and_sends_on_postgres 为存量失败（HEAD 无本 diff 同败，patch 目标 execute_enablement_archer 早已移除，默认 skip 掩盖）；test_worker.py 14 项 investigation ownership 存量失败维持披露。本轮 PR 内文件共 11 个 tracked（v1 6+修复轮一 8+修复轮二 4，并集去重）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复轮（评审 F1-F7）：统一 helper+真实入口测试+增量渲染 API Graph 注入（同 PR #1436 追加，待独立验收）",
+          "command": "pytest test_hermes_email_execution.py(9)+test_automation_ecs_deploy.py(68)+test_hermes_tool_failure_handoff/test_account_automation_delivery(37)+test_account_intake/test_automation_account_intake/test_account_automation_ownership(224)+test_automation_routing/test_automation_ecs_api(42)+test_hermes_zendesk_agent；bash -n 两部署脚本",
+          "result": "评审 7 项阻断全部修复：F1 新增 _HERMES_EMAIL_PREPARABLE（排除 awaiting_public_reply），helper 直接调 repository.prepare_account_internal_email_delivery 传受限 allowed_statuses，人工门禁不再被 Hermes re-prepare 释放；F2 prepare 失败与 sent 复用路径均改读 repository.get_account_case_by_ticket_id 权威状态（复用路径并回写 account_case=fresh）；F3 delivery 失败先查权威 automation_status==human_review_required（_run_internal_email_delivery 已升级过则仅记 work_result，不再二次 escalation/通知/incident）；F4 成功与复用两路统一创建幂等 reply job（create_account_reply_job 内建 cancel-pending），返回 skip_persona 并入工具结果与 turn work_result；F5 增量 render_task_definition 新增 graph-efs 参数（api 专属、成对校验），注入 API_GRAPH_MAIL_ENV 五环境变量+Graph/收件人三 secrets+_ensure_graph_efs_volume 幂等挂载，发布管线 preproduction 从 worker 现行 task definition 提取 EFS 真实 ID 传给 api 渲染；F6 register_automation_ecs_initial_task_definitions.sh 的 --graph-efs 参数从 worker-only 扩为非 route 全传；F7 test_hermes_email_execution.py 全量重写为真实入口测试（tool_execute_automation_action + InMemory store/repo，prepare/claim 协议真实运行仅 spy，外部边界=attempt 构建/delivery runner/reply job 写入/ownership 门禁/升级通知），9 测试覆盖：受限 prepare+成功链、sent 复用不重发仍建 reply job、awaiting_public_reply 门禁保持（经真实协议拒绝且持久状态不翻转）、冲突 key 单次升级、delivery 失败已升级不二次/未升级则工具升级一次、fraud 双路径对等、重复调用重放无新副作用。披露：test_worker.py 14 项失败为存量（stash 对比在本 PR HEAD 同样失败，investigation ownership 资格断言，与本 diff 无关）。"
+        },
+        {
+          "type": "test",
+          "label": "邮件执行链修复（F1-F4）：prepare+failure传播+reply链+API配置（Draft PR 待独立验收）",
+          "command": "py_compile+全量 259+2 回归 + 8 项新定向测试 test_hermes_email_execution.py",
+          "result": "F1（delivery claim unavailable）：Hermes suspension/fraud 工具入口在 _run_internal_email_delivery 前增加 prepare_account_internal_email 调用（将 not_applicable 原子转为 pending+delivery_key），复用既有 prepare 原语；prepare 失败时检查已发送同 key 复用或冲突升级。F3（work_result=executed 掩盖邮件失败）：delivery 返回非 sent 时立即 _escalate_uncompleted_automation，保留原始失败码（如 suspension_email_delivery_unknown），不再以 ownership_lost 作为主要原因。C5/C6（reply 链）：suspension 成功后 update workflow→closing_reply_pending + create account_suspension_handoff_and_close reply job（绑定 automation_delivery_key，close_after_publish=False）；fraud 成功后 create fraud_handoff_confirmation reply job。F2/F4（API Graph 配置）：Terraform API 子网改 [var.efs_subnet_id]（加入 1b 单可用区）；deploy 渲染 API 增加 Graph EFS volume mount（/app/.msgraph）+ REPLY_RECORD_PATH + FRAUD/SUSPENSION recipients SSM secrets。8 项新测试（test_hermes_email_execution.py）验证：prepare 在 delivery 前、not_applicable 可 prepare、claim 不含 not_applicable、失败传播触发 escalation、suspension/fraud reply job 创建、prepare 失败复用/冲突分支。259+2 全量回归零回归。"
+        },
         {
           "type": "test",
           "label": "离线真实模型分类验证：v5 manual + 3 样本 → o3-mini → 叶子原因码全过",
@@ -16836,7 +16913,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Hermes 会话存储故障修复（错误分类/告警真实性/受限重试）",
       "summary": "AC-13898 hermes_run_failed（Hermes Session DB 在 EFS 上间歇 SQLite disk I/O error）的修复：阶段一新增 io 错误分类、gateway 结构化 failure_reason 传递、SupportPortal 事件细分与告警真实性（环境/job/attempt/phase/真实接管结果）；阶段二仅对 COMMIT 前、可完整回滚、文件身份不变的会话保存做单次补试。不自动重跑调查回合，不扩大 Zendesk 自动转派，不含数据库迁移。Hermes 侧改动在 agent-infra/hermes-agent（bc9a0f7d 基线），经 hermes-deploy 版本化构建产物发布。",
       "status": "done",
-      "next_action": "F-D1 已闭环：r20261008-afa0130 的发布失败证据保留为 rollback_incomplete 并已解释（api_rollout 观察窗口 103s 不足即判负，:110 task 启动 35s 后仍在收敛；回滚与在途 rollout 竞争致 rollback=failed；ECS 最终收敛到新 revision，随后被 r20261008-07cac14 正式取代）。运行验证由 07cac14 的完整发布门禁承载（evidence complete：provider_probe/public_health/cloudwatch 零错误/terraform_post_deploy 零漂移/TargetHealth healthy/三角色 runtime_verified+digest 绑定），且该 release 包含本任务代码（#1424 已在 07cac144 祖先链）。剩余观察：自然失败告警样本（等待外部事件，不人为制造）",
+      "next_action": "已完成（验收通过，F-D1 关闭）。r20261008-afa0130 失败记录保留 rollback_incomplete：已核对失败阶段（api_rollout，实际耗时 103s，脚本等待上限为 900s）与最终状态（回滚未完成、其后服务收敛），具体根因待定（需原始错误日志）；运行验证由 r20261008-07cac14 完整发布门禁（evidence complete，三角色 runtime_verified+digest 绑定）与独立线上对账承载。非阻断外部等待：自然失败告警样本。Production 晋级与 AC-13898 重跑不在放行范围",
       "owner": "agent",
       "created_at": "2026-10-07",
       "updated_at": "2026-10-08",
@@ -16862,7 +16939,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "deployment",
-          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（api_rollout 观察窗口 103s 不足+回滚竞争，正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
+          "label": "Preproduction 部署终态：r20261008-afa0130（api :110/route :109/worker :111）的 deploy evidence 为 rollback_incomplete（失败阶段 api_rollout 实际耗时 103s、脚本等待上限 900s；回滚未完成、其后服务收敛；具体根因待定待原始错误日志；正式失败记录保留未改写）；紧接的 r20261008-07cac14（含本任务代码）完整门禁 evidence complete：api :111 HEALTHY/route :110/worker :112，三角色 runtime_verified=true 且 digest 绑定 publish-record，TargetHealth healthy/blocking=0，provider/graph/rag 探针通过，CloudWatch 三角色 0 错误，terraform 发布后零漂移；线上 /health/release 独立回读一致"
         },
         {
           "type": "deployment",
@@ -16871,6 +16948,104 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "镜像内隔离验收 43 项全过 + hermes_state 500 通过 + SP 全链测试（round-2/3 验收方独立复跑 95 项）"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-190",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Investigation 路由固定与状态同步修复（Ticket 13923）",
+      "summary": "计划 v1.1：C1 首次 Investigation 客户续轮固定 work；C2 原文进入原 Slack thread；C3 原生接管及真实告警；C4 原生状态事务通知与 n8n PP 分支；C5 工程师明确 close tool/skill。仅 Preproduction 发布，禁止真实13923重放或客户回复。",
+      "status": "done",
+      "next_action": "ECS Preproduction 技术验收已获用户确认并完成；本地官方栈重启按授权豁免。自然业务样本缺口保留，不重放真实13923、不发送客户回复或真实 Slack 测试消息。",
+      "owner": "agent",
+      "created_at": "2026-10-08",
+      "updated_at": "2026-10-09",
+      "acceptance_criteria": [
+        "C1: 真实客户 intake/work-only，身份/fence/session/thread不丢失，Automation边界保留",
+        "C2: 当前客户原文带来源身份引用进入原thread，可审计幂等投递",
+        "C3: 真实native terminal failure进入统一接管，各动作状态独立且告警无虚构成功",
+        "C4: 状态和通知intent同PG事务，单调source水位，claim/unknown不盲重发",
+        "C5: 可信工程师明确close授权驱动tool/plugin/skill，只solve绑定票且无客户回复",
+        "隔离PG与真实入口验证；正常merge与PP运行证据，Production不变"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-fix.md",
+          "label": "当前合同 v1.1 与执行证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-route-status-pp-evidence.json",
+          "label": "SP complete / Hermes actual gateway and skill / n8n published graph sanitized PP evidence"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1437",
+          "label": "SP C1-C5 已合并，运行源 435811e4"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/heremes-deploy/pull/33",
+          "label": "Hermes close plugin/skill 已合并，构建源 e5c2f119"
+        },
+        {
+          "type": "decision",
+          "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-191",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 回复长度优化 v1",
+      "summary": "为 Investigation 客户草稿和工程师 Slack 调查展示增加确定性长度契约：客户 draft（含 greeting）最多 1200 字符，Slack 调查消息最多 2000 字符；复用一次重生成，最终超长 fail-closed。",
+      "status": "active",
+      "next_action": "完成定向回归、全量相关套件和 diff 检查后，提交 Preproduction 发布与技术验收证据。",
+      "owner": "agent",
+      "created_at": "2026-10-09",
+      "updated_at": "2026-10-09",
+      "acceptance_criteria": [
+        "C1: engineer_investigation_reply 首次输出超长时触发现有第二次生成，prompt version 为 v2",
+        "C2: Investigation 完整客户 draft（含 greeting、引用拼接）超过 1200 字符时 reply_too_long，不能保存或发送",
+        "C3: Investigation result、ad-hoc result、review pending Slack 文本最多 2000 字符，summary/evidence/blockers/next_steps 有数量和单项上限",
+        "C4: 完整调查记录仍保存，Slack 只压缩展示；合法 draft 在审批消息中保持完整",
+        "C5: 相关单元、Hermes 工具入口和 Preproduction 技术检查通过；不重放 Ticket 13923，不发送真实客户回复，不发布 Production"
+      ],
+      "blockers": [],
+      "evidence": [],
+      "legacy_ids": []
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-192",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Investigation 附件闭环 v1",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
+      "status": "active",
+      "next_action": "完成 C1-C7 真实入口与隔离 PG 验证，再按正常流程合并并部署 Preproduction。",
+      "owner": "agent",
+      "created_at": "2026-10-09",
+      "updated_at": "2026-10-09",
+      "acceptance_criteria": [
+        "C1-C7 见 docs/plans/investigation-attachments-v1.md"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-attachments-v1.md",
+          "label": "R1 合同与执行证据"
         }
       ]
     },
@@ -22208,6 +22383,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 原生会话引擎以 Zendesk ticket 绑定唯一逻辑会话、Session、Workspace 和 case_revision 处理 Automation 与调查（零 Engineer Case）：route/work/persona 三阶段编排、新客户 comment 取消旧 run 只跑最新 revision、调查回复经 Case 页批准或 Request changes 重开反馈轮、发送前唯一门禁核对 case 与 comments revision，Tencent 记忆只收整理知识不收原始对话。",
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
+        "原生 Investigation 续轮与关闭（p2-190，Preproduction 技术发布通过，最终运行验收方式待用户确认）：首次有效 Investigation 后客户消息在原 session/thread 仅跑 work，工程师可见完整原文；ticket.updated 状态与通知 intent 同事务保存，未知发送结果不自动重发。可信工程师明确 `close the case` 可调用已注册 work tool/skill 将绑定票设为 solved，无客户自动回复；客户感谢/请求关闭、引用与历史均不赋权。SP/Hermes/n8n 版本与工具/技能实际回读通过；没有授权隔离业务 fixture，自然闭环样本未验证。",
+        "Investigation 附件闭环 v1（p2-192，实现及隔离 PG 验证完成，待 Preproduction 发布）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",

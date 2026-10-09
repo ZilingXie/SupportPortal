@@ -26,6 +26,7 @@ COMPARISON_FIELDS = (
     "automation_subcategory",
     "primary_label",
     "secondary_label",
+    "conversation_subcategory",
     "route_target",
     "route_family",
     "execution_action",
@@ -89,6 +90,7 @@ class ComparisonResult:
     disagreement: bool
     disagreement_fields: dict[str, list[str]]
     review_required: bool
+    case_revision: str | None = None
     baseline_unavailable_fields: list[str] = field(default_factory=list)
 
 
@@ -248,6 +250,7 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
             review_required = True
     return ComparisonResult(
         alias=snapshot.alias,
+        case_revision=snapshot.case_revision,
         baseline=baseline_key,
         baseline_status=snapshot.baseline_status,
         candidates=candidate_map,
@@ -258,6 +261,70 @@ def compare_case(snapshot: CaseSnapshot, candidates: Iterable[CandidateResult]) 
             field for field in BASELINE_OPTIONAL_DERIVED_FIELDS if baseline_key.get(field) is None
         ) if snapshot.baseline_available else [],
     )
+
+
+THREE_WAY_FIELDS = ("primary_label", "secondary_label", "conversation_subcategory", "route_target")
+
+
+def pair_field_comparison(
+    left: Mapping[str, Any] | None,
+    right: Mapping[str, Any] | None,
+) -> tuple[list[str], list[str]]:
+    """Return comparable fields and fields that differ for two classifications."""
+    if not isinstance(left, Mapping) or not isinstance(right, Mapping):
+        return [], []
+    left_key = comparison_key(left)
+    right_key = comparison_key(right)
+    comparable = [
+        field for field in THREE_WAY_FIELDS
+        if left_key.get(field) is not None and right_key.get(field) is not None
+    ]
+    return comparable, [field for field in comparable if left_key[field] != right_key[field]]
+
+
+def three_way_row(result: ComparisonResult) -> dict[str, Any]:
+    """Build one auditable CSV row, including failed cases."""
+    candidates = result.candidates
+    values: dict[str, Any] = {"case_alias": result.alias, "case_revision": result.case_revision or "", "baseline_status": result.baseline_status}
+    production = comparison_key(result.baseline) if result.baseline_status == "available" else {}
+    values.update({f"production_{field}": production.get(field) for field in THREE_WAY_FIELDS})
+    for name in ("hermes", "jev"):
+        candidate = candidates.get(name)
+        normalized = comparison_key(candidate.normalized) if candidate and candidate.normalized is not None else {}
+        values[f"{name}_status"] = candidate.status if candidate else "not_run"
+        values.update({f"{name}_{field}": normalized.get(field) for field in THREE_WAY_FIELDS})
+    pairs = (("production_hermes", production, candidates.get("hermes")), ("production_jev", production, candidates.get("jev")), ("hermes_jev", candidates.get("hermes"), candidates.get("jev")))
+    for label, left, right in pairs:
+        left_value = left if isinstance(left, Mapping) else (left.normalized if left and left.status == "ok" else None)
+        right_value = right if isinstance(right, Mapping) else (right.normalized if right and right.status == "ok" else None)
+        comparable, differences = pair_field_comparison(left_value, right_value)
+        values[f"{label}_comparable_fields"] = ",".join(comparable)
+        values[f"{label}_different_fields"] = ",".join(differences)
+    values["errors"] = ";".join(
+        f"{name}:{candidate.error_code or candidate.error or candidate.status}"
+        for name, candidate in candidates.items() if candidate.status != "ok"
+    )
+    return values
+
+
+def write_three_way_csv(path: Path, results: Iterable[ComparisonResult]) -> None:
+    rows = [three_way_row(result) for result in results]
+    fields = [
+        "case_alias", "case_revision", "baseline_status",
+        "hermes_status", "jev_status",
+        *(f"production_{field}" for field in THREE_WAY_FIELDS),
+        *(f"hermes_{field}" for field in THREE_WAY_FIELDS),
+        *(f"jev_{field}" for field in THREE_WAY_FIELDS),
+        "production_hermes_comparable_fields", "production_hermes_different_fields",
+        "production_jev_comparable_fields", "production_jev_different_fields",
+        "hermes_jev_comparable_fields", "hermes_jev_different_fields", "errors",
+    ]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    path.chmod(0o600)
 
 
 def _json_default(value: Any) -> Any:
@@ -271,6 +338,7 @@ def result_to_dict(
 ) -> dict[str, Any]:
     record = {
         "case_alias": result.alias,
+        "case_revision": result.case_revision,
         "baseline_status": result.baseline_status,
         "production_baseline": result.baseline,
         "candidates": {

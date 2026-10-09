@@ -103,6 +103,8 @@ class AccountBusinessProcessor:
         payload: ProcessingJobPayload,
         *,
         before_external: Callable[[], None],
+        coordination_store: AutomationEcsStore | None = None,
+        processing_job: ClaimedJob | None = None,
     ) -> dict[str, Any]:
         event = payload.event
         ticket_id = event.ticket.id
@@ -171,6 +173,14 @@ class AccountBusinessProcessor:
             return {"comment_sync": sync_result, "trigger": trigger}
 
         before_external()
+        native_context = None
+        binding = coordination_store.get_hermes_case_binding(ticket_id) if coordination_store is not None else None
+        if binding is not None and str(binding.get("session_kind") or "case") == "case":
+            if event.ticket.updated_at is None or processing_job is None:
+                raise ValueError("native status requires source updated_at and processing job fence")
+            native_context = {"binding": binding, "event_id": event.event_id,
+                "execution_id": processing_job.execution_id, "claim_token": processing_job.claim_token,
+                "before_external": before_external}
         return await sync_account_case_ticket_status(
             repository=self.repository,
             normalized_ticket_id=ticket_id,
@@ -180,6 +190,7 @@ class AccountBusinessProcessor:
                 if event.ticket.updated_at
                 else event.occurred_at.astimezone(timezone.utc).isoformat()
             ),
+            **({"native_context": native_context} if native_context is not None else {}),
         )
 
 
@@ -241,6 +252,7 @@ class AutomationWorker:
 
         def before_external() -> None:
             nonlocal external_started
+            self.store.renew_job_lease(job, lease_seconds=self.lease_seconds)
             if external_started:
                 return
             self.store.mark_processing_external_started(job)
@@ -428,9 +440,22 @@ class AutomationWorker:
         lease.start()
         action_key = f"{self.settings.environment}:{job.execution_id}:account_workflow"
         external_started = False
+        event = (job.payload.get("event") or {})
+        ticket_id = str((event.get("ticket") or {}).get("id") or "")
+        native_status = (
+            isinstance(self.processor, AccountBusinessProcessor)
+            and event.get("event_type") == IntakeEventType.TICKET_UPDATED.value
+            and self.store.get_hermes_case_binding(ticket_id) is not None
+        )
 
         def before_external() -> None:
             nonlocal external_started
+            self.store.renew_job_lease(job, lease_seconds=self.lease_seconds)
+            # Native status submissions have their own conditional ledger.
+            # Keep this job reclaimable after a crash before Slack; a sending
+            # notification claim prevents an ambiguous submission being retried.
+            if native_status:
+                return
             if external_started:
                 return
             self.store.mark_processing_external_started(job)
@@ -445,9 +470,34 @@ class AutomationWorker:
 
         try:
             payload = ProcessingJobPayload.model_validate(job.payload)
-            outcome = asyncio.run(self.processor.process(payload, before_external=before_external))
+            kwargs = {"before_external": before_external}
+            if isinstance(self.processor, AccountBusinessProcessor):
+                kwargs.update(coordination_store=self.store, processing_job=job)
+            outcome = asyncio.run(self.processor.process(payload, **kwargs))
             normalized = jsonable_encoder(outcome)
             lease.stop()
+            native_notification = normalized.get("native_notification")
+            if isinstance(native_notification, dict):
+                notification_status = str(native_notification.get("status") or "")
+                self.store.append_execution_event(job.execution_id, "native.status_notification", native_notification)
+                if notification_status == "failed":
+                    code = str(native_notification.get("failure_code") or "native_notification_failed")
+                    if code in {"native_thread_binding_missing", "native_thread_channel_mismatch", "native_slack_outbound_disabled"}:
+                        # Configuration/lineage failures need correction at
+                        # the existing execution retry entry, not a busy loop.
+                        self.store.fail_job(job, failure_stage="native.status_notification",
+                            failure_code=code, error_message="Original notification intent retained; binding/configuration needs correction")
+                    else:
+                        self.store.defer_job(job, delay_seconds=30)
+                elif notification_status == "outcome_unknown":
+                    self.store.fail_job(job, failure_stage="native.status_notification",
+                        failure_code="native_notification_outcome_unknown",
+                        error_message="Slack submission requires message identity readback",
+                        outcome_unknown=True)
+                else:
+                    self.store.complete_processing(job, outcome=normalized, status=ExecutionStatus.COMPLETED)
+                self._run_background_cycle()
+                return True
             status = _execution_status(normalized)
             if status == ExecutionStatus.OUTCOME_UNKNOWN:
                 if external_started:
@@ -526,8 +576,12 @@ def run_automation_worker() -> int:
     from backend import worker as account_worker
 
     account_worker.ticket_repository = repository
+    def account_cycle():
+        account_worker.process_account_automation_once()
+        from backend.services.automation_native_notifications import drain_customer_attachments
+        drain_customer_attachments(repository, store)
     background_cycle = AccountBackgroundCycle(
-        account_cycle=account_worker.process_account_automation_once,
+        account_cycle=account_cycle,
         outlook_cycle=account_worker.process_automation_request_replies_once,
         outlook_enabled=account_worker._billing_reply_poller_enabled_from_env,
         outlook_interval_seconds=account_worker._billing_reply_poll_interval_from_env,

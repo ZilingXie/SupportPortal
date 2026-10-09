@@ -1263,10 +1263,11 @@ class FullChainAlertContextTests(unittest.TestCase):
         # Structured cause as its own field — independent of the truncated
         # prose (the gateway error text is >500 chars).
         assert kwargs["failure_reason"] == "session_persistence_failed:io"
-        # Per-step handoff wording: rag is not an automated handler, so both
-        # external steps read as not executed.
-        assert "internal note not sent (inactive_handler)" in kwargs["detail"]
-        assert "queue return not executed (inactive_handler)" in kwargs["detail"]
+        # Verified native terminal failure is eligible, but this environment
+        # forbids Zendesk handoff side effects independently of legacy profile.
+        assert "internal note not sent (not_production)" in kwargs["detail"]
+        assert "queue return not executed (not_production)" in kwargs["detail"]
+        assert kwargs["handoff"]["reply_cancellation_status"] == "completed"
         assert "transferred to the human team" not in kwargs["detail"]
 
     def test_completed_with_skipped_steps_reads_not_executed(self) -> None:

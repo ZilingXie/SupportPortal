@@ -101,6 +101,7 @@ _ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS = (
     "draft_version",
     "comments_revision",
     "immutable_content",
+    "attachments",
     "created_at",
     "updated_at",
 )
@@ -1011,6 +1012,24 @@ def _plan_account_zendesk_status_transition(
     }
 
 
+def _native_status_watermark(source: Any, stored: Any) -> str:
+    # Native events require a real, timezone-bearing source revision.
+    timestamp = datetime.fromisoformat(str(source or "").replace("Z", "+00:00"))
+    if timestamp.tzinfo is None:
+        raise ValueError("native status source_updated_at requires timezone")
+    if stored is None:
+        return "newer"
+    incoming = _canonical_account_revision_timestamp(source)
+    previous = _canonical_account_revision_timestamp(stored)
+    return "older" if incoming < previous else "same" if incoming == previous else "newer"
+
+
+def _native_status_intent(notification: dict[str, Any], prior: Any, current: str) -> dict[str, Any]:
+    payload = dict(notification["payload"])
+    payload.update(prior_status=str(prior or "unknown").lower(), current_status=current)
+    return {"scope": notification["scope"], "key": notification["key"], "payload": payload}
+
+
 def _account_case_detail_revision(
     account_case: dict[str, Any],
     ticket: dict[str, Any] | None,
@@ -1096,6 +1115,7 @@ def _account_comment_payload_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
         "body": str(row[6] or ""),
         "via_channel": str(row[7] or "").strip() or None,
         "created_at": _to_iso(row[8]),
+        "attachments": copy.deepcopy(row[9] if len(row) > 9 and isinstance(row[9], list) else []),
     }
 
 
@@ -1294,8 +1314,9 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v20-standalone-retry"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v21-investigation-attachments"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v20-standalone-retry",
     "2026-single-ai-managed-v19-governance-pipeline",
     "2026-single-ai-managed-v18-n8n-summary-trigger",
     "2026-single-ai-managed-v17-knowledge-source-intake",
@@ -2023,6 +2044,32 @@ def _engineer_case_record_to_header_payload(
     }
 
 
+def _parse_account_reply_trigger(value: Any) -> Any:
+    """Parse a trigger timestamp to an aware datetime (None on failure)."""
+    from datetime import datetime, timezone as _timezone
+
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=_timezone.utc)
+    return parsed
+
+
+def _normalize_account_reply_trigger(value: Any) -> str:
+    """Canonical UTC ISO string for trigger comparisons ("" on failure)."""
+    parsed = _parse_account_reply_trigger(value)
+    if parsed is None:
+        return ""
+    from datetime import timezone as _timezone
+
+    return parsed.astimezone(_timezone.utc).isoformat()
+
+
 class TicketRepository(Protocol):
     def initialize(self) -> None:
         ...
@@ -2455,6 +2502,13 @@ class TicketRepository(Protocol):
     ) -> int: ...
     def get_account_reply_job(self, job_id: str) -> dict[str, Any] | None: ...
     def get_latest_account_reply_job(self, ticket_id: str) -> dict[str, Any] | None: ...
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None: ...
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]
     ) -> dict[str, dict[str, Any]]: ...
@@ -2850,6 +2904,7 @@ class TicketRepository(Protocol):
         draft_version: int | None = None,
         comments_revision: str | None = None,
         immutable_content: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -2968,6 +3023,7 @@ class TicketRepository(Protocol):
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         ...
 
@@ -3450,13 +3506,14 @@ class InMemoryTicketRepository(
         draft_version: int | None = None,
         comments_revision: str | None = None,
         immutable_content: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         key = (str(account_case_id).strip(), str(message_id).strip())
         normalized_target_status = str(target_status or "").strip().lower() or None
         if normalized_target_status not in (None, "solved"):
             raise ValueError("invalid Zendesk comment delivery target status")
         normalized_source = str(source or "account").strip().lower()
-        if normalized_source not in {"account", "engineer"}:
+        if normalized_source not in {"account", "engineer", "hermes"}:
             raise ValueError("invalid Zendesk comment delivery source")
         if normalized_source == "engineer" and not all(
             (
@@ -3484,10 +3541,19 @@ class InMemoryTicketRepository(
                 "draft_version": int(draft_version) if draft_version is not None else None,
                 "comments_revision": str(comments_revision or "").strip() or None,
                 "immutable_content": str(immutable_content or "").strip() or None,
+                "attachments": copy.deepcopy(attachments or []),
                 "created_at": created_at, "updated_at": created_at,
             }
             self._account_zendesk_comment_deliveries[key] = delivery
             return {**copy.deepcopy(delivery), "created": True}
+
+    def checkpoint_zendesk_delivery_attachments(self, *, account_case_id: str, message_id: str, attachments: list[dict[str, Any]]) -> bool:
+        with self._assignment_lock:
+            row = self._account_zendesk_comment_deliveries.get((account_case_id, message_id))
+            if row is None or row["status"] != "pending":
+                return False
+            row["attachments"] = copy.deepcopy(attachments)
+            return True
 
     def claim_account_zendesk_comment_delivery(
         self,
@@ -4116,6 +4182,7 @@ class InMemoryTicketRepository(
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -4140,6 +4207,14 @@ class InMemoryTicketRepository(
                 stored_status_updated_at=account_case.get("zendesk_status_updated_at"),
                 synced_at=synced_at,
             )
+            if native_notification is not None:
+                watermark = _native_status_watermark(source_updated_at, account_case.get("zendesk_status_updated_at"))
+                if watermark == "older":
+                    plan = {"outcome": "stale_ignored"}
+                elif plan["outcome"] == "unchanged" and watermark == "newer":
+                    account_case["zendesk_status_updated_at"] = str(source_updated_at)
+                    account_case["zendesk_status_synced_at"] = synced_at
+                    self._billing_tickets[billing_ticket_id or stored_key] = _normalize_account_case_record(account_case)
             if plan["outcome"] != "updated":
                 return {
                     "status": plan["outcome"],
@@ -4190,6 +4265,9 @@ class InMemoryTicketRepository(
                 },
                 created_at=synced_at,
             )
+            if native_notification is not None:
+                intent = _native_status_intent(native_notification, plan["prior_zendesk_status"], normalized_status)
+                self.enqueue_native_notification(**intent, created_at=synced_at)
             engineer_slack_event_queued = False
             if (
                 isinstance(engineer_slack_event, dict)
@@ -5150,6 +5228,43 @@ class InMemoryTicketRepository(
         if not jobs:
             return None
         return max(jobs, key=lambda item: str(item.get("created_at") or ""))
+
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None:
+        """Find the reply job bound to one automation email chain.
+
+        Mirrors the unique index identity (ticket_id, trigger timestamp,
+        empty rerun_job_id) plus the automation delivery key, across ALL
+        statuses — the caller decides whether the found job is reusable.
+        """
+        normalized_trigger = _normalize_account_reply_trigger(trigger_message_created_at)
+        normalized_key = str(automation_delivery_key or "").strip()
+        if not normalized_trigger or not normalized_key:
+            return None
+        matches: list[dict[str, Any]] = []
+        with self._assignment_lock:
+            for job in self._account_reply_jobs.values():
+                if str(job.get("ticket_id") or "") != str(ticket_id):
+                    continue
+                payload = job.get("payload") if isinstance(job.get("payload"), dict) else {}
+                if str(payload.get("rerun_job_id") or "").strip():
+                    continue
+                if str(payload.get("automation_delivery_key") or "") != normalized_key:
+                    continue
+                if (
+                    _normalize_account_reply_trigger(job.get("trigger_message_created_at"))
+                    != normalized_trigger
+                ):
+                    continue
+                matches.append(copy.deepcopy(job))
+        if not matches:
+            return None
+        return max(matches, key=lambda item: str(item.get("created_at") or ""))
 
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]
@@ -6761,6 +6876,74 @@ class InMemoryTicketRepository(
     def list_workspace_audit_events(self, limit: int = 100) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 100), 1000))
         return [copy.deepcopy(item) for item in reversed(self._workspace_audit_events[-safe_limit:])]
+
+    def list_native_attachment_notifications(self, *, scope: str, limit: int = 20) -> list[dict[str, Any]]:
+        with self._assignment_lock:
+            return [copy.deepcopy(row) for (row_scope, key), row in self._idempotency_records.items()
+                if row_scope == scope and key.startswith("attachment:") and not key.endswith(":failure-notice") and row["state"] in {"pending", "failed", "sending", "outcome_unknown"}][:limit]
+
+    def enqueue_native_notification(self, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> dict[str, Any]:
+        with self._assignment_lock:
+            self._idempotency_records.setdefault((scope, key), {"scope": scope, "idempotency_key": key, "state": "pending", "response_payload": copy.deepcopy(payload), "created_at": created_at, "updated_at": created_at})
+            return copy.deepcopy(self._idempotency_records[(scope, key)])
+
+    def get_native_notification(self, scope: str, key: str) -> dict[str, Any] | None:
+        with self._assignment_lock:
+            return copy.deepcopy(self._idempotency_records.get((scope, key)))
+
+    def claim_native_notification(self, *, scope: str, key: str, claim_token: str, updated_at: str) -> dict[str, Any] | None:
+        if not claim_token:
+            raise ValueError("notification claim requires processing fence")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] not in {"pending", "failed"}:
+                return None
+            row["state"] = "sending"
+            row["updated_at"] = updated_at
+            row["response_payload"]["claim_token"] = claim_token
+            return copy.deepcopy(row)
+
+    def confirm_native_attachment_readback(self, *, scope: str, key: str, file_id: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not key.startswith("attachment:"):
+            raise ValueError("attachment identity required")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] not in {"sending", "outcome_unknown"} or row["response_payload"].get("slack_file_id") != file_id:
+                return False
+            row.update(state="completed", updated_at=updated_at)
+            row["response_payload"]["delivery"] = copy.deepcopy(result)
+            return True
+
+    def checkpoint_native_notification(self, *, scope: str, key: str, claim_token: str, fields: dict[str, Any], updated_at: str) -> bool:
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] != "sending" or row["response_payload"].get("claim_token") != claim_token:
+                return False
+            row["response_payload"].update(copy.deepcopy(fields))
+            row["updated_at"] = updated_at
+            return True
+
+    def finish_native_notification(self, *, scope: str, key: str, claim_token: str, state: str, result: dict[str, Any], updated_at: str) -> bool:
+        if state not in {"completed", "failed", "outcome_unknown"}:
+            raise ValueError("invalid native notification outcome")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] != "sending" or row["response_payload"].get("claim_token") != claim_token:
+                return False
+            row.update(state=state, updated_at=updated_at)
+            row["response_payload"]["delivery"] = copy.deepcopy(result)
+            return True
+
+    def confirm_native_close_readback(self, *, scope: str, key: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not scope.startswith("native-hermes-close:") or result.get("ticket_status") not in {"solved", "closed"}:
+            raise ValueError("terminal native close readback required")
+        with self._assignment_lock:
+            row = self._idempotency_records.get((scope, key))
+            if row is None or row["state"] not in {"sending", "outcome_unknown"}:
+                return False
+            row.update(state="completed", updated_at=updated_at)
+            row["response_payload"]["delivery"] = copy.deepcopy(result)
+            return True
 
     def begin_idempotent_request(
         self,
@@ -8673,6 +8856,7 @@ class PostgresTicketRepository(
         draft_version: int | None = None,
         comments_revision: str | None = None,
         immutable_content: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_message_id = str(message_id or "").strip()
@@ -8715,12 +8899,12 @@ class PostgresTicketRepository(
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
-                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, source, engineer_case_id, investigation_id, draft_version, comments_revision, immutable_content, created_at, updated_at) "
-                        "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                        "INSERT INTO {} (account_case_id, message_id, zendesk_ticket_id, idempotency_key, is_public, status, target_status, source, engineer_case_id, investigation_id, draft_version, comments_revision, immutable_content, attachments, created_at, updated_at) "
+                        "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                         "ON CONFLICT (account_case_id, message_id) DO NOTHING "
                         "RETURNING " + ", ".join(_ACCOUNT_ZENDESK_COMMENT_DELIVERY_FIELDS)
                     ).format(self._table("support_account_zendesk_comment_deliveries")),
-                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, normalized_is_public, normalized_target_status, normalized_source, normalized_engineer_case_id, normalized_investigation_id, normalized_draft_version, normalized_comments_revision, normalized_content, created_at, created_at),
+                    (normalized_case_id, normalized_message_id, normalized_ticket_id, normalized_key, normalized_is_public, normalized_target_status, normalized_source, normalized_engineer_case_id, normalized_investigation_id, normalized_draft_version, normalized_comments_revision, normalized_content, Json(attachments or []), created_at, created_at),
                 )
                 row = cur.fetchone()
                 created = row is not None
@@ -8743,6 +8927,13 @@ class PostgresTicketRepository(
         return self._run_with_connection_retry(
             "create_account_zendesk_comment_delivery", _operation
         )
+
+    def checkpoint_zendesk_delivery_attachments(self, *, account_case_id: str, message_id: str, attachments: list[dict[str, Any]]) -> bool:
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET attachments=%s WHERE account_case_id=%s AND message_id=%s AND status='pending'").format(self._table("support_account_zendesk_comment_deliveries")), (Json(attachments), account_case_id, message_id))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("checkpoint_zendesk_delivery_attachments", operation)
 
     def claim_account_zendesk_comment_delivery(
         self,
@@ -9609,15 +9800,15 @@ class PostgresTicketRepository(
                     cur.execute(
                         sql.SQL(
                             "SELECT zendesk_comment_id, is_public, is_initial, author_id, "
-                            "author_name, author_kind, body, via_channel, created_at, client_ticket_id "
+                            "author_name, author_kind, body, via_channel, created_at, attachments, client_ticket_id "
                             "FROM {} WHERE client_ticket_id = ANY(%s::TEXT[]) "
                             "ORDER BY created_at ASC, zendesk_comment_id ASC"
                         ).format(self._table("support_account_case_comments")),
                         (ticket_ids,),
                     )
                     for row in cur.fetchall():
-                        comments_by_ticket.setdefault(str(row[9]), []).append(
-                            _account_comment_payload_from_row(row[:9])
+                        comments_by_ticket.setdefault(str(row[10]), []).append(
+                            _account_comment_payload_from_row(row[:10])
                         )
                     cur.execute(
                         sql.SQL(
@@ -9693,7 +9884,7 @@ class PostgresTicketRepository(
                 cur.execute(
                     sql.SQL(
                         "SELECT zendesk_comment_id, is_public, is_initial, author_id, "
-                        "author_name, author_kind, body, via_channel, created_at "
+                        "author_name, author_kind, body, via_channel, created_at, attachments "
                         "FROM {} WHERE client_ticket_id=%s "
                         "ORDER BY created_at ASC, zendesk_comment_id ASC"
                     ).format(self._table("support_account_case_comments")),
@@ -9781,13 +9972,13 @@ class PostgresTicketRepository(
                         sql.SQL(
                             "INSERT INTO {} (account_case_id, client_ticket_id, zendesk_comment_id, "
                             "is_public, is_initial, author_id, author_name, author_kind, body, "
-                            "via_channel, created_at, synced_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                            "via_channel, created_at, attachments, synced_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                             "ON CONFLICT (client_ticket_id, zendesk_comment_id) DO UPDATE SET "
                             "account_case_id=EXCLUDED.account_case_id, is_public=EXCLUDED.is_public, "
                             "is_initial=EXCLUDED.is_initial, author_id=EXCLUDED.author_id, "
                             "author_name=EXCLUDED.author_name, author_kind=EXCLUDED.author_kind, "
                             "body=EXCLUDED.body, via_channel=EXCLUDED.via_channel, "
-                            "created_at=EXCLUDED.created_at, synced_at=EXCLUDED.synced_at"
+                            "created_at=EXCLUDED.created_at, attachments=EXCLUDED.attachments, synced_at=EXCLUDED.synced_at"
                         ).format(comment_table),
                         (
                             normalized_case_id,
@@ -9801,6 +9992,7 @@ class PostgresTicketRepository(
                             comment.body,
                             comment.via_channel,
                             comment.created_at,
+                            Json([item.as_storage_payload() for item in comment.attachments]),
                             synced_at,
                         ),
                     )
@@ -9865,6 +10057,7 @@ class PostgresTicketRepository(
         synced_at: str,
         source_updated_at: str | None = None,
         engineer_slack_event: dict[str, Any] | None = None,
+        native_notification: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         normalized_case_id = str(account_case_id or "").strip()
         normalized_status = str(zendesk_status or "").strip().lower()
@@ -9913,6 +10106,12 @@ class PostgresTicketRepository(
                     stored_status_updated_at=stored_status_updated_at,
                     synced_at=synced_at,
                 )
+                if native_notification is not None:
+                    watermark = _native_status_watermark(normalized_source_updated_at, stored_status_updated_at)
+                    if watermark == "older":
+                        plan = {"outcome": "stale_ignored"}
+                    elif plan["outcome"] == "unchanged" and watermark == "newer":
+                        cur.execute(sql.SQL("UPDATE {} SET zendesk_status_updated_at=%s,zendesk_status_synced_at=%s WHERE account_case_id=%s").format(self._table("support_account_cases")), (normalized_source_updated_at, synced_at, stored_key))
                 if plan["outcome"] != "updated":
                     return {
                         "status": plan["outcome"],
@@ -9975,6 +10174,9 @@ class PostgresTicketRepository(
                         synced_at,
                     ),
                 )
+                if native_notification is not None:
+                    intent = _native_status_intent(native_notification, plan["prior_zendesk_status"], normalized_status)
+                    self._insert_native_notification(cur, **intent, created_at=synced_at)
                 engineer_slack_event_queued = False
                 if (
                     normalized_slack_event is not None
@@ -12522,6 +12724,7 @@ class PostgresTicketRepository(
                     ("draft_version", "INTEGER"),
                     ("comments_revision", "TEXT"),
                     ("immutable_content", "TEXT"),
+                    ("attachments", "JSONB NOT NULL DEFAULT '[]'::jsonb"),
                 ):
                     cur.execute(
                         sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
@@ -12631,6 +12834,7 @@ class PostgresTicketRepository(
                         self._table("support_tickets"),
                     )
                 )
+                cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS attachments JSONB NOT NULL DEFAULT '[]'::jsonb").format(self._table("support_account_case_comments")))
                 cur.execute(
                     sql.SQL(
                         """
@@ -14888,6 +15092,77 @@ class PostgresTicketRepository(
                 ]
 
         return self._run_with_connection_retry("list_workspace_audit_events", _operation)
+
+    def _insert_native_notification(self, cur: Any, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> None:
+        cur.execute(sql.SQL("INSERT INTO {} (scope,idempotency_key,state,response_payload,created_at,updated_at) VALUES (%s,%s,'pending',%s,%s,%s) ON CONFLICT (scope,idempotency_key) DO NOTHING").format(self._table("support_idempotency_records")), (scope, key, Json(payload), created_at, created_at))
+
+    def list_native_attachment_notifications(self, *, scope: str, limit: int = 20) -> list[dict[str, Any]]:
+        def operation(conn):
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT scope,idempotency_key,state,response_payload,created_at,updated_at FROM {} WHERE scope=%s AND idempotency_key LIKE 'attachment:%%' AND idempotency_key NOT LIKE '%%:failure-notice' AND state IN ('pending','failed','sending','outcome_unknown') ORDER BY updated_at LIMIT %s").format(self._table("support_idempotency_records")), (scope, limit))
+                return [dict(zip(("scope","idempotency_key","state","response_payload","created_at","updated_at"), row)) for row in cur.fetchall()]
+        return self._run_with_connection_retry("list_native_attachment_notifications", operation)
+
+    def enqueue_native_notification(self, *, scope: str, key: str, payload: dict[str, Any], created_at: str) -> dict[str, Any]:
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                self._insert_native_notification(cur, scope=scope, key=key, payload=payload, created_at=created_at)
+                cur.execute(sql.SQL("SELECT state,response_payload FROM {} WHERE scope=%s AND idempotency_key=%s").format(self._table("support_idempotency_records")), (scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": row[0], "response_payload": row[1]}
+        return self._run_with_connection_retry("enqueue_native_notification", operation)
+
+    def get_native_notification(self, scope: str, key: str) -> dict[str, Any] | None:
+        def operation(conn):
+            with conn.cursor() as cur:
+                cur.execute(sql.SQL("SELECT state,response_payload FROM {} WHERE scope=%s AND idempotency_key=%s").format(self._table("support_idempotency_records")), (scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": row[0], "response_payload": row[1]} if row else None
+        return self._run_with_connection_retry("get_native_notification", operation)
+
+    def claim_native_notification(self, *, scope: str, key: str, claim_token: str, updated_at: str) -> dict[str, Any] | None:
+        if not claim_token:
+            raise ValueError("notification claim requires processing fence")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state='sending',response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state IN ('pending','failed') RETURNING response_payload").format(self._table("support_idempotency_records")), (Json({"claim_token": claim_token}), updated_at, scope, key))
+                row = cur.fetchone()
+                return {"scope": scope, "idempotency_key": key, "state": "sending", "response_payload": row[0]} if row else None
+        return self._run_with_connection_retry("claim_native_notification", operation)
+
+    def confirm_native_attachment_readback(self, *, scope: str, key: str, file_id: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not key.startswith("attachment:"):
+            raise ValueError("attachment identity required")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state='completed',response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state IN ('sending','outcome_unknown') AND response_payload->>'slack_file_id'=%s").format(self._table("support_idempotency_records")), (Json({"delivery":result}), updated_at, scope, key, file_id))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("confirm_native_attachment_readback", operation)
+
+    def checkpoint_native_notification(self, *, scope: str, key: str, claim_token: str, fields: dict[str, Any], updated_at: str) -> bool:
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state='sending' AND response_payload->>'claim_token'=%s").format(self._table("support_idempotency_records")), (Json(fields), updated_at, scope, key, claim_token))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("checkpoint_native_notification", operation)
+
+    def finish_native_notification(self, *, scope: str, key: str, claim_token: str, state: str, result: dict[str, Any], updated_at: str) -> bool:
+        if state not in {"completed", "failed", "outcome_unknown"}:
+            raise ValueError("invalid native notification outcome")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state=%s,response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state='sending' AND response_payload->>'claim_token'=%s").format(self._table("support_idempotency_records")), (state, Json({"delivery": result}), updated_at, scope, key, claim_token))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("finish_native_notification", operation)
+
+    def confirm_native_close_readback(self, *, scope: str, key: str, result: dict[str, Any], updated_at: str) -> bool:
+        if not scope.startswith("native-hermes-close:") or result.get("ticket_status") not in {"solved", "closed"}:
+            raise ValueError("terminal native close readback required")
+        def operation(conn):
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(sql.SQL("UPDATE {} SET state='completed',response_payload=response_payload || %s::jsonb,updated_at=%s WHERE scope=%s AND idempotency_key=%s AND state IN ('sending','outcome_unknown')").format(self._table("support_idempotency_records")), (Json({"delivery": result}), updated_at, scope, key))
+                return cur.rowcount == 1
+        return self._run_with_connection_retry("confirm_native_close_readback", operation)
 
     def begin_idempotent_request(
         self,
@@ -19104,6 +19379,45 @@ class PostgresTicketRepository(
                 row = cur.fetchone()
                 return self._account_reply_job_from_row(row) if row is not None else None
         return self._run_with_connection_retry("get_latest_account_reply_job", _operation)
+
+    def find_account_reply_job_by_chain(
+        self,
+        ticket_id: str,
+        *,
+        trigger_message_created_at: str,
+        automation_delivery_key: str,
+    ) -> dict[str, Any] | None:
+        """PostgreSQL twin: one indexed lookup by chain identity.
+
+        Uses the exact unique-index identity (ticket_id, trigger
+        timestamp, empty rerun_job_id) plus the automation delivery key
+        so a retry reuses the persisted job instead of colliding with
+        idx_support_account_reply_jobs_ticket_trigger_rerun.
+        """
+        normalized_key = str(automation_delivery_key or "").strip()
+        parsed_trigger = _parse_account_reply_trigger(trigger_message_created_at)
+        if parsed_trigger is None or not normalized_key:
+            return None
+
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,scheduled_for,"
+                        "payload,attempt_count,claimed_at,published_at,created_at,updated_at "
+                        "FROM {} WHERE ticket_id=%s AND trigger_message_created_at=%s "
+                        "AND COALESCE(payload->>'rerun_job_id', '') = '' "
+                        "AND payload->>'automation_delivery_key' = %s "
+                        "ORDER BY created_at DESC LIMIT 1"
+                    ).format(self._table("support_account_reply_jobs")),
+                    (str(ticket_id), parsed_trigger, normalized_key),
+                )
+                row = cur.fetchone()
+                return self._account_reply_job_from_row(row) if row is not None else None
+
+        return self._run_with_connection_retry(
+            "find_account_reply_job_by_chain", _operation
+        )
 
     def get_latest_account_reply_jobs(
         self, ticket_ids: list[str]

@@ -223,6 +223,8 @@ def read_ticket_comment_audit(
     body: str,
     public: bool = False,
     timeout_seconds: float = 15.0,
+    attachments: list[dict[str, Any]] | None = None,
+    not_before: str | None = None,
 ) -> tuple[ZendeskCommentResult | None, bool]:
     """Locate the exact comment in ticket audits and report whether a solved change exists.
 
@@ -240,6 +242,13 @@ def read_ticket_comment_audit(
     )
     solved_seen = _audit_contains_solved_change(audits)
     for audit in audits:
+        if attachments:
+            from datetime import datetime
+            try:
+                if not not_before or datetime.fromisoformat(str(audit.get("created_at") or "").replace("Z", "+00:00")) < datetime.fromisoformat(str(not_before).replace("Z", "+00:00")):
+                    continue
+            except ValueError:
+                continue
         events = audit.get("events") if isinstance(audit, dict) and isinstance(audit.get("events"), list) else []
         for event in reversed(events):
             if not isinstance(event, dict):
@@ -249,6 +258,15 @@ def read_ticket_comment_audit(
                 and event.get("public") is expected_public
                 and _audit_body_matches(event.get("body"), normalized_body)
             ):
+                if attachments:
+                    expected_ids = {str(a.get("zendesk_attachment_id") or "") for a in attachments}
+                    observed_ids = {str(a.get("id") or "") for a in event.get("attachments", [])}
+                    if "" in expected_ids or expected_ids != observed_ids:
+                        continue
+                    expected = sorted((a["file_name"], int(a["size_bytes"])) for a in attachments)
+                    observed = sorted((str(a.get("file_name") or ""), int(a.get("size") or 0)) for a in event.get("attachments", []))
+                    if observed != expected:
+                        continue
                 comment_id = str(event.get("id") or "").strip() or None
                 return (
                     ZendeskCommentResult(comment_id=comment_id, status_code=status_code),
@@ -316,13 +334,48 @@ def get_ticket_status(*, ticket_id: str, timeout_seconds: float = 15.0) -> str |
     return _ticket_status_from_payload(payload)
 
 
+def get_ticket_state(*, ticket_id: str, timeout_seconds: float = 15.0) -> dict[str, Any]:
+    """Read the current Zendesk ticket status without writing."""
+    normalized_ticket_id = str(ticket_id or "").strip()
+    if not normalized_ticket_id:
+        raise ZendeskCommentError("permanent", error_code="zendesk_comment_input_invalid")
+    url = f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(normalized_ticket_id, safe='')}.json"
+    request = urllib.request.Request(
+        url,
+        method="GET",
+        headers={"Authorization": _basic_auth_header(), "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_request_timeout(timeout_seconds)) as response:
+            status_code = int(getattr(response, "status", 200) or 200)
+            if status_code < 200 or status_code >= 300:
+                raise ZendeskCommentError(
+                    _http_status_category(status_code), status_code=status_code, error_code="zendesk_http_error"
+                )
+            payload = _decode_json_response(response)
+    except ZendeskCommentError:
+        raise
+    except urllib.error.HTTPError as exc:
+        raise _zendesk_request_error(exc) from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_network_outcome_unknown") from exc
+    ticket = payload.get("ticket")
+    if not isinstance(ticket, dict) or str(ticket.get("id") or "") != normalized_ticket_id:
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_identity_unverified")
+    if not ticket.get("updated_at") or not _ticket_status_from_payload(payload):
+        raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_state_unverified")
+    return {key: ticket.get(key) for key in ("id", "status", "updated_at", "assignee_id", "group_id")}
+
+
+
 def upload_ticket_attachment(
     *,
     filename: str,
     data: bytes,
     content_type: str = "application/pdf",
     timeout_seconds: float = 60.0,
-) -> str:
+    return_receipt: bool = False,
+) -> str | dict[str, str]:
     """Upload one binary attachment and return its Zendesk upload token.
 
     An upload that is never attached to a comment is inert on the Zendesk side,
@@ -375,6 +428,11 @@ def upload_ticket_attachment(
     token = str((upload or {}).get("token") or "").strip()
     if not token:
         raise ZendeskCommentError("retryable", error_code="zendesk_upload_token_missing")
+    if return_receipt:
+        attachment_id = str((upload.get("attachment") or {}).get("id") or "").strip()
+        if not attachment_id:
+            raise ZendeskCommentError("retryable", error_code="zendesk_upload_attachment_identity_missing")
+        return {"token": token, "attachment_id": attachment_id}
     return token
 
 
@@ -385,6 +443,7 @@ def add_ticket_comment(
     public: bool = False,
     solve: bool = False,
     uploads: tuple[str, ...] | list[str] | None = None,
+    expected_attachment_ids: list[str] | None = None,
     timeout_seconds: float = 15.0,
 ) -> ZendeskCommentResult:
     normalized_ticket_id = str(ticket_id or "").strip()
@@ -447,6 +506,10 @@ def add_ticket_comment(
     comment = _comment_event(payload)
     if not isinstance(comment, dict) or comment.get("public") is not expected_public:
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_comment_visibility_unverified")
+    if expected_attachment_ids is not None:
+        observed_ids = {str(a.get("id") or "") for a in comment.get("attachments", [])}
+        if not expected_attachment_ids or observed_ids != set(expected_attachment_ids):
+            raise ZendeskCommentError("outcome_unknown", error_code="zendesk_comment_attachments_unverified")
     ticket_status = _ticket_status_from_payload(payload)
     if solve and ticket_status != "solved":
         raise ZendeskCommentError("outcome_unknown", error_code="zendesk_ticket_status_unverified")
