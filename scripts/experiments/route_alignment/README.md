@@ -94,7 +94,15 @@ produced from a different snapshot.
 
 Outputs are `manifest.jsonl`, controlled `raw_results.jsonl`,
 `normalized_comparison.jsonl`, `disagreement_report.<run_id>.csv`,
-`candidate_error_report.<run_id>.csv`, and `summary.json`. The disagreement
+`candidate_error_report.<run_id>.csv`, `three_way_comparison.csv`, and
+`summary.json`. `three_way_comparison.csv` has one row for every frozen case,
+including candidate failures, and records Production/Hermes/Jev
+`primary_label`, `secondary_label`, `conversation_subcategory`, and
+`route_target`, plus the differing fields for Production–Hermes,
+Production–Jev, and Hermes–Jev. `summary.json` reports each pair's
+comparable sample count and per-field/overall agreement rate; each denominator
+uses only cases where both sides succeeded and the compared fields are present.
+The disagreement
 report contains only valid classifications with field differences. Candidate
 errors, input-size failures, and missing baselines are recorded separately and
 are excluded from agreement denominators. The controlled evidence file does
