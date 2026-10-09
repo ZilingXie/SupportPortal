@@ -6,9 +6,7 @@
 - 背景：PP-A4 工单 13939 的 hermes ask 草稿与 Production fraud 回复风格（13710/13616/13426/13548 样本）差距：意译字段标签、合并列表项、泛化收尾（"move the request forward"）、中文镜像、完整资料缺转交+24h 承诺。生成源已实证绑定 Hermes Persona 路径（persona 阶段 prompt=hermes-persona-manual，零 automation-persona-v32 reply job）。
 - v4 变更：persona manual 增加零/部分/完整字段三段结构选择、逐字标准标签、"- " 连字符列表、"continue coordinating the review" 收尾锚点、禁空泛道歉与 meta 句式、英文草稿不镜像客户语言；reply contract fraud 节增加七字段 canonical display labels、保存前六点核对清单、结构形状参考（防逐字复制）。
 - 验证：test_hermes_fraud_reply_style.py 12 项（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+结构化 C1-C8 判定器 9 场景正反例）；离线真实模型评估（gpt-6-sol@medium，与 13939 实跑 usage 记录同模型）三轮五样本，证据 /tmp/fraud_reply_style_results_round3.json 形态（脱敏）。
-- 离线结论（A 模式，纯提示词）：硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5）；措辞锚点在部署档位不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5——中文镜像 1 例）。提示词层已达合理强化上限。
-B 方案收口（用户选定）：新增 backend/services/account_fraud_reply_basis.py（确定性骨架：lead_in/connector/七字段 bullets/ask_sentence/closing/confirmation/24h 承诺/draft_language/collected_facts，标签对齐 legacy automation_persona._FIELD_LABELS），工具 work_result 注入 reply_basis，persona-manual v4+reply-contract v4 改为"骨架逐字渲染+模型只写叙事"。离线评估 5/5 全过（gpt-6-sol@medium）。
-发布（2026-10-09）：schedule v4×2 → prepare pr-ee28a3c51d44（41 项）→ 管线 r20261009-1a7b6e5 全阶段 passed → activation → DB 回读 active。实测工单 13949：reply_basis 注入 ✓、草稿与 Production 风格逐字一致 ✓、C1-C8 判定器全过 ✓。
+- 离线结论：硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5）；措辞锚点在部署档位不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5——中文镜像 1 例）。提示词层已达合理强化上限；后续路径（接受残余风格偏移×工程师评审门 / 服务端确定性 reply basis / 提升 persona 档位）待用户决策。
 
 ## 2026-10-08 - 计划交接收敛：共享角色规则、PR 证据与版本校验
 
@@ -5099,6 +5097,10 @@ For each new entry, record:
 - Verification: fixture CLI run and targeted route-alignment tests cover equal,
   differing and failed candidate cases, candidate input isolation, CSV row
   completeness and pair denominators.
+
+## 2026-10-09 — Investigation 附件闭环 v1（p2-192）
+
+Hermes snapshot/model input 增加经过来源验证的工程师附件元数据，明确未读取文件、不自动读图。附件由 store 权威绑定当前 turn/draft，经审批后 delivery ledger 发送；不更改 route 或版本化 prompt 内容。见 [R1](plans/investigation-attachments-v1.md)。
 
 ## 2026-10-09 — Investigation 客户回复长度契约 v2（Investigation 回复长度优化 v1）
 

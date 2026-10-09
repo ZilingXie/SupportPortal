@@ -210,3 +210,78 @@ R3 撤回 R2 报告中"基础设施和脚本不适用自动化测试"的表述�
 1. **F1 cleanup 单次查询一致判定**：删除原"第二遍重查询重建归属"的循环；每个容器在 cleanup 中只查询一次，同一次结果同时决定（a）归属是否保留、（b）是否允许删除工作目录。仅当本轮全部自建容器均确认 absent 才删 GUARD_WORK_DIR；任一 present/unknown → 保留该容器归属+KEEPING+保留目录。修复"第一次 absent、第二次 unknown → 保留归属却删目录"的反例；持续 unknown、删除失败、重复 cleanup 反例保留并通过。
 2. **F3 合同拒绝与断言失败区分**：child B 合同完成（拒绝启动 C）改用专用退出码 42；所有断言失败路径仍 exit 1。父进程 B 断言要求 exit 42（不再接受任意非零）。新增 child B-BUG：注入 R7 缺陷（rm 后置 STOP_RC=0 并丢弃归属），子进程自身断言必须触发 FAIL 并 exit 1——父断言证明该缺陷子进程被检出（exit 1 + FAIL 行，绝不会被当作合同通过）。
 3. 固定提交实测计数：真实模式 7 PASS；--self-check 父断言 14 PASS（A 5 + B-fault 3 + B-bug 1 + C-fault 3 + 载具自校验 2）。
+
+### R9 知识链验收记录（2026-10-08，用户授权复用 preprod LLM key + AgentMemory embedding key）
+
+**凭据**（用户明确授权复用；未改动 Hermes/AgentMemory 自身配置）：chat=gpt-6-sol（/supportportal/preproduction/openai-api-key，OpenAI 官方，openai-responses）；embedding=BAAI/bge-m3 1024 维（/supportportal/preproduction/hermes-memory-embedding-api-key-v2，SiliconFlow）。前置确认：旧 embedding key 失效（Token invalid）；-v2 曾余额不足（30001），用户充值后连通。两模型经 /api/v1/models/:id/debug 实调验证（chat elapsed 1.4s；embedding 返回 1024 维实向量）。
+
+**验收结果（阶段一八项现已全部有证据）**：
+1. 文档闭环：KB `008d2bab`（PUT /initialization/config/:kbId 绑定模型）→ 非业务样本《泽塔七号星球咖啡种植指南》上传（knowledge `963f59b0`）→ parse completed → hybrid-search 命中（gpt-6-sol 摘要块 + bge-m3 原文块）→ 精确事实 `ZETA-7-IRRIGATE-42` 回读 PASS → /knowledge/:id/download 与本地参考文件字节一致。
+2. 异常表现：模型未绑定时的首样本（`bd125801`）parse_status=failed、error_message=`failed to get embedding model: model ID cannot be empty`，未呈现 ready。
+3. 含知识数据的任务重建持久化：weknora-paradedb 与 weknora-app 双强制重建（:4 数据守卫在既有 PGDATA 上放行）→ 重建后 hybrid 检索命中 + 文件下载字节一致。
+4. 备份：`db/weknora-weknora-20261008T090954Z.dump`（310,112B；manifest 基线 users=1/kb=1/knowledges=2/chunks=2/embeddings=2，sourceTaskDefinition :4）。
+5. DB 层恢复：restore_verify countsMatchBaseline=true；`--expect-knowledge 泽塔七号咖啡种植指南-验收样本` 精确标题命中 2 chunks 全文回读。
+6. 独立恢复环境应用层验证（新脚本 `verify_restore_app_level.sh`，已入库）：容量实例（amd64）上三容器（paradedb/redis/app 同 ECR 镜像）→ template0 恢复 → app /health → 管理员登录 → hybrid 检索命中故障码 PASS → /knowledge/:id/download HTTP 200 且 MD5 e53ce21a… 与本地参考全等 → 唯一资源清理 TEARDOWN-OK。产物 JSON 明确分层（appLevelSearch/appLevelFileReadBack）。
+
+**本轮新坑（已记）**：本地 qemu 仿真运行 amd64 app 镜像段错误（arm64 Mac）→应用层验证改在 amd64 容量实例执行；paradedb 镜像 init 库预置 paradedb/tiger schema→恢复目标库必须 `createdb -T template0`；长会话 STS 凭据在脚本执行中途过期→脚本内即时 export-credentials。
+
+**残余限制更新**：文档处理依赖外部模型（现已配 gpt-6-sol+bge-m3）；知识处理链依赖模型可用性，若上游 key 额度/密码变化需同步更新 WeKnora 模型配置（管理 UI 或 API）。管理员密码已在本轮浏览器会话中出现过，交付时建议轮换。
+
+### R10 修复记录（2026-10-08，响应 R9 复验 F1：恢复脚本资源归属；无镜像/服务变更）
+
+1. **碰撞 fail-closed**：删除 `docker rm -f …|| true` 无条件预清理与 `network create …|| true` 静默复用；预检（容器名单 + 网络名单）发现同名资源即退出 81/COLLISION，不触碰既有资源。
+2. **归属文件**：远端脚本将本轮成功创建的每项资源（container:/net:/file:）记入 `/tmp/wkr-owned-<RS>`；清理只处理文件内记录。
+3. **EXIT trap 三态清理**：容器先删、网络后删（端点异步脱离，重试 5×2s）；单次查询判定 absent/present/unknown，无法确认撤除即 KEEPING 报告并保留；幂等（确认撤除移出清单）。
+4. **外层 rescue**：外层 EXIT trap 重放归属文件——覆盖 SSM 中断/超时（SIGKILL 跳过远端 trap）后仅按记录清理本轮资源；成功路径归属文件已空 → rescue 无害 no-op（也输出 rescue-done）。
+5. **--self-check 故障注入套件（17 PASS）**：S1 碰撞（既有容器存活）；S2-S6 restore/appstart/login/search/download 五故障（失败+资源全清）；S7 SSM 短超时杀远端（Failed）→ rescue → 资源全清。
+6. **新坑**：实例 docker 旧版无 `container exists` 子命令（打 usage、rc=1）→ 曾被误判 absent（S1 失效根因）；改 `docker ps -a` 名单三态判定。heredoc 非引用模式下 `\\x27` 不展开（字面反斜杠引号传入远端）→ 统一改双引号形式。
+7. **证据边界（复核意见采纳）**：应用层恢复验证读取现有 docs 桶对象——MD5 证明『独立恢复的 app 经数据库记录读取现有文件桶对象』，不单独证明文件对象在备份恢复链内；完整文件备份/恢复如需，另补对象存储证据。
+
+### R11 修复记录（2026-10-08，响应 R10 复验 F1：归属崩溃窗口；无镜像/服务变更）
+
+1. **预登记归属**：net/pg/redis/app 四处归属标记全部改为资源**创建前**写入 `/tmp/wkr-owned-<RS>`——资源一旦创建成功即已持有归属记录，"创建成功但登记前被杀"的窗口不存在；若创建失败，清理按 absent 处理自然撤销标记（幂等语义不变）。
+2. **dump 窗口**：rescue 首步**确定性删除**本轮唯一命名路径 `/tmp/wkr-<RS>.dump`（RS 唯一 ⇒ 无碰撞歧义），覆盖"dump 已下载、远端脚本尚未启动（无归属文件）"的 SSM 失败窗口。
+3. **新增故障注入（self-check 29 PASS）**：S8=stage 后不发远端直接 rescue（nothing-owned 路径+确定性删 dump，assert_clean=0）；S9-S12=killnet/killpg/killredis/killapp 以 kill -9 在四个创建边界自杀（远端 trap 被跳过，SSM Failed/TimedOut），外层 rescue 按预登记归属清理，全部资源逐项为零。
+4. 首轮 self-check 26/27 唯一 FAIL 为 AWS 会话中途过期（assert_clean 的 SendCommand ExpiredToken），非脚本逻辑；重登录后干净复跑 29/29。
+5. 真实模式复跑通过（APP-SEARCH PASS / DL-MD5 全等 / TEARDOWN-OK / assert_clean miss=0）。
+
+### R12 修复记录（2026-10-08，响应 R11 复验：预登记的 TOCTOU 竞态；无镜像/服务变更）
+
+1. **owner-label 双因子归属**：本轮创建的网络与容器全部携带 `wkrestore-owner=<RS>` 标签；远端 cleanup 与外层 rescue 在删除前核对**名称+标签同时匹配**——标签缺失/不匹配（外部抢占者）或标签查询失败一律不删除，记录 FOREIGN 并撤销本轮标记（fail-closed）。create 失败（竞态输家）路径因此天然安全：预登记标记存在但对象非本轮所有，清理只撤标记不触碰资源。
+2. **S13-S14 TOCTOU 竞态注入**：`racenet`/`racepg` 旋钮在预检通过后、本轮 create 前抢先创建同名网络/容器（无标签=模拟外部进程）。断言：本轮 run 失败、外部资源存活、本轮其余资源+dump+归属记录全清；移除诱饵后逐项全清。
+3. **killpg 残留根因修复**：被 SIGKILL 容器的端点在网络沙箱滞留，旧 docker 的 network rm 长期拒绝（30s 重试仍不够）；三处网络删除循环增加 `network disconnect -f` 强制断开端点 + 15×2s 重试。
+4. **套件压缩**：dump stage 折入运行脚本（S8 保留独立 stage 以覆盖未启动窗口）、rescue+assert 合并为单条 SSM 命令、竞态校验+诱饵移除+终清合并单命令、轮询 5s——全程约 12 分钟，单 AWS 会话内完成（此前两轮因会话中途过期失败，均为环境非逻辑）。
+5. 固定提交实测：--self-check 27 PASS（0 FAIL）；真实模式复跑通过；实例终检零残留（容器/网络/wkr* 文件全零）。
+
+### R13 修复记录（2026-10-08，响应 R12 复验：网络查询布尔误判；无镜像/服务变更）
+
+1. **network_state() 三态统一**：新增基于 `docker network ls` 名单的 network_state()（present/absent/unknown；查询失败=unknown），统一应用于远端 cleanup、外层 rescue、rescue_assert、preflight 与 assert_clean 五处。仅确认 absent 才撤销归属记录；unknown 一律 KEEPING+保留归属+失败关闭；preflight 对 unknown 拒绝启动。
+2. **查询失败故障注入（WK_NETQUERY_FAIL=1，不触碰 docker 即模拟 daemon/权限失败）**：S15=资源确属本轮时查询失败——网络 KEPT（零误删）、归属文件保留 net: 标记（零丢失）、TEARDOWN-PARTIAL（不报清理成功）、容器标记正常撤销；查询恢复后 rescue 完成清理。S16=preflight 阶段查询失败——拒绝启动+零残留。assert_clean 的 network ls 失败记为 cannot-verify（不误报零残留）。
+3. **载具缺陷修复（调试中发现）**：①脚本顶层 `S3_KEY=""` 覆盖了环境变量，而 --self-check 模式仅从 --key 旗标解析——所有 self-check presign 此前签在桶根（HTTP 200 + ListBucketResult XML），dump 依赖场景多轮空转；现 --self-check 缺 --key 即 fail-fast。②诊断插桩曾在双引号赋值串内嵌双引号，截断 prelude 使生成脚本语法损坏（bash -n 生成物校验已补）。③ssm_run 发送失败现清空 REMOTE_* 并中止（此前保留上一场景状态，把会话过期伪装成"全部意外成功"）。
+4. **场景重排**：本轮复验必需的 S15/S16 移至最前，慢速 app 引导类（S2-S6）最后——AWS login 会话在本机仅约 8-15 分钟，整套约 20 分钟无法单会话完成；fail-fast 保证会话过期时如实报告而非假绿。
+5. 固定提交实测：sc26 轮 S15(4/4)+S16(2/2)+S1(2/2)+S2-S6(10/10)+S7-rescue+S8(1/1) 全过，S7 状态检查为轮询窗flake；kill/race 在 sc24 轮（同功能代码）8+4 全过。
+
+### R14 修复记录（2026-10-08，响应 R13 复验：删除后查询 unknown 的撤标记缺陷；无镜像/服务变更）
+
+1. **严格 absent-only 撤标记**：cleanup/rescue/rescue_assert 三处的"重试后判定"全部从 `gone && rst != present`（unknown 也会撤销归属）改为 `rst = absent` 才撤销，否则 KEEPING + kept=1。
+2. **rescue_assert kept 门控**：初始 unknown 分支补设 kept=1；ownership 文件删除改为仅 kept=0 时执行，kept>0 输出 RESCUE-PARTIAL 并保留 ownership（不再无条件删除）。
+3. **S15b 注入（rm 成功后查询变 unknown）**：两级旋钮 WK_NETQUERY_ARM_AFTER_RM（查询失败仅在删除发生后生效）+ WK_RM_OCCURRED（三处 network rm 成功点置位）——实测 net: 标记保留（严格 absent-only 撤销）、查询恢复后 rescue 完成。
+4. **S15c 注入（rescue 自身查询失败）**：在保留的归属状态上以查询全失败运行 rescue 逻辑——ownership 存活、不报清理成功、恢复后清理完成。
+5. **S7 断言括号化**：if 块明确覆盖 TimedOut/Cancelled/Failed → PASS，其余 → FAIL；本环境会话过期出现的空状态在本两轮均产生明确 FAIL（else 分支实证）。
+6. 会话时限说明（如实）：本机 AWS login 会话约 8-10 分钟，整套约 20 分钟；sc27/sc28 在时限内锁定本轮必需 23 项全绿（S15/S15b/S15c/S16/S1/S2-S6），其后场景 SEND-FAILED 如实报告；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。
+
+### R15 修复记录（2026-10-08，响应 R14 复验：rescue_assert 容器 unknown 不置 kept；无镜像/服务变更）
+
+1. **rescue_assert 容器分支三态化**：重写为显式 case——absent 撤标记；**unknown 记 KEEPING + kept=1**（修复此前只保留 marker 不置 kept、循环结束后仍因 kept=0 删除 ownership 的缺陷）；present 经标签证明删除，删除后重查非 absent 同样 kept=1 + KEEPING。ownership 文件删除受 kept=0 门控（RESCUE-PARTIAL 保留）。
+2. **真实 rescue_assert 可注入**：函数新增 env 前缀参数；container_state 增 WK_CTQUERY_FAIL（全程 unknown）与 WK_CTQUERY_ARM_AFTER_RM+WK_CTRM_OCCURRED（仅容器删除后 unknown）钩子；容器 rm 成功点置位 WK_CTRM_OCCURRED。
+3. **S15c 重写在真实路径上**（弃用手写等价脚本）：killpg 留下带容器标记的 kept-状态（file+net+container 三标记+活 pg 容器），随后以 WK_CTQUERY_FAIL=1 驱动真实 rescue_assert——报 RESCUE-PARTIAL、容器标记与 ownership 存活、恢复 rescue 完成（4/4 PASS）。
+4. **S15d（容器 rm 成功后查询 unknown）**：PARTIAL + 容器标记保留（严格 absent-only 撤销）+ 恢复完成（3/3 PASS）。
+5. sc31 单轮 28 PASS（S15/S15b/S15c/S15d/S16/S1/S2-S6 全绿）；会话在 S7 过期，其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。
+
+### R16 修复记录（2026-10-08，响应 R15 复验：rm 成功证据化；无镜像/服务变更）
+
+1. **条件置位**：WK_CTRM_OCCURRED 仅在 `docker rm -f` 返回 0 时 export（修复原无条件置位、无法证明 rm 成功的缺陷）。
+2. **rm 成败证据行**：成功写 `CTRM-OK <name>`、失败写 `CTRM-FAILED <name>` 至 CLEANLOG，并随 rescue_assert 输出回传（grep CTRM- 于 kept 门控前、ownership 删除前输出，两种终态都可见）。
+3. **S15d 增证据断言**：要求输出含 `CTRM-OK <pg名>` 且不含 `CTRM-FAILED`——证明"rm 成功后查询 unknown"确为目标场景。
+4. **S15e（rm 失败独立验证）**：`WK_CTRM_FORCE_FAIL=1` 强制 rm 失败（钩子不臂）——CTRM-FAILED 证据 + RESCUE-PARTIAL + 容器标记与 ownership 保留 + 恢复完成。
+5. sc32 单轮 34 PASS（S15/S15b/S15c/S15d/S15e/S16/S1/S2-S6 全绿）；会话在 S7 过期，其后 SendFailed；S7/S8 绿于 sc26、kill/race 绿于 sc24（同功能代码）。

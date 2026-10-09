@@ -12,6 +12,8 @@ from typing import Any
 MAX_COMMENT_BODY_LENGTH = 100_000
 MAX_COMMENT_AUTHOR_NAME_LENGTH = 160
 MAX_COMMENT_CHANNEL_LENGTH = 160
+MAX_ATTACHMENT_NAME_LENGTH = 255
+MAX_ATTACHMENT_TYPE_LENGTH = 160
 
 
 class ZendeskCommentSnapshotError(ValueError):
@@ -21,6 +23,26 @@ class ZendeskCommentSnapshotError(ValueError):
         super().__init__(message)
         self.code = str(code or "invalid_snapshot").strip() or "invalid_snapshot"
         self.message = str(message or "Invalid Zendesk comment snapshot").strip()
+
+
+@dataclass(frozen=True)
+class NormalizedZendeskAttachment:
+    attachment_id: str
+    file_name: str
+    content_type: str
+    size_bytes: int
+    inline: bool
+    source_comment_id: str
+
+    def as_storage_payload(self) -> dict[str, Any]:
+        return {
+            "attachment_id": self.attachment_id,
+            "file_name": self.file_name,
+            "content_type": self.content_type,
+            "size_bytes": self.size_bytes,
+            "inline": self.inline,
+            "source_comment_id": self.source_comment_id,
+        }
 
 
 @dataclass(frozen=True)
@@ -34,6 +56,7 @@ class NormalizedZendeskComment:
     body: str
     via_channel: str | None
     created_at: str
+    attachments: tuple[NormalizedZendeskAttachment, ...] = ()
 
     def as_storage_payload(self) -> dict[str, Any]:
         return {
@@ -46,6 +69,7 @@ class NormalizedZendeskComment:
             "body": self.body,
             "via_channel": self.via_channel,
             "created_at": self.created_at,
+            "attachments": [item.as_storage_payload() for item in self.attachments],
         }
 
     def as_public_payload(self) -> dict[str, Any]:
@@ -60,6 +84,7 @@ class NormalizedZendeskComment:
             "body": self.body,
             "via_channel": self.via_channel,
             "created_at": self.created_at,
+            "attachments": [item.as_storage_payload() for item in self.attachments],
         }
 
 
@@ -124,6 +149,35 @@ def _parse_optional_bool(value: Any, *, field: str) -> bool | None:
         "invalid_snapshot",
         f"{field} must be a boolean",
     )
+
+
+def _normalize_attachments(raw: Any, *, source_comment_id: str) -> tuple[NormalizedZendeskAttachment, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list) or len(raw) > 100:
+        raise ZendeskCommentSnapshotError("invalid_snapshot", "comment attachments must be an array with at most 100 items")
+    result = []
+    seen: set[str] = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            raise ZendeskCommentSnapshotError("invalid_snapshot", "each attachment must be an object")
+        attachment_id = _normalize_text(item.get("id", item.get("attachment_id")), field="attachment id", max_length=128, required=True)
+        if attachment_id in seen:
+            raise ZendeskCommentSnapshotError("duplicate_attachment_id", f"duplicate attachment id: {attachment_id}")
+        seen.add(attachment_id)
+        file_name = _normalize_text(item.get("file_name", item.get("name")), field="attachment file_name", max_length=MAX_ATTACHMENT_NAME_LENGTH, required=True)
+        content_type = _normalize_text(item.get("content_type", item.get("mime_type")), field="attachment content_type", max_length=MAX_ATTACHMENT_TYPE_LENGTH) or "application/octet-stream"
+        try:
+            size_bytes = int(item.get("size_bytes", item.get("size", 0)) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ZendeskCommentSnapshotError("invalid_snapshot", "attachment size_bytes must be an integer") from exc
+        if size_bytes < 0:
+            raise ZendeskCommentSnapshotError("invalid_snapshot", "attachment size_bytes must be non-negative")
+        if str(item.get("source_comment_id", source_comment_id)) != source_comment_id:
+            raise ZendeskCommentSnapshotError("invalid_snapshot", "attachment source comment mismatch")
+        inline = _parse_optional_bool(item.get("inline", False), field="attachment inline")
+        result.append(NormalizedZendeskAttachment(attachment_id, file_name, content_type, size_bytes, bool(inline), source_comment_id))
+    return tuple(result)
 
 
 def _author_kind(role: Any, *, is_agent: Any = None, is_public: bool) -> str:
@@ -249,6 +303,7 @@ def normalize_snapshot(payload: Any) -> NormalizedZendeskSnapshot:
             max_length=MAX_COMMENT_CHANNEL_LENGTH,
         ) or None
         created_at = normalize_timestamp(raw_comment.get("created_at"), field="comment created_at")
+        attachments = _normalize_attachments(raw_comment.get("attachments"), source_comment_id=comment_id)
         normalized.append(
             NormalizedZendeskComment(
                 zendesk_comment_id=comment_id,
@@ -260,6 +315,7 @@ def normalize_snapshot(payload: Any) -> NormalizedZendeskSnapshot:
                 body=body,
                 via_channel=via_channel,
                 created_at=created_at,
+                attachments=attachments,
             )
         )
 
@@ -267,7 +323,16 @@ def normalize_snapshot(payload: Any) -> NormalizedZendeskSnapshot:
     if normalized:
         first = normalized[0]
         normalized[0] = NormalizedZendeskComment(
-            **{**first.as_storage_payload(), "is_initial": True}
+            zendesk_comment_id=first.zendesk_comment_id,
+            is_public=first.is_public,
+            is_initial=True,
+            author_id=first.author_id,
+            author_name=first.author_name,
+            author_kind=first.author_kind,
+            body=first.body,
+            via_channel=first.via_channel,
+            created_at=first.created_at,
+            attachments=first.attachments,
         )
 
     comment_payloads = [comment.as_storage_payload() for comment in normalized]

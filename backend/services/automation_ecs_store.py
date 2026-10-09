@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 import os
 import threading
 from dataclasses import dataclass
@@ -1745,7 +1746,7 @@ class InMemoryAutomationEcsStore:
             if turn is None or turn["status"] not in {"pending", "running", "cancel_requested"}:
                 raise HermesTurnStateError(turn_id, "turn is not active")
             work_result = copy.deepcopy(work_result)
-            for field in ("reviewer_feedback", "engineer_authority"):
+            for field in ("reviewer_feedback", "engineer_authority", "attachments"):
                 if field in (turn.get("work_result") or {}):
                     work_result[field] = copy.deepcopy(turn["work_result"][field])
             turn.update(work_result=work_result, updated_at=_iso())
@@ -1787,6 +1788,8 @@ class InMemoryAutomationEcsStore:
                 if prior:
                     if (prior.get("work_result") or {}).get("reviewer_feedback") != feedback:
                         raise HermesTurnStateError(prior["turn_id"], "Slack event identity conflict")
+                    if (prior.get("work_result") or {}).get("attachments", []) != (base_event.get("attachments") or []):
+                        raise HermesTurnStateError(prior["turn_id"], "Slack attachment identity conflict")
                     prior_authority = (prior.get("work_result") or {}).get("engineer_authority") or {}
                     if {k: v for k, v in prior_authority.items() if k != "case_revision"} != (authority or {}):
                         raise HermesTurnStateError(prior["turn_id"], "Slack authority identity conflict")
@@ -1796,6 +1799,9 @@ class InMemoryAutomationEcsStore:
             blocker = self.get_hermes_turn_fence_blocker(zendesk_ticket_id)
             if blocker is not None:
                 raise HermesTurnConflictError(blocker["turn_id"])
+            for draft in self._hermes_drafts.values():
+                if draft["zendesk_ticket_id"] == zendesk_ticket_id and (draft.get("basis") or {}).get("attachments") and draft.get("status") not in {"delivered", "stale"}:
+                    draft.update(status="stale", updated_at=_iso())
             now_value = _iso()
             execution_id = _new_id("exec")
             turn_id = _new_id("turn")
@@ -1812,7 +1818,7 @@ class InMemoryAutomationEcsStore:
                 "failure_code": None,
                 "error_message": None,
                 "requires_human_review": False,
-                "intake": {"feedback": feedback[:4000]},
+                "intake": {"feedback": feedback[:4000], "attachments": copy.deepcopy(base_event.get("attachments") or [])},
                 "route": {"engine": "hermes", "turn_kind": "investigation_feedback"},
                 "persona": None,
                 "outcome": None,
@@ -1842,7 +1848,7 @@ class InMemoryAutomationEcsStore:
                     ),
                     None,
                 ),
-                "work_result": {"reviewer_feedback": feedback[:4000], **({"engineer_authority": authority} if authority else {})},
+                "work_result": {"reviewer_feedback": feedback[:4000], "attachments": copy.deepcopy(base_event.get("attachments") or []), **({"engineer_authority": authority} if authority else {})},
                 "input_snapshot": None,
                 "request_id": request_id,
                 "prompt_release_id": str(prompt_release_id or "") or None,
@@ -1923,6 +1929,8 @@ class InMemoryAutomationEcsStore:
                 raise HermesTurnStateError(source_turn_id, "source turn is not awaiting investigation review")
             if source_result.get("continued_turn_id"):
                 raise HermesTurnConflictError(str(source_result["continued_turn_id"]))
+            if (source_turn.get("work_result") or {}).get("attachments") and self.list_hermes_case_turns(zendesk_ticket_id, limit=1)[0]["turn_id"] != source_turn_id:
+                raise HermesTurnStateError(source_turn_id, "stale_attachment_investigation_round")
             revision = int(case_row.get("case_revision") or 1)
             if int(source_turn.get("case_revision") or 0) != revision:
                 raise HermesTurnStateError(
@@ -1970,7 +1978,7 @@ class InMemoryAutomationEcsStore:
                 "direction": "investigation",
                 "route": None,
                 "direction_reason": source_turn.get("direction_reason"),
-                "work_result": None,
+                "work_result": {"attachments": copy.deepcopy((source_turn.get("work_result") or {}).get("attachments") or [])},
                 "input_snapshot": None,
                 "request_id": request_id,
                 "prompt_release_id": str(prompt_release_id or "") or None,
@@ -2251,6 +2259,16 @@ class InMemoryAutomationEcsStore:
             )
             return copy.deepcopy(binding)
 
+    @contextmanager
+    def attachment_delivery_guard(self, draft_id: str):
+        with self._lock:
+            draft = self._hermes_drafts.get(draft_id) or {}
+            case = self._cases.get(str(draft.get("zendesk_ticket_id"))) or {}
+            binding = self._hermes_bindings.get((draft.get("namespace"), draft.get("zendesk_ticket_id"))) or {}
+            if draft.get("status") != "queued" or draft.get("case_revision") != case.get("case_revision") or int(binding.get("conversation_version") or 0) > int(draft.get("conversation_version") or 0) + 1:
+                raise HermesDraftStateError(draft_id, "attachment_draft_stale")
+            yield
+
     def save_hermes_case_draft(
         self,
         turn_id: str,
@@ -2281,7 +2299,7 @@ class InMemoryAutomationEcsStore:
                 "conversation_version": int(binding["conversation_version"]),
                 "case_revision": int(turn["case_revision"]),
                 "content": normalized,
-                "basis": copy.deepcopy(basis or {}),
+                "basis": {**copy.deepcopy(basis or {}), "attachments": copy.deepcopy((turn.get("work_result") or {}).get("attachments") or [])},
                 "guardrail": copy.deepcopy(guardrail) if guardrail is not None else None,
                 "publish_policy": publish_policy,
                 "status": "draft",
@@ -4307,7 +4325,7 @@ class PostgresAutomationEcsStore:
                 if str(turn["status"]) not in {"pending", "running", "cancel_requested"}:
                     raise HermesTurnStateError(turn_id, "turn is not active")
                 work_result = copy.deepcopy(work_result)
-                for field in ("reviewer_feedback", "engineer_authority"):
+                for field in ("reviewer_feedback", "engineer_authority", "attachments"):
                     if field in (turn.get("work_result") or {}):
                         work_result[field] = copy.deepcopy(turn["work_result"][field])
                 cursor.execute(
@@ -4390,6 +4408,8 @@ class PostgresAutomationEcsStore:
                     if prior:
                         if (prior.get("work_result") or {}).get("reviewer_feedback") != feedback:
                             raise HermesTurnStateError(prior["turn_id"], "Slack event identity conflict")
+                        if (prior.get("work_result") or {}).get("attachments", []) != (base_event.get("attachments") or []):
+                            raise HermesTurnStateError(prior["turn_id"], "Slack attachment identity conflict")
                         prior_authority = (prior.get("work_result") or {}).get("engineer_authority") or {}
                         if {k: v for k, v in prior_authority.items() if k != "case_revision"} != (authority or {}):
                             raise HermesTurnStateError(prior["turn_id"], "Slack authority identity conflict")
@@ -4414,6 +4434,7 @@ class PostgresAutomationEcsStore:
                 )
                 reason_row = cursor.fetchone()
                 inherited_reason = str(reason_row["direction_reason"]) if reason_row else None
+                cursor.execute(sql.SQL("UPDATE {} SET status='stale',updated_at=NOW() WHERE namespace=%s AND zendesk_ticket_id=%s AND jsonb_array_length(COALESCE(basis->'attachments','[]'::jsonb))>0 AND status NOT IN ('delivered','stale')").format(self._table("automation_hermes_case_drafts")), (namespace, zendesk_ticket_id))
                 execution_id = _new_id("exec")
                 turn_id = _new_id("turn")
                 request_id = _new_id("hmreq")
@@ -4433,7 +4454,7 @@ class PostgresAutomationEcsStore:
                         (inbound_event_id or f"feedback:{turn_id}"),
                         ExecutionStatus.PROCESSING_PENDING.value,
                         "agent_turn.queued",
-                        Jsonb({"feedback": feedback[:4000]}),
+                        Jsonb({"feedback": feedback[:4000], "attachments": base_event.get("attachments") or []}),
                         Jsonb(base_event),
                         revision,
                     ),
@@ -4457,7 +4478,7 @@ class PostgresAutomationEcsStore:
                         inherited_reason,
                         request_id,
                         str(prompt_release_id or "") or None,
-                        Jsonb({"reviewer_feedback": feedback[:4000], **({"engineer_authority": authority} if authority else {})}),
+                        Jsonb({"reviewer_feedback": feedback[:4000], "attachments": base_event.get("attachments") or [], **({"engineer_authority": authority} if authority else {})}),
                     ),
                 )
                 agent_job_id = _new_id("job")
@@ -4549,6 +4570,10 @@ class PostgresAutomationEcsStore:
                     )
                 if source_result.get("continued_turn_id"):
                     raise HermesTurnConflictError(str(source_result["continued_turn_id"]))
+                if (source_turn.get("work_result") or {}).get("attachments"):
+                    cursor.execute(sql.SQL("SELECT turn_id FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s ORDER BY created_at DESC, turn_id DESC LIMIT 1").format(self._table("automation_hermes_agent_turns")), (namespace, zendesk_ticket_id))
+                    if cursor.fetchone()["turn_id"] != source_turn_id:
+                        raise HermesTurnStateError(source_turn_id, "stale_attachment_investigation_round")
                 revision = int(case_row["case_revision"])
                 if int(source_turn["case_revision"] or 0) != revision:
                     raise HermesTurnStateError(
@@ -4592,8 +4617,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status)
-                        VALUES (%s,%s,%s,%s,%s,'investigation_reply',%s,%s,'investigation_reply','persona','investigation',%s,%s,%s,'pending')
+                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status,work_result)
+                        VALUES (%s,%s,%s,%s,%s,'investigation_reply',%s,%s,'investigation_reply','persona','investigation',%s,%s,%s,'pending',%s)
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -4607,6 +4632,7 @@ class PostgresAutomationEcsStore:
                         source_turn.get("direction_reason"),
                         request_id,
                         str(prompt_release_id or "") or None,
+                        Jsonb({"attachments": (source_turn.get("work_result") or {}).get("attachments") or []}),
                     ),
                 )
                 agent_job_id = _new_id("job")
@@ -5235,6 +5261,27 @@ class PostgresAutomationEcsStore:
             raise HermesTurnStateError(turn_id, "turn not found")
         return dict(row)
 
+    @contextmanager
+    def attachment_delivery_guard(self, draft_id: str):
+        # Linearize the public write before the next input/feedback commits.
+        # File download/upload occurs before these row locks are acquired.
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE draft_id=%s").format(self._table("automation_hermes_case_drafts")), (draft_id,))
+                identity = cursor.fetchone()
+                if not identity:
+                    raise HermesDraftStateError(draft_id, "attachment_draft_missing")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                cursor.execute(sql.SQL("SELECT case_revision FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                case = cursor.fetchone() or {}
+                cursor.execute(sql.SQL("SELECT conversation_version FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
+                binding = cursor.fetchone() or {}
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE draft_id=%s FOR UPDATE").format(self._table("automation_hermes_case_drafts")), (draft_id,))
+                draft = cursor.fetchone() or {}
+                if draft.get("status") != "queued" or draft.get("case_revision") != case.get("case_revision") or int(binding.get("conversation_version") or 0) > int(draft.get("conversation_version") or 0) + 1:
+                    raise HermesDraftStateError(draft_id, "attachment_draft_stale")
+                yield
+
     def save_hermes_case_draft(
         self,
         turn_id: str,
@@ -5281,7 +5328,7 @@ class PostgresAutomationEcsStore:
                         int(binding["conversation_version"]),
                         int(turn["case_revision"]),
                         normalized,
-                        Jsonb(basis or {}),
+                        Jsonb({**(basis or {}), "attachments": (turn.get("work_result") or {}).get("attachments") or []}),
                         Jsonb(guardrail) if guardrail is not None else None,
                         publish_policy,
                     ),

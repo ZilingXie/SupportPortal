@@ -1648,6 +1648,7 @@ def create_app(    *,
                 handle_slack_hermes_message,
                 coordination_store,
                 payload,
+                repository=_engineer_ticket_repository(),
                 expected_team_id=str(os.getenv("ENGINEER_SLACK_TEAM_ID") or "").strip(),
                 expected_channel_id=str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip(),
             )
