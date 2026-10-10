@@ -7,10 +7,10 @@
   "title": "Investigation 附件闭环 v1",
   "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
   "status": "active",
-  "next_action": "完成 C1-C7 真实入口与隔离 PG 验证，再按正常流程合并并部署 Preproduction。",
+  "next_action": "修复后的 n8n binding gate 已发布并完成契约负向/正向验证；待独立验收通过后，另行授权受控 Preproduction Slack/Zendesk 样本，完成 C2/C3/C5/C7 端到端对账。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-09",
+  "updated_at": "2026-10-10",
   "acceptance_criteria": [
     "C1-C7 见 docs/plans/investigation-attachments-v1.md"
   ],
@@ -20,6 +20,16 @@
       "type": "document",
       "url": "docs/plans/investigation-attachments-v1.md",
       "label": "R1 合同与执行证据"
+    },
+    {
+      "type": "test",
+      "command": "python3 -m unittest backend.tests.test_investigation_attachments_n8n_contract",
+      "result": "3 passed；Investigation-bound 发送，Production-bound/未绑定忽略，普通文字 adhoc 路径保持不变。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction active workflow readback",
+      "details": "[slack]Forward Thread|Prod+Preprod active version b02f3ed5-667b-4633-be2c-ede582fcdf23；附件入口经 Preproduction Hermes resolver 与 bound gate，false 分支进入 Ignore Non-Investigation Attachment。"
     }
   ]
 }
