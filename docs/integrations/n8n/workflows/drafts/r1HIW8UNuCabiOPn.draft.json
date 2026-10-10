@@ -1,15 +1,15 @@
 {
  "capturedAt": "2026-10-11T00:00:00Z",
  "restoreNotes": {
-  "activeAtCapture": true,
-  "credentials": "Credential references retained; rebind redacted literals before restore.",
+  "note": "stage-4 draft (p2-195): hermes messages payload forwards raw_text + bot_user_id so SupportPortal can enforce the bot-mention requirement server-side; NOT published; active b02f3ed5 unchanged",
   "redactedValues": []
  },
  "schemaVersion": 1,
  "source": {
-  "snapshotKind": "published",
-  "updatedAt": "2026-10-10T02:12:49.754Z",
-  "versionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
+  "snapshotKind": "draft",
+  "stage4Forwarding": true,
+  "updatedAt": null,
+  "versionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
   "workflowId": "r1HIW8UNuCabiOPn",
   "workflowName": "[slack]Forward Thread|Prod+Preprod"
  },
@@ -378,7 +378,7 @@
     "name": "Send Hermes Message",
     "parameters": {
      "authentication": "genericCredentialType",
-     "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
+     "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), raw_text: String(input.text || ''), bot_user_id: 'U08RVQSJQF2', source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
      "contentType": "raw",
      "genericAuthType": "httpHeaderAuth",
      "method": "POST",

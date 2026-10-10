@@ -243,3 +243,131 @@ def test_pg_approve_with_edited_content_recomputes_hash(repository) -> None:
             decided_at=LATER,
             resolution={"action": "new", "content": "# engineer-edited body"},
         )
+
+
+def test_pg_v23_operator_identity_and_slack_review_state_machine(repository) -> None:
+    """Stage 4 (p2-195): the v23 columns persist the verified operator
+    identity and the review-notification state machine on PostgreSQL."""
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    # notification state machine
+    queued = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=NOW
+    )
+    assert queued and queued["slack_review_status"] == "queued"
+    # already-delivered guard: mark again after completion must not requeue
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001", now_value=LATER,
+    )
+    assert completed and completed["slack_review_status"] == "delivered"
+    refused = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=LATER
+    )
+    assert refused is None, "delivered is terminal for the notification state machine"
+
+    # decision with verified identity
+    decided = repository.decide_weknora_promotion(
+        promotion_id,
+        decision="approve",
+        decided_by="engineer@example.com",
+        decided_at=LATER,
+        resolution={"action": "new", "content": "C"},
+        operator_email="engineer@example.com",
+        operator_slack_user_id="U-9",
+    )
+    assert decided and decided["status"] == "queued"
+    row = next(
+        row for row in repository.list_weknora_promotions()
+        if row["promotion_id"] == promotion_id
+    )
+    assert row["human_decided_by_email"] == "engineer@example.com"
+    assert row["human_decided_slack_user_id"] == "U-9"
+    assert row["slack_review_status"] == "delivered"
+    assert row["slack_channel_id"] == "C-REVIEW"
+    assert row["slack_thread_ts"] == "1700.001"
+
+
+def test_pg_concurrent_slack_review_claim_posts_once(repository) -> None:
+    """Stage-4 review F1: two concurrent claims on PostgreSQL — exactly one
+    wins the queued transition (row-locked UPDATE), the loser gets None."""
+    import concurrent.futures
+
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    def claim():
+        return repository.mark_knowledge_slack_review_queued(
+            promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=LATER
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim) for _ in range(2)]
+        results = [future.result() for future in futures]
+
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1, f"exactly one claim wins, got {results}"
+    assert winners[0]["slack_review_status"] == "queued"
+    # a third claim after the winner is still queued gets None
+    assert claim() is None
+    # ...and completion from 'queued' stays the only exit
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001", now_value=LATER,
+    )
+    assert completed["slack_review_status"] == "delivered"
+    assert claim() is None, "delivered is terminal"
+
+
+def test_pg_crashed_claim_reclaim_and_owner_guard(repository) -> None:
+    """Stage-4 review F5 on PostgreSQL: an expired 'queued' claim is
+    reclaimable (crash recovery) and only the owner completes."""
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    # crashed claim at 08:00
+    claimed = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:00:00+00:00", owner_token="dead-owner",
+    )
+    assert claimed is not None
+    # within the lease a fresh-state claim is refused (queued, not expired):
+    # at 08:01 with a 300s lease the cutoff is 07:56 — the 08:00 claim is live
+    assert repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:01:00+00:00", owner_token="other",
+        lease_expires_at="2026-10-10T07:56:00+00:00",
+    ) is None
+    # past the lease the dead claim is reclaimed
+    reclaimed = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:10:00+00:00", owner_token="new-owner",
+        lease_expires_at="2026-10-10T08:05:00+00:00",
+    )
+    assert reclaimed is not None
+    # the dead owner cannot complete over the new owner
+    assert repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="dead-owner", now_value="2026-10-10T08:10:01+00:00",
+    ) is None
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="new-owner", now_value="2026-10-10T08:10:02+00:00",
+    )
+    assert completed["slack_review_status"] == "delivered"
+    # delivered stays terminal
+    assert repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T09:00:00+00:00", owner_token="x",
+        lease_expires_at="2026-10-10T08:00:00+00:00",
+    ) is None
