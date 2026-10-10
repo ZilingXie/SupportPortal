@@ -825,3 +825,154 @@ class MessageActionWorkTests(unittest.TestCase):
         self.assertEqual(result["status"], "executed")
         self.assertEqual(result["internal_email_send_status"], "sent")
         self.assertTrue(result["skip_persona"])
+
+
+class ReplyConversationContextTests(unittest.TestCase):
+    """Stiff-reply root cause fix: the hermes tool path must persist
+    reply_conversation_context (legacy intake parity) so the reply-job
+    persona sees the customer's conversation."""
+
+    def _run_fraud_turn(self, *, missing=True):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        if missing:
+            attempt["missing_fields"] = list(ALL_FIELDS)
+            attempt["internal_email_to_send"] = None
+            attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        return repository, result
+
+    def test_case_persists_reply_conversation_context(self):
+        repository, result = self._run_fraud_turn()
+        self.assertEqual(result["status"], "missing_fields")
+        persisted = repository.get_account_case("AC-123")
+        context = (persisted.get("automation_context") or {}).get(
+            "reply_conversation_context"
+        )
+        self.assertIsInstance(context, dict)
+        self.assertEqual(context.get("version"), "automation-context-v1")
+        conversation = context.get("conversation") or []
+        self.assertTrue(
+            any(
+                "suspended" in str(m.get("content") or "")
+                or "media relay" in str(m.get("content") or "").lower()
+                for m in conversation
+            ),
+            "conversation must include the customer's public messages",
+        )
+
+    def test_ask_job_facts_carry_conversation_context(self):
+        repository, result = self._run_fraud_turn()
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+        facts = jobs[0].get("payload") or {}
+        carried = facts.get("reply_facts", {}).get("conversation_context")
+        self.assertIsInstance(carried, dict)
+        self.assertEqual(carried.get("version"), "automation-context-v1")
+        self.assertTrue(carried.get("conversation"))
+
+    def test_context_is_sanitized_for_persona(self):
+        repository, result = self._run_fraud_turn()
+        persisted = repository.get_account_case("AC-123")
+        context = (persisted.get("automation_context") or {}).get(
+            "reply_conversation_context"
+        )
+        contents = "\n".join(
+            str(m.get("content") or "") for m in context.get("conversation") or []
+        )
+        # 32-hex App IDs and emails must be redacted before the persona
+        # ever sees the conversation.
+        import re
+
+        self.assertIsNone(re.search(r"[0-9a-fA-F]{32,}", contents))
+        self.assertIsNone(re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", contents))
+
+    def test_prior_case_context_keys_survive_the_merge(self):
+        # A case carrying a prior-turn key must NOT lose it to the
+        # attempt-context merge (the old code overwrote wholesale).
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        seeded = email_harness._account_case(route="fraud_account", status="not_applicable")
+        seeded["automation_context"] = {"prior_turn_marker": "keep-me"}
+        repository = email_harness._repository(seeded)
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        persisted = repository.get_account_case("AC-123")
+        context = persisted.get("automation_context") or {}
+        self.assertEqual(context.get("prior_turn_marker"), "keep-me")
+        self.assertIn("reply_conversation_context", context)
