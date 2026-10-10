@@ -246,3 +246,118 @@ def test_noop_resolution_records_zero_writes() -> None:
     assert promotion["status"] == "accepted"
     assert promotion["operation_receipt"] == {"no_change": True, "zero_writes": True}
     assert host.list_knowledge_deliveries(promotion_id) == []
+
+
+def test_approve_with_a_disabled_target_still_fans_out_both_rows(monkeypatch) -> None:
+    """Review R2-1 (reviewer repro): AgentMemory switch off at approval time.
+
+    The approval creates BOTH delivery rows; the disabled target's row waits
+    queued (never claimed while disabled), so a WeKnora success cannot close
+    the candidate single-target."""
+    from unittest.mock import patch
+
+    from backend.services.knowledge_dual_write import fan_out_candidate
+    from backend.tests.test_knowledge_dual_write import NOW as _NOW, ProbeClients
+
+    monkeypatch.setenv("KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED", "0")
+    monkeypatch.setenv("KNOWLEDGE_WEKNORA_DELIVERY_ENABLED", "1")
+    host, promotion_id = _host_with_promotion()
+    # Candidate parked at the gate BEFORE any fan-out (zero delivery rows).
+    host.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+    host.decide_weknora_promotion(
+        promotion_id,
+        decision="approve",
+        decided_by="engineer",
+        decided_at=NOW,
+        resolution={"action": "new", "content": "C"},
+    )
+    promotion = next(
+        row for row in host.list_weknora_promotions() if row["promotion_id"] == promotion_id
+    )
+    with patch("backend.services.knowledge_dual_write._native_state_store", lambda: None):
+        fan_out_candidate(
+            host, promotion, now_value=_NOW,
+            agent_memory_client=None, weknora_client=ProbeClients(),
+        )
+    rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion_id)}
+    assert set(rows) == {"agent_memory", "weknora"}, "approval must fan out BOTH targets"
+    assert rows["agent_memory"]["status"] == "queued"
+    # WeKnora alone succeeds -> the candidate must NOT close accepted.
+    wk = knowledge_delivery_id(promotion_id=promotion_id, target="weknora")
+    host.claim_knowledge_delivery(
+        wk, owner_token="w", claimed_at=NOW, lease_expires_at="2026-10-10T08:02:00+00:00"
+    )
+    host.complete_knowledge_delivery(
+        wk, owner_token="w", status="accepted", external_object_id="doc-1", completed_at=NOW
+    )
+    from backend.services.knowledge_dual_write import resolve_knowledge_candidate
+
+    assert resolve_knowledge_candidate(host, promotion_id, now_value=NOW) is None
+    stored = next(
+        row for row in host.list_weknora_promotions() if row["promotion_id"] == promotion_id
+    )
+    assert stored["status"] == "active", "the candidate waits for the disabled target"
+
+
+def test_approve_with_edited_content_recomputes_the_candidate_hash(monkeypatch) -> None:
+    """Review R2-2: a human-edited body re-earns its content hash so the
+    candidate key, the AgentMemory content-addressed filename and the actual
+    body stay consistent."""
+    from backend.services.agent_memory_delivery import agent_memory_filename
+    from backend.services.hermes_case_workflow import _weknora_candidate_hash
+
+    monkeypatch.setenv("KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_WEKNORA_DELIVERY_ENABLED", "1")
+    host, promotion_id = _host_with_promotion()
+    row = next(r for r in host.list_weknora_promotions() if r["promotion_id"] == promotion_id)
+    original_hash = row["content_hash"]
+    original_filename = agent_memory_filename(original_hash)
+
+    host.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+    decided = host.decide_weknora_promotion(
+        promotion_id,
+        decision="approve",
+        decided_by="engineer",
+        decided_at=NOW,
+        resolution={"action": "new", "content": "# engineer-edited body"},
+    )
+    assert decided and decided["status"] == "queued"
+    updated = next(r for r in host.list_weknora_promotions() if r["promotion_id"] == promotion_id)
+    expected = _weknora_candidate_hash(updated["candidate_payload"])
+    assert updated["content_hash"] == expected != original_hash
+    assert agent_memory_filename(updated["content_hash"]) != original_filename
+    # The idempotent delivery identity stays stable across the edit.
+    assert updated["promotion_id"] == promotion_id
+
+    # A sibling candidate of the SAME source triple whose approved body would
+    # hash to an already-owned (source, hash) pair is refused cleanly.
+    sibling = dict(PROMOTION_TASK)
+    sibling["candidate_payload"] = {**PROMOTION_TASK["candidate_payload"], "content": "C2"}
+    sibling["content_hash"] = _weknora_candidate_hash(sibling["candidate_payload"])
+    inserted = host.enqueue_weknora_promotions([sibling], now_value=NOW)
+    sibling_id = inserted[0]["promotion_id"]
+    host.park_knowledge_candidate(sibling_id, reasons=["gate"], now_value=NOW)
+    try:
+        host.decide_weknora_promotion(
+            sibling_id,
+            decision="approve",
+            decided_by="engineer",
+            decided_at=NOW,
+            resolution={"action": "new", "content": "# engineer-edited body"},
+        )
+        raised = False
+    except ValueError as exc:
+        raised = True
+        assert "collides" in str(exc)
+    assert raised
+
+
+def test_ticket_storage_mirror_contains_the_delivery_table() -> None:
+    """Review R2-3: the static schema mirror tracks the v22 delivery table."""
+    from pathlib import Path
+
+    sql_source = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+    assert "CREATE TABLE IF NOT EXISTS support_knowledge_deliveries" in sql_source
+    assert "idx_support_knowledge_deliveries_claim" in sql_source
+    assert "idx_support_knowledge_deliveries_promotion" in sql_source
+    assert "REFERENCES support_weknora_promotions(promotion_id)" in sql_source

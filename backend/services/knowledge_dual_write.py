@@ -25,6 +25,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from backend.repositories.knowledge_delivery_repository import (
+    KNOWLEDGE_DELIVERY_TARGETS,
+)
+
 LOGGER = logging.getLogger(__name__)
 
 KNOWLEDGE_SOURCE_INTAKE_ENABLED_ENV = "KNOWLEDGE_SOURCE_INTAKE_ENABLED"
@@ -234,23 +238,24 @@ def fan_out_candidate(
     human_approved = str(promotion.get("human_decision") or "") == "approved"
     if human_approved:
         # A human-approved action skips the auto gate (the human IS the
-        # review) but re-enters the SAME delivery contract: only non-accepted
-        # targets are repaired, and only targets whose delivery switch is
-        # currently enabled (review B2 — a disabled target must never be
-        # re-queued into execution).
-        targets = enabled_delivery_targets()
-        if not targets:
+        # review) but re-enters the SAME delivery contract.  Review R2-1: an
+        # approval always fans out BOTH target rows — a target whose switch is
+        # currently disabled gets a QUEUED row that WAITS (the execution
+        # boundary never claims it while disabled, so nothing is written)
+        # instead of the candidate silently closing single-target.  Only when
+        # BOTH targets are disabled is there nothing runnable at all.
+        if not enabled_delivery_targets():
             repository.park_knowledge_candidate(
                 promotion_id,
                 reasons=["no delivery target enabled (KNOWLEDGE_*_DELIVERY_ENABLED)"],
                 now_value=now_value,
             )
             return DualWriteVerdict(action="human_review", reasons=["no delivery target enabled"])
-        rows = repository.ensure_knowledge_deliveries(promotion_id, targets, now_value=now_value)
+        rows = repository.ensure_knowledge_deliveries(
+            promotion_id, list(KNOWLEDGE_DELIVERY_TARGETS), now_value=now_value
+        )
         for row in rows:
-            if str(row.get("target") or "") in targets and str(row.get("status") or "") in {
-                "failed", "outcome_unknown",
-            }:
+            if str(row.get("status") or "") in {"failed", "outcome_unknown"}:
                 repository.requeue_knowledge_delivery(
                     str(row["delivery_id"]), requeued_at=now_value, reason="human approve fan-out"
                 )
@@ -271,13 +276,14 @@ def fan_out_candidate(
         repository.park_knowledge_candidate(promotion_id, reasons=verdict.reasons, now_value=now_value)
         _notify_human_review(repository, promotion)
         return verdict
-    targets = enabled_delivery_targets()
-    if not targets:
+    if not enabled_delivery_targets():
         reasons = ["auto-write gate passed but no delivery target enabled"]
         repository.park_knowledge_candidate(promotion_id, reasons=reasons, now_value=now_value)
         _notify_human_review(repository, promotion)
         return DualWriteVerdict(action="human_review", reasons=reasons)
-    repository.ensure_knowledge_deliveries(promotion_id, targets, now_value=now_value)
+    repository.ensure_knowledge_deliveries(
+        promotion_id, list(KNOWLEDGE_DELIVERY_TARGETS), now_value=now_value
+    )
     repository.mark_knowledge_candidate_delivering(promotion_id, now_value=now_value)
     return verdict
 

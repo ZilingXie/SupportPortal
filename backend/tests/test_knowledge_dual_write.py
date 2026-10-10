@@ -467,8 +467,10 @@ def test_drain_skips_disabled_target_at_execution_boundary() -> None:
     assert rows["weknora"]["status"] == "accepted"
 
 
-def test_human_approve_requeues_only_enabled_targets() -> None:
-    """Review B2: approval repair respects the CURRENT target switches."""
+def test_human_approve_waits_for_both_targets_when_one_is_disabled() -> None:
+    """Review B2 + R2-1: a disabled target never EXECUTES, but the approval
+    still fans out both rows — the disabled one waits queued, the candidate
+    cannot close single-target, and re-enabling the switch completes it."""
     host = _Host()
     promotion = _promotion()
     host.enqueue_weknora_promotions([dict(promotion)], now_value=NOW)
@@ -486,10 +488,27 @@ def test_human_approve_requeues_only_enabled_targets() -> None:
     )
     env = {**DRAIN_ENV, "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0"}
     _drain(host, adapters, env=env)
-    assert adapters.agent_calls == 1, "the disabled target must not re-execute"
+    assert adapters.agent_calls == 1, "the disabled target must not execute"
     rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion["promotion_id"])}
-    assert rows["agent_memory"]["status"] == "failed", "no requeue for a disabled target"
+    assert rows["agent_memory"]["status"] == "queued", "waiting, not executed, not failed"
     assert rows["weknora"]["status"] == "accepted"
+    stored = next(
+        row for row in host.list_weknora_promotions() if row["promotion_id"] == promotion["promotion_id"]
+    )
+    assert stored["status"] != "accepted", "the candidate must not close single-target"
+
+    # Re-enable the rollback target: the waiting row runs, the candidate now
+    # completes on BOTH targets.
+    adapters.agent_status = "accepted"
+    _drain(host, adapters)
+    assert adapters.agent_calls == 2
+    rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion["promotion_id"])}
+    assert rows["agent_memory"]["status"] == "accepted"
+    stored = next(
+        row for row in host.list_weknora_promotions() if row["promotion_id"] == promotion["promotion_id"]
+    )
+    assert stored["status"] == "accepted"
+    assert adapters.weknora_calls == 1, "the accepted target never re-executes"
 
 
 def test_resolve_does_not_accept_when_a_target_was_invalidated() -> None:

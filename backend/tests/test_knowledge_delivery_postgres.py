@@ -203,3 +203,43 @@ def test_in_memory_and_pg_agree_on_delivery_lifecycle(repository) -> None:
     memory_repo = InMemoryTicketRepository()
     memory_repo.initialize()
     assert lifecycle(memory_repo) == lifecycle(repository)
+
+
+def test_pg_approve_with_edited_content_recomputes_hash(repository) -> None:
+    """Review R2-2 on PostgreSQL: the approved body re-earns its hash and the
+    unique (source, hash) index refuses a colliding approval."""
+    from backend.services.hermes_case_workflow import _weknora_candidate_hash
+
+    promotion_id = _enqueue(repository)
+    before = next(
+        row for row in repository.list_weknora_promotions() if row["promotion_id"] == promotion_id
+    )
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+    decided = repository.decide_weknora_promotion(
+        promotion_id,
+        decision="approve",
+        decided_by="engineer",
+        decided_at=LATER,
+        resolution={"action": "new", "content": "# engineer-edited body"},
+    )
+    assert decided and decided["status"] == "queued"
+    after = next(
+        row for row in repository.list_weknora_promotions() if row["promotion_id"] == promotion_id
+    )
+    expected = _weknora_candidate_hash(after["candidate_payload"])
+    assert after["content_hash"] == expected != before["content_hash"]
+
+    sibling = dict(PROMOTION_TASK)
+    sibling["candidate_payload"] = {**PROMOTION_TASK["candidate_payload"], "content": "C2"}
+    sibling["content_hash"] = _weknora_candidate_hash(sibling["candidate_payload"])
+    inserted = repository.enqueue_weknora_promotions([sibling], now_value=NOW)
+    sibling_id = inserted[0]["promotion_id"]
+    repository.park_knowledge_candidate(sibling_id, reasons=["gate"], now_value=NOW)
+    with pytest.raises(ValueError):
+        repository.decide_weknora_promotion(
+            sibling_id,
+            decision="approve",
+            decided_by="engineer",
+            decided_at=LATER,
+            resolution={"action": "new", "content": "# engineer-edited body"},
+        )
