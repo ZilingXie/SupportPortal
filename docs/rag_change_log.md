@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-2 review R1: CSD completeness strictness (p2-194)
+
+- Summary: the CSD source-only draft's completeness gate is now strictly fail-closed — a missing or non-numeric `fields.comment.total` throws instead of falling back to the comments length, and `Get_CSD_Detail` requests `fields=*,comment` (the complete Jira issue object the ingestion contract requires) instead of a fixed field list. Both changes live in the n8n DRAFT (new draft version 6fed47a6; the active version b5cf6d6b remains untouched), the repo snapshot was rebuilt from the live readback, and four regression tests pin the behaviour.
+- Reason: stage-2 round-1 review blockers (contract: numeric total must be present; full snapshot completeness).
+- Affected files/config: docs/integrations/n8n/workflows/drafts/GgDxPEWtW7ltT5BW.draft.json, manifest.json, backend/tests/test_n8n_source_only_contracts.py, docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md; remote n8n draft nodes Validate CSD Snapshot + Get_CSD_Detail.
+- Data impact: none (draft not published, not executed).
+- Verification: 22 offline contract tests passed; snapshot validator 15+3+56 exit 0; live readback confirms activeVersionId unchanged.
+
 ## 2026-10-10 - n8n knowledge chains converted to source-only DRAFTS (p2-194 stage 2)
 
 - Summary: both n8n knowledge chains now carry a source-only DRAFT (not published; active versions b5cf6d6b / 1f544830 unchanged, verified by live readback): fetch source -> completeness validation -> build a knowledge-source-v1 snapshot -> POST to the SupportPortal preproduction source endpoint (credential `preprodcution`, 3 retries) -> three-state receipt gate (accepted/already_exists/stale_ignored + non-empty task_id, throw -> errorWorkflow otherwise). All AI filtering, local PostgreSQL dedup, AgentMemory Wiki direct writes, 2_rag and KB generation nodes were removed from the drafts. Snapshot contract option A: the v1 intake model is unchanged; idempotent identity stays source_type+source_id+source_updated_at; snapshot_hash travels in references. The snapshot validator gained endpoint-closure, a source-only node-type allowlist, a URL-prefix allowlist and direct-write URL bans — legacy snapshots report 29 LEGACY-EXPOSED warnings (historical dangling endpoints from the p2-183 era plus the Wiki write URLs), source-only drafts are enforced as hard errors.

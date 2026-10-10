@@ -202,7 +202,8 @@ def test_solved_next_page_present_fails_closed() -> None:
 # ---------------------------------------------------------- CSD chain (C2)
 
 
-def _csd_issue(comment_total: int, comments: int, *, omit_comment: bool = False) -> dict:
+def _csd_issue(comment_total, comments: int, *, omit_comment: bool = False) -> dict:
+    """comment_total may be an int, None (key omitted) or a non-numeric type."""
     issue = {
         "key": "CSD-990001",
         "fields": {
@@ -213,12 +214,14 @@ def _csd_issue(comment_total: int, comments: int, *, omit_comment: bool = False)
         },
     }
     if not omit_comment:
-        issue["fields"]["comment"] = {
+        comment = {
             "comments": [
                 {"id": c, "body": f"synthetic csd comment {c}"} for c in range(1, comments + 1)
-            ],
-            "total": comment_total,
+            ]
         }
+        if comment_total is not None:
+            comment["total"] = comment_total
+        issue["fields"]["comment"] = comment
     return issue
 
 
@@ -324,3 +327,31 @@ def test_already_exists_absorbs_replay_and_stale_absorbs_reorder() -> None:
         gate = _run_js(_node_code(SOLVED, "Verify Receipt"),
                        {"status": receipt["receipt_status"], "task_id": receipt["task_id"]})
         assert gate["ok"], gate
+
+
+# --------------------------------------------- review round 1 (CSD fail-closed)
+
+
+@pytest.mark.parametrize(
+    "total,label",
+    [(None, "total missing"), ("3", "total non-numeric"), ([3], "total non-numeric")],
+    ids=["total-missing", "total-string", "total-array"],
+)
+def test_csd_missing_or_non_numeric_total_fails_closed(total, label) -> None:
+    issue = _csd_issue(comment_total=total, comments=3)
+    result = _run_js(_node_code(CSD, "Validate CSD Snapshot"), issue)
+    assert not result["ok"], label
+    assert "total missing or non-numeric" in result["error"], result
+
+
+def test_csd_detail_requests_the_full_field_set() -> None:
+    """Review R1: the draft must request fields=*,comment (the complete Jira
+    snapshot the ingestion contract requires), not a fixed field list."""
+    node = next(
+        n for n in CSD["workflow"]["nodes"] if n["name"] == "Get_CSD_Detail"
+    )
+    fields = (node["parameters"].get("queryParameters") or {}).get("parameters") or []
+    assert any(
+        p.get("name") == "fields" and p.get("value") == "*,comment" for p in fields
+    ), fields
+    assert node["parameters"].get("url") == "={{ $json.url }}"

@@ -55,3 +55,15 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 ## 其他命令验证
 
 `validate_workflow_snapshots.py` ✓（上）；`generate_project_overview.py --check` ✓；`git diff --check` ✓；`test_n8n_source_only_contracts.py` 18 passed ✓。
+
+
+## 修复轮 R1（2026-10-10，阶段 2 首轮验收两阻断后）
+
+| 阻断 | 修复 | 回归 |
+|---|---|---|
+| CSD total 缺失/非数字回退 comments.length（未 fail-closed） | Validate CSD Snapshot 的 jsCode 改为 `typeof comment.total !== 'number'` 即 throw（快照契约第 61 行"数值型 total 必须齐备"）；线上 Draft 经 setNodeParameter 更新并回读确认 | test_csd_missing_or_non_numeric_total_fails_closed ×3（缺失/字符串/数组全 throw，消息含 "total missing or non-numeric"） |
+| Get_CSD_Detail 请求固定字段列表而非完整快照 | queryParameters 改为 `fields=*,comment`（契约第 36 行"完整 Jira issue 对象"）；首次 replace 误清 url/sendQuery 的即时修正已回读确认（url/认证/jira_zac 凭据完整、validationWarnings=[]） | test_csd_detail_requests_the_full_field_set（断言 fields=*,comment+url 表达式完整） |
+
+- 修复后 CSD Draft 版本 `6fed47a6`（回读确认 activeVersionId=b5cf6d6b 未变）；仓库快照由回读重建（3 处 secret 脱敏+ledger 保持）。
+- 契约选择：A（两轮评审一致推荐，继续采用；PR 披露可推翻）。
+- 验证：合同测试 **22 passed**（18+4 新回归）；快照校验 15+3+56 退出码 0；overview --check、git diff --check 通过。
