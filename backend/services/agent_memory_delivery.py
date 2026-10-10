@@ -246,7 +246,9 @@ class AgentMemoryWikiClient:
         data = _data(payload)
         items = data.get("items") if isinstance(data.get("items"), list) else None
         total = data.get("total")
-        if items is None or not isinstance(total, int):
+        # bool is an int subclass in Python: JSON true/false must be rejected
+        # explicitly or a malformed response keeps the surface "available".
+        if items is None or isinstance(total, bool) or not isinstance(total, int):
             raise AgentMemoryWikiError(
                 "AgentMemory wiki list response is missing items/total",
                 failure_kind="invalid_response",
@@ -270,7 +272,9 @@ class AgentMemoryWikiClient:
         payload = self._request("POST", "/api/v1/knowledge/wiki/search", json_body=body)
         data = _data(payload)
         count = data.get("count")
-        if not isinstance(count, int) or count < 0:
+        # bool is an int subclass in Python: JSON true/false must be rejected
+        # explicitly or a malformed response masquerades as a valid count.
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
             raise AgentMemoryWikiError(
                 "AgentMemory wiki search response is missing a numeric count",
                 failure_kind="invalid_response",

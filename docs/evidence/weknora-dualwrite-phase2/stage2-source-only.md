@@ -108,3 +108,12 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 回归 5 项（全部复现验收场景）：缺 count / 非数值 count / `results=[null]` / 空页+total=5 首页即抛且仅一次调用 / malformed 端到端链（面不可用→`new` 降级 human_review、理由含 AgentMemory evidence unavailable）。
 
 验证：全套 **449 passed / 0 failed**（16 套件含隔离 PG）。
+
+
+## 阶段 3 修复轮 2（2026-10-10，第二轮验收一项同类阻断后）
+
+阻断：Python `bool` 是 `int` 子类——`isinstance(count/total, int)` 会放行 JSON `true/false`，实测 `count=true` 返回成功空结果、`total=false` 得到 `available=True` 的空检索面。
+
+修复：`wiki_search.count` 与 `wiki_list.total` 显式拒绝 `bool`（先 `isinstance(x, bool)` 后 `isinstance(x, int)`），malformed 布尔响应即 `invalid_response` → 面不可用 → 可写降级。
+
+回归 2 项（count=true/false、total=true/false 四形态全部拒绝）。验证：AM 套件 28 passed；全套 **451 passed / 0 failed**（16 套件含隔离 PG）。

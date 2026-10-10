@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-3 review fix 2: JSON booleans rejected as counts (p2-194)
+
+- Summary: `wiki_search.count` and `wiki_list.total` now explicitly reject booleans — Python treats `bool` as an `int` subclass, so JSON `true`/`false` previously passed `isinstance(x, int)` and a malformed response could keep the AgentMemory evidence surface "available" with an empty sweep. Both fields now require a real integer (bool check first), raising `invalid_response` so the surface degrades and writable decisions downgrade to human_review.
+- Reason: stage-3 second-round review blocker (same fail-closed family as round 1).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 28 passed (+2 regressions covering count=true/false and total=true/false); full 16-suite regression 451 passed / 0 failed including isolated PostgreSQL.
+
 ## 2026-10-10 - Stage-3 review fix: AgentMemory read surface fail-closed strictness (p2-194)
 
 - Summary: the AgentMemory wiki read surface now proves every response: `wiki_search` requires a numeric `count` and object-shaped entries (`results=[null]` or a missing count raise `invalid_response` instead of counting as "no hits"), `search_knowledge` no longer silently skips malformed entries, and the wiki-list pagination raises on an empty page that still owes items (previously a potential infinite loop). Any of these failures marks the whole evidence surface unavailable, which downgrades writable decisions to human_review — the reviewer's repro (malformed response leaving `available=True` so a `new` decision could bypass the duplicate check) is covered by an end-to-end regression.

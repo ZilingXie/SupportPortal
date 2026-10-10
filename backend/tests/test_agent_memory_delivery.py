@@ -613,3 +613,41 @@ def test_malformed_search_response_fails_the_whole_evidence_surface() -> None:
     assert downgraded == ["k1"]
     assert adjusted[0]["decision"] == "human_review"
     assert "AgentMemory evidence unavailable" in adjusted[0]["rationale"]
+
+
+# --------------------- stage-3 review fix 2: JSON booleans are not counts ---
+
+
+def test_wiki_search_boolean_count_is_invalid_response(monkeypatch) -> None:
+    """JSON true/false parse to Python bool, which is an int subclass — both
+    must be rejected (reviewer repro: count=true returns an empty success)."""
+    import unittest.mock as mock
+
+    for bad in (True, False):
+        transport = _ScriptedTransport([{"data": {"count": bad, "results": []}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_search(wiki_id="w1", query="q")
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"count={bad!r} must be rejected"
+
+
+def test_wiki_list_boolean_total_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: total=false must not yield an available empty sweep."""
+    import unittest.mock as mock
+
+    for bad in (True, False):
+        transport = _ScriptedTransport([{"data": {"items": [], "total": bad}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"total={bad!r} must be rejected"
