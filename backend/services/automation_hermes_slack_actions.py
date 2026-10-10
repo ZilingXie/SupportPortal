@@ -264,6 +264,8 @@ def handle_slack_hermes_message(
         store, ticket_id, text,
         channel_id=channel_id, thread_ts=thread_ts, repository=repository,
         slack_user_id=str((payload or {}).get("slack_user_id") or "").strip(),
+        raw_text=str((payload or {}).get("raw_text") or "").strip(),
+        bot_user_id=str((payload or {}).get("bot_user_id") or "").strip(),
     )
     if review_decision is not None:
         return review_decision
@@ -442,8 +444,14 @@ def _try_knowledge_review_command(
     thread_ts: str = "",
     repository: Any = None,
     slack_user_id: str = "",
+    raw_text: str = "",
+    bot_user_id: str = "",
 ) -> dict[str, Any] | None:
-    """Route a Slack thread reply to the knowledge promotion decision contract."""
+    """Route a Slack thread reply to the knowledge promotion decision contract.
+
+    Stage 4 review F3: the SAME mention evidence requirement as the
+    source-only path applies here — a bound-thread knowledge command without
+    the raw mention prefix is refused, closing the bypass."""
     normalized = text.strip()
     lower = normalized.lower()
     if not (
@@ -451,6 +459,9 @@ def _try_knowledge_review_command(
         or lower.startswith(_KNOWLEDGE_APPROVE_PREFIX)
     ):
         return None
+    mention_error = _require_bot_mention_prefix(raw_text, bot_user_id)
+    if mention_error is not None:
+        return mention_error
     # The SAME fail-closed master switch as the API decision endpoint: while
     # governance is disabled the backlog must stay untouched — a Slack
     # approve/reject performs the identical persisted mutation the endpoint
@@ -745,6 +756,67 @@ def _resolve_verified_operator(slack_user_id: str) -> dict[str, Any]:
         ) | {"operator_error": True}
 
 
+def _configured_bot_user_id(payload_bot_user_id: str = "") -> str:
+    import os
+
+    return str(payload_bot_user_id or "").strip() or str(
+        os.getenv("ENGINEER_SLACK_BOT_USER_ID") or ""
+    ).strip()
+
+
+def _knowledge_command_text(
+    raw_text: str, text: str, bot_user_id: str
+) -> str | None:
+    """Best-effort command text for DETECTION only (F4-safe).
+
+    Returns the mention-stripped text when it looks like a knowledge command,
+    else None. Detection never fails on missing mention evidence — the C5
+    enforcement happens after detection so non-knowledge messages keep the
+    legacy fallback."""
+    candidates = []
+    stripped_raw = str(raw_text or "").lstrip()
+    bot = _configured_bot_user_id(bot_user_id)
+    if bot and stripped_raw.startswith(f"<@{bot}>"):
+        candidates.append(stripped_raw[len(f"<@{bot}>"):].strip())
+    candidates.append(str(raw_text or "").strip())
+    candidates.append(str(text or "").strip())
+    for candidate in candidates:
+        if not candidate:
+            continue
+        lower = candidate.lower()
+        if lower.startswith(_KNOWLEDGE_REJECT_PREFIX) or lower.startswith(
+            _KNOWLEDGE_APPROVE_PREFIX
+        ):
+            return candidate
+    return None
+
+
+def _require_bot_mention_prefix(
+    raw_text: str, bot_user_id: str
+) -> dict[str, Any] | None:
+    """C5/F2: the raw message must START with the bot mention.
+
+    A mention anywhere else (or a stripped-only text without raw evidence)
+    refuses the command. Returns the error response or None when proven."""
+    bot = _configured_bot_user_id(bot_user_id)
+    if not str(raw_text or "").strip():
+        return _invalid(
+            "knowledge review commands require the raw message text with the bot mention",
+            status_code=422,
+        )
+    if not bot:
+        return _invalid(
+            "knowledge review commands cannot be verified without the bot user id",
+            status_code=422,
+        )
+    if not str(raw_text or "").lstrip().startswith(f"<@{bot}>"):
+        return _invalid(
+            "knowledge review commands must start with a mention of this bot",
+            status_code=422,
+        )
+    return None
+
+
 def handle_slack_knowledge_review_message(
     store: AutomationEcsStore,
     payload: dict[str, Any],
@@ -767,35 +839,19 @@ def handle_slack_knowledge_review_message(
     text = str((payload or {}).get("text") or "").strip()
     raw_text = str((payload or {}).get("raw_text") or "").strip()
     team_id = str((payload or {}).get("team_id") or "").strip()
-    if not raw_text or not raw_text.strip():
-        # The forwarded payload carries no mention evidence — the command
-        # cannot be proven to have started with the bot mention (C5), so it
-        # is refused rather than guessed at.
-        return _invalid(
-            "knowledge review commands require the raw message text with the bot mention",
-            status_code=422,
-        )
-    # C5: the raw text must contain the bot mention (the forwarding chain
-    # strips it from ``text``; ``raw_text`` keeps the original).
     bot_user_id = str((payload or {}).get("bot_user_id") or "").strip()
-    import os
 
-    if not bot_user_id:
-        bot_user_id = str(os.getenv("ENGINEER_SLACK_BOT_USER_ID") or "").strip()
-    if not bot_user_id or f"<@{bot_user_id}>" not in raw_text:
-        return _invalid(
-            "knowledge review commands must start with a mention of this bot",
-            status_code=422,
-        )
-    # The command grammar applies to the mention-stripped text.
-    command_text = raw_text.replace(f"<@{bot_user_id}>", "").strip()
-    if not command_text:
-        return _invalid("knowledge review commands require a command after the mention", status_code=422)
-    lower = command_text.lower()
-    if not (
-        lower.startswith(_KNOWLEDGE_REJECT_PREFIX) or lower.startswith(_KNOWLEDGE_APPROVE_PREFIX)
-    ):
+    # Command detection FIRST (F4): a message that is not a knowledge command
+    # falls back to the legacy unbound behaviour even without raw_text.
+    command_text = _knowledge_command_text(raw_text, text, bot_user_id)
+    if command_text is None:
         return None  # not a knowledge command — caller falls back
+    # It IS a knowledge command: C5 now REQUIRES the raw mention evidence —
+    # the leading bot mention in the original text (F2: prefix, not
+    # anywhere), which only the forwarding chain's raw_text can prove.
+    mention_error = _require_bot_mention_prefix(raw_text, bot_user_id)
+    if mention_error is not None:
+        return mention_error
     if not (team_id and channel_id and thread_ts and user_id):
         return _invalid("team_id, channel_id, thread_ts, and slack_user_id are required")
     if expected_team_id and team_id != expected_team_id:
@@ -803,7 +859,7 @@ def handle_slack_knowledge_review_message(
     if expected_channel_id and channel_id != expected_channel_id:
         return _invalid("channel mismatch", status_code=403)
     # bot self-messages never decide (C4).
-    known_bot = str(os.getenv("ENGINEER_SLACK_BOT_USER_ID") or "").strip()
+    known_bot = _configured_bot_user_id(bot_user_id)
     if known_bot and user_id == known_bot:
         return _invalid("bot messages cannot decide reviews", status_code=403)
 
@@ -827,11 +883,8 @@ def handle_slack_knowledge_review_message(
             status_code=409,
         )
     promotion = pending[0]
-    # The forwarding chain strips the mention into ``text``; when the chain
-    # is the stage-4 draft the stripped text already IS the command. Fall
-    # back to the mention-stripped raw text for chains that pass it through.
-    if not text:
-        text = command_text
+    text = command_text
+    lower = command_text.lower()
 
     if lower.startswith(_KNOWLEDGE_REJECT_PREFIX):
         return _decide_source_only(

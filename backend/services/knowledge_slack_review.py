@@ -165,12 +165,18 @@ def deliver_knowledge_review_notification(
     if str(promotion.get("slack_review_status") or "") == "delivered":
         # C3: already delivered — a retry must never post a second message.
         return {"promotion_id": promotion_id, "status": "delivered", "reason": "already_delivered"}
+    # F1 (review): the mark is an ATOMIC claim — only the caller that moves
+    # the state into 'queued' wins the send right; a concurrent caller (or a
+    # stale retry against an in-flight delivery) gets None and posts nothing.
     queued = repository.mark_knowledge_slack_review_queued(
         promotion_id, event_id=event_id, now_value=now
     )
     if queued is None:
-        # A concurrent delivery won the race; treat it as delivered.
-        return {"promotion_id": promotion_id, "status": "delivered", "reason": "already_delivered"}
+        return {
+            "promotion_id": promotion_id,
+            "status": "in_flight",
+            "reason": "concurrent_delivery_in_progress",
+        }
 
     try:
         result = poster.post_engineer_slack_event(event, thread_ts=thread_ts)

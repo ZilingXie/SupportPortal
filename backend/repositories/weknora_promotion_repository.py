@@ -465,15 +465,20 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
     def mark_knowledge_slack_review_queued(
         self, promotion_id: str, *, event_id: str, now_value: str
     ) -> dict[str, Any] | None:
-        """Stage 4 (p2-195): C3 idempotency — the deterministic event id is
-        recorded with the queued state; a delivered notification is never
-        re-queued, so a retry can never post a second message."""
+        """Stage 4 (p2-195, review F1): ATOMIC send claim.
+
+        Only a caller that moves the state from NULL/failed/outcome_unknown
+        into 'queued' wins the send right; a concurrent caller sees 'queued'
+        (already claimed) or 'delivered' (terminal) and gets None — exactly
+        one Slack post per notification lifecycle."""
         with self._assignment_lock:
             row = self._weknora_promotion_state().get(str(promotion_id))
             if row is None:
                 return None
-            if str(row.get("slack_review_status") or "") == "delivered":
-                return copy.deepcopy(row)
+            if str(row.get("slack_review_status") or "") not in {
+                None, "", "failed", "outcome_unknown",
+            }:
+                return None
             row.update(
                 slack_review_event_id=str(event_id or "").strip() or None,
                 slack_review_status="queued",
@@ -1088,7 +1093,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         UPDATE {} SET slack_review_event_id=%s, slack_review_status='queued',
                         slack_review_failure_code=NULL, updated_at=%s
                         WHERE promotion_id=%s
-                        AND (slack_review_status IS DISTINCT FROM 'delivered')
+                        AND (slack_review_status IS NULL OR slack_review_status IN ('failed','outcome_unknown'))
                         RETURNING promotion_id, slack_review_status
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),

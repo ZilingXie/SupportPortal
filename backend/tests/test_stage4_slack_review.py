@@ -488,3 +488,161 @@ def test_root_event_builder_requires_promotion_identity() -> None:
     assert event["promotion_id"] == "p1"
     with pytest.raises(ValueError):
         build_knowledge_review_root_event(event_id="", promotion_id="p1", message_text="b")
+
+
+# ------------------- stage-4 review fixes F1-F4 (concurrency + mention) ----
+
+
+def test_concurrent_delivery_claims_send_exactly_once() -> None:
+    """F1: two concurrent deliver() calls must produce exactly ONE post."""
+    import concurrent.futures
+
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _FakeSlackPoster()
+    promotion = _row(host, promotion_id)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(
+                deliver_knowledge_review_notification,
+                host, promotion, slack_client=poster, now_value=NOW,
+            )
+            for _ in range(2)
+        ]
+        results = [future.result() for future in futures]
+
+    statuses = sorted(result["status"] for result in results)
+    assert statuses == ["delivered", "in_flight"], statuses
+    assert len(poster.posts) == 1, "exactly one Slack post wins the claim"
+    row = _row(host, promotion_id)
+    assert row["slack_review_status"] == "delivered"
+
+
+def test_stale_retry_against_in_flight_delivery_posts_nothing() -> None:
+    """F1: a retry holding a STALE promotion copy (status not yet visible)
+    must not post while another delivery owns the claim."""
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _FakeSlackPoster()
+    stale = _row(host, promotion_id)  # captured BEFORE any delivery
+
+    first = deliver_knowledge_review_notification(host, stale, slack_client=poster, now_value=NOW)
+    assert first["status"] == "delivered"
+    # second call still uses the stale copy (slack_review_status is None)
+    second = deliver_knowledge_review_notification(host, stale, slack_client=poster, now_value=NOW)
+    assert second["status"] in {"in_flight", "delivered"}
+    assert len(poster.posts) == 1
+
+
+def test_mention_at_end_is_refused() -> None:
+    """F2: the mention must be the PREFIX, not anywhere in the text."""
+    host = _Host()
+    promotion_id = _parked(host)
+    _bind_thread(host, promotion_id)
+    result = _handle(
+        monkeypatch_fixture(), host,
+        _inbound_payload("knowledge reject", raw_text="knowledge reject <@U-BOT-1>"),
+    )
+    assert result["ok"] is False
+    assert "must start with a mention" in result["detail"]
+    row = _row(host, promotion_id)
+    assert row["status"] == "human_review", "F2: zero state change"
+
+
+def monkeypatch_fixture():
+    import pytest as _pytest
+
+    class _MP:
+        def __init__(self):
+            self._undos = []
+
+        def setattr(self, obj, name, value):
+            old = getattr(obj, name)
+            self._undos.append(lambda: setattr(obj, name, old))
+            setattr(obj, name, value)
+
+    return _MP()
+
+
+def test_ticket_bound_command_without_raw_text_is_refused(monkeypatch) -> None:
+    """F3: the case-bound path requires the SAME mention evidence — a bare
+    command on a bound thread no longer decides."""
+    from backend.services.automation_hermes_slack_actions import (
+        _try_knowledge_review_command,
+    )
+
+    host = _Host()
+    promotion_id = _parked(
+        host,
+        slack_channel_id=CHANNEL,
+        slack_thread_ts="999.500",
+        engineer_case_id="123-1",
+        client_ticket_id="123",
+    )
+    import unittest.mock as mock
+
+    import backend.services.engineer_slack as slack_module
+
+    with mock.patch.object(
+        slack_module, "resolve_slack_operator",
+        lambda uid, bot_user_id=None: {
+            "slack_user_id": uid, "email": "engineer@example.com", "display_name": "E",
+        },
+    ):
+        result = _try_knowledge_review_command(
+            _StoreStub(), "123", "knowledge reject",
+            channel_id=CHANNEL, thread_ts="999.500", repository=host,
+            slack_user_id="U-9", raw_text="", bot_user_id="",
+        )
+    assert result is not None and result["ok"] is False
+    assert "raw message text" in result["detail"]
+    row = _row(host, promotion_id)
+    assert row["status"] == "human_review", "F3: zero state change on missing evidence"
+
+
+def test_ticket_bound_command_with_mention_prefix_decides(monkeypatch) -> None:
+    """F3 positive: with the raw mention evidence the bound path decides."""
+    from backend.services.automation_hermes_slack_actions import (
+        _try_knowledge_review_command,
+    )
+
+    host = _Host()
+    promotion_id = _parked(
+        host,
+        slack_channel_id=CHANNEL,
+        slack_thread_ts="999.500",
+        engineer_case_id="123-1",
+        client_ticket_id="123",
+    )
+    import unittest.mock as mock
+
+    import backend.services.engineer_slack as slack_module
+
+    with mock.patch.object(
+        slack_module, "resolve_slack_operator",
+        lambda uid, bot_user_id=None: {
+            "slack_user_id": uid, "email": "engineer@example.com", "display_name": "E",
+        },
+    ):
+        result = _try_knowledge_review_command(
+            _StoreStub(), "123", "knowledge reject",
+            channel_id=CHANNEL, thread_ts="999.500", repository=host,
+            slack_user_id="U-9",
+            raw_text=f"<@{BOT}> knowledge reject", bot_user_id=BOT,
+        )
+    assert result is not None and result["ok"] is True, result
+    row = _row(host, promotion_id)
+    assert row["status"] == "rejected"
+    assert row["human_decided_by_email"] == "engineer@example.com"
+
+
+def test_plain_message_without_raw_text_falls_back_to_unbound(monkeypatch) -> None:
+    """F4: a NON-knowledge message without raw_text must return None (the
+    caller keeps the legacy ignored_unbound behaviour), never a 422."""
+    host = _Host()
+    result = _handle(monkeypatch, host, _inbound_payload("hello"))
+    payload = _inbound_payload("hello")
+    payload["raw_text"] = ""
+    result = _handle(monkeypatch, host, payload)
+    assert result is None, "non-knowledge messages fall back, no 422"

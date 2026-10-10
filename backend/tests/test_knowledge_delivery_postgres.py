@@ -289,3 +289,36 @@ def test_pg_v23_operator_identity_and_slack_review_state_machine(repository) -> 
     assert row["slack_review_status"] == "delivered"
     assert row["slack_channel_id"] == "C-REVIEW"
     assert row["slack_thread_ts"] == "1700.001"
+
+
+def test_pg_concurrent_slack_review_claim_posts_once(repository) -> None:
+    """Stage-4 review F1: two concurrent claims on PostgreSQL — exactly one
+    wins the queued transition (row-locked UPDATE), the loser gets None."""
+    import concurrent.futures
+
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    def claim():
+        return repository.mark_knowledge_slack_review_queued(
+            promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=LATER
+        )
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(claim) for _ in range(2)]
+        results = [future.result() for future in futures]
+
+    winners = [result for result in results if result is not None]
+    assert len(winners) == 1, f"exactly one claim wins, got {results}"
+    assert winners[0]["slack_review_status"] == "queued"
+    # a third claim after the winner is still queued gets None
+    assert claim() is None
+    # ...and completion from 'queued' stays the only exit
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001", now_value=LATER,
+    )
+    assert completed["slack_review_status"] == "delivered"
+    assert claim() is None, "delivered is terminal"

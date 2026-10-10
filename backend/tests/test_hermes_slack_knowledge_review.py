@@ -52,6 +52,7 @@ def _preproduction_settings() -> AutomationEcsSettings:
         "APP_BUILD_REF": "abc123",
         "PROMPT_RELEASE_ID": "prompt-1",
         "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "ENGINEER_SLACK_BOT_USER_ID": "U-BOT-TEST",
     }
     with patch.dict(os.environ, env, clear=True):
         return AutomationEcsSettings.from_env("api")
@@ -136,6 +137,9 @@ def _verified_operator(monkeypatch, user_id: str = "U-1") -> None:
     )
 
 
+_BOT_USER_ID = "U-BOT-TEST"
+
+
 def _reply(
     store: InMemoryAutomationEcsStore,
     text: str,
@@ -151,6 +155,10 @@ def _reply(
             "thread_ts": _THREAD,
             "slack_user_id": "U-1",
             "text": text,
+            # Stage 4 (review F3): the forwarding chain carries the raw text
+            # (with the leading bot mention) and the bot user id.
+            "raw_text": f"<@{_BOT_USER_ID}> {text}",
+            "bot_user_id": _BOT_USER_ID,
         },
         expected_team_id=_TEAM,
         expected_channel_id=_CHANNEL,

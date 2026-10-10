@@ -51,3 +51,17 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 
 - 测试载体固定 promotion_id/source_id/candidate_id/event_id/channel_id/thread_ts/slack_user_id；成功场景同时断言 Slack payload、promotion 持久化字段、身份列、绑定、状态、重试前后消息数量；
 - delivery 补写行为沿用阶段 1 状态机（approve 后只补 failed/unknown 目标），阶段 4 未改动（由既有 test_knowledge_dual_write 覆盖）。
+
+
+## 修复轮（2026-10-11，首轮验收四阻断后）
+
+| 阻断 | 修复 | 回归 |
+|---|---|---|
+| F1 并发重复发送 | mark_knowledge_slack_review_queued 改为**原子发送权 claim**：仅 NULL/failed/outcome_unknown → queued 的调用者获得发送权（InMemory 锁内判定；PG 单条 UPDATE 行锁 WHERE 状态集）；并发失败方得 None → 服务返回 in_flight 零发送 | InMemory 并发双线程（ThreadPool 结果=delivered+in_flight、posts==1）+ 陈旧副本重试 + PG 真并发 claim（恰一胜、queued 期间再 claim=None、delivered 终态） |
+| F2 mention 位置 | _require_bot_mention_prefix：raw_text 去除前导空白后必须以 <@bot> **开始**（前缀而非任意位置）；仅剥离开头一个 mention | mention 在句尾 → 422 零状态变更 |
+| F3 绑定路径绕过 | _try_knowledge_review_command 增加 raw_text/bot_user_id 参数并执行同一 _require_bot_mention_prefix；handle_slack_hermes_message 透传载荷字段 | 绑定线程裸命令（无 raw_text）→ 422 零变更；带 mention 前缀 → 正常决策（正反两测） |
+| F4 普通消息误 422 | 命令检测先行（_knowledge_command_text 对 raw_text/text 双候选做前缀判定），非知识命令在任何证据形态下都返回 None 走 ignored_unbound 回落；C5 证据校验只在确认是知识命令后执行 | "hello" 无 raw_text → None（回落） |
+
+存量适配：知识 Slack 决策测试 _reply 载荷补 raw_text+bot_user_id、测试 env 加 ENGINEER_SLACK_BOT_USER_ID（模拟阶段 4 转发链）。
+
+验证：阶段 4 专项 **29 passed**（23+6 新回归）；全套 17 套件 **489 passed / 0 failed**（含 PG：v23 集成 8 项含并发 claim）；compileall / git diff --check / Overview --check 通过。
