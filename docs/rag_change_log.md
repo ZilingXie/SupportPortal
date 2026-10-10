@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-3 review fix 3: negative totals and item shapes rejected (p2-194)
+
+- Summary: `wiki_list.total` now rejects negative integers (total=-1 previously produced an empty-but-available sweep), and every `items` entry must be an object — closing the last parsing gap so both AgentMemory read endpoints fully self-verify their responses (non-boolean, non-negative, true integers; element-wise object validation).
+- Reason: stage-3 third-round review blocker (same fail-closed family).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 31 passed (+3 regressions incl. the end-to-end negative-total unavailable-surface path); full 16-suite regression 454 passed / 0 failed including isolated PostgreSQL.
+
 ## 2026-10-10 - Stage-3 review fix 2: JSON booleans rejected as counts (p2-194)
 
 - Summary: `wiki_search.count` and `wiki_list.total` now explicitly reject booleans — Python treats `bool` as an `int` subclass, so JSON `true`/`false` previously passed `isinstance(x, int)` and a malformed response could keep the AgentMemory evidence surface "available" with an empty sweep. Both fields now require a real integer (bool check first), raising `invalid_response` so the surface degrades and writable decisions downgrade to human_review.

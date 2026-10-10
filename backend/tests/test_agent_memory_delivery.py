@@ -651,3 +651,67 @@ def test_wiki_list_boolean_total_is_invalid_response(monkeypatch) -> None:
                 raised = True
                 assert exc.failure_kind == "invalid_response"
         assert raised, f"total={bad!r} must be rejected"
+
+
+# --------------------- stage-3 review fix 3: negative totals / item shapes --
+
+
+def test_wiki_list_negative_total_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: total=-1/-100 must not yield an available empty sweep."""
+    import unittest.mock as mock
+
+    for bad in (-1, -100):
+        transport = _ScriptedTransport([{"data": {"items": [], "total": bad}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"total={bad!r} must be rejected"
+
+
+def test_wiki_list_non_object_items_are_invalid_response(monkeypatch) -> None:
+    """Same-family hardening: a malformed inventory entry is rejected at the
+    client boundary instead of surfacing as an AttributeError later."""
+    import unittest.mock as mock
+
+    for bad_items in ([None], ["wiki-1"], [42]):
+        transport = _ScriptedTransport([{"data": {"items": bad_items, "total": len(bad_items)}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"items={bad_items!r} must be rejected"
+
+
+def test_search_knowledge_negative_total_fails_closed_end_to_end(monkeypatch) -> None:
+    """End-to-end: the reviewer's repro path (negative total -> empty sweep
+    -> surface available -> new bypasses duplicate check) is closed."""
+    import unittest.mock as mock
+
+    from backend.services.hermes_knowledge_workflow import _collect_agent_memory_evidence
+
+    class _NegativeTotalClient:
+        def configured(self) -> bool:
+            return True
+
+        def search_knowledge(self, query: str) -> dict:
+            return self.wiki_list() and {}
+
+        def wiki_list(self, *, limit=100, offset=0):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki list response is missing items/total",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_NegativeTotalClient(), packet)
+    assert available is False
+    assert "agent_memory_search_failed" in meta["reason"]

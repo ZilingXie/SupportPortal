@@ -247,8 +247,16 @@ class AgentMemoryWikiClient:
         items = data.get("items") if isinstance(data.get("items"), list) else None
         total = data.get("total")
         # bool is an int subclass in Python: JSON true/false must be rejected
-        # explicitly or a malformed response keeps the surface "available".
-        if items is None or isinstance(total, bool) or not isinstance(total, int):
+        # explicitly, a negative total is equally malformed (it would let the
+        # sweep report an empty-but-available surface), and every inventory
+        # entry must be an object.
+        if (
+            items is None
+            or isinstance(total, bool)
+            or not isinstance(total, int)
+            or total < 0
+            or any(not isinstance(item, dict) for item in items)
+        ):
             raise AgentMemoryWikiError(
                 "AgentMemory wiki list response is missing items/total",
                 failure_kind="invalid_response",

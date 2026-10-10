@@ -117,3 +117,12 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 修复：`wiki_search.count` 与 `wiki_list.total` 显式拒绝 `bool`（先 `isinstance(x, bool)` 后 `isinstance(x, int)`），malformed 布尔响应即 `invalid_response` → 面不可用 → 可写降级。
 
 回归 2 项（count=true/false、total=true/false 四形态全部拒绝）。验证：AM 套件 28 passed；全套 **451 passed / 0 failed**（16 套件含隔离 PG）。
+
+
+## 阶段 3 修复轮 3（2026-10-10，第三轮验收一项同类阻断后）
+
+阻断：`wiki_list.total` 未拒绝负数——实测 `total=-1/-100` 使 `search_knowledge` 返回 wiki_count=0/searched=0/hits=[] 且面保持可用。
+
+修复：`total < 0` → `invalid_response`；并主动收口同族最后一处解析缺口——`items` 每元素必须为对象（`items=[null]/["x"]/[42]` 拒绝，避免下游 AttributeError 形态的延迟失败）。至此 `wiki_list` 与 `wiki_search` 的响应自证完整：total/count 非布尔、非负、真整数；items/results 逐元素对象。
+
+回归 3 项（负数 total 两形态、非对象 items 三形态、负 total 端到端面不可用链）。验证：AM 套件 31 passed；全套 **454 passed / 0 failed**（16 套件含隔离 PG）。
