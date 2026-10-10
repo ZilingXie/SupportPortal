@@ -57,6 +57,12 @@ WEKNORA_PROMOTION_FIELDS = (
     "human_decision",
     "human_decision_detail",
     "human_decided_at",
+    "human_decided_by_email",
+    "human_decided_slack_user_id",
+    "slack_review_event_id",
+    "slack_review_status",
+    "slack_review_message_ts",
+    "slack_review_failure_code",
     "input_fingerprint",
     "created_at",
     "updated_at",
@@ -121,6 +127,14 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         "human_decision": None,
         "human_decision_detail": None,
         "human_decided_at": None,
+        # Stage 4 (p2-195): verified operator identity + Slack review
+        # notification state machine.
+        "human_decided_by_email": None,
+        "human_decided_slack_user_id": None,
+        "slack_review_event_id": None,
+        "slack_review_status": None,
+        "slack_review_message_ts": None,
+        "slack_review_failure_code": None,
         # Frozen-input generation this promotion was produced from (review
         # round 3, R3-6); standalone promotions carry the source version.
         "input_fingerprint": str(task.get("input_fingerprint") or "") or None,
@@ -357,6 +371,8 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
         note: str = "",
         decided_at: str,
         resolution: dict[str, Any] | None = None,
+        operator_email: str | None = None,
+        operator_slack_user_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Close the human-review loop (governance plan WP3, review round 1).
 
@@ -367,6 +383,11 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
         ``reject`` parks it terminally. Only rows actually sitting in
         ``human_review`` are decidable; any other state returns None so a
         stale decision cannot resurrect finished work.
+
+        Stage 4 (p2-195): ``operator_email`` / ``operator_slack_user_id``
+        persist the VERIFIED operator identity (server-resolved via
+        users.info or the authenticated server principal) — client-supplied
+        display strings never land here.
         """
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
@@ -423,6 +444,8 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 human_decision="approved" if decision == "approve" else "rejected",
                 human_decision_detail=detail or None,
                 human_decided_at=decided_at,
+                human_decided_by_email=str(operator_email).strip() or None,
+                human_decided_slack_user_id=str(operator_slack_user_id).strip() or None,
                 updated_at=decided_at,
             )
             # Dual-write phase 2: an approval repairs ONLY the failed/unknown
@@ -436,6 +459,56 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             else:
                 self._cascade_invalidate_deliveries(
                     str(row.get("promotion_id") or ""), invalidated_at=decided_at
+                )
+            return copy.deepcopy(row)
+
+    def mark_knowledge_slack_review_queued(
+        self, promotion_id: str, *, event_id: str, now_value: str
+    ) -> dict[str, Any] | None:
+        """Stage 4 (p2-195): C3 idempotency — the deterministic event id is
+        recorded with the queued state; a delivered notification is never
+        re-queued, so a retry can never post a second message."""
+        with self._assignment_lock:
+            row = self._weknora_promotion_state().get(str(promotion_id))
+            if row is None:
+                return None
+            if str(row.get("slack_review_status") or "") == "delivered":
+                return copy.deepcopy(row)
+            row.update(
+                slack_review_event_id=str(event_id or "").strip() or None,
+                slack_review_status="queued",
+                slack_review_failure_code=None,
+                updated_at=now_value,
+            )
+            return copy.deepcopy(row)
+
+    def complete_knowledge_slack_review(
+        self,
+        promotion_id: str,
+        *,
+        status: str,
+        slack_channel_id: str | None = None,
+        slack_thread_ts: str | None = None,
+        slack_review_message_ts: str | None = None,
+        failure_code: str | None = None,
+        now_value: str,
+    ) -> dict[str, Any] | None:
+        if status not in {"delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid knowledge slack review completion status")
+        with self._assignment_lock:
+            row = self._weknora_promotion_state().get(str(promotion_id))
+            if row is None or str(row.get("slack_review_status") or "") != "queued":
+                return None
+            row.update(
+                slack_review_status=status,
+                slack_review_failure_code=str(failure_code).strip() or None,
+                updated_at=now_value,
+            )
+            if status == "delivered":
+                row.update(
+                    slack_channel_id=str(slack_channel_id or "").strip() or row.get("slack_channel_id"),
+                    slack_thread_ts=str(slack_thread_ts or "").strip() or row.get("slack_thread_ts"),
+                    slack_review_message_ts=str(slack_review_message_ts or "").strip() or None,
                 )
             return copy.deepcopy(row)
 
@@ -535,6 +608,22 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decision_detail TEXT").format(promotion_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS human_decided_at TIMESTAMPTZ").format(promotion_table))
         cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS input_fingerprint TEXT").format(promotion_table))
+        # v23 (stage 4, p2-195): verified Slack operator identity and the
+        # review-notification state machine (queued/delivered/failed/
+        # outcome_unknown) on the candidate row itself.
+        for column, col_type in (
+            ("human_decided_by_email", "TEXT"),
+            ("human_decided_slack_user_id", "TEXT"),
+            ("slack_review_event_id", "TEXT"),
+            ("slack_review_status", "TEXT"),
+            ("slack_review_message_ts", "TEXT"),
+            ("slack_review_failure_code", "TEXT"),
+        ):
+            cur.execute(
+                sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
+                    promotion_table, sql.Identifier(column), sql.SQL(col_type)
+                )
+            )
         cur.execute(
             sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
                 promotion_table,
@@ -832,11 +921,14 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         note: str = "",
         decided_at: str,
         resolution: dict[str, Any] | None = None,
+        operator_email: str | None = None,
+        operator_slack_user_id: str | None = None,
     ) -> dict[str, Any] | None:
         """PG twin of the human-review decision closure; see the in-memory
         method for the contract (approve applies the human-determined write
         action and re-queues under the full external write contract, reject is
-        terminal, only human_review is decidable)."""
+        terminal, only human_review is decidable). Stage 4 (p2-195): the
+        verified operator identity columns persist with the decision."""
         if decision not in {"approve", "reject"}:
             raise ValueError("decision must be approve or reject")
         detail = str(decided_by or "").strip()
@@ -876,7 +968,9 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                             """
                             UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
                             lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
-                            human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s,
+                            human_decided_at=%s,
+                            human_decided_by_email=%s, human_decided_slack_user_id=%s,
+                            updated_at=%s, decision=%s, candidate_payload=%s,
                             content_hash=COALESCE(%s, content_hash),
                             weknora_object_id=%s, weknora_version=%s
                             WHERE promotion_id=%s AND status='human_review'
@@ -888,6 +982,8 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                             "approved" if decision == "approve" else "rejected",
                             detail or None,
                             decided_at,
+                            str(operator_email).strip() or None,
+                            str(operator_slack_user_id).strip() or None,
                             decided_at,
                             next_decision,
                             Json(next_payload),
@@ -979,6 +1075,77 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 (timestamp, promotion_id),
             )
         return cur.rowcount
+
+    def mark_knowledge_slack_review_queued(
+        self, promotion_id: str, *, event_id: str, now_value: str
+    ) -> dict[str, Any] | None:
+        """PG twin of the C3 idempotency guard; see the in-memory method."""
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} SET slack_review_event_id=%s, slack_review_status='queued',
+                        slack_review_failure_code=NULL, updated_at=%s
+                        WHERE promotion_id=%s
+                        AND (slack_review_status IS DISTINCT FROM 'delivered')
+                        RETURNING promotion_id, slack_review_status
+                        """
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (str(event_id or "").strip() or None, now_value, str(promotion_id)),
+                )
+                record = cur.fetchone()
+                if record is None:
+                    return None
+                return {"promotion_id": str(record[0]), "slack_review_status": str(record[1])}
+
+        return self._run_with_connection_retry("mark_knowledge_slack_review_queued", operation)
+
+    def complete_knowledge_slack_review(
+        self,
+        promotion_id: str,
+        *,
+        status: str,
+        slack_channel_id: str | None = None,
+        slack_thread_ts: str | None = None,
+        slack_review_message_ts: str | None = None,
+        failure_code: str | None = None,
+        now_value: str,
+    ) -> dict[str, Any] | None:
+        if status not in {"delivered", "failed", "outcome_unknown"}:
+            raise ValueError("invalid knowledge slack review completion status")
+
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} SET slack_review_status=%s, slack_review_failure_code=%s,
+                        slack_channel_id=COALESCE(%s, slack_channel_id),
+                        slack_thread_ts=COALESCE(%s, slack_thread_ts),
+                        slack_review_message_ts=COALESCE(%s, slack_review_message_ts),
+                        updated_at=%s
+                        WHERE promotion_id=%s AND slack_review_status='queued'
+                        RETURNING promotion_id, slack_review_status
+                        """
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (
+                        status,
+                        str(failure_code).strip() or None,
+                        str(slack_channel_id or "").strip() or None,
+                        str(slack_thread_ts or "").strip() or None,
+                        str(slack_review_message_ts or "").strip() or None,
+                        now_value,
+                        str(promotion_id),
+                    ),
+                )
+                record = cur.fetchone()
+                return None if record is None else {
+                    "promotion_id": str(record[0]),
+                    "slack_review_status": str(record[1]),
+                }
+
+        return self._run_with_connection_retry("complete_knowledge_slack_review", operation)
 
 
 def _json_value(value: Any) -> Any:

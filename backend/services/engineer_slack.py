@@ -17,6 +17,7 @@ LOGGER = logging.getLogger("supportportal.engineer_slack")
 
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
+SLACK_USERS_INFO_URL = "https://slack.com/api/users.info"
 HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
 HERMES_CASE_OPENED_EVENT_TYPE = "hermes_case_opened"
 HERMES_INVESTIGATION_RESULT_EVENT_TYPE = "hermes_investigation_result"
@@ -38,6 +39,10 @@ _ROOT_EVENT_TYPES = frozenset(
         "engineer_case_opened",
         HERMES_REVIEW_PENDING_EVENT_TYPE,
         HERMES_CASE_OPENED_EVENT_TYPE,
+        # Stage 4 (p2-195): a source-only candidate's review notification
+        # STARTS a new root thread in the review channel — the returned
+        # message ts becomes the candidate's thread binding.
+        "knowledge_review_required",
     }
 )
 # Hermes investigation cases bind one root message per case; every later
@@ -997,3 +1002,120 @@ def notify_knowledge_review_candidate(
         return post_engineer_slack_event(event, thread_ts=slack_thread_ts)
     except Exception:  # noqa: BLE001 - Slack failure must not block the worker
         return None
+
+
+# ------------------------------------------------- Slack operator identity
+
+
+class SlackOperatorResolutionError(RuntimeError):
+    """The Slack user behind a review command could not be verified.
+
+    Any failure here MUST refuse the decision with zero state change (stage 4
+    C4): the operator identity is a server-side fact (users.info via the bot
+    token), never a client claim.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
+
+
+def resolve_slack_operator(
+    user_id: str, *, bot_user_id: str | None = None
+) -> dict[str, Any]:
+    """Resolve a Slack user id to a verified operator identity (stage 4 C4).
+
+    Uses the engineer Slack bot token to call ``users.info`` and proves:
+    ``ok=true``, the returned user id equals the requested one, and a non-empty
+    email. Bot self-messages are refused up front. The result carries the
+    slack user id, the email, and a display name; nothing from the inbound
+    payload can override it.
+    """
+    normalized_user_id = str(user_id or "").strip()
+    if not normalized_user_id:
+        raise SlackOperatorResolutionError("missing_user_id", "a Slack user id is required")
+    known_bot = str(bot_user_id or os.getenv("ENGINEER_SLACK_BOT_USER_ID") or "").strip()
+    if known_bot and normalized_user_id == known_bot:
+        raise SlackOperatorResolutionError("bot_message", "bot messages cannot decide reviews")
+
+    token = str(os.getenv("ENGINEER_SLACK_ACCESS_TOKEN") or "").strip()
+    if not token:
+        raise SlackOperatorResolutionError(
+            "slack_not_configured", "the engineer Slack bot token is not configured"
+        )
+    request = urllib.request.Request(
+        f"{SLACK_USERS_INFO_URL}?user={urllib.parse.quote(normalized_user_id)}",
+        method="GET",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=_timeout_seconds()) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except (TimeoutError, socket.timeout, urllib.error.URLError) as exc:
+        raise SlackOperatorResolutionError(
+            "slack_api_failed", f"users.info request failed: {exc}"
+        ) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SlackOperatorResolutionError(
+            "slack_api_failed", "users.info returned an unparseable response"
+        ) from exc
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        error = payload.get("error") if isinstance(payload, dict) else None
+        if error == "user_not_found":
+            raise SlackOperatorResolutionError(
+                "user_not_found", f"Slack user {normalized_user_id!r} does not exist"
+            )
+        raise SlackOperatorResolutionError(
+            "slack_api_failed", f"users.info answered ok=false: {error}"
+        )
+    user = payload.get("user") if isinstance(payload.get("user"), dict) else {}
+    returned_id = str(user.get("id") or "").strip()
+    if returned_id != normalized_user_id:
+        raise SlackOperatorResolutionError(
+            "id_mismatch",
+            f"users.info returned id {returned_id!r} for requested {normalized_user_id!r}",
+        )
+    profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
+    email = str(profile.get("email") or "").strip()
+    if not email:
+        raise SlackOperatorResolutionError(
+            "empty_email", f"Slack user {normalized_user_id!r} has no email on record"
+        )
+    display = str(profile.get("real_name") or profile.get("display_name") or "").strip()
+    return {
+        "slack_user_id": normalized_user_id,
+        "email": email,
+        "display_name": display or email,
+    }
+
+
+# ------------------------------------------ source-only review root message
+
+
+def build_knowledge_review_root_event(
+    *,
+    event_id: str,
+    promotion_id: str,
+    message_text: str,
+) -> dict[str, Any]:
+    """A review notification for a source-only candidate (stage 4 C1).
+
+    Unlike the case-bound thread event this carries NO case identity: the
+    message starts a NEW root thread in the review channel, and the returned
+    message ts becomes the candidate's review thread binding.
+    """
+    normalized_event_id = str(event_id or "").strip()
+    normalized_promotion = str(promotion_id or "").strip()
+    normalized_message = str(message_text or "").strip()
+    if not all((normalized_event_id, normalized_promotion, normalized_message)):
+        raise ValueError(
+            "knowledge review root event requires event id, promotion id, and message"
+        )
+    return {
+        "schema_version": ENGINEER_SLACK_SCHEMA_VERSION,
+        "event_id": normalized_event_id,
+        "event_type": "knowledge_review_required",
+        "engineer_case_id": "knowledge-review",
+        "promotion_id": normalized_promotion,
+        "message_text": normalized_message,
+    }

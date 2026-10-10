@@ -1,4 +1,10 @@
 # Prompt Change Log
+## 2026-10-11 - Knowledge review Slack message rebuilt (p2-195 stage 4)
+
+- 变更：知识 Review 通知消息由 knowledge_slack_review._build_review_message 重建：标题/判断/完整候选正文（1500 字符截断+API 全文指引）/target+base_version/Rationale/来源三元组/Promotion ID/回复指引（含 @bot mention 示例与定向操作说明）。source-only 根消息与工单线程回复共用同一模板；knowledge_review_required 成为合法根消息类型。无 Hermes prompt 文本变更（仅 Slack 展示层）。
+- 原因：阶段 4 出站合同（计划 r2-stage4 第 4 步）。
+- 验证：阶段 4 专项测试断言消息要素与根消息类型；23 项+全套 481/0。
+
 ## 2026-10-10 - Review bundle gains the AgentMemory retrieval surface (p2-194 stage 3)
 
 - 变更：Hermes 知识 Review 的输入 bundle（case 绑定 `hermes-knowledge-review-bundle-v1` 与 standalone `knowledge-review-bundle-v1`）新增 `agent_memory` 面：`{available, results, wiki_count, searched}`——AgentMemory wiki 检索证据（verified API：wiki/list+wiki/search 扇出，仅 ready wiki、上限 100、top_k 5）。可写决策（new/supplement/replace/merge）现要求 WeKnora 各面 AND AgentMemory 同时应答，任一不可用降级 human_review（理由区分单侧/双侧）。无 prompt 文本变更；仅 Review 模型可见的输入结构扩展（向后兼容的加字段）。

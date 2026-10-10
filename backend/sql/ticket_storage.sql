@@ -738,6 +738,14 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     human_decision TEXT,
     human_decision_detail TEXT,
     human_decided_at TIMESTAMPTZ,
+    -- v23 (stage 4, p2-195): verified Slack operator identity + review
+    -- notification state machine on the candidate row.
+    human_decided_by_email TEXT,
+    human_decided_slack_user_id TEXT,
+    slack_review_event_id TEXT,
+    slack_review_status TEXT,
+    slack_review_message_ts TEXT,
+    slack_review_failure_code TEXT,
     input_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL

@@ -243,3 +243,49 @@ def test_pg_approve_with_edited_content_recomputes_hash(repository) -> None:
             decided_at=LATER,
             resolution={"action": "new", "content": "# engineer-edited body"},
         )
+
+
+def test_pg_v23_operator_identity_and_slack_review_state_machine(repository) -> None:
+    """Stage 4 (p2-195): the v23 columns persist the verified operator
+    identity and the review-notification state machine on PostgreSQL."""
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    # notification state machine
+    queued = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=NOW
+    )
+    assert queued and queued["slack_review_status"] == "queued"
+    # already-delivered guard: mark again after completion must not requeue
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001", now_value=LATER,
+    )
+    assert completed and completed["slack_review_status"] == "delivered"
+    refused = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}", now_value=LATER
+    )
+    assert refused is None, "delivered is terminal for the notification state machine"
+
+    # decision with verified identity
+    decided = repository.decide_weknora_promotion(
+        promotion_id,
+        decision="approve",
+        decided_by="engineer@example.com",
+        decided_at=LATER,
+        resolution={"action": "new", "content": "C"},
+        operator_email="engineer@example.com",
+        operator_slack_user_id="U-9",
+    )
+    assert decided and decided["status"] == "queued"
+    row = next(
+        row for row in repository.list_weknora_promotions()
+        if row["promotion_id"] == promotion_id
+    )
+    assert row["human_decided_by_email"] == "engineer@example.com"
+    assert row["human_decided_slack_user_id"] == "U-9"
+    assert row["slack_review_status"] == "delivered"
+    assert row["slack_channel_id"] == "C-REVIEW"
+    assert row["slack_thread_ts"] == "1700.001"

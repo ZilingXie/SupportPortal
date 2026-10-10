@@ -203,19 +203,18 @@ def _generation_current(repository: Any, promotion: dict[str, Any], native_state
 
 
 def _notify_human_review(repository: Any, promotion: dict[str, Any]) -> None:
-    """Best-effort Slack notification for a parked candidate (queue API stays
-    the primary surface; a Slack failure never loses the candidate)."""
-    if not knowledge_slack_notify_enabled():
-        return
-    try:
-        from backend.services.engineer_slack import notify_knowledge_review_candidate
+    """Reliable Slack notification for a parked candidate (stage 4, p2-195).
 
-        notify_knowledge_review_candidate(
-            engineer_case_id=str(promotion.get("engineer_case_id") or ""),
-            promotion_id=str(promotion.get("promotion_id") or ""),
-            candidate=candidate_payload(promotion),
-            slack_thread_ts=str(promotion.get("slack_thread_ts") or "") or None,
+    Delegates to the v23 state machine (deterministic event id, queued ->
+    delivered/failed/outcome_unknown on the candidate row; source-only
+    candidates start a root thread in the review channel). The queue API
+    stays the primary surface; a Slack failure never loses the candidate."""
+    try:
+        from backend.services.knowledge_slack_review import (
+            deliver_knowledge_review_notification,
         )
+
+        deliver_knowledge_review_notification(repository, promotion)
     except Exception as exc:  # noqa: BLE001 - notification is never a dependency
         LOGGER.warning(
             "knowledge_dual_write slack notify failed promotion=%s: %s",

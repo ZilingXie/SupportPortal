@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T16:13:40Z",
-  "source_base_commit": "6551b29d2bd3df26fb76ff7ba1b25bedb2265c18",
-  "registry_digest": "4747acadad6c70b98377c9506a05339a9c798c078d9cced0704ee0fb6e4afd39",
+  "generated_at": "2026-10-10T17:41:17Z",
+  "source_base_commit": "8d235da51185d4901e04c358e6ce6635ec392b84",
+  "registry_digest": "cd9705d19f8fe5a9be7a488700c17b90cd3e219255e6aa53f351a91957d06482",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5561,6 +5561,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 3 第五轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD 6551b29d；必需字段 fail-closed 全确认、malformed→面不可用→new 降级、布尔/负数/空页/非对象全覆盖；定向 42、16 套件 458/0 含隔离 PG；编译/Overview/快照校验/diff-check 全过；LEGACY-EXPOSED 29 条属历史 active 链）；允许进入 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 4 专项测试（C1-C10 全矩阵）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q",
+          "result": "23 passed（根线程/绑定/幂等重试/失败与超时/频道不匹配/开关关闭/身份五类失败/入站 mention/线程/消歧/定向/C10）"
+        },
+        {
+          "type": "test",
+          "label": "全套回归含隔离 PostgreSQL",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （17 套件）",
+          "result": "481 passed / 0 failed（含 v23 PG 集成 7 项：状态机+delivered 终态+身份列持久化）"
+        },
+        {
+          "type": "document",
+          "label": "n8n Forward Thread Draft 与 Active 未变证据",
+          "command": "n8n MCP get_workflow_details（直连 JSON-RPC）→ update_workflow（1 op，setNodeParameter body）→ 回读",
+          "result": "active=b02f3ed5 未变；draft=4ed2c0c3 转发 raw_text+bot_user_id；active 快照先行刷新（仓库原快照过期已同步）+manifest+validator 15 published+4 drafts+56 redactions 退出码 0"
         }
       ],
       "source_refs": [
@@ -5576,7 +5594,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 1,
+      "task_count": 2,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -17569,6 +17587,55 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 3 第五轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD 6551b29d；必需字段 fail-closed 全确认、malformed→面不可用→new 降级、布尔/负数/空页/非对象全覆盖；定向 42、16 套件 458/0 含隔离 PG；编译/Overview/快照校验/diff-check 全过；LEGACY-EXPOSED 29 条属历史 active 链）；允许进入 finalize"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-195",
+      "title": "Slack 人工 Review：source-only 根线程、验证身份与可靠通知（阶段四）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-dualwrite-governance",
+      "created_at": "2026-10-11",
+      "updated_at": "2026-10-11",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage4。前置=阶段 0-3（main bcbda671）。范围=Slack Review 代码/持久化/Draft 交互链/自动化测试；不开治理开关、不发布 n8n、不发真实业务消息、不部署。交付（分支 codex/weknora-dualwrite-phase4）：v23 schema（六字段：human_decided_by_email/human_decided_slack_user_id/slack_review_event_id/slack_review_status/slack_review_message_ts/slack_review_failure_code，InMemory+PG+静态镜像+版本守卫同步）；resolve_slack_operator（bot token users.info→邮箱，五类失败拒绝：user_not_found/api_failed/empty_email/id_mismatch/bot_message，客户端字段不可覆盖）；可靠通知状态机（knowledge_slack_review.py：确定性 event id=f\"knowledge-review:{promotion_id}\"，queued→delivered/failed/outcome_unknown，source-only 根消息/工单线程回复/频道不匹配拒绝/重试不重复）；knowledge_review_required 入根消息类型；出站消息含来源/判断/证据/正文/target/base_version/promotion/source/candidate；入站 source-only 路径（C5 mention 证据=raw_text 含 \u003c@bot>，C6 channel/thread 绑定，C7 单候选消歧，C4 身份解析失败零状态变更，C8 既有 generation/hash/delivery 状态机，C9 定向操作必带 target+base_version）；decision API 收紧（客户端 operator 一律 422 拒绝；服务端主体=dashboard session 或 automation-api）；n8n Forward Thread Draft（r1HIW8UNuCabiOPn：hermes messages 转发载荷加 raw_text+bot_user_id=U08RVQSJQF2，draft 4ed2c0c3 未发布、active b02f3ed5 未变；改前刷新 active 快照+manifest）。验证：阶段 4 专项 23 项（C1-C10 全矩阵）+ 存量适配（知识 Slack 决策测试加身份桩、API 测试改服务端主体）+PG v23 集成 7 项；全套 17 套件 481 passed/0 failed（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）。",
+      "next_action": "阶段 4 待独立验收（Draft PR 就绪后）；验收点=C1-C10、v23 镜像三方一致、身份解析五类失败、n8n Draft 快照与 Active 未变、真实 Slack 发送证据=waiting-for-evidence（阶段 6 授权后补齐）。通过后进入阶段 5（页面/API 展示增强）。",
+      "acceptance_criteria": [
+        "C1 source-only 根线程创建并持久化绑定；失败保留 human_review",
+        "C2 既有 case binding 只回复原线程；不匹配拒绝发送",
+        "C3 确定性 event id；重试不产生第二条根消息",
+        "C4 user_id→users.info→email 验证后审计；失败零状态变更",
+        "C5 命令必须带 bot mention 证据（raw_text）",
+        "C6 命令必须来自保存的 channel/thread",
+        "C7 线程唯一待审候选；0 或多个拒绝转 API",
+        "C8 reject→rejected；approve→既有双目标 delivery；冲突 409",
+        "C9 定向操作必带 target+base_version；缺字段零 delivery",
+        "C10 主开关关闭时保留队列与审计零变更",
+        "v23 schema 动态/静态/守卫三方一致；InMemory/PG 行为一致",
+        "decision API 拒绝客户端 operator；操作人=服务端主体"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "阶段 4 专项测试（C1-C10 全矩阵）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q",
+          "result": "23 passed（根线程/绑定/幂等重试/失败与超时/频道不匹配/开关关闭/身份五类失败/入站 mention/线程/消歧/定向/C10）"
+        },
+        {
+          "type": "test",
+          "label": "全套回归含隔离 PostgreSQL",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （17 套件）",
+          "result": "481 passed / 0 failed（含 v23 PG 集成 7 项：状态机+delivered 终态+身份列持久化）"
+        },
+        {
+          "type": "document",
+          "label": "n8n Forward Thread Draft 与 Active 未变证据",
+          "command": "n8n MCP get_workflow_details（直连 JSON-RPC）→ update_workflow（1 op，setNodeParameter body）→ 回读",
+          "result": "active=b02f3ed5 未变；draft=4ed2c0c3 转发 raw_text+bot_user_id；active 快照先行刷新（仓库原快照过期已同步）+manifest+validator 15 published+4 drafts+56 redactions 退出码 0"
         }
       ]
     },

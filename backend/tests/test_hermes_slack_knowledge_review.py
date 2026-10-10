@@ -118,7 +118,31 @@ def _parked_promotion(repository: InMemoryTicketRepository, **overrides: Any) ->
     return promotion_id
 
 
-def _reply(store: InMemoryAutomationEcsStore, text: str) -> dict[str, Any]:
+def _verified_operator(monkeypatch, user_id: str = "U-1") -> None:
+    """Stage 4 (p2-195): stub the server-side users.info resolution so tests
+    exercise the decision contract with a verified identity."""
+    from unittest.mock import patch
+
+    import backend.services.engineer_slack as slack_module
+
+    monkeypatch.setattr(
+        slack_module,
+        "resolve_slack_operator",
+        lambda uid, bot_user_id=None: {
+            "slack_user_id": uid,
+            "email": "engineer@example.com",
+            "display_name": "Engineer",
+        },
+    )
+
+
+def _reply(
+    store: InMemoryAutomationEcsStore,
+    text: str,
+    monkeypatch=None,
+) -> dict[str, Any]:
+    if monkeypatch is not None:
+        _verified_operator(monkeypatch)
     return handle_slack_hermes_message(
         store,
         {
@@ -159,6 +183,7 @@ def _promotion(repository: InMemoryTicketRepository, promotion_id: str) -> dict[
 
 
 def test_real_entry_reject_decides_case_bound_promotion(monkeypatch) -> None:
+    _verified_operator(monkeypatch)
     store = _bound_store()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -173,7 +198,7 @@ def test_real_entry_reject_decides_case_bound_promotion(monkeypatch) -> None:
     row = _promotion(repository, promotion_id)
     assert row["status"] == "rejected"
     assert row["human_decision"] == "rejected"
-    assert "slack-engineer" in str(row["human_decision_detail"] or "")
+    assert "engineer@example.com" in str(row["human_decision_detail"] or "")
     # The reply is a decision, not reviewer feedback: no turn was created.
     review = store.get_hermes_case_review(_TICKET) or {}
     assert not [
@@ -183,6 +208,7 @@ def test_real_entry_reject_decides_case_bound_promotion(monkeypatch) -> None:
 
 
 def test_real_entry_approve_finds_standalone_promotion_by_thread(monkeypatch) -> None:
+    _verified_operator(monkeypatch)
     """R18-2: a standalone promotion has NO client_ticket_id — only the
     thread lineage in the reply can find it."""
     store = _bound_store()
@@ -266,6 +292,7 @@ def test_real_entry_non_command_reply_opens_feedback_when_governance_disabled(
 
 
 def test_real_entry_targeted_approve_requires_target_and_base_version(monkeypatch) -> None:
+    _verified_operator(monkeypatch)
     store = _bound_store()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -292,6 +319,7 @@ def test_real_entry_targeted_approve_requires_target_and_base_version(monkeypatc
 
 
 def test_real_entry_targeted_approve_accepts_candidate_target(monkeypatch) -> None:
+    _verified_operator(monkeypatch)
     """Pre-filled target/base_version from the candidate need no flags."""
     store = _bound_store()
     repository = InMemoryTicketRepository()
@@ -472,6 +500,7 @@ def _published_receiving_chain(event_text: str) -> tuple[bool, str]:
 
 
 def test_notification_examples_reach_decision_through_published_chain(monkeypatch) -> None:
+    _verified_operator(monkeypatch)
     """R19/P1: examples shown to the engineer must clear the published
     receiving chain and complete a decision through the real entry."""
     from backend.services.engineer_slack import build_knowledge_review_event
