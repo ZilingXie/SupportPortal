@@ -63,7 +63,7 @@ def store() -> Any:
     postgres_store = PostgresAutomationEcsStore(settings)
     try:
         postgres_store.migrate()
-        assert SCHEMA_REVISION == "automation-ecs-014"
+        assert SCHEMA_REVISION == "automation-ecs-015"
         yield postgres_store
     finally:
         with psycopg.connect(_DSN, autocommit=True) as connection:

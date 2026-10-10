@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T02:58:17Z",
-  "source_base_commit": "ac7a27ac0274ab3d023b2070d72a0fca3cea5bf8",
-  "registry_digest": "c82be33d70ee723660cf4f8a93b7ad75ca096c817846180ee626063b32888c04",
+  "generated_at": "2026-10-10T03:03:03Z",
+  "source_base_commit": "857b9d9f542b05279926c0ab99591dd920cc3178",
+  "registry_digest": "9e82f4f97d3f85ec7e5931f52000252a101d0213349db4ba3c36a846d48bfb89",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1516,6 +1516,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1 合同与执行证据"
         },
         {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1622,7 +1649,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 44,
+      "task_count": 45,
       "done_count": 23,
       "blocked_count": 0
     },
@@ -17166,6 +17193,58 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-attachments-v1.md",
           "label": "R1 合同与执行证据"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-193",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Hermes 固定 Case Task 与 Comment Message Action",
+      "summary": "按 r4 计划把新 Hermes case 的 Account Router 结果固化为 case_task，并让 customer comment 复用固定任务：Investigation 进入 investigation_feedback，其他任务进入严格 message_action；classification-only、幂等字段、Prompt Release pin 和 InMemory/PostgreSQL schema 已接入。本任务不包含三方 benchmark、PR 合并或 ECS 部署。",
+      "status": "review",
+      "owner": "codex",
+      "created_at": "2026-10-10",
+      "updated_at": "2026-10-10",
+      "next_action": "独立验收已通过（HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a）；PR #1449 保持 Draft，等待后续单独的 merge/Preproduction deploy 授权。",
+      "acceptance_criteria": [
+        "ticket.created 在 Hermes 引擎中只调用一次 Account Router；automation/investigation 固化为 hermes case_task，其他分类只保存 classification-only。",
+        "binding 持久化 case_task、case_task_prompt_release_id、case_task_prompt_snapshot、flow_version；route lock 后 comment 不可覆盖。",
+        "comment.created 不调用 Account Router；Investigation 走 investigation_feedback，普通固定任务走 message_action。",
+        "六个 message action 严格校验；多意图、非法 JSON、未知 action、无法判断进入 handoff_human；reply action 不执行 automation。",
+        "InMemory 与 PostgreSQL schema/迁移保持同名行为；重复事件和 active turn 保护保留。",
+        "不执行三方 benchmark、Prompt Release 创建、PR merge、Preproduction/Production deploy。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
         }
       ]
     },
