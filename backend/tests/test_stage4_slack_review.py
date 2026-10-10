@@ -646,3 +646,140 @@ def test_plain_message_without_raw_text_falls_back_to_unbound(monkeypatch) -> No
     payload["raw_text"] = ""
     result = _handle(monkeypatch, host, payload)
     assert result is None, "non-knowledge messages fall back, no 422"
+
+
+# --------------------- stage-4 review fix F5: recoverable claim ------------
+
+
+def test_crashed_claim_is_reclaimed_and_finally_sends() -> None:
+    """F5 repro: a claim whose owner died before posting must not strand the
+    notification — after the lease expires a retry reclaims and sends."""
+    from datetime import datetime, timedelta
+
+    host = _Host()
+    promotion_id = _parked(host)
+    # simulate the crash window: a claim was written, then the process died
+    claimed_at = "2026-10-11T08:00:00+00:00"
+    host.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value=claimed_at, owner_token="crashed-owner",
+    )
+    poster = _FakeSlackPoster()
+
+    # within the lease: a retry is still in_flight, nothing sends
+    soon = (datetime.fromisoformat(claimed_at) + timedelta(seconds=10)).isoformat()
+    early = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=soon
+    )
+    assert early["status"] == "in_flight"
+    assert poster.posts == []
+
+    # past the lease: the retry reclaims the dead claim and delivers
+    late = (datetime.fromisoformat(claimed_at) + timedelta(seconds=301)).isoformat()
+    result = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=late
+    )
+    assert result["status"] == "delivered", result
+    assert len(poster.posts) == 1
+    row = _row(host, promotion_id)
+    assert row["slack_review_status"] == "delivered"
+    assert row["slack_thread_ts"] == "1700.001"
+
+
+def test_stale_owner_cannot_complete_after_reclaim() -> None:
+    """The owner guard: a stale claimant completing after its claim was
+    reclaimed gets None — only the new owner's completion lands."""
+    host = _Host()
+    promotion_id = _parked(host)
+    host.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value=NOW, owner_token="stale-owner",
+    )
+    # reclaim by the new owner
+    reclaimed = host.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value="2026-10-11T08:10:00+00:00", owner_token="new-owner",
+        lease_expires_at="2026-10-11T08:05:00+00:00",
+    )
+    assert reclaimed is not None
+    # the stale owner's completion is refused
+    refused = host.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id=CHANNEL, slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="stale-owner", now_value="2026-10-11T08:10:01+00:00",
+    )
+    assert refused is None
+    assert _row(host, promotion_id)["slack_review_status"] == "queued"
+    # the new owner completes
+    completed = host.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id=CHANNEL, slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="new-owner", now_value="2026-10-11T08:10:02+00:00",
+    )
+    assert completed is not None
+    assert _row(host, promotion_id)["slack_review_status"] == "delivered"
+
+
+def test_drain_recovers_expired_notification_claims(monkeypatch) -> None:
+    """The worker's crash-recovery scan re-delivers an expired queued claim."""
+    from backend.services import knowledge_dual_write as kdw
+    from backend.services.knowledge_slack_review import claim_lease_expired
+
+    host = _Host()
+    promotion_id = _parked(host)
+    host.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value="2026-10-11T07:00:00+00:00", owner_token="dead-owner",
+    )
+    posted = []
+
+    class _RecoveringPoster:
+        def post_engineer_slack_event(self, event, thread_ts=None):
+            posted.append(event.get("event_id"))
+            return {
+                "event_id": event.get("event_id"), "status": "delivered",
+                "failure_code": None, "slack_channel_id": CHANNEL,
+                "slack_message_ts": "1700.001",
+                "slack_thread_ts": str(thread_ts or "") or "1700.001",
+            }
+
+    env = dict(os.environ)
+    env.update({
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "1",
+    })
+    import unittest.mock as mock
+
+    with mock.patch.dict(os.environ, env), mock.patch(
+        "backend.services.knowledge_slack_review.deliver_knowledge_slack_review_notification",
+        create=True,
+    ), mock.patch(
+        "backend.services.knowledge_dual_write._native_state_store", lambda: None
+    ):
+        # route the recovery through the real deliver with our poster
+        import backend.services.knowledge_slack_review as review_module
+
+        original_deliver = review_module.deliver_knowledge_review_notification
+
+        def deliver_with_poster(repository, promotion, **kwargs):
+            return original_deliver(
+                repository, promotion, slack_client=_RecoveringPoster(), **kwargs
+            )
+
+        with mock.patch.object(
+            review_module, "deliver_knowledge_review_notification", deliver_with_poster
+        ):
+            processed = kdw.drain_knowledge_dual_write(
+                host, limit=20,
+                agent_memory_client=None, weknora_client=None,
+                slack=False, now_value="2026-10-11T08:00:00+00:00",
+            )
+        assert processed >= 0  # the drain ran; recovery is a side phase
+    row = _row(host, promotion_id)
+    assert row["slack_review_status"] == "delivered", (
+        "the expired claim must be recovered by the drain scan"
+    )
+    assert posted == [knowledge_review_event_id(promotion_id)]
+    assert not claim_lease_expired(row, now_value="2026-10-11T08:00:00+00:00")

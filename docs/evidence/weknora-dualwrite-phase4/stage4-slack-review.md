@@ -65,3 +65,19 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 存量适配：知识 Slack 决策测试 _reply 载荷补 raw_text+bot_user_id、测试 env 加 ENGINEER_SLACK_BOT_USER_ID（模拟阶段 4 转发链）。
 
 验证：阶段 4 专项 **29 passed**（23+6 新回归）；全套 17 套件 **489 passed / 0 failed**（含 PG：v23 集成 8 项含并发 claim）；compileall / git diff --check / Overview --check 通过。
+
+
+## 修复轮 2（2026-10-11，二轮验收 F5 阻断后）
+
+阻断：claim 写入 `queued` 后无 owner/租约，进程在 claim 与 POST 之间崩溃 → 所有重试 in_flight，通知永久卡死（无目标/无写入的人工审核候选尤甚）。
+
+修复（可恢复 claim 语义）：
+
+1. **v23 追加两列**：`slack_review_owner_token`、`slack_review_claimed_at`（InMemory/PG/静态镜像三方同步，v23 未合入前同批扩展）；
+2. **claim = 原子 + 可回收**：NULL/failed/outcome_unknown → queued 直取；`queued` 且 `claimed_at ≤ now-lease`（默认 300s，env `KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS`）→ 回收死 claim；活 claim/delivered → None。PG 单条行锁 UPDATE 判胜；
+3. **owner 互斥完成**：`complete` 要求 `slack_review_owner_token` 匹配（陈旧 owner 在被回收后完成得 None，只有新 owner 的终态落库；完成时释放 token）；
+4. **恢复扫描**：`drain_knowledge_dual_write` 新增 Phase 0——扫描 `slack_review_status='queued'` 且租约过期的候选，重投通知（`claim_lease_expired` 判定；恢复失败不阻断 drain）。
+
+回归 4 项（复现验收场景）：崩溃 claim 在租约内重试 in_flight 零发送、过期后回收并发送（post==1）；陈旧 owner 完成被拒、新 owner 完成；drain 恢复扫描把过期 queued claim 重投为 delivered；PG 侧同链（死 claim→租约内拒→过期回收→owner 互斥→delivered 终态）。
+
+验证：专项 **32 passed**（29+3 新回归）；全套 17 套件 **493 passed / 0 failed**（PG 9 项含崩溃回收）；compileall / git diff --check / Overview --check 通过。

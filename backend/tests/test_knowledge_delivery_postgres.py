@@ -322,3 +322,52 @@ def test_pg_concurrent_slack_review_claim_posts_once(repository) -> None:
     )
     assert completed["slack_review_status"] == "delivered"
     assert claim() is None, "delivered is terminal"
+
+
+def test_pg_crashed_claim_reclaim_and_owner_guard(repository) -> None:
+    """Stage-4 review F5 on PostgreSQL: an expired 'queued' claim is
+    reclaimable (crash recovery) and only the owner completes."""
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+
+    # crashed claim at 08:00
+    claimed = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:00:00+00:00", owner_token="dead-owner",
+    )
+    assert claimed is not None
+    # within the lease a fresh-state claim is refused (queued, not expired):
+    # at 08:01 with a 300s lease the cutoff is 07:56 — the 08:00 claim is live
+    assert repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:01:00+00:00", owner_token="other",
+        lease_expires_at="2026-10-10T07:56:00+00:00",
+    ) is None
+    # past the lease the dead claim is reclaimed
+    reclaimed = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T08:10:00+00:00", owner_token="new-owner",
+        lease_expires_at="2026-10-10T08:05:00+00:00",
+    )
+    assert reclaimed is not None
+    # the dead owner cannot complete over the new owner
+    assert repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="dead-owner", now_value="2026-10-10T08:10:01+00:00",
+    ) is None
+    completed = repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="new-owner", now_value="2026-10-10T08:10:02+00:00",
+    )
+    assert completed["slack_review_status"] == "delivered"
+    # delivered stays terminal
+    assert repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value="2026-10-10T09:00:00+00:00", owner_token="x",
+        lease_expires_at="2026-10-10T08:00:00+00:00",
+    ) is None

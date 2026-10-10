@@ -542,6 +542,23 @@ def drain_knowledge_dual_write(
         if isinstance(row, dict)
     }
 
+    # Phase 0 — notification crash recovery (stage-4 review F5): a claim
+    # whose owner died between claim and post would strand the notification
+    # in 'queued' forever; reclaim-and-resend expired claims here.
+    try:
+        from backend.services.knowledge_slack_review import (
+            claim_lease_expired,
+            deliver_knowledge_review_notification,
+        )
+
+        for promotion in promotions.values():
+            if claim_lease_expired(promotion, now_value=now_iso):
+                deliver_knowledge_review_notification(
+                    repository, promotion, now_value=now_iso
+                )
+    except Exception:  # noqa: BLE001 - recovery must never break the drain
+        LOGGER.warning("knowledge_review_notification_recovery_failed", exc_info=True)
+
     # Phase 1 — fan out queued candidates (dual-write owns every queued
     # promotion while its worker switch is on).
     for promotion_id, promotion in sorted(promotions.items()):

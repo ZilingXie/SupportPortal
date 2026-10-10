@@ -63,6 +63,8 @@ WEKNORA_PROMOTION_FIELDS = (
     "slack_review_status",
     "slack_review_message_ts",
     "slack_review_failure_code",
+    "slack_review_owner_token",
+    "slack_review_claimed_at",
     "input_fingerprint",
     "created_at",
     "updated_at",
@@ -135,6 +137,8 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
         "slack_review_status": None,
         "slack_review_message_ts": None,
         "slack_review_failure_code": None,
+        "slack_review_owner_token": None,
+        "slack_review_claimed_at": None,
         # Frozen-input generation this promotion was produced from (review
         # round 3, R3-6); standalone promotions carry the source version.
         "input_fingerprint": str(task.get("input_fingerprint") or "") or None,
@@ -463,26 +467,39 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             return copy.deepcopy(row)
 
     def mark_knowledge_slack_review_queued(
-        self, promotion_id: str, *, event_id: str, now_value: str
+        self,
+        promotion_id: str,
+        *,
+        event_id: str,
+        now_value: str,
+        owner_token: str = "",
+        lease_expires_at: str = "",
     ) -> dict[str, Any] | None:
-        """Stage 4 (p2-195, review F1): ATOMIC send claim.
+        """Stage 4 (p2-195, reviews F1+F5): recoverable atomic send claim.
 
-        Only a caller that moves the state from NULL/failed/outcome_unknown
-        into 'queued' wins the send right; a concurrent caller sees 'queued'
-        (already claimed) or 'delivered' (terminal) and gets None — exactly
-        one Slack post per notification lifecycle."""
+        A caller wins the send right by moving the state into 'queued' from
+        NULL/failed/outcome_unknown, or by RECLAIMING a 'queued' claim whose
+        lease has expired (the claimer crashed between claim and post —
+        without reclaim the notification would be stuck forever). A live
+        claim (lease not expired) or a delivered notification returns None.
+        The owner token is recorded for the completion guard."""
         with self._assignment_lock:
             row = self._weknora_promotion_state().get(str(promotion_id))
             if row is None:
                 return None
-            if str(row.get("slack_review_status") or "") not in {
-                None, "", "failed", "outcome_unknown",
-            }:
-                return None
+            status = str(row.get("slack_review_status") or "")
+            if status not in {None, "", "failed", "outcome_unknown"}:
+                if status != "queued":
+                    return None  # delivered (terminal)
+                claimed_at = str(row.get("slack_review_claimed_at") or "")
+                if not lease_expires_at or not claimed_at or claimed_at > lease_expires_at:
+                    return None  # live claim, not yet reclaimable
             row.update(
                 slack_review_event_id=str(event_id or "").strip() or None,
                 slack_review_status="queued",
                 slack_review_failure_code=None,
+                slack_review_owner_token=str(owner_token or "").strip() or None,
+                slack_review_claimed_at=now_value,
                 updated_at=now_value,
             )
             return copy.deepcopy(row)
@@ -496,6 +513,7 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
         slack_thread_ts: str | None = None,
         slack_review_message_ts: str | None = None,
         failure_code: str | None = None,
+        owner_token: str = "",
         now_value: str,
     ) -> dict[str, Any] | None:
         if status not in {"delivered", "failed", "outcome_unknown"}:
@@ -504,9 +522,14 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             row = self._weknora_promotion_state().get(str(promotion_id))
             if row is None or str(row.get("slack_review_status") or "") != "queued":
                 return None
+            # F5: only the claim owner completes — a stale claimant (whose
+            # expired claim was reclaimed) cannot overwrite the new owner.
+            if str(row.get("slack_review_owner_token") or "") != str(owner_token or "").strip():
+                return None
             row.update(
                 slack_review_status=status,
                 slack_review_failure_code=str(failure_code).strip() or None,
+                slack_review_owner_token=None,
                 updated_at=now_value,
             )
             if status == "delivered":
@@ -623,6 +646,8 @@ class PostgresWeKnoraPromotionRepositoryMixin:
             ("slack_review_status", "TEXT"),
             ("slack_review_message_ts", "TEXT"),
             ("slack_review_failure_code", "TEXT"),
+            ("slack_review_owner_token", "TEXT"),
+            ("slack_review_claimed_at", "TEXT"),
         ):
             cur.execute(
                 sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(
@@ -1082,22 +1107,48 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         return cur.rowcount
 
     def mark_knowledge_slack_review_queued(
-        self, promotion_id: str, *, event_id: str, now_value: str
+        self,
+        promotion_id: str,
+        *,
+        event_id: str,
+        now_value: str,
+        owner_token: str = "",
+        lease_expires_at: str = "",
     ) -> dict[str, Any] | None:
-        """PG twin of the C3 idempotency guard; see the in-memory method."""
+        """PG twin of the recoverable atomic send claim (reviews F1+F5); see
+        the in-memory method. The single row-locked UPDATE decides the winner:
+        fresh states win outright; an expired 'queued' claim is reclaimed;
+        a live claim or a delivered notification loses."""
         def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
             with conn.transaction(), conn.cursor() as cur:
                 cur.execute(
                     sql.SQL(
                         """
                         UPDATE {} SET slack_review_event_id=%s, slack_review_status='queued',
-                        slack_review_failure_code=NULL, updated_at=%s
+                        slack_review_failure_code=NULL, slack_review_owner_token=%s,
+                        slack_review_claimed_at=%s, updated_at=%s
                         WHERE promotion_id=%s
-                        AND (slack_review_status IS NULL OR slack_review_status IN ('failed','outcome_unknown'))
+                        AND (
+                            slack_review_status IS NULL OR slack_review_status IN ('failed','outcome_unknown')
+                            OR (
+                                slack_review_status = 'queued'
+                                AND %s <> ''
+                                AND slack_review_claimed_at IS NOT NULL
+                                AND slack_review_claimed_at <= %s
+                            )
+                        )
                         RETURNING promotion_id, slack_review_status
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
-                    (str(event_id or "").strip() or None, now_value, str(promotion_id)),
+                    (
+                        str(event_id or "").strip() or None,
+                        str(owner_token or "").strip() or None,
+                        now_value,
+                        now_value,
+                        str(promotion_id),
+                        str(lease_expires_at or ""),
+                        str(lease_expires_at or ""),
+                    ),
                 )
                 record = cur.fetchone()
                 if record is None:
@@ -1115,6 +1166,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         slack_thread_ts: str | None = None,
         slack_review_message_ts: str | None = None,
         failure_code: str | None = None,
+        owner_token: str = "",
         now_value: str,
     ) -> dict[str, Any] | None:
         if status not in {"delivered", "failed", "outcome_unknown"}:
@@ -1129,8 +1181,10 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         slack_channel_id=COALESCE(%s, slack_channel_id),
                         slack_thread_ts=COALESCE(%s, slack_thread_ts),
                         slack_review_message_ts=COALESCE(%s, slack_review_message_ts),
+                        slack_review_owner_token=NULL,
                         updated_at=%s
                         WHERE promotion_id=%s AND slack_review_status='queued'
+                        AND slack_review_owner_token IS NOT DISTINCT FROM %s
                         RETURNING promotion_id, slack_review_status
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
@@ -1142,6 +1196,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         str(slack_review_message_ts or "").strip() or None,
                         now_value,
                         str(promotion_id),
+                        str(owner_token or "").strip() or None,
                     ),
                 )
                 record = cur.fetchone()

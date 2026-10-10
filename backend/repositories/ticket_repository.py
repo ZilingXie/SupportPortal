@@ -1323,8 +1323,10 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # independent lease/status machine, external object capture, receipts and
 # readback evidence.
 # v23 (stage 4, p2-195) adds the Slack review columns on the promotion table:
-# verified operator identity (email + slack user id) and the deterministic
-# review-notification state machine (event id / status / message ts / failure).
+# verified operator identity (email + slack user id) and the deterministic,
+# recoverable review-notification claim (event id / status / message ts /
+# failure / owner token / claimed at — expired claims are reclaimable so a
+# crashed sender can never strand the notification).
 _TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v23-knowledge-slack-review"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
     "2026-single-ai-managed-v22-knowledge-dualwrite",

@@ -746,6 +746,8 @@ CREATE TABLE IF NOT EXISTS support_weknora_promotions (
     slack_review_status TEXT,
     slack_review_message_ts TEXT,
     slack_review_failure_code TEXT,
+    slack_review_owner_token TEXT,
+    slack_review_claimed_at TEXT,
     input_fingerprint TEXT,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
