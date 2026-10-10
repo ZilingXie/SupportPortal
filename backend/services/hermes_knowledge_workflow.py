@@ -845,17 +845,60 @@ def _collect_weknora_evidence(
     return knowledge_results, memory_results, knowledge_ok, memory_ok
 
 
+def _collect_agent_memory_evidence(
+    agent_memory_client: Any,
+    packet: dict[str, Any],
+) -> tuple[dict[str, list[dict[str, Any]]], bool, dict[str, Any]]:
+    """Per-candidate similarity evidence from the AgentMemory wiki surface
+    (dual-write phase 2, stage 3: Review reads BOTH retrieval sides).
+
+    Fail-closed like the WeKnora surfaces: an unconfigured client or any
+    list/search failure marks the WHOLE surface unavailable — a partial sweep
+    could miss a duplicate, so a writable decision never survives it.
+    """
+    candidates = packet.get("candidates") or []
+    results: dict[str, list[dict[str, Any]]] = {
+        str(c.get("candidate_id") or ""): []
+        for c in candidates if isinstance(c, dict)
+    }
+    if agent_memory_client is None or not agent_memory_client.configured():
+        return results, False, {"reason": "agent_memory_client_not_configured"}
+    meta: dict[str, Any] = {}
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        candidate_id = str(candidate.get("candidate_id") or "")
+        query = str(candidate.get("statement") or "")[:256]
+        if not query.strip():
+            results[candidate_id] = []
+            continue
+        try:
+            sweep = agent_memory_client.search_knowledge(query)
+            results[candidate_id] = sweep.get("hits") or []
+            meta = {"wiki_count": sweep.get("wiki_count"), "searched": sweep.get("searched")}
+        except Exception as exc:  # noqa: BLE001 - any failure is unavailable evidence
+            LOGGER.warning(
+                "agent_memory_evidence_unavailable candidate_id=%s error=%s", candidate_id, exc
+            )
+            for key in results:
+                results[key] = []
+            return results, False, {"reason": f"agent_memory_search_failed: {exc}"[:300]}
+    return results, True, meta
+
+
 def _downgrade_decisions_without_evidence(
     decisions: list[Any],
     *,
     knowledge_available: bool,
     memory_available: bool,
+    agent_memory_available: bool = True,
 ) -> tuple[list[Any], list[str]]:
     """Fail closed: a writable decision survives only when every surface that
-    could hold a duplicate answered (knowledge candidates need the knowledge
-    surface; memory candidates need both), and skill write proposals always
-    become ``human_review`` — the original decision is preserved in the
-    rationale and nothing is silently dropped or auto-written."""
+    could hold a duplicate answered (knowledge candidates need the WeKnora
+    knowledge surface and AgentMemory; memory candidates additionally need the
+    WeKnora memory surface), and skill write proposals always become
+    ``human_review`` — the original decision is preserved in the rationale and
+    nothing is silently dropped or auto-written."""
     adjusted: list[Any] = []
     downgraded: list[str] = []
     for item in decisions:
@@ -865,22 +908,26 @@ def _downgrade_decisions_without_evidence(
         decision = str(item.get("decision") or "")
         candidate_type = str(item.get("candidate_type") or "")
         skill_write = candidate_type == "skill" and decision in WRITABLE_REVIEW_DECISIONS
-        evidence_ok = (
+        weknora_ok = (
             knowledge_available
             if candidate_type == "knowledge"
             else (knowledge_available and memory_available)
         )
+        evidence_ok = weknora_ok and agent_memory_available
         unverified_write = decision in WRITABLE_REVIEW_DECISIONS and not evidence_ok
         if not skill_write and not unverified_write:
             adjusted.append(item)
             continue
         degraded = dict(item)
         degraded["decision"] = "human_review"
-        reason = (
-            "skill candidates are human-maintained and never auto-written"
-            if skill_write
-            else "WeKnora evidence unavailable; refusing an unverified write"
-        )
+        if skill_write:
+            reason = "skill candidates are human-maintained and never auto-written"
+        elif not weknora_ok and not agent_memory_available:
+            reason = "WeKnora and AgentMemory evidence unavailable; refusing an unverified write"
+        elif not agent_memory_available:
+            reason = "AgentMemory evidence unavailable; refusing an unverified write"
+        else:
+            reason = "WeKnora evidence unavailable; refusing an unverified write"
         degraded["rationale"] = f"[downgraded from {decision}: {reason}] {item.get('rationale') or ''}".strip()
         degraded.pop("target_object", None)
         degraded.pop("target_version", None)
@@ -998,6 +1045,7 @@ def run_hermes_review_task(
     task: dict[str, Any],
     weknora_client: HermesWeKnoraClient | None = None,
     memory_client: Any = None,
+    agent_memory_client: Any = None,
     sleeper: Any = time.sleep,
     poll_interval_seconds: float | None = None,
     timeout_seconds: float | None = None,
@@ -1028,6 +1076,9 @@ def run_hermes_review_task(
         instructions = _review_instructions()
         weknora_results, memory_results, knowledge_ok, memory_ok = _collect_weknora_evidence(
             weknora_client, packet, memory_client=memory_client
+        )
+        agent_memory_results, agent_memory_ok, agent_memory_meta = _collect_agent_memory_evidence(
+            agent_memory_client, packet
         )
         try:
             repository.record_hermes_review_weknora_context(
@@ -1066,6 +1117,14 @@ def run_hermes_review_task(
                 "memory_available": memory_ok,
                 "results": weknora_results,
                 "memory_results": memory_results,
+            },
+            "agent_memory": {
+                # Dual-write phase 2, stage 3: the review reads BOTH retrieval
+                # sides — AgentMemory wiki hits with the same fail-closed
+                # availability semantics as the WeKnora surfaces.
+                "available": agent_memory_ok,
+                "results": agent_memory_results,
+                **agent_memory_meta,
             },
         }
         status = _execute_knowledge_run(
@@ -1112,12 +1171,13 @@ def run_hermes_review_task(
             decisions,
             knowledge_available=knowledge_ok,
             memory_available=memory_ok,
+            agent_memory_available=agent_memory_ok,
         )
         if downgraded_ids:
             LOGGER.warning(
                 "review_decisions_downgraded review_task_id=%s knowledge_available=%s "
-                "memory_available=%s candidate_ids=%s",
-                review_task_id, knowledge_ok, memory_ok, downgraded_ids,
+                "memory_available=%s agent_memory_available=%s candidate_ids=%s",
+                review_task_id, knowledge_ok, memory_ok, agent_memory_ok, downgraded_ids,
             )
         report_payload = {
             "schema_version": "v1",
@@ -1322,6 +1382,7 @@ def drain_hermes_knowledge_tasks(
     client: HermesAgentClient | None = None,
     weknora_client: HermesWeKnoraClient | None = None,
     memory_client: Any = None,
+    agent_memory_client: Any = None,
     limit: int = 5,
     now_value: str | None = None,
     sleeper: Any = time.sleep,
@@ -1375,6 +1436,7 @@ def drain_hermes_knowledge_tasks(
             run_hermes_review_task(
                 repository, hermes_client, task=claimed,
                 weknora_client=weknora, memory_client=memory_client,
+                agent_memory_client=agent_memory_client,
                 sleeper=sleeper, now_value=now,
             )
         except Exception:  # noqa: BLE001

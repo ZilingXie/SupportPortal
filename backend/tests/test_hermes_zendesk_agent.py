@@ -382,7 +382,10 @@ class TestAgentTurnProcessor:
         )
         client = FakeHermesClient(terminal_output=action_json)
         result = self._processor(store, client).process(comment_job)
-        assert result["status"] == "completed"
+        # Reply-only message actions now fail closed when the repository
+        # boundary is unavailable; the classification itself is still
+        # validated and persisted below.
+        assert result["status"] == "human_review"
         submission = client.submissions[0]
         assert submission["enabled_toolsets"] == []
         assert "Message Action Manual" in submission["instructions"]
