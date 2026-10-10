@@ -1182,6 +1182,15 @@ async def tool_execute_automation_action(
             )
             executed_actions.append("ask_reply_job_created")
         skip_persona = True
+        # Legacy attempt-builder semantics: a case with missing fields is
+        # "not_ready" (fields missing, email not ready) — not the mirror's
+        # initial "not_applicable" (no email configured for the route).
+        if str(account_case.get("internal_email_send_status") or "") in {
+            "", "not_applicable"
+        }:
+            account_case["internal_email_send_status"] = "not_ready"
+            account_case["internal_email_send_reason"] = "missing_required_fields"
+            repository.save_account_case(account_case)
 
     # Refresh fields from the post-execution case: downstream validation
     # (e.g. the enablement app-id format check) mutates them, and the tool

@@ -545,6 +545,15 @@ class FraudAskChannelTests(unittest.TestCase):
         self.assertIn("ask_reply_job_created", result["executed_actions"])
         turn = store.get_hermes_turn(handoff["turn_id"])
         self.assertTrue((turn.get("work_result") or {}).get("skip_persona"))
+        # Legacy semantics: missing fields -> not_ready (not the mirror's
+        # initial not_applicable).
+        persisted = repository.get_account_case("AC-123")
+        self.assertEqual(
+            persisted.get("internal_email_send_status"), "not_ready"
+        )
+        self.assertEqual(
+            persisted.get("internal_email_send_reason"), "missing_required_fields"
+        )
 
     def test_retry_reuses_ask_job_without_recreate(self):
         store, repository, handoff, first = self._run_fraud_turn(missing=True)
