@@ -9,6 +9,7 @@ from backend.services.agent_memory_delivery import (  # noqa: E402
     AgentMemoryWikiClient,
     AgentMemoryWikiError,
     agent_memory_filename,
+    agent_memory_state_fingerprint,
 )
 from backend.services.hermes_case_workflow import _weknora_candidate_hash  # noqa: E402
 
@@ -236,7 +237,10 @@ def test_targeted_delivery_writes_into_target_wiki() -> None:
     filename = agent_memory_filename(targeted["content_hash"])
     client = FakeWikiClient(files_on_get=[filename])
     client.exists.add("wiki-7")
-    client._get_impl = lambda wid: {"data": {"wiki_id": wid, "files": [{"filename": filename}]}}
+    target_state = {"data": {"wiki_id": "wiki-7", "files": [{"filename": filename}]}}
+    client._get_impl = lambda wid: target_state
+    confirmed = agent_memory_state_fingerprint(target_state["data"])
+    targeted["candidate_payload"]["agent_memory_base_version"] = confirmed
     outcome = AgentMemoryDeliveryAdapter(client).execute(
         promotion=targeted, delivery=_delivery()
     )
@@ -244,6 +248,7 @@ def test_targeted_delivery_writes_into_target_wiki() -> None:
     assert outcome.external_object_id == "wiki-7"
     assert client.create_calls == []
     assert client.raw_write_calls == [("wiki-7", filename)]
+    assert outcome.receipt["confirmed_base"] == confirmed
 
 
 def test_targeted_delivery_without_target_fails() -> None:
@@ -266,6 +271,7 @@ def test_missing_target_wiki_routes_to_human_review() -> None:
             "decision": "merge",
             "merged_content": "# merged",
             "target_object_id": "wiki-gone",
+            "agent_memory_base_version": "amfp:confirmed-by-human",
         },
     }
     client = FakeWikiClient()
@@ -290,3 +296,77 @@ def test_candidate_hash_helper_matches_promotion_identity() -> None:
     # The dual-write gate recomputes the payload hash with the SAME helper
     # the promotion bridge used at enqueue time.
     assert _weknora_candidate_hash(PROMOTION["candidate_payload"]) != ""
+
+
+def test_targeted_without_amfp_base_refuses_and_surfaces_fingerprint() -> None:
+    """Review B3: no version anchor -> NO write; the current fingerprint is
+    surfaced for the human to confirm."""
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "replace",
+            "content": "# replaced",
+            "target_object_id": "wiki-7",
+            "base_version": "v3",
+        },
+    }
+    target_state = {"data": {"wiki_id": "wiki-7", "status": "ready"}}
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    client._get_impl = lambda wid: target_state
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "agent_memory_target_base_unconfirmed"
+    expected = agent_memory_state_fingerprint(target_state["data"])
+    assert expected in (outcome.failure_detail or "")
+    assert outcome.receipt["current_base_fingerprint"] == expected
+    assert client.raw_write_calls == [] and client.ingest_calls == []
+
+
+def test_targeted_with_stale_amfp_base_refuses_overwrite() -> None:
+    """Review B3: the target changed after the human confirmed -> conflict,
+    never an overwrite of the newer state."""
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "supplement",
+            "content": "# supplemented",
+            "target_object_id": "wiki-7",
+            "base_version": "v3",
+            "agent_memory_base_version": "amfp:stale-fingerprint",
+        },
+    }
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    client._get_impl = lambda wid: {"data": {"wiki_id": "wiki-7", "files": [{"filename": "other.md"}]}}
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "agent_memory_target_version_conflict"
+    assert "amfp:stale-fingerprint" in (outcome.failure_detail or "")
+    assert client.raw_write_calls == [] and client.ingest_calls == []
+
+
+def test_targeted_without_base_version_fails_closed() -> None:
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "replace",
+            "content": "# replaced",
+            "target_object_id": "wiki-7",
+        },
+    }
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "targeted_delivery_without_base_version"
+    assert client.get_calls == []

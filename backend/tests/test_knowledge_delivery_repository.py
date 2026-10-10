@@ -138,7 +138,9 @@ def test_requeue_only_from_failed_or_outcome_unknown() -> None:
     assert host.requeue_knowledge_delivery(delivery_id, requeued_at=NOW, reason="x") is None
 
 
-def test_human_approve_repairs_only_failed_targets() -> None:
+def test_human_approve_repairs_only_failed_targets(monkeypatch) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_WEKNORA_DELIVERY_ENABLED", "1")
     host, promotion_id = _host_with_promotion()
     host.ensure_knowledge_deliveries(promotion_id, ["agent_memory", "weknora"], now_value=NOW)
     for target in ("agent_memory", "weknora"):

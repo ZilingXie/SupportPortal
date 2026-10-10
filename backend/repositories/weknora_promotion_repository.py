@@ -195,6 +195,12 @@ def _normalize_human_resolution(
         value = str(resolution.get(field) or "").strip()
         if value:
             updated[field] = value
+    # Dual-write phase 2 (review B3): the AgentMemory target anchors targeted
+    # writes on its own state fingerprint (amfp:...), separate from the
+    # WeKnora-facing base_version the review evidence produced.
+    agent_memory_base = str(resolution.get("agent_memory_base_version") or "").strip()
+    if agent_memory_base:
+        updated["agent_memory_base_version"] = agent_memory_base
     if resolution.get("importance") is not None:
         try:
             updated["importance"] = int(resolution["importance"])
@@ -892,15 +898,25 @@ class PostgresWeKnoraPromotionRepositoryMixin:
         if cur.fetchone()[0] is None:
             return 0
         if action == "requeue":
+            # Review B2: only targets whose delivery switch is currently
+            # enabled are repaired; a disabled target never re-enters
+            # execution.  Invalidate is NOT switch-gated — retiring rows is
+            # always safe.
+            from backend.services.knowledge_dual_write import enabled_delivery_targets
+
+            enabled = enabled_delivery_targets()
+            if not enabled:
+                return 0
             cur.execute(
                 sql.SQL(
                     """
                     UPDATE {} SET status='queued', owner_token=NULL, claimed_at=NULL,
                     lease_expires_at=NULL, failure_detail=%s, updated_at=%s
                     WHERE promotion_id=%s AND status IN ('failed','outcome_unknown')
+                    AND target = ANY(%s)
                     """
                 ).format(sql.Identifier(self._schema, _KNOWLEDGE_DELIVERY_TABLE)),
-                ("requeued: human approve", timestamp, promotion_id),
+                ("requeued: human approve", timestamp, promotion_id, enabled),
             )
         else:
             cur.execute(

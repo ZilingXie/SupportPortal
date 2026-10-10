@@ -321,11 +321,20 @@ class InMemoryKnowledgeDeliveryRepositoryMixin:
         """Requeue the FAILED/UNKNOWN targets of one candidate (approve repair).
 
         Accepted targets are never touched — "一个目标成功、另一个目标失败时，
-        只补失败目标".
+        只补失败目标".  Review B2: targets whose delivery switch is currently
+        disabled are NOT requeued — a disabled target must never re-enter
+        execution.
         """
+        from backend.services.knowledge_dual_write import enabled_delivery_targets
+
+        enabled = set(enabled_delivery_targets())
+        if not enabled:
+            return 0
         repaired = 0
         for row in self._knowledge_delivery_state().values():
             if row["promotion_id"] != str(promotion_id):
+                continue
+            if row["target"] not in enabled:
                 continue
             if row["status"] in {"failed", "outcome_unknown"}:
                 row.update(

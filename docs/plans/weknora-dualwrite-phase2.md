@@ -5,7 +5,7 @@
 - 任务登记：p2-194（function：weknora-dualwrite-governance，module：rag-knowledge）
 - 工作分支：codex/weknora-dualwrite-phase2（基线 main d958c66f）
 - 阶段 0 冻结基线：[docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md](../evidence/weknora-dualwrite-phase2/stage0-baseline.md)
-- 阶段状态：阶段 0 已完成并通过独立验收（2026-10-10）；阶段 1 代码已实施（同日，知识区回归 268 passed/0 failed 含隔离 PG 集成，六个开关默认关、零运行态变更），停在 Draft PR 待独立验收；阶段 2-6 未实施
+- 阶段状态：阶段 0 已通过独立验收；阶段 1 首轮验收未通过（五项阻断：互锁单向/目标开关旁路/AM 定向缺版本校验/终态未要求双成功/intake 未叠主开关），修复轮已全部修复并补回归（276 passed/0 failed 含 PG 集成），任务改号 p2-194（并行线程占用 p2-193），停在 Draft PR #1453 待第二轮独立验收；阶段 2-6 未实施
 
 ## 目标
 

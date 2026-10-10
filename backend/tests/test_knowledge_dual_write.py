@@ -436,3 +436,88 @@ def test_enabled_delivery_targets_follow_switches(monkeypatch) -> None:
     assert enabled_delivery_targets() == ["weknora"]
     monkeypatch.setenv("KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED", "1")
     assert enabled_delivery_targets() == ["agent_memory", "weknora"]
+
+
+def test_drain_skips_disabled_target_at_execution_boundary() -> None:
+    """Review B2: a delivery row whose target switch is off is never claimed.
+
+    Fan-out happens while both targets are enabled (both rows exist), then a
+    rollback turns the AgentMemory switch off BEFORE any execution."""
+    host = _Host()
+    promotion = _promotion()
+    host.enqueue_weknora_promotions([dict(promotion)], now_value=NOW)
+    with patch.dict(os.environ, DRAIN_ENV, clear=False):
+        fan_out_candidate(
+            host,
+            promotion,
+            now_value=NOW,
+            agent_memory_client=ProbeClients(),
+            weknora_client=ProbeClients(),
+        )
+    rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion["promotion_id"])}
+    assert set(rows) == {"agent_memory", "weknora"}
+
+    adapters = FakeAdapters()
+    env = {**DRAIN_ENV, "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0"}
+    _drain(host, adapters, env=env)
+    assert adapters.agent_calls == 0, "a disabled target must not execute"
+    assert adapters.weknora_calls == 1
+    rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion["promotion_id"])}
+    assert rows["agent_memory"]["status"] == "queued"
+    assert rows["weknora"]["status"] == "accepted"
+
+
+def test_human_approve_requeues_only_enabled_targets() -> None:
+    """Review B2: approval repair respects the CURRENT target switches."""
+    host = _Host()
+    promotion = _promotion()
+    host.enqueue_weknora_promotions([dict(promotion)], now_value=NOW)
+    adapters = FakeAdapters(agent_status="failed")
+    _drain(host, adapters)  # both targets on: AM fails, WK accepts, park
+    assert adapters.agent_calls == 1
+
+    # Rollback: AgentMemory delivery switched OFF before the human approves.
+    host.decide_weknora_promotion(
+        promotion["promotion_id"],
+        decision="approve",
+        decided_by="engineer",
+        decided_at=NOW,
+        resolution={"action": "new", "content": "# Body"},
+    )
+    env = {**DRAIN_ENV, "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0"}
+    _drain(host, adapters, env=env)
+    assert adapters.agent_calls == 1, "the disabled target must not re-execute"
+    rows = {row["target"]: row for row in host.list_knowledge_deliveries(promotion["promotion_id"])}
+    assert rows["agent_memory"]["status"] == "failed", "no requeue for a disabled target"
+    assert rows["weknora"]["status"] == "accepted"
+
+
+def test_resolve_does_not_accept_when_a_target_was_invalidated() -> None:
+    """Review B4: one accepted row plus one invalidated row is NOT success."""
+    from backend.services.knowledge_dual_write import resolve_knowledge_candidate
+
+    host = _Host()
+    promotion = _promotion()
+    host.enqueue_weknora_promotions([dict(promotion)], now_value=NOW)
+    host.ensure_knowledge_deliveries(promotion["promotion_id"], ["agent_memory", "weknora"], now_value=NOW)
+    host.mark_knowledge_candidate_delivering(promotion["promotion_id"], now_value=NOW)
+    am = f"{promotion['promotion_id']}:agent_memory"
+    wk = f"{promotion['promotion_id']}:weknora"
+    for delivery_id in (am, wk):
+        host.claim_knowledge_delivery(
+            delivery_id, owner_token="w", claimed_at=NOW, lease_expires_at="2026-10-10T08:02:00+00:00"
+        )
+    host.complete_knowledge_delivery(
+        am, owner_token="w", status="accepted", external_object_id="wiki-1", completed_at=NOW
+    )
+    host.complete_knowledge_delivery(
+        wk, owner_token="w", status="invalidated", failure_code="case_reopened",
+        completed_at=NOW,
+    )
+    parked = resolve_knowledge_candidate(host, promotion["promotion_id"], now_value=NOW)
+    assert parked and parked["status"] == "human_review"
+    promotion_row = next(
+        row for row in host.list_weknora_promotions() if row["promotion_id"] == promotion["promotion_id"]
+    )
+    assert promotion_row["status"] == "human_review"
+    assert "invalidated" in (promotion_row.get("failure_detail") or "")

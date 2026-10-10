@@ -246,6 +246,19 @@ def agent_memory_filename(content_hash: str) -> str:
     return f"sp-{str(content_hash or '').strip()}.md"
 
 
+# Prefix of an AgentMemory target-state fingerprint (review B3): the Wiki API
+# has no version field, so a targeted write anchors on a deterministic hash of
+# the wiki/get state the human confirmed.  The first unconfirmed attempt
+# surfaces the current fingerprint; the write only executes when the human
+# re-approves with THAT fingerprint and the target has not changed since.
+AM_BASE_FINGERPRINT_PREFIX = "amfp:"
+
+
+def agent_memory_state_fingerprint(wiki_get_data: dict[str, Any]) -> str:
+    canonical = json.dumps(wiki_get_data or {}, sort_keys=True, ensure_ascii=False, default=str)
+    return AM_BASE_FINGERPRINT_PREFIX + hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
 def _content_fingerprint(content: str) -> str:
     return hashlib.sha256(str(content or "").encode("utf-8")).hexdigest()[:16]
 
@@ -399,6 +412,14 @@ class AgentMemoryDeliveryAdapter:
                 failure_code="targeted_delivery_without_target",
                 failure_detail="supplement/replace/merge require the target wiki_id",
             )
+        shared_base = str(payload.get("base_version") or "").strip()
+        confirmed_base = str(payload.get("agent_memory_base_version") or "").strip()
+        if not shared_base and not confirmed_base:
+            return AgentMemoryDeliveryOutcome(
+                status="failed",
+                failure_code="targeted_delivery_without_base_version",
+                failure_detail="supplement/replace/merge require the base version the review used",
+            )
         try:
             existing = self._client.wiki_get(wiki_id=target)
         except AgentMemoryWikiError as exc:
@@ -409,6 +430,31 @@ class AgentMemoryDeliveryAdapter:
                     failure_detail=f"the target wiki {target!r} no longer exists",
                 )
             return self._map_error(exc, stage="wiki_get_target")
+        current = agent_memory_state_fingerprint(_data(existing))
+        if not confirmed_base.startswith(AM_BASE_FINGERPRINT_PREFIX):
+            # First touch: the Wiki API exposes no version, so this attempt
+            # refuses to write and surfaces the CURRENT fingerprint — the
+            # human re-approves with it as agent_memory_base_version, and
+            # only an unchanged target may then be written.
+            return AgentMemoryDeliveryOutcome(
+                status="human_review",
+                failure_code="agent_memory_target_base_unconfirmed",
+                failure_detail=(
+                    "confirm the AgentMemory target state and re-approve with "
+                    f"agent_memory_base_version={current} (target {target!r})"
+                ),
+                receipt={"wiki_id": target, "current_base_fingerprint": current, "target_read": existing},
+            )
+        if confirmed_base != current:
+            return AgentMemoryDeliveryOutcome(
+                status="human_review",
+                failure_code="agent_memory_target_version_conflict",
+                failure_detail=(
+                    f"target {target!r} changed since the confirmed base "
+                    f"(confirmed {confirmed_base}, current {current}); refusing to overwrite"
+                ),
+                receipt={"wiki_id": target, "confirmed_base": confirmed_base, "current_base_fingerprint": current},
+            )
         return self._write_files(
             wiki_id=target,
             filename=filename,
@@ -416,6 +462,7 @@ class AgentMemoryDeliveryAdapter:
             receipt={
                 "wiki_id": target,
                 "target_read": existing,
+                "confirmed_base": confirmed_base,
                 "base_version": str(payload.get("base_version") or ""),
             },
         )

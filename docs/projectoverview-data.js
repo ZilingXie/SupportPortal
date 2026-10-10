@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T03:23:19Z",
-  "source_base_commit": "1d1a5175482ead9c67818d7405682c6ad0c238b3",
-  "registry_digest": "f31e5f57a008f4c3f94999adabdc3f2bfca959ad2fd0495111ecb2cf4a9413f1",
+  "generated_at": "2026-10-10T05:41:02Z",
+  "source_base_commit": "ee8f09b7b5e9604b5cd275f2d30dbc37c4a54669",
+  "registry_digest": "30540222a38fda163af3aedbc5bc53ff3b2af88e3b1b9171660f3dda8a0f37d8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1516,6 +1516,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1 合同与执行证据"
         },
         {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1622,7 +1649,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 44,
+      "task_count": 45,
       "done_count": 23,
       "blocked_count": 0
     },
@@ -4440,6 +4467,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
+          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
+          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
+        },
+        {
+          "type": "test",
           "label": "邮件执行链修复轮二（F4 幂等）：reply job 链路身份查找复用+崩溃恢复/竞态/PG 证据（同 PR #1436 追加，待独立验收）",
           "command": "pytest test_hermes_email_execution.py(12)+test_account_case_postgres_roundtrip.py(RUN_POSTGRES_INTEGRATION=1 本机 PG14 隔离 schema，12 passed/1 存量失败)+test_account_reply_publication_postgres/test_automation_reply_claims_postgres(12)+相关 InMemory 444；bash -n 部署脚本",
           "result": "F4 阻断修复：新增 repository.find_account_reply_job_by_chain(ticket_id, trigger_message_created_at, automation_delivery_key)（Protocol+InMemory+PG 三实现；PG 查询精确对齐唯一索引身份(ticket_id, trigger, COALESCE(rerun_job_id,''))+delivery key，TIMESTAMPTZ 规范化比较）；helper F4 段先查链路身份，命中且状态非 cancelled/failed/manual_attention 即复用原 job（executed_actions 记 reply_job_reused，suspension 仍补 workflow/closing_reply_job_id 持久化），未命中才走 create_account_reply_job——消除 cancel+随机新 job_id 重建（既重复业务 reply 又撞唯一索引）。新测试 3 项：崩溃恢复（真实 create_account_reply_job 首写→清 turn work_result 模拟结果落库失败→重试：邮件复用+同 job_id 同状态零重建）；F2 竞态（真实 prepare 拒绝 delivery_unknown→fresh read 前并发提交 sent→复用零重发）；F3 组合（真实 _run_internal_email_delivery+真实 prepare/claim 协议+失败 sender→_record_execution_failure 经 intake 模块绑定名升级恰一次，helper 查权威 human_review_required 不二次升级，case 落库 failed+human_review_required）。PG 证据：新增 test_reply_job_chain_lookup_reuses_and_unique_index_blocks_duplicates——Z 后缀 trigger 经 TIMESTAMPTZ round-trip 命中、错误 key/trigger 不命中、cancel 后同链路新 job_id 插入触发 UniqueViolation（证明必须 find-first）。披露：PG 套件 test_enablement_failure_workflow_prepares_and_sends_on_postgres 为存量失败（HEAD 无本 diff 同败，patch 目标 execute_enablement_archer 早已移除，默认 skip 掩盖）；test_worker.py 14 项 investigation ownership 存量失败维持披露。本轮 PR 内文件共 11 个 tracked（v1 6+修复轮一 8+修复轮二 4，并集去重）。"
@@ -5420,6 +5453,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 1 变更清单",
           "command": "git diff --stat 1d1a5175..HEAD（分支 codex/weknora-dualwrite-phase2）",
           "result": "新文件：knowledge_dual_write.py/agent_memory_delivery.py/knowledge_delivery_repository.py+四套测试；修改：ticket_repository（v22+mixin）、weknora_promotion_repository（decide/invalidate 级联）、worker（drain+互锁）、automation_ecs_api（intake 开关+deliveries 端点）、hermes_knowledge_workflow（summary/review 开关）；docs/rag_change_log.md 已记 2026-10-10 条目"
+        },
+        {
+          "type": "test",
+          "label": "修复轮全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "276 passed / 0 failed（较首轮 +10 回归：B1 worker 拒绝 1、B2 边界跳过+approve 只补启用目标 2、B3 amfp 三态 3、B4 invalidated 不容假成功 1、B5 主开关 1、其余为既有用例随契约更新）；validate_workflow_snapshots.py 通过（15 published+1 divergent+53 redacted）"
+        },
+        {
+          "type": "document",
+          "label": "首轮证据更正披露",
+          "command": "（验收方复跑）",
+          "result": "首轮登记 268 passed/0 failed 有误；验收方同命令=267 passed/1 failed，失败项为根区 main 亦失败的存量 Slack published snapshot 缺失，非本 diff 引入；登记以本条更正为准"
         }
       ],
       "source_refs": [
@@ -16665,7 +16710,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "fraud 回复风格对齐（B 方案）全链收口：代码+提示词 v4+确定性 reply basis 已发布 Preproduction（pr-ee28a3c51d44 active）且 13949 实测草稿 C1-C8 全过。剩余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）待用户决策；fraud-reply-style worktree 待清理。",
+      "next_action": "fraud ask 通道 A 已实现（自动 reply job+幂等复用+skip_persona）：待 finalize→管线发布→PP-A4/A4b 全场景实测收口。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16678,6 +16723,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
+          "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
+          "result": "发布链：服务层 create_draft+schedule（hermes-persona-manual v4/hermes-reply-contract v4，标签与 legacy _FIELD_LABELS 对齐）→prepare pr-ee28a3c51d44（41 项）→管线发布 r20261009-1a7b6e5（main@1a7b6e51，含他线 #1443/#1444/#1445 合并）全阶段 passed（activation 通过）→DB 回读：pr-ee28a3c51d44 active（pr-43cee390c4b7 superseded）、两 key v4 active、B 模式内容在库验证。实测：工单 13949（hermes fraud 首轮零字段）→work_result.reply_basis=fraud_account_reply_basis_v1（ask_layout=bullets、connector=To proceed, please provide:）→persona prompt=hermes-persona-manual→草稿与 Production 风格逐字一致（lead-in/connector/七字段 canonical 标签 bullets/closing anchor 全 verbatim、英文）→C1-C8 判定器全 PASS。发布过程披露：(1)他线并发发布三次撞 main 后置变更守卫（6eed5d0→e8ff95b→1a7b6e5 重建）；(2)他线 direct-r20261009-1a7b6e5-c47 直发用旧源目录 prompt（pr-c47f99044ae0 在 preprod 不存在）致 worker/route 启动崩溃循环，其共享日志组 ERROR 污染我方 collector 窗口（误判一次）——已用窗口戳调和排除；该坏 task def（worker:120 等）仍在 family 中待其线程处理；(3)本地代理 env（source .env 的 HTTP_PROXY=127.0.0.1:1082）曾炸 heartbeat 一次；aws login 会话过期重登一次；(4)api 服务 platform_version 漂移（1.4.0 vs LATEST）terraform apply 归零一次。残余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）决策仍待用户。"
+        },
+        {
+          "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
+          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
+          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
+        },
         {
           "type": "deployment",
           "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
@@ -17210,6 +17273,58 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-193",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Hermes 固定 Case Task 与 Comment Message Action",
+      "summary": "按 r4 计划把新 Hermes case 的 Account Router 结果固化为 case_task，并让 customer comment 复用固定任务：Investigation 进入 investigation_feedback，其他任务进入严格 message_action；classification-only、幂等字段、Prompt Release pin 和 InMemory/PostgreSQL schema 已接入。本任务不包含三方 benchmark、PR 合并或 ECS 部署。",
+      "status": "review",
+      "owner": "codex",
+      "created_at": "2026-10-10",
+      "updated_at": "2026-10-10",
+      "next_action": "独立验收已通过（HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a）；PR #1449 保持 Draft，等待后续单独的 merge/Preproduction deploy 授权。",
+      "acceptance_criteria": [
+        "ticket.created 在 Hermes 引擎中只调用一次 Account Router；automation/investigation 固化为 hermes case_task，其他分类只保存 classification-only。",
+        "binding 持久化 case_task、case_task_prompt_release_id、case_task_prompt_snapshot、flow_version；route lock 后 comment 不可覆盖。",
+        "comment.created 不调用 Account Router；Investigation 走 investigation_feedback，普通固定任务走 message_action。",
+        "六个 message action 严格校验；多意图、非法 JSON、未知 action、无法判断进入 handoff_human；reply action 不执行 automation。",
+        "InMemory 与 PostgreSQL schema/迁移保持同名行为；重复事件和 active turn 保护保留。",
+        "不执行三方 benchmark、Prompt Release 创建、PR merge、Preproduction/Production deploy。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
+          "label": "r4 contract/evidence record"
+        },
+        {
+          "type": "test",
+          "label": "Contract and route worker focused tests",
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
+        },
+        {
+          "type": "document",
+          "label": "Implementation branch",
+          "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-194",
       "title": "WeKnora 并行双写与人工治理链（阶段二）",
       "status": "active",
       "owner": "codex",
@@ -17218,8 +17333,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-10",
       "updated_at": "2026-10-10",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。",
-      "next_action": "阶段 1 代码待独立验收（Draft PR 就绪后）：验收重点=双目标独立状态机、七条件门禁、单侧失败只补失败目标、reject 原子作废、六开关默认关、互锁。验收通过后依次：阶段 2 n8n source-only（复用 p2-183 快照合同，发布前刷新 active/draft 快照+manifest+校验器）→阶段 3/4/5→阶段 6 Preproduction 按十步顺序发布（部署前置=AGENT_MEMORY_WIKI_BASE_URL/USER_KEY/TEAM_ID SSM 参数与 worker task def 注入、六个开关显式 0 入 deploy env 清单）。",
+      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。",
+      "next_action": "修复轮完成，等待第二轮独立验收（Draft PR #1453 保持 Draft，新 HEAD 见 PR）；验收范围=阶段 0+1 含五项修复。通过后 finalize（Preproduction 发布按计划阶段 6 十步另行执行，部署前置=AGENT_MEMORY_WIKI_* SSM 参数+worker task def 注入+六开关显式 0）。",
       "acceptance_criteria": [
         "阶段二完成条件十条全部满足（计划 r1 第十节）：两条 n8n 链仅投快照、SP 唯一双写编排者、new 高质量无重复候选双写成功、merge/replace/supplement 进 Slack 人工 Review、source-only 候选建审核线程、页面/API 兜底、部分失败与超时恢复有效、Hermes AgentMemory 无回归、WeKnora Web/检索正常、观察期无重复写入/旧版本覆盖/审计缺失",
         "验证矩阵十六场景全过（计划 r1 第八节），证据含 n8n execution ID、source receipt、Summary/Review session+run、candidate ID、内容哈希、Slack channel/thread、人工决定、两目标独立状态与外部 ID/回读",
@@ -17250,6 +17365,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 1 变更清单",
           "command": "git diff --stat 1d1a5175..HEAD（分支 codex/weknora-dualwrite-phase2）",
           "result": "新文件：knowledge_dual_write.py/agent_memory_delivery.py/knowledge_delivery_repository.py+四套测试；修改：ticket_repository（v22+mixin）、weknora_promotion_repository（decide/invalidate 级联）、worker（drain+互锁）、automation_ecs_api（intake 开关+deliveries 端点）、hermes_knowledge_workflow（summary/review 开关）；docs/rag_change_log.md 已记 2026-10-10 条目"
+        },
+        {
+          "type": "test",
+          "label": "修复轮全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "276 passed / 0 failed（较首轮 +10 回归：B1 worker 拒绝 1、B2 边界跳过+approve 只补启用目标 2、B3 amfp 三态 3、B4 invalidated 不容假成功 1、B5 主开关 1、其余为既有用例随契约更新）；validate_workflow_snapshots.py 通过（15 published+1 divergent+53 redacted）"
+        },
+        {
+          "type": "document",
+          "label": "首轮证据更正披露",
+          "command": "（验收方复跑）",
+          "result": "首轮登记 268 passed/0 failed 有误；验收方同命令=267 passed/1 failed，失败项为根区 main 亦失败的存量 Slack published snapshot 缺失，非本 diff 引入；登记以本条更正为准"
         }
       ]
     },

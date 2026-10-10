@@ -509,18 +509,23 @@ def create_app(    *,
         WeKnora promotion remain asynchronous worker stages.
         """
         from backend.repositories.knowledge_source_repository import normalize_source_timestamp
-        from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+        from backend.services.hermes_knowledge_workflow import (
+            knowledge_governance_enabled,
+            queue_hermes_summary_for_case,
+        )
         from backend.services.knowledge_dual_write import knowledge_source_intake_enabled
 
-        # Independent rollback switch (dual-write phase 2): closed intake
-        # refuses new snapshots fail-closed; already-accepted sources and
-        # their queue state remain readable through the GET endpoint.
-        if not knowledge_source_intake_enabled():
+        # Independent rollback switch (dual-write phase 2), layered UNDER the
+        # governance master switch (review B5): either one being off refuses
+        # new snapshots fail-closed; already-accepted sources and their queue
+        # state remain readable through the GET endpoint.
+        if not knowledge_source_intake_enabled() or not knowledge_governance_enabled():
             raise HTTPException(
                 status_code=503,
                 detail=(
                     "knowledge source intake is disabled "
-                    "(KNOWLEDGE_SOURCE_INTAKE_ENABLED); no snapshot was accepted"
+                    "(KNOWLEDGE_SOURCE_INTAKE_ENABLED / HERMES_KNOWLEDGE_WORKFLOW_ENABLED); "
+                    "no snapshot was accepted"
                 ),
             )
 

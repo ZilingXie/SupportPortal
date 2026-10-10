@@ -3057,10 +3057,23 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
     from backend.services.hermes_knowledge_workflow import (
         weknora_promotion_generation_current,
     )
+    from backend.services.knowledge_dual_write import knowledge_dualwrite_worker_enabled
 
-    # Dual-write interlock: a candidate that already has delivery rows is
-    # owned by the dual-target worker — the legacy single-target path must
-    # never claim it, or the WeKnora side would be written twice.
+    # Exclusive ownership, bidirectional (review B1): when the dual-write
+    # worker switch is on, the legacy single-target path must not run AT ALL —
+    # a fresh candidate has no delivery rows yet, so a row-level skip could
+    # never close that window while this poller step runs first.  Both
+    # switches on means NEITHER worker runs (fail-closed misconfiguration).
+    if knowledge_dualwrite_worker_enabled():
+        LOGGER.error(
+            "legacy weknora promotion drain disabled: KNOWLEDGE_DUALWRITE_WORKER_ENABLED "
+            "is on (the two workers own the same candidates exclusively)"
+        )
+        return 0
+
+    # Defense in depth: a candidate that already has delivery rows is owned
+    # by the dual-target worker — the legacy single-target path must never
+    # claim it, or the WeKnora side would be written twice.
     try:
         dual_owned = {
             str(row.get("promotion_id") or "")

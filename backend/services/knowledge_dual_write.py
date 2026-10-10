@@ -235,7 +235,9 @@ def fan_out_candidate(
     if human_approved:
         # A human-approved action skips the auto gate (the human IS the
         # review) but re-enters the SAME delivery contract: only non-accepted
-        # targets are repaired.
+        # targets are repaired, and only targets whose delivery switch is
+        # currently enabled (review B2 — a disabled target must never be
+        # re-queued into execution).
         targets = enabled_delivery_targets()
         if not targets:
             repository.park_knowledge_candidate(
@@ -246,7 +248,9 @@ def fan_out_candidate(
             return DualWriteVerdict(action="human_review", reasons=["no delivery target enabled"])
         rows = repository.ensure_knowledge_deliveries(promotion_id, targets, now_value=now_value)
         for row in rows:
-            if str(row.get("status") or "") in {"failed", "outcome_unknown"}:
+            if str(row.get("target") or "") in targets and str(row.get("status") or "") in {
+                "failed", "outcome_unknown",
+            }:
                 repository.requeue_knowledge_delivery(
                     str(row["delivery_id"]), requeued_at=now_value, reason="human approve fan-out"
                 )
@@ -285,16 +289,22 @@ def resolve_knowledge_candidate(repository: Any, promotion_id: str, *, now_value
     """Terminal reconciliation of one candidate from its delivery rows.
 
     Runs after every delivery completion: while any target is still
-    queued/active/outcome_unknown nothing changes; when every target is
-    terminal, the candidate closes (both accepted -> accepted with the
-    WeKnora projection; any failed -> human review with the failing targets).
+    queued/active/outcome_unknown nothing changes; the candidate closes as
+    accepted ONLY when EVERY delivery row is accepted (review B4 — one
+    accepted row alongside an invalidated one is not success); any failed
+    row parks the candidate at human review with the failing targets.  An
+    invalidated row without a matching promotion-level retirement is an
+    inconsistent state and also parks (never a false accepted).
     """
     rows = repository.list_knowledge_deliveries(promotion_id)
+    if not rows:
+        return None
     pending = [row for row in rows if str(row.get("status") or "") in {"queued", "active", "outcome_unknown"}]
     if pending:
         return None
     accepted = [row for row in rows if str(row.get("status") or "") == "accepted"]
     failed = [row for row in rows if str(row.get("status") or "") == "failed"]
+    invalidated = [row for row in rows if str(row.get("status") or "") == "invalidated"]
     if failed:
         targets = ", ".join(sorted(str(row.get("target") or "") for row in failed))
         detail = "; ".join(
@@ -306,7 +316,22 @@ def resolve_knowledge_candidate(repository: Any, promotion_id: str, *, now_value
             reasons=[f"delivery failed: {targets}", detail],
             now_value=now_value,
         )
-    if accepted:
+    if invalidated:
+        if not accepted:
+            # Every row retired: the promotion's own invalidation transition
+            # owns the candidate — resolve must not resurrect it.
+            return None
+        targets = ", ".join(sorted(str(row.get("target") or "") for row in invalidated))
+        return repository.park_knowledge_candidate(
+            promotion_id,
+            reasons=[
+                f"delivery invalidated: {targets}",
+                "a target was retired after another target succeeded; the candidate "
+                "cannot close as accepted",
+            ],
+            now_value=now_value,
+        )
+    if len(accepted) == len(rows):
         weknora_row = next((row for row in accepted if str(row.get("target") or "") == "weknora"), None)
         return repository.resolve_knowledge_candidate_accepted(
             promotion_id,
@@ -538,6 +563,15 @@ def drain_knowledge_dual_write(
             break
         status = str(delivery.get("status") or "")
         delivery_id = str(delivery.get("delivery_id") or "")
+        target = str(delivery.get("target") or "")
+        # Execution-boundary target switch (review B2): a row whose target
+        # is currently disabled is NEVER claimed or executed — it waits
+        # untouched until the switch is re-enabled (rollback semantics:
+        # keep the candidate and the audit state, write nothing).
+        if target == "agent_memory" and not knowledge_agent_memory_delivery_enabled():
+            continue
+        if target == "weknora" and not knowledge_weknora_delivery_enabled():
+            continue
         if status not in {"queued", "outcome_unknown"} and not (
             status == "active" and str(delivery.get("lease_expires_at") or "") <= now_iso
         ):

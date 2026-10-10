@@ -113,7 +113,9 @@ def test_pg_claim_lease_and_owner_guarded_completion(repository) -> None:
     assert row["external_object_id"] == "doc-77" and row["readback_result"] == {"content": "C"}
 
 
-def test_pg_decide_approve_repairs_only_failed_target_atomically(repository) -> None:
+def test_pg_decide_approve_repairs_only_failed_target_atomically(repository, monkeypatch) -> None:
+    monkeypatch.setenv("KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_WEKNORA_DELIVERY_ENABLED", "1")
     promotion_id = _enqueue(repository)
     repository.ensure_knowledge_deliveries(promotion_id, ["agent_memory", "weknora"], now_value=NOW)
     for target in ("agent_memory", "weknora"):

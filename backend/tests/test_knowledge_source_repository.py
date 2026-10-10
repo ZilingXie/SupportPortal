@@ -617,6 +617,7 @@ def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> N
 
 def test_source_intake_requires_bearer_and_state_redacts_raw_payload(monkeypatch) -> None:
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     client, _store = _client()
     missing = client.post(
         "/automation/production/v1/knowledge/sources",
@@ -1107,3 +1108,23 @@ def test_promotion_deliveries_endpoint_reports_per_target_state(monkeypatch) -> 
     assert set(targets) == {"agent_memory", "weknora"}
     assert all(item["status"] == "queued" for item in targets.values())
     assert missing.status_code == 404
+
+
+def test_source_intake_requires_governance_master_switch(monkeypatch) -> None:
+    """Review B5: the phase-2 intake switch layers UNDER the governance
+    master switch — intake on + master off must refuse fail-closed."""
+    from unittest.mock import Mock
+
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.delenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", raising=False)
+    client, _store = _client()
+    repository = Mock()
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        refused = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot("2026-10-01T01:00:00Z"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert refused.status_code == 503
+    assert "HERMES_KNOWLEDGE_WORKFLOW_ENABLED" in refused.json()["detail"]
+    repository.accept_knowledge_source.assert_not_called()
