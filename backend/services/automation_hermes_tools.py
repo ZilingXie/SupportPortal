@@ -1592,11 +1592,19 @@ def tool_save_reply_draft(
     from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
     from backend.services.account_reply_rag_fallback import format_rag_fallback_references
 
-    if (
+    followup_knowledge_reply = (
         str(turn.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE
         and isinstance(work_result, dict)
         and str(work_result.get("followup_kind") or "") == "knowledge_question"
-    ):
+    )
+    message_action_knowledge_reply = (
+        str(turn.get("turn_kind") or "") == "message_action"
+        and isinstance(work_result, dict)
+        and str(work_result.get("reply_kind") or "") == "knowledge_question"
+        and str((work_result.get("message_action_reply") or {}).get("action") or "")
+        == "answer_related_question"
+    )
+    if followup_knowledge_reply or message_action_knowledge_reply:
         # The trusted reference list is appended deterministically (the same
         # contract as the legacy RAG fallback reply) — the persona renders
         # core content only, so the guardrail below validates the final text.
