@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-3 review fix 4: required fields on wiki entries and search hits (p2-194)
+
+- Summary: object-shaped but content-empty entries no longer pass: every wiki-list inventory entry requires non-empty string `wiki_id` and `status` (identity + lifecycle — without both, the sweep would skip wikis while staying "available"), and every search result requires non-empty string `title` and `path` (content fields present in every verified hit — without them a result normalizes to a fake empty hit). Non-string and whitespace-only values are rejected too; any violation raises `invalid_response`, marking the whole AgentMemory evidence surface unavailable so writable decisions downgrade to human_review.
+- Reason: stage-3 fourth-round review blocker (same fail-closed family: shape without substance).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 35 passed (+4 regressions incl. the four reviewer repro shapes and the end-to-end downgrade chain); full 16-suite regression 458 passed / 0 failed including isolated PostgreSQL.
+
 ## 2026-10-10 - Stage-3 review fix 3: negative totals and item shapes rejected (p2-194)
 
 - Summary: `wiki_list.total` now rejects negative integers (total=-1 previously produced an empty-but-available sweep), and every `items` entry must be an object — closing the last parsing gap so both AgentMemory read endpoints fully self-verify their responses (non-boolean, non-negative, true integers; element-wise object validation).

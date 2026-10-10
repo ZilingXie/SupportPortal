@@ -126,3 +126,14 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 修复：`total < 0` → `invalid_response`；并主动收口同族最后一处解析缺口——`items` 每元素必须为对象（`items=[null]/["x"]/[42]` 拒绝，避免下游 AttributeError 形态的延迟失败）。至此 `wiki_list` 与 `wiki_search` 的响应自证完整：total/count 非布尔、非负、真整数；items/results 逐元素对象。
 
 回归 3 项（负数 total 两形态、非对象 items 三形态、负 total 端到端面不可用链）。验证：AM 套件 31 passed；全套 **454 passed / 0 failed**（16 套件含隔离 PG）。
+
+
+## 阶段 3 修复轮 4（2026-10-10，第四轮验收一项同族阻断后）
+
+阻断：对象形但缺必需字段的条目仍放行——`items=[{}]/[{"status":"ready"}]/[{"wiki_id":"w1"}]` 得可用空检索面（wiki 被跳过）；`results=[{}]` 归一化为空命中（伪证据）。
+
+修复：必需字段校验——inventory 条目必须有非空字符串 `wiki_id` 与 `status`（身份+生命周期，缺一则该 wiki 无法被检索/分类，面必须失效）；搜索结果必须有非空字符串 `title` 与 `path`（verified 合同中每个命中都携带的内容字段，缺失即伪证据）。非字符串类型（数字/布尔/空白）同样拒绝。
+
+回归 4 项+扩展变体：四形态（`[{}]`/`[{"status"}]`/`[{"wiki_id"}]`/`results=[{}]`）+ 非字符串/空白字段变体 + 端到端（contentless result → 面不可用 → `new` 降级 human_review）。验证：AM 套件 35 passed；全套 **458 passed / 0 failed**（16 套件含隔离 PG）。
+
+至此读面响应自证五层闭环：类型（对象）→ 数值（非布尔/非负/真整数）→ 元素结构（逐元素对象）→ **必需字段（身份/状态/内容）** → 分页进展。

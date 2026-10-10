@@ -715,3 +715,94 @@ def test_search_knowledge_negative_total_fails_closed_end_to_end(monkeypatch) ->
     results, available, meta = _collect_agent_memory_evidence(_NegativeTotalClient(), packet)
     assert available is False
     assert "agent_memory_search_failed" in meta["reason"]
+
+
+# ----------------- stage-3 review fix 4: required fields, not just objects --
+
+
+def test_wiki_list_entries_must_carry_identity_and_status(monkeypatch) -> None:
+    """Reviewer repro: items=[{}]/[{"status":"ready"}]/[{"wiki_id":"w1"}] all
+    previously produced an available-but-unsearched sweep."""
+    import unittest.mock as mock
+
+    for bad_items in ([{}], [{"status": "ready"}], [{"wiki_id": "w1"}]):
+        transport = _ScriptedTransport([{"data": {"items": bad_items, "total": len(bad_items)}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+                assert "missing wiki_id" in str(exc) or "missing status" in str(exc)
+        assert raised, f"items={bad_items!r} must be rejected"
+
+
+def test_wiki_list_non_string_identity_fields_are_rejected(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    for bad in ({"wiki_id": 42, "status": "ready"}, {"wiki_id": "w1", "status": True},
+                {"wiki_id": "", "status": "ready"}, {"wiki_id": "w1", "status": "  "}):
+        transport = _ScriptedTransport([{"data": {"items": [bad], "total": 1}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"entry={bad!r} must be rejected"
+
+
+def test_wiki_search_result_without_content_fields_is_invalid(monkeypatch) -> None:
+    """Reviewer repro: results=[{}] previously normalized to an empty hit and
+    kept the surface available with fake evidence."""
+    import unittest.mock as mock
+
+    for bad in ({}, {"title": "T"}, {"path": "p"}, {"title": 42, "path": "p"}):
+        transport = _ScriptedTransport([{"data": {"count": 1, "results": [bad]}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_search(wiki_id="w1", query="q")
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+                assert "missing title" in str(exc) or "missing path" in str(exc)
+        assert raised, f"result={bad!r} must be rejected"
+
+
+def test_contentless_result_fails_the_evidence_surface_end_to_end() -> None:
+    """End-to-end: results=[{}] on one wiki -> surface unavailable -> the
+    writable decision downgrades to human_review (duplicate check preserved)."""
+    from backend.services.hermes_knowledge_workflow import (
+        _collect_agent_memory_evidence,
+        _downgrade_decisions_without_evidence,
+    )
+
+    class _ContentlessResultClient:
+        def configured(self) -> bool:
+            return True
+
+        def search_knowledge(self, query: str) -> dict:
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search result #0 is missing title",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_ContentlessResultClient(), packet)
+    assert available is False
+    assert "agent_memory_search_failed" in meta["reason"]
+
+    adjusted, downgraded = _downgrade_decisions_without_evidence(
+        [{"candidate_id": "k1", "candidate_type": "knowledge", "decision": "new",
+          "rationale": "r", "proposed_content": "b"}],
+        knowledge_available=True, memory_available=True,
+        agent_memory_available=available,
+    )
+    assert downgraded == ["k1"]
+    assert adjusted[0]["decision"] == "human_review"

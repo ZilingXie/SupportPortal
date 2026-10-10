@@ -250,6 +250,19 @@ class AgentMemoryWikiClient:
         # explicitly, a negative total is equally malformed (it would let the
         # sweep report an empty-but-available surface), and every inventory
         # entry must be an object.
+        for index, item in enumerate(items or []):
+            # Stage-3 review fix 4: an object-shaped entry still proves
+            # nothing without its identity (wiki_id) and lifecycle (status)
+            # fields — both must be non-empty strings or the sweep would skip
+            # wikis while staying "available".
+            for field in ("wiki_id", "status"):
+                value = item.get(field) if isinstance(item, dict) else None
+                if not isinstance(value, str) or not value.strip():
+                    raise AgentMemoryWikiError(
+                        f"AgentMemory wiki list entry #{index} is missing {field}",
+                        failure_kind="invalid_response",
+                        payload=payload,
+                    )
         if (
             items is None
             or isinstance(total, bool)
@@ -302,6 +315,18 @@ class AgentMemoryWikiClient:
                     failure_kind="invalid_response",
                     payload=payload,
                 )
+            # Stage-3 review fix 4: an object-shaped result without its
+            # content fields (title + path, present in every verified hit)
+            # would normalize to an empty hit and keep the surface available
+            # with fake evidence.
+            for field in ("title", "path"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise AgentMemoryWikiError(
+                        f"AgentMemory wiki search result #{index} is missing {field}",
+                        failure_kind="invalid_response",
+                        payload=payload,
+                    )
         return results
 
     def search_knowledge(
