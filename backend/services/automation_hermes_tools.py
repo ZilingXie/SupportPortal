@@ -696,7 +696,13 @@ async def tool_execute_automation_action(
     if (
         isinstance(prior_work, dict)
         and str(prior_work.get("status") or "").strip()
-        and str(prior_work.get("status") or "").strip() != "running"
+        # "message_action_classified" is the message-action phase's
+        # classification stub, not a business conclusion: replaying it would
+        # skip execution entirely and the publication gate would park the
+        # turn (live evidence: ticket 13976 turn-2
+        # work_result_not_publishable:message_action_classified).
+        and str(prior_work.get("status") or "").strip()
+        not in {"running", "message_action_classified"}
     ):
         return dict(prior_work)
     binding = context["binding"]
