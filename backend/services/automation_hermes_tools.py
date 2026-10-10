@@ -961,9 +961,36 @@ async def tool_execute_automation_action(
         account_case["route_family"] = "automated"
         account_case["collected_fields"] = collected_fields
         account_case["missing_fields"] = missing_fields
-        account_case["automation_context"] = dict(
-            attempt.get("automation_context") or account_case.get("automation_context") or {}
+        # Merge the attempt's context OVER the persisted case context: the
+        # naive overwrite dropped reply_conversation_context (and any other
+        # turn-persisted keys) every execution, so the reply pipeline's
+        # persona rendered from bare field lists with no sight of the
+        # customer's conversation — the "stiff reply" regression vs
+        # Production (live evidence: tickets 13938/13982/13984 facts
+        # carried no conversation_context while Production ask jobs do).
+        merged_context = dict(account_case.get("automation_context") or {})
+        merged_context.update(dict(attempt.get("automation_context") or {}))
+        account_case["automation_context"] = merged_context
+        # Legacy parity (automation_account_intake.py reply_conversation_context):
+        # the reply-job persona reads this to see the (sanitized) public
+        # conversation — acknowledgement, context awareness, and language
+        # choice all depend on it.
+        from backend.services.automation_context import persona_context
+
+        account_case["automation_context"]["reply_conversation_context"] = (
+            persona_context(
+                conversation_context,
+                [
+                    str(value)
+                    for key, value in dict(collected_fields or {}).items()
+                    if key in {"app_id", "customer_email"}
+                ],
+            )
         )
+        # Persist immediately: every reply job created later in this tool
+        # run (ask, email confirmation) reads the context from the
+        # repository, not from this in-memory dict.
+        repository.save_account_case(account_case)
 
         # Acceptance gap #3 (13601): re-check turn freshness at the business-write
         # boundary — field extraction and the waits above may have raced a
