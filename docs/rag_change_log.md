@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-3 review fix: AgentMemory read surface fail-closed strictness (p2-194)
+
+- Summary: the AgentMemory wiki read surface now proves every response: `wiki_search` requires a numeric `count` and object-shaped entries (`results=[null]` or a missing count raise `invalid_response` instead of counting as "no hits"), `search_knowledge` no longer silently skips malformed entries, and the wiki-list pagination raises on an empty page that still owes items (previously a potential infinite loop). Any of these failures marks the whole evidence surface unavailable, which downgrades writable decisions to human_review — the reviewer's repro (malformed response leaving `available=True` so a `new` decision could bypass the duplicate check) is covered by an end-to-end regression.
+- Reason: stage-3 review blocker (fail-closed contract violation).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py, docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 26 passed (+5 regressions reproducing the review scenarios); full 16-suite regression 449 passed / 0 failed including isolated PostgreSQL.
+
 ## 2026-10-10 - Review dual-side retrieval: AgentMemory evidence surface (p2-194 stage 3)
 
 - Summary: the Hermes knowledge Review now reads BOTH retrieval sides. The review bundle (case-bound and standalone) gains an `agent_memory` surface: per-candidate hits from the AgentMemory wiki knowledge API (verified live: wiki/list + per-wiki search fan-out over ready wikis, cap 100, top_k 5; no global search endpoint exists — 404-probed). A writable decision (new/supplement/replace/merge) survives only when the WeKnora surfaces AND AgentMemory all answered; any unavailable surface downgrades it to human_review with an explicit single/dual-sided reason. The AgentMemoryWikiClient read methods fail closed (invalid shapes raise, a mid-sweep failure marks the whole surface unavailable); the worker injects the client into both review drains (unconfigured = surface unavailable = strictest behaviour, so Preproduction runtime behaviour is unchanged until the AGENT_MEMORY_WIKI_* parameters are deployed in stage 6).

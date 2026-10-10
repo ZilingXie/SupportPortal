@@ -256,19 +256,40 @@ class AgentMemoryWikiClient:
 
     def wiki_search(self, *, wiki_id: str, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         """Per-wiki knowledge search (verified contract; hits carry title,
-        snippet, score and path)."""
+        snippet, score and path).
+
+        Stage-3 review fix: the response must prove itself — a missing or
+        non-numeric ``count`` raises, and ANY non-object entry in ``results``
+        raises. A malformed response can never masquerade as "no hits", which
+        would leave the evidence surface marked available and let a ``new``
+        decision bypass the duplicate check.
+        """
         body: dict[str, Any] = {"wiki_id": str(wiki_id or ""), "query": str(query or "")}
         if top_k is not None:
             body["top_k"] = int(top_k)
         payload = self._request("POST", "/api/v1/knowledge/wiki/search", json_body=body)
         data = _data(payload)
-        results = data.get("results") if isinstance(data.get("results"), list) else None
-        if results is None:
+        count = data.get("count")
+        if not isinstance(count, int) or count < 0:
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search response is missing a numeric count",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        results = data.get("results")
+        if not isinstance(results, list):
             raise AgentMemoryWikiError(
                 "AgentMemory wiki search response is missing results",
                 failure_kind="invalid_response",
                 payload=payload,
             )
+        for index, item in enumerate(results):
+            if not isinstance(item, dict):
+                raise AgentMemoryWikiError(
+                    f"AgentMemory wiki search result #{index} is not an object",
+                    failure_kind="invalid_response",
+                    payload=payload,
+                )
         return results
 
     def search_knowledge(
@@ -290,6 +311,14 @@ class AgentMemoryWikiClient:
             wikis.extend(page["items"])
             if len(wikis) >= page["total"]:
                 break
+            # Stage-3 review fix: an empty page that still owes items would
+            # never move the offset — raise instead of looping forever.
+            if len(page["items"]) == 0:
+                raise AgentMemoryWikiError(
+                    "AgentMemory wiki list returned an empty page before total",
+                    failure_kind="invalid_response",
+                    payload={"collected": len(wikis), "total": page["total"]},
+                )
             offset = len(wikis)
         ready = [
             item for item in wikis
@@ -301,9 +330,10 @@ class AgentMemoryWikiClient:
                 wiki_id=str(item["wiki_id"]), query=query,
                 top_k=top_k if top_k is not None else self.DEFAULT_SEARCH_TOP_K,
             )
+            # wiki_search already rejects non-object entries, so every result
+            # here is a dict — a malformed entry invalidates the whole sweep
+            # (fail-closed) instead of silently counting as "no hits".
             for result in results:
-                if not isinstance(result, dict):
-                    continue
                 hits.append({
                     "wiki_id": str(item.get("wiki_id") or ""),
                     "wiki_name": str(item.get("name") or ""),

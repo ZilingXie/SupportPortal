@@ -488,3 +488,128 @@ def test_search_knowledge_any_wiki_failure_propagates(monkeypatch) -> None:
         except AgentMemoryWikiError:
             raised = True
     assert raised, "a partial sweep must fail closed, not return partial hits"
+
+
+# ------------------------- stage-3 review fixes (fail-closed strictness) ----
+
+
+def _am_client(base_url="https://am.test"):
+    return AgentMemoryWikiClient(base_url=base_url, user_key="k", team_id="team-1")
+
+
+def test_wiki_search_missing_count_is_invalid_response(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"results": []}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "count" in str(exc)
+    assert raised
+
+
+def test_wiki_search_non_numeric_count_is_invalid_response(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"count": "13", "results": []}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+    assert raised
+
+
+def test_wiki_search_null_result_element_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: results=[null] must NOT count as an empty success."""
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"count": 1, "results": [None]}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "not an object" in str(exc)
+    assert raised
+
+
+def test_search_knowledge_empty_page_before_total_raises_not_loops(monkeypatch) -> None:
+    """Reviewer repro: items=[] with total>0 must raise, not loop forever."""
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([
+        {"data": {"items": [], "total": 5}},
+        {"data": {"items": [], "total": 5}},  # would loop forever without the guard
+        {"data": {"items": [], "total": 5}},
+    ])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.search_knowledge("q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "empty page" in str(exc)
+    assert raised
+    assert len(transport.calls) == 1, "the guard must fail on the first empty page"
+
+
+def test_malformed_search_response_fails_the_whole_evidence_surface() -> None:
+    """End-to-end reviewer repro: results=[null] on ONE wiki makes the AM
+    surface unavailable, so the collector reports available=False and a
+    writable decision downgrades to human_review instead of bypassing the
+    duplicate check."""
+    from backend.services.hermes_knowledge_workflow import (
+        _collect_agent_memory_evidence,
+        _downgrade_decisions_without_evidence,
+    )
+
+    class _MalformedWikiClient:
+        def configured(self) -> bool:
+            return True
+
+        def wiki_list(self, *, limit=100, offset=0):
+            return {
+                "items": [{"wiki_id": "w1", "name": "A", "status": "ready", "version": "1"}],
+                "total": 1,
+            }
+
+        def search_knowledge(self, query: str) -> dict:
+            results = self.wiki_search(wiki_id="w1", query=query)
+            return {"wiki_count": 1, "searched": 1, "hits": results}
+
+        def wiki_search(self, *, wiki_id, query, top_k=None):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search result #0 is not an object",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_MalformedWikiClient(), packet)
+    assert available is False
+    assert results == {"k1": []}
+    assert "agent_memory_search_failed" in meta["reason"]
+
+    adjusted, downgraded = _downgrade_decisions_without_evidence(
+        [{"candidate_id": "k1", "candidate_type": "knowledge", "decision": "new",
+          "rationale": "r", "proposed_content": "b"}],
+        knowledge_available=True,
+        memory_available=True,
+        agent_memory_available=available,
+    )
+    assert downgraded == ["k1"]
+    assert adjusted[0]["decision"] == "human_review"
+    assert "AgentMemory evidence unavailable" in adjusted[0]["rationale"]

@@ -93,3 +93,18 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 - 新测试 13 项：客户端读面 5（list 校验/search 归一/ready-only/失败传播/缺 total fail-closed）+ 降级 4（AM 不可用双侧类型降级/双侧应答存活/双侧不可用合并理由/skill 独立）+ 采集器 3（hits/未配置/中途失败）+ standalone bundle 面 1（available+results 断言+AM 不可用变体降级）。
 - 存量适配 3 处（e2e/sessions/legal-empty 注入 AM 假客户端——新合同下"可写存活"必须双侧应答）。
 - 全套回归 **444 passed / 0 failed**（RUN_POSTGRES_INTEGRATION=1，16 套件）。
+
+
+## 阶段 3 修复轮（2026-10-10，验收一项阻断后）
+
+阻断：AM 读面三处 fail-closed 缺口+一处死循环风险（`wiki_search` 未校验 count 与元素结构、`search_knowledge` 静默跳过非对象元素、`results=[null]`/缺 count 被当作"无命中"使面保持可用、空页+total>0 时 offset 不前进）。
+
+修复（全部任一异常→`invalid_response`→整面不可用→可写决策降级 human_review）：
+
+1. `wiki_search` 严格校验 `count`（数值型且 ≥0）与 `results` 每个元素为对象；
+2. `search_knowledge` 不再静默跳过（元素校验前移至 `wiki_search`，malformed 即抛）；
+3. 分页无进展防护：空页且未达 total → 立即 `invalid_response`（不再死循环）。
+
+回归 5 项（全部复现验收场景）：缺 count / 非数值 count / `results=[null]` / 空页+total=5 首页即抛且仅一次调用 / malformed 端到端链（面不可用→`new` 降级 human_review、理由含 AgentMemory evidence unavailable）。
+
+验证：全套 **449 passed / 0 failed**（16 套件含隔离 PG）。
