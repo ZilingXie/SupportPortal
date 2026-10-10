@@ -3220,6 +3220,8 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
     if not knowledge_workflow_active():
         return 0
     try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
         return drain_hermes_knowledge_tasks(
             ticket_repository,
             client=HERMES_KNOWLEDGE_AGENT_CLIENT,
@@ -3228,6 +3230,10 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
             # contract simply marks memory evidence unavailable, which fails
             # review decisions closed to human_review instead of guessing.
             memory_client=WeKnoraClient(),
+            # Stage 3 (p2-194): the second retrieval side — AgentMemory wiki
+            # evidence for the Review bundle; unconfigured fails closed the
+            # same way.
+            agent_memory_client=AgentMemoryWikiClient(),
             limit=limit,
         )
     except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure
@@ -3249,11 +3255,14 @@ def _drain_standalone_knowledge_tasks(*, limit: int = 5) -> int:
     if not standalone_workflow_active():
         return 0
     try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
         outcome = drain_standalone_knowledge_tasks(
             ticket_repository,
             client=HERMES_KNOWLEDGE_AGENT_CLIENT,
             weknora_client=HermesWeKnoraClient(),
             memory_client=WeKnoraClient(),
+            agent_memory_client=AgentMemoryWikiClient(),
             limit=limit,
         )
         return int(outcome.get("executed") or 0)

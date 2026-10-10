@@ -11,6 +11,62 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Stage-3 review fix 4: required fields on wiki entries and search hits (p2-194)
+
+- Summary: object-shaped but content-empty entries no longer pass: every wiki-list inventory entry requires non-empty string `wiki_id` and `status` (identity + lifecycle — without both, the sweep would skip wikis while staying "available"), and every search result requires non-empty string `title` and `path` (content fields present in every verified hit — without them a result normalizes to a fake empty hit). Non-string and whitespace-only values are rejected too; any violation raises `invalid_response`, marking the whole AgentMemory evidence surface unavailable so writable decisions downgrade to human_review.
+- Reason: stage-3 fourth-round review blocker (same fail-closed family: shape without substance).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 35 passed (+4 regressions incl. the four reviewer repro shapes and the end-to-end downgrade chain); full 16-suite regression 458 passed / 0 failed including isolated PostgreSQL.
+
+## 2026-10-10 - Stage-3 review fix 3: negative totals and item shapes rejected (p2-194)
+
+- Summary: `wiki_list.total` now rejects negative integers (total=-1 previously produced an empty-but-available sweep), and every `items` entry must be an object — closing the last parsing gap so both AgentMemory read endpoints fully self-verify their responses (non-boolean, non-negative, true integers; element-wise object validation).
+- Reason: stage-3 third-round review blocker (same fail-closed family).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 31 passed (+3 regressions incl. the end-to-end negative-total unavailable-surface path); full 16-suite regression 454 passed / 0 failed including isolated PostgreSQL.
+
+## 2026-10-10 - Stage-3 review fix 2: JSON booleans rejected as counts (p2-194)
+
+- Summary: `wiki_search.count` and `wiki_list.total` now explicitly reject booleans — Python treats `bool` as an `int` subclass, so JSON `true`/`false` previously passed `isinstance(x, int)` and a malformed response could keep the AgentMemory evidence surface "available" with an empty sweep. Both fields now require a real integer (bool check first), raising `invalid_response` so the surface degrades and writable decisions downgrade to human_review.
+- Reason: stage-3 second-round review blocker (same fail-closed family as round 1).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 28 passed (+2 regressions covering count=true/false and total=true/false); full 16-suite regression 451 passed / 0 failed including isolated PostgreSQL.
+
+## 2026-10-10 - Stage-3 review fix: AgentMemory read surface fail-closed strictness (p2-194)
+
+- Summary: the AgentMemory wiki read surface now proves every response: `wiki_search` requires a numeric `count` and object-shaped entries (`results=[null]` or a missing count raise `invalid_response` instead of counting as "no hits"), `search_knowledge` no longer silently skips malformed entries, and the wiki-list pagination raises on an empty page that still owes items (previously a potential infinite loop). Any of these failures marks the whole evidence surface unavailable, which downgrades writable decisions to human_review — the reviewer's repro (malformed response leaving `available=True` so a `new` decision could bypass the duplicate check) is covered by an end-to-end regression.
+- Reason: stage-3 review blocker (fail-closed contract violation).
+- Affected files/config: backend/services/agent_memory_delivery.py, backend/tests/test_agent_memory_delivery.py, docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md.
+- Data impact: none (no runtime deployment).
+- Verification: AM suite 26 passed (+5 regressions reproducing the review scenarios); full 16-suite regression 449 passed / 0 failed including isolated PostgreSQL.
+
+## 2026-10-10 - Review dual-side retrieval: AgentMemory evidence surface (p2-194 stage 3)
+
+- Summary: the Hermes knowledge Review now reads BOTH retrieval sides. The review bundle (case-bound and standalone) gains an `agent_memory` surface: per-candidate hits from the AgentMemory wiki knowledge API (verified live: wiki/list + per-wiki search fan-out over ready wikis, cap 100, top_k 5; no global search endpoint exists — 404-probed). A writable decision (new/supplement/replace/merge) survives only when the WeKnora surfaces AND AgentMemory all answered; any unavailable surface downgrades it to human_review with an explicit single/dual-sided reason. The AgentMemoryWikiClient read methods fail closed (invalid shapes raise, a mid-sweep failure marks the whole surface unavailable); the worker injects the client into both review drains (unconfigured = surface unavailable = strictest behaviour, so Preproduction runtime behaviour is unchanged until the AGENT_MEMORY_WIKI_* parameters are deployed in stage 6).
+- Reason: plan r1 §四 — the Review must read AgentMemory and WeKnora retrieval results before any dual-write.
+- Affected files/config: backend/services/agent_memory_delivery.py (read surface), backend/services/hermes_knowledge_workflow.py (collector, downgrade, case-bound bundle), backend/services/knowledge_standalone_workflow.py (standalone bundle), backend/worker.py (drain injection), tests (13 new + 3 adapted), docs/prompt_change_log.md (review input surface).
+- Data impact: none (no runtime deployment; the AM read surface is unconfigured in Preproduction today, so every review fails the AM side closed — strictly more conservative than before).
+- Verification: 444 passed / 0 failed across 16 suites including isolated PostgreSQL; AM API contract probed read-only against live preproduction (93 wikis listed, 13-hit search sample).
+
+## 2026-10-10 - Stage-2 review R1: CSD completeness strictness (p2-194)
+
+- Summary: the CSD source-only draft's completeness gate is now strictly fail-closed — a missing or non-numeric `fields.comment.total` throws instead of falling back to the comments length, and `Get_CSD_Detail` requests `fields=*,comment` (the complete Jira issue object the ingestion contract requires) instead of a fixed field list. Both changes live in the n8n DRAFT (new draft version 6fed47a6; the active version b5cf6d6b remains untouched), the repo snapshot was rebuilt from the live readback, and four regression tests pin the behaviour.
+- Reason: stage-2 round-1 review blockers (contract: numeric total must be present; full snapshot completeness).
+- Affected files/config: docs/integrations/n8n/workflows/drafts/GgDxPEWtW7ltT5BW.draft.json, manifest.json, backend/tests/test_n8n_source_only_contracts.py, docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md; remote n8n draft nodes Validate CSD Snapshot + Get_CSD_Detail.
+- Data impact: none (draft not published, not executed).
+- Verification: 22 offline contract tests passed; snapshot validator 15+3+56 exit 0; live readback confirms activeVersionId unchanged.
+
+## 2026-10-10 - n8n knowledge chains converted to source-only DRAFTS (p2-194 stage 2)
+
+- Summary: both n8n knowledge chains now carry a source-only DRAFT (not published; active versions b5cf6d6b / 1f544830 unchanged, verified by live readback): fetch source -> completeness validation -> build a knowledge-source-v1 snapshot -> POST to the SupportPortal preproduction source endpoint (credential `preprodcution`, 3 retries) -> three-state receipt gate (accepted/already_exists/stale_ignored + non-empty task_id, throw -> errorWorkflow otherwise). All AI filtering, local PostgreSQL dedup, AgentMemory Wiki direct writes, 2_rag and KB generation nodes were removed from the drafts. Snapshot contract option A: the v1 intake model is unchanged; idempotent identity stays source_type+source_id+source_updated_at; snapshot_hash travels in references. The snapshot validator gained endpoint-closure, a source-only node-type allowlist, a URL-prefix allowlist and direct-write URL bans — legacy snapshots report 29 LEGACY-EXPOSED warnings (historical dangling endpoints from the p2-183 era plus the Wiki write URLs), source-only drafts are enforced as hard errors.
+- Reason: WeKnora dual-write governance plan stage 2 — SupportPortal must become the only writer before any dual-write activation.
+- Affected files/config: scripts/n8n/validate_workflow_snapshots.py, docs/integrations/n8n/workflows/drafts/{GgDxPEWtW7ltT5BW,MM3Z3T469Eru3Q1I}.draft.json, manifest.json (draftSourceOnly), backend/tests/test_n8n_source_only_contracts.py, docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md. Remote n8n: two DRAFT updates via MCP update_workflow only — no publish, no credential changes (existing `preprodcution` httpHeaderAuth referenced by id).
+- Data impact: no knowledge ingestion (the intake switch stays off; drafts are not executed), no AgentMemory/WeKnora writes, no Production. Real-execution evidence is registered waiting-for-evidence until the stage-6 rollout authorizes publishing and natural-schedule capture.
+- Verification: 18 offline contract tests execute the actual Code-node JS from the repo snapshots (pagination/counts/CSD comment totals/three-state receipts/bad receipts) with outputs validated against the real KnowledgeSourceSnapshot model, plus a real InMemory-repository replay test proving already_exists/stale_ignored absorption on the exact identity triple; snapshot validator 15 published + 3 drafts + 56 redactions exit 0; live readback confirms both activeVersionIds unchanged.
+
 ## 2026-10-10 - Dual-write stage-1 second repair round (p2-194)
 
 - Summary: three second-round blockers fixed. (R2-1) a human approval now always fans out BOTH target delivery rows — a target whose switch is currently disabled gets a queued row that waits behind the execution boundary (never claimed, never written) so a single-target success can never close the candidate, and re-enabling the switch completes the dual write; (R2-2) a human-edited approval body re-earns its content hash on both the in-memory and PostgreSQL decide paths (the AgentMemory content-addressed filename follows the new hash; promotion_id stays the stable candidate-slot identity), and an approval whose body would collide with another candidate's (source triple, hash) is refused with an explicit error backed by the unique index; (R2-3) the static schema mirror backend/sql/ticket_storage.sql gains the support_knowledge_deliveries table and both indexes, and the stale mirror version guard (failing on main since v19) is repaired to assert v22 with the v18-v21 compatibility chain.

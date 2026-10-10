@@ -1,4 +1,10 @@
 # Prompt Change Log
+## 2026-10-10 - Review bundle gains the AgentMemory retrieval surface (p2-194 stage 3)
+
+- 变更：Hermes 知识 Review 的输入 bundle（case 绑定 `hermes-knowledge-review-bundle-v1` 与 standalone `knowledge-review-bundle-v1`）新增 `agent_memory` 面：`{available, results, wiki_count, searched}`——AgentMemory wiki 检索证据（verified API：wiki/list+wiki/search 扇出，仅 ready wiki、上限 100、top_k 5）。可写决策（new/supplement/replace/merge）现要求 WeKnora 各面 AND AgentMemory 同时应答，任一不可用降级 human_review（理由区分单侧/双侧）。无 prompt 文本变更；仅 Review 模型可见的输入结构扩展（向后兼容的加字段）。
+- 原因：阶段 3 双侧检索合同（计划 r1 §四）。
+- 验证：test_stage3_dual_retrieval 7 项 + 采集器/降级/存量适配，全套 444 passed（含隔离 PG）。
+
 
 ## 2026-10-09 - hermes-persona-manual v4 + hermes-reply-contract v4：fraud 回复风格对齐（p2-187，未发布）
 

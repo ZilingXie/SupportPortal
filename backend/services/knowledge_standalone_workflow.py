@@ -321,10 +321,12 @@ def run_standalone_review_task(
     client: HermesAgentClient,
     weknora_client: Any = None,
     memory_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
     owner_token = str(task.get("owner_token") or "")
     """Execute one standalone Review; feed the standard promotion bridge."""
     from backend.services.hermes_knowledge_workflow import (
+        _collect_agent_memory_evidence,
         _collect_weknora_evidence,
         _downgrade_decisions_without_evidence,
         build_weknora_promotions_from_review_report,
@@ -356,6 +358,9 @@ def run_standalone_review_task(
     knowledge_results, memory_results, knowledge_ok, memory_ok = _collect_weknora_evidence(
         knowledge_client, packet, memory_client=memory_client
     )
+    agent_memory_results, agent_memory_ok, agent_memory_meta = _collect_agent_memory_evidence(
+        agent_memory_client, packet
+    )
     bundle = {
         "schema": "knowledge-review-bundle-v1",
         "source": {
@@ -369,6 +374,13 @@ def run_standalone_review_task(
             "memory": {k: v for k, v in memory_results.items()},
             "knowledge_available": knowledge_ok,
             "memory_available": memory_ok,
+        },
+        "agent_memory": {
+            # Stage 3: the review reads BOTH retrieval sides, with the same
+            # fail-closed availability semantics.
+            "available": agent_memory_ok,
+            "results": agent_memory_results,
+            **agent_memory_meta,
         },
     }
     # R25 (p2-184): attempt-suffixed run identity for retried reviews (same
@@ -410,7 +422,10 @@ def run_standalone_review_task(
             f"decisions {sorted(seen_ids)} do not cover candidates {sorted(expected_ids)} exactly once",
         )
     adjusted, _downgraded = _downgrade_decisions_without_evidence(
-        decisions, knowledge_available=knowledge_ok, memory_available=memory_ok
+        decisions,
+        knowledge_available=knowledge_ok,
+        memory_available=memory_ok,
+        agent_memory_available=agent_memory_ok,
     )
     # Same per-decision output contract as the case-bound review (review
     # round 3, R3-8): a structurally invalid decision (for example a
@@ -490,6 +505,7 @@ def drain_standalone_knowledge_tasks(
     client: HermesAgentClient,
     weknora_client: Any = None,
     memory_client: Any = None,
+    agent_memory_client: Any = None,
     limit: int = 5,
 ) -> dict[str, int]:
     """Claim and run pending/lease-expired standalone tasks (worker entry)."""
@@ -519,6 +535,7 @@ def drain_standalone_knowledge_tasks(
             run_standalone_review_task(
                 repository, task, client=client,
                 weknora_client=weknora_client, memory_client=memory_client,
+                agent_memory_client=agent_memory_client,
             )
             executed += 1
         except Exception as exc:  # noqa: BLE001

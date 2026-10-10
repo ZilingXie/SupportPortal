@@ -62,13 +62,14 @@
       "parentFolderId": "SLMnELm0z3huA2Cr",
       "updatedAt": "2026-10-06T09:28:56.387Z",
       "publishedVersionId": "b5cf6d6b-34b0-4e64-9d40-8e7c50512266",
-      "draftVersionId": "b5cf6d6b-34b0-4e64-9d40-8e7c50512266",
-      "draftMatchesPublished": true,
+      "draftVersionId": "6fed47a6-0192-4356-af03-c8c5820b2cb9",
+      "draftMatchesPublished": false,
       "nodeCount": 26,
       "publishedFile": "active/GgDxPEWtW7ltT5BW.published.json",
-      "draftFile": null,
+      "draftFile": "drafts/GgDxPEWtW7ltT5BW.draft.json",
       "publishedRedactionCount": 3,
-      "draftRedactionCount": 0
+      "draftRedactionCount": 3,
+      "draftSourceOnly": true
     },
     {
       "workflowId": "MM3Z3T469Eru3Q1I",
@@ -77,13 +78,14 @@
       "parentFolderId": "SLMnELm0z3huA2Cr",
       "updatedAt": "2026-10-06T09:25:32.115Z",
       "publishedVersionId": "1f544830-fc6d-4212-bbca-bd4b84d936c1",
-      "draftVersionId": "1f544830-fc6d-4212-bbca-bd4b84d936c1",
-      "draftMatchesPublished": true,
+      "draftVersionId": "6a262f9a-c6bc-4173-88a3-c96d60025a6f",
+      "draftMatchesPublished": false,
       "nodeCount": 29,
       "publishedFile": "active/MM3Z3T469Eru3Q1I.published.json",
-      "draftFile": null,
+      "draftFile": "drafts/MM3Z3T469Eru3Q1I.draft.json",
       "publishedRedactionCount": 1,
-      "draftRedactionCount": 0
+      "draftRedactionCount": 0,
+      "draftSourceOnly": true
     },
     {
       "workflowId": "dV5vNA6l1MbDMHZt",
