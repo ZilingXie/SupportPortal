@@ -1,7 +1,7 @@
 # 阶段 0 冻结基线记录 — WeKnora 并行双写与人工治理链（阶段二）
 
 - 计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1
-- 任务：p2-193
+- 任务：p2-194
 - 基线 main：d958c66f（2026-10-10 采集时根区 clean、与 origin/main 同步）
 - 采集时间：2026-10-10（北京时间当日）
 - 采集方式：全部只读（代码读取 + n8n MCP 只读接口 + AWS CLI 只读 describe/list）
@@ -78,7 +78,7 @@ hermes:45 四容器结构（AgentMemory 侧配置，机密值不落盘）：
 
 | 任务 | 登记 | 与阶段二的关系 |
 |---|---|---|
-| p2-182 WeKnora 写入适配层 | **active** | 代码已合入 main 并经隔离 PG/回归测试（189+ 用例）；**未部署激活**（WEKNORA_PROMOTION_ENABLED=0、客户端参数缺）。其 adapter/repository 即阶段 1 WeKnora 目标的复用底座；本任务推进后其剩余目标由 p2-193 承接，收口时一并迁移/关账 |
+| p2-182 WeKnora 写入适配层 | **active** | 代码已合入 main 并经隔离 PG/回归测试（189+ 用例）；**未部署激活**（WEKNORA_PROMOTION_ENABLED=0、客户端参数缺）。其 adapter/repository 即阶段 1 WeKnora 目标的复用底座；本任务推进后其剩余目标由 p2-194 承接，收口时一并迁移/关账 |
 | p2-183 n8n 来源迁移 | **review** | source-only 草稿已被 p2-186 恢复发布覆盖（线上无存留）；快照合同（schema version/来源三元组/分页完整性/快照哈希/幂等键）与 snapshot 校验器流程为阶段 2 直接输入；任务停留在 review 状态，阶段 2 完成后按实际结果关账或迁移 |
 | p2-186 AgentMemory 恢复 | **active** | 当前有效运行合同：治理链关闭（本基线 §3 实测）、n8n 两条 AgentMemory 直写链 active（§1 实测版本）、Preprod r20261006-c17ea45 起生效；剩余=两 n8n 链正向入库自然样本观察（与本任务阶段 2 改造存在时序交叉：source-only 改造会改变链形态，关账时需对齐） |
 | p2-188 WeKnora 阶段一 | **done** | 独立 WeKnora 集群运行中（§2 实测）；其交接项（管理员密码轮换、额度监控、文件桶备份边界）继续有效，不属阶段二范围 |

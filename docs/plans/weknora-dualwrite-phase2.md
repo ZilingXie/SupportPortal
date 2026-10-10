@@ -2,7 +2,7 @@
 
 - 计划名称：WeKnora 并行双写与人工治理链（阶段二）
 - 修订：r1（2026-10-10 登记入仓，正文为用户批准的计划原文）
-- 任务登记：p2-193（function：weknora-dualwrite-governance，module：rag-knowledge）
+- 任务登记：p2-194（function：weknora-dualwrite-governance，module：rag-knowledge）
 - 工作分支：codex/weknora-dualwrite-phase2（基线 main d958c66f）
 - 阶段 0 冻结基线：[docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md](../evidence/weknora-dualwrite-phase2/stage0-baseline.md)
 - 阶段状态：阶段 0 已完成并通过独立验收（2026-10-10）；阶段 1 代码已实施（同日，知识区回归 268 passed/0 failed 含隔离 PG 集成，六个开关默认关、零运行态变更），停在 Draft PR 待独立验收；阶段 2-6 未实施
