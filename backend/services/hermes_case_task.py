@@ -216,4 +216,3 @@ def parse_message_action(value: Any) -> MessageAction:
     if not isinstance(value, dict):
         raise ValueError("message action must be a JSON object")
     return MessageAction.model_validate(value)
-
