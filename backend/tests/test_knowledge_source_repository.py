@@ -63,6 +63,8 @@ def _snapshot(version: str) -> dict:
 def test_source_intake_is_versioned_and_queues_summary(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, _store = _client()
     repository = _repository()
     token = "secret"
@@ -115,6 +117,8 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -280,6 +284,8 @@ def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, _store = _client()
     repository = _repository()
     from backend.services.hermes_knowledge_workflow import (
@@ -370,6 +376,8 @@ def test_open_ticket_snapshot_is_recorded_but_never_summarized(monkeypatch) -> N
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -453,6 +461,8 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -575,6 +585,8 @@ def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> N
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -603,7 +615,8 @@ def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> N
     assert repository.list_standalone_summary_tasks() == []
 
 
-def test_source_intake_requires_bearer_and_state_redacts_raw_payload() -> None:
+def test_source_intake_requires_bearer_and_state_redacts_raw_payload(monkeypatch) -> None:
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     client, _store = _client()
     missing = client.post(
         "/automation/production/v1/knowledge/sources",
@@ -636,6 +649,8 @@ def test_human_review_decision_endpoint_closes_the_loop(monkeypatch) -> None:
     from backend.repositories.weknora_promotion_repository import weknora_promotion_id
 
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, _store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -849,6 +864,8 @@ def test_late_older_solved_delivery_never_rolls_mirror_back(monkeypatch) -> None
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -887,6 +904,8 @@ def test_reclosed_generation_can_be_approved_without_waiting(monkeypatch) -> Non
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -949,6 +968,8 @@ def test_raw_zendesk_ticket_snapshot_keeps_internal_contract(monkeypatch) -> Non
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -1016,3 +1037,73 @@ def test_raw_zendesk_ticket_snapshot_keeps_internal_contract(monkeypatch) -> Non
     )
     assert str(event["ticket"]["id"]) == "13807"
     assert isinstance(event["ticket"]["custom_fields"], dict)
+
+
+def test_source_intake_is_fail_closed_without_the_phase2_switch(monkeypatch) -> None:
+    from unittest.mock import Mock
+
+    monkeypatch.delenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", raising=False)
+    client, _store = _client()
+    repository = Mock()
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        refused = client.post(
+            "/automation/production/v1/knowledge/sources",
+            json=_snapshot("2026-10-01T01:00:00Z"),
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert refused.status_code == 503
+    assert "KNOWLEDGE_SOURCE_INTAKE_ENABLED" in refused.json()["detail"]
+    # Fail-closed means zero persistence, not a deferred acceptance.
+    repository.accept_knowledge_source.assert_not_called()
+
+
+def test_promotion_deliveries_endpoint_reports_per_target_state(monkeypatch) -> None:
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    client, _store = _client()
+    repository = InMemoryTicketRepository()
+    repository.initialize()
+    inserted = repository.enqueue_weknora_promotions(
+        [
+            {
+                "source_type": "knowledge_source_review",
+                "source_id": "knowledge-source-summary:csd_issue:ISS-42:v3:kb-1",
+                "source_version": "v3",
+                "content_hash": "e" * 64,
+                "candidate_type": "knowledge",
+                "decision": "new",
+                "candidate_payload": {
+                    "schema_version": "v1",
+                    "candidate_type": "knowledge",
+                    "decision": "new",
+                    "title": "T",
+                    "content": "C",
+                    "note": "n",
+                },
+                "review_run_id": "run-1",
+            }
+        ],
+        now_value="2026-10-10T08:00:00Z",
+    )
+    promotion_id = inserted[0]["promotion_id"]
+    repository.ensure_knowledge_deliveries(
+        promotion_id, ["agent_memory", "weknora"], now_value="2026-10-10T08:00:00Z"
+    )
+    with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
+        found = client.get(
+            f"/automation/production/v1/knowledge/promotions/{promotion_id}/deliveries",
+            headers={"Authorization": "Bearer secret"},
+        )
+        missing = client.get(
+            "/automation/production/v1/knowledge/promotions/does-not-exist/deliveries",
+            headers={"Authorization": "Bearer secret"},
+        )
+    assert found.status_code == 200
+    body = found.json()
+    assert body["count"] == 2
+    targets = {item["target"]: item for item in body["items"]}
+    assert set(targets) == {"agent_memory", "weknora"}
+    assert all(item["status"] == "queued" for item in targets.values())
+    assert missing.status_code == 404

@@ -35,6 +35,7 @@ def _enable_real_mode(env: dict) -> None:
         "HERMES_AGENT_BASE_URL": "http://hermes.test",
         "HERMES_AGENT_API_TOKEN": "test-token",
         "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
     }, clear=False)
     patcher.start()
     return patcher

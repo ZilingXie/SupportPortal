@@ -510,6 +510,19 @@ def create_app(    *,
         """
         from backend.repositories.knowledge_source_repository import normalize_source_timestamp
         from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+        from backend.services.knowledge_dual_write import knowledge_source_intake_enabled
+
+        # Independent rollback switch (dual-write phase 2): closed intake
+        # refuses new snapshots fail-closed; already-accepted sources and
+        # their queue state remain readable through the GET endpoint.
+        if not knowledge_source_intake_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "knowledge source intake is disabled "
+                    "(KNOWLEDGE_SOURCE_INTAKE_ENABLED); no snapshot was accepted"
+                ),
+            )
 
         try:
             canonical_timestamp, _ = normalize_source_timestamp(snapshot.source_updated_at)
@@ -975,6 +988,35 @@ def create_app(    *,
                 "decision": resolved,
                 "status": resolved_row.get("status"),
                 "candidate_decision": resolved_row.get("decision"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(f"{base}/v1/knowledge/promotions/{{promotion_id}}/deliveries")
+    async def knowledge_promotion_deliveries(promotion_id: str) -> JSONResponse:
+        """Per-target delivery state for one candidate (dual-write phase 2).
+
+        The two targets never share a success state: each row carries its own
+        status, external identity, receipt, readback and failure
+        classification, so a partial failure and its repair are observable
+        per target.
+        """
+        repository = _engineer_ticket_repository()
+        promotions = await asyncio.to_thread(repository.list_weknora_promotions)
+        known = any(
+            isinstance(row, dict) and str(row.get("promotion_id") or "") == str(promotion_id)
+            for row in promotions or []
+        )
+        if not known:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        rows = await asyncio.to_thread(
+            repository.list_knowledge_deliveries, str(promotion_id)
+        )
+        return JSONResponse(
+            content={
+                "promotion_id": promotion_id,
+                "count": len(rows or []),
+                "items": jsonable_encoder(rows or []),
             },
             headers={"Cache-Control": "no-store"},
         )

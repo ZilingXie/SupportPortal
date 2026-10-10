@@ -312,6 +312,7 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                     "queued", "active", "human_review", "failed", "outcome_unknown",
                 }:
                     row.update(status="invalidated", lease_expires_at=None, updated_at=invalidated_at)
+                    self._cascade_invalidate_deliveries(str(row.get("promotion_id") or ""), invalidated_at=invalidated_at)
                     invalidated += 1
             return invalidated
 
@@ -386,7 +387,31 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 human_decided_at=decided_at,
                 updated_at=decided_at,
             )
+            # Dual-write phase 2: an approval repairs ONLY the failed/unknown
+            # targets (accepted deliveries are never re-executed); a reject
+            # retires every non-terminal delivery of the candidate.
+            if decision == "approve":
+                self._cascade_requeue_deliveries(
+                    str(row.get("promotion_id") or ""), requeued_at=decided_at,
+                    reason="human approve",
+                )
+            else:
+                self._cascade_invalidate_deliveries(
+                    str(row.get("promotion_id") or ""), invalidated_at=decided_at
+                )
             return copy.deepcopy(row)
+
+    def _cascade_requeue_deliveries(self, promotion_id: str, *, requeued_at: str, reason: str) -> int:
+        cascade = getattr(self, "_requeue_candidate_deliveries_locked", None)
+        if not callable(cascade):
+            return 0
+        return cascade(promotion_id, requeued_at=requeued_at, reason=reason)
+
+    def _cascade_invalidate_deliveries(self, promotion_id: str, *, invalidated_at: str) -> int:
+        cascade = getattr(self, "_invalidate_candidate_deliveries_locked", None)
+        if not callable(cascade):
+            return 0
+        return cascade(promotion_id, invalidated_at=invalidated_at)
 
 
 _WEKNORA_PROMOTION_TABLE = "support_weknora_promotions"
@@ -725,11 +750,17 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s
                         WHERE engineer_case_id=%s
                         AND status IN ('queued','active','human_review','failed','outcome_unknown')
+                        RETURNING promotion_id
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
                     (invalidated_at, engineer_case_id),
                 )
-                return cur.rowcount
+                affected = [str(record[0]) for record in cur.fetchall()]
+                for promotion_id in affected:
+                    self._cascade_deliveries_cur(
+                        cur, promotion_id, action="invalidate", timestamp=invalidated_at
+                    )
+                return len(affected)
 
         return self._run_with_connection_retry("invalidate_weknora_promotions_for_case", operation)
 
@@ -824,6 +855,16 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 )
                 if cur.fetchone() is None:
                     return None
+                # Dual-write phase 2, in the SAME transaction: an approval
+                # repairs only the failed/unknown targets (accepted deliveries
+                # are never re-executed); a reject retires every non-terminal
+                # delivery so a rejected candidate can never be claimed and
+                # written by the dual-write worker afterwards.
+                self._cascade_deliveries_cur(
+                    cur, promotion_id,
+                    action="requeue" if decision == "approve" else "invalidate",
+                    timestamp=decided_at,
+                )
                 return {
                     "promotion_id": promotion_id,
                     "status": next_status,
@@ -831,6 +872,48 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 }
 
         return self._run_with_connection_retry("decide_weknora_promotion", operation)
+
+    def _cascade_deliveries_cur(
+        self, cur: psycopg.Cursor[Any], promotion_id: str, *, action: str, timestamp: str
+    ) -> int:
+        """Cascade a promotion decision to its delivery rows (same transaction).
+
+        Silently skips when the delivery table does not exist yet (legacy
+        standalone contexts that only bootstrap the promotion schema).
+        """
+        from backend.repositories.knowledge_delivery_repository import (
+            _KNOWLEDGE_DELIVERY_TABLE,
+        )
+
+        cur.execute(
+            "SELECT to_regclass(%s)",
+            (f"{self._schema}.{_KNOWLEDGE_DELIVERY_TABLE}",),
+        )
+        if cur.fetchone()[0] is None:
+            return 0
+        if action == "requeue":
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE {} SET status='queued', owner_token=NULL, claimed_at=NULL,
+                    lease_expires_at=NULL, failure_detail=%s, updated_at=%s
+                    WHERE promotion_id=%s AND status IN ('failed','outcome_unknown')
+                    """
+                ).format(sql.Identifier(self._schema, _KNOWLEDGE_DELIVERY_TABLE)),
+                ("requeued: human approve", timestamp, promotion_id),
+            )
+        else:
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s
+                    WHERE promotion_id=%s
+                    AND status IN ('queued','active','failed','outcome_unknown')
+                    """
+                ).format(sql.Identifier(self._schema, _KNOWLEDGE_DELIVERY_TABLE)),
+                (timestamp, promotion_id),
+            )
+        return cur.rowcount
 
 
 def _json_value(value: Any) -> Any:

@@ -9,8 +9,8 @@
   "function_id": "weknora-dualwrite-governance",
   "created_at": "2026-10-10",
   "updated_at": "2026-10-10",
-  "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。目标：Preproduction 上 n8n 只投来源快照→SupportPortal 接收→Summary→AI Review→自动双写或 Slack 人工 Review→分别写入 AgentMemory 与 WeKnora；Hermes 全程继续读 AgentMemory，不迁移历史、不退休 AgentMemory、不切 Hermes 主库、不碰 Production。阶段 0（2026-10-10）已完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md——两条 n8n 链（CSD GgDxPEWtW7ltT5BW=b5cf6d6b、Solved MM3Z3T469Eru3Q1I=1f544830）均 active 且无发散草稿、仍为 p2-186 AgentMemory 直写链；hermes td:45（memory-core 网关 8420 为主读路径）；治理开关线上全关（HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、WEKNORA_PROMOTION_ENABLED=0，api:121/worker:121/route:120）；WeKnora 独立集群五服务 ACTIVE（td:4）。差距清单八项：双目标 delivery 缺、自动双写门禁缺、n8n 直写节点待拆、source-only Slack 根线程缺、operator 身份待收紧、页面视图缺、Review 双侧检索输入缺、六独立开关缺；SupportPortal→WeKnora 客户端 SSM 参数不存在（阶段 1 前置）。历史收敛：p2-182 适配层代码为复用底座（收口时迁移关账）、p2-183 source-only 合同可复用（草稿已被 p2-186 覆盖）、p2-186 为当前有效运行合同（其 n8n 自然样本观察与阶段 2 改造有时序交叉）。",
-  "next_action": "阶段 1（SupportPortal 双写编排）未开始：候选级记录+双目标 delivery 状态机+自动双写七条件门禁+六独立开关（默认关），在 codex/weknora-dualwrite-phase2 分支实现；WeKnora 客户端 SSM 参数（BASE_URL/API_TOKEN/KNOWLEDGE_BASE_ID）为部署期前置。阶段 2 n8n source-only 改造复用 p2-183 快照合同。阶段 6 发布顺序与停止条件按计划 r1 执行。",
+  "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。",
+  "next_action": "阶段 1 代码待独立验收（Draft PR 就绪后）：验收重点=双目标独立状态机、七条件门禁、单侧失败只补失败目标、reject 原子作废、六开关默认关、互锁。验收通过后依次：阶段 2 n8n source-only（复用 p2-183 快照合同，发布前刷新 active/draft 快照+manifest+校验器）→阶段 3/4/5→阶段 6 Preproduction 按十步顺序发布（部署前置=AGENT_MEMORY_WIKI_BASE_URL/USER_KEY/TEAM_ID SSM 参数与 worker task def 注入、六个开关显式 0 入 deploy env 清单）。",
   "acceptance_criteria": [
     "阶段二完成条件十条全部满足（计划 r1 第十节）：两条 n8n 链仅投快照、SP 唯一双写编排者、new 高质量无重复候选双写成功、merge/replace/supplement 进 Slack 人工 Review、source-only 候选建审核线程、页面/API 兜底、部分失败与超时恢复有效、Hermes AgentMemory 无回归、WeKnora Web/检索正常、观察期无重复写入/旧版本覆盖/审计缺失",
     "验证矩阵十六场景全过（计划 r1 第八节），证据含 n8n execution ID、source receipt、Summary/Review session+run、candidate ID、内容哈希、Slack channel/thread、人工决定、两目标独立状态与外部 ID/回读",
@@ -29,6 +29,18 @@
       "label": "计划正本入仓（r1）",
       "command": "git add docs/plans/weknora-dualwrite-phase2.md",
       "result": "用户批准的阶段二计划原文登记为 docs/plans/weknora-dualwrite-phase2.md（修订 r1），作为后续阶段实施与验收的合同正本"
+    },
+    {
+      "type": "test",
+      "label": "阶段 1 知识区全套回归（含隔离 PostgreSQL 集成）",
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+      "result": "268 passed / 0 failed（新测试 56：适配器失败模型 13、delivery 仓库 InMemory 8、编排门禁/drain/互锁 15、PG 集成 5、API 契约 2，存量套件 env 补 KNOWLEDGE_* 开关后全绿）；test_worker.py 14 失败=stash 复核确认的 p2-187 已披露存量"
+    },
+    {
+      "type": "document",
+      "label": "阶段 1 变更清单",
+      "command": "git diff --stat 1d1a5175..HEAD（分支 codex/weknora-dualwrite-phase2）",
+      "result": "新文件：knowledge_dual_write.py/agent_memory_delivery.py/knowledge_delivery_repository.py+四套测试；修改：ticket_repository（v22+mixin）、weknora_promotion_repository（decide/invalidate 级联）、worker（drain+互锁）、automation_ecs_api（intake 开关+deliveries 端点）、hermes_knowledge_workflow（summary/review 开关）；docs/rag_change_log.md 已记 2026-10-10 条目"
     }
   ]
 }
