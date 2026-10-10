@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T02:52:20Z",
-  "source_base_commit": "9d723d66868efde075f0f79312cf6f665ca5f20a",
-  "registry_digest": "2451cf8fa0c5f2b7205b9b1867f075e68eed545456775f9be1ac0c20dd54f0fc",
+  "generated_at": "2026-10-10T03:03:03Z",
+  "source_base_commit": "857b9d9f542b05279926c0ab99591dd920cc3178",
+  "registry_digest": "9e82f4f97d3f85ec7e5931f52000252a101d0213349db4ba3c36a846d48bfb89",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4464,6 +4464,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
           "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
           "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
+          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
+          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
         },
         {
           "type": "test",
@@ -16630,7 +16636,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "fraud 回复风格对齐（B 方案）全链收口：代码+提示词 v4+确定性 reply basis 已发布 Preproduction（pr-ee28a3c51d44 active）且 13949 实测草稿 C1-C8 全过。剩余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）待用户决策；fraud-reply-style worktree 待清理。",
+      "next_action": "fraud ask 通道 A 已实现（自动 reply job+幂等复用+skip_persona）：待 finalize→管线发布→PP-A4/A4b 全场景实测收口。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16643,6 +16649,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
+          "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
+          "result": "发布链：服务层 create_draft+schedule（hermes-persona-manual v4/hermes-reply-contract v4，标签与 legacy _FIELD_LABELS 对齐）→prepare pr-ee28a3c51d44（41 项）→管线发布 r20261009-1a7b6e5（main@1a7b6e51，含他线 #1443/#1444/#1445 合并）全阶段 passed（activation 通过）→DB 回读：pr-ee28a3c51d44 active（pr-43cee390c4b7 superseded）、两 key v4 active、B 模式内容在库验证。实测：工单 13949（hermes fraud 首轮零字段）→work_result.reply_basis=fraud_account_reply_basis_v1（ask_layout=bullets、connector=To proceed, please provide:）→persona prompt=hermes-persona-manual→草稿与 Production 风格逐字一致（lead-in/connector/七字段 canonical 标签 bullets/closing anchor 全 verbatim、英文）→C1-C8 判定器全 PASS。发布过程披露：(1)他线并发发布三次撞 main 后置变更守卫（6eed5d0→e8ff95b→1a7b6e5 重建）；(2)他线 direct-r20261009-1a7b6e5-c47 直发用旧源目录 prompt（pr-c47f99044ae0 在 preprod 不存在）致 worker/route 启动崩溃循环，其共享日志组 ERROR 污染我方 collector 窗口（误判一次）——已用窗口戳调和排除；该坏 task def（worker:120 等）仍在 family 中待其线程处理；(3)本地代理 env（source .env 的 HTTP_PROXY=127.0.0.1:1082）曾炸 heartbeat 一次；aws login 会话过期重登一次；(4)api 服务 platform_version 漂移（1.4.0 vs LATEST）terraform apply 归零一次。残余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）决策仍待用户。"
+        },
+        {
+          "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
+          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
+          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
+        },
         {
           "type": "deployment",
           "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
