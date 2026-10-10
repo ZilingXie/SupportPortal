@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-09T09:56:04.522Z",
+  "capturedAt": "2026-10-09T17:30:19.035Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "r1HIW8UNuCabiOPn",
     "workflowName": "[slack]Forward Thread|Prod+Preprod",
     "snapshotKind": "published",
-    "versionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
-    "draftVersionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
-    "publishedVersionId": "a3c2add4-c3f5-44f0-8ba2-c273c552f595",
-    "updatedAt": "2026-10-08T13:58:27.741Z",
+    "versionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
+    "draftVersionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
+    "publishedVersionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
+    "updatedAt": "2026-10-09T17:23:13.835Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
@@ -255,7 +255,7 @@
           "sendBody": true,
           "contentType": "raw",
           "rawContentType": "application/json",
-          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts }); })() }}",
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
           "options": {}
         },
         "credentials": {
@@ -282,7 +282,7 @@
           "sendBody": true,
           "contentType": "raw",
           "rawContentType": "application/json",
-          "body": "={{ JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }) }}",
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (Array.isArray(input.files) && input.files.length) throw new Error('Attachments require a bound Investigation thread'); return JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }); })() }}",
           "options": {}
         },
         "credentials": {
@@ -291,20 +291,42 @@
             "name": "preprodcution"
           }
         }
+      },
+      {
+        "id": "p2192-validate-attachment-mention",
+        "name": "Validate Hermes Attachment Mention",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -528,
+          320
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1f5a928d-226b-4d6a-b756-68d6e381dc57",
+                "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && !$json.Input.bot_id && $json.Input.subtype === 'file_share' && Array.isArray($json.Input.files) && $json.Input.files.length > 0 && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
       }
     ],
     "connections": {
-      "When Executed by Another Workflow": {
-        "main": [
-          [
-            {
-              "node": "Validate Slack Mention",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
       "Validate Slack Mention": {
         "main": [
           [
@@ -368,6 +390,35 @@
           [
             {
               "node": "Send Adhoc Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Validate Hermes Attachment Mention",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Hermes Attachment Mention": {
+        "main": [
+          [
+            {
+              "node": "Resolve Hermes Binding",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Validate Slack Mention",
               "type": "main",
               "index": 0
             }

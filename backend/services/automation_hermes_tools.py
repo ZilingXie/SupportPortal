@@ -1121,6 +1121,68 @@ async def tool_execute_automation_action(
             detail=f"The automation execution raised: {exc}",
         )
 
+    # Channel decision (user, 2026-10-09): the fraud missing-information
+    # ask is delivered AUTOMATICALLY through the reply-job pipeline — the
+    # same Production behavior as enablement asks — instead of waiting in
+    # the engineer-gated hermes draft channel. The job is the SOLE customer
+    # reply for this turn: persona must not draft a second one.
+    if (
+        normalized_route == "fraud_account"
+        and missing_fields
+        and zendesk_side_effects_enabled
+    ):
+        from datetime import datetime, timezone
+
+        from backend.services.account_reply_jobs import (
+            account_reply_delay_seconds_for_profile,
+            create_account_reply_job,
+        )
+        from backend.services.automation_account_intake import _reply_facts
+
+        ask_trigger = str(
+            trigger_message_created_at
+            or datetime.now(timezone.utc).isoformat()
+        )
+        # Idempotency: the covering unique index (ticket, trigger, no
+        # rerun) holds exactly one ask job for this customer turn — reuse
+        # it on retry instead of cancel-and-recreate.
+        existing_ask = repository.find_account_reply_job_by_chain(
+            ticket_id,
+            trigger_message_created_at=ask_trigger,
+            automation_delivery_key="",
+        )
+        reusable_ask = bool(existing_ask) and str(
+            existing_ask.get("status") or ""
+        ) not in {"cancelled", "failed", "manual_attention"}
+        if reusable_ask:
+            executed_actions.append("ask_reply_job_reused")
+        else:
+            ask_facts = _reply_facts(
+                handler=automation_handler or "billing",
+                action=normalized_route,
+                missing_fields=list(missing_fields),
+                collected_fields=dict(collected_fields or {}),
+                submitted=False,
+                customer_name=str((collected_fields or {}).get("name") or "")
+                or None,
+            )
+            create_account_reply_job(
+                repository,
+                ticket_id=ticket_id,
+                trigger_message_created_at=ask_trigger,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                delay_seconds=account_reply_delay_seconds_for_profile(
+                    environment or "production"
+                ),
+                draft_content="",
+                reply_facts=ask_facts,
+                asked_field_keys=list(missing_fields),
+                persona_assignment=None,
+                close_after_publish=False,
+            )
+            executed_actions.append("ask_reply_job_created")
+        skip_persona = True
+
     # Refresh fields from the post-execution case: downstream validation
     # (e.g. the enablement app-id format check) mutates them, and the tool
     # result must reflect the persisted business state, not the
