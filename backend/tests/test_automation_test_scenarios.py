@@ -435,9 +435,20 @@ class ScenarioEngineTests(unittest.TestCase):
         def scripted_zendesk_turn(ctx, body):
             ctx.turn_started_at = automation_test_scenarios.now_utc()
             ctx.stamp_turn_baseline()
+            if "What is the App ID?" in body:
+                comment_id = "53820000000102"
+            elif "possibility of getting" in body:
+                comment_id = "53820000000106"
+            else:
+                comment_id = f"scripted-customer-comment-{len(engine.events)}"
+            ctx.last_customer_comment_id = comment_id
             engine.emit(
                 "customer_turn_sent",
-                {"transport": "zendesk_api", "zendesk_ticket_id": ctx.zendesk_ticket_id},
+                {
+                    "transport": "zendesk_api",
+                    "zendesk_ticket_id": ctx.zendesk_ticket_id,
+                    "comment_id": comment_id,
+                },
             )
 
         engine.zendesk_customer_turn = scripted_zendesk_turn  # type: ignore[method-assign]
@@ -462,15 +473,27 @@ class ScenarioEngineTests(unittest.TestCase):
                 "zendesk_comment_id": "53820000000101",
                 "content": "Hi Ziling, could you share the project's App ID so I can proceed?",
             }]),
-            # Turn 2: in-session knowledge question -> conversation_followup.
+            # Turn 2: fixed enablement task -> message_action answer.
             ("FROM automation_hermes_agent_turns", [{
                 "turn_id": "turn-2",
+                "turn_kind": "message_action",
                 "direction": "automation",
-                "route": "conversation_followup",
-                "direction_reason": "conversation_followup_knowledge_question",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
                 "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000102",
+                "work_result": {
+                    "message_action": {
+                        "action": "answer_related_question",
+                        "reason_code": "related_question",
+                        "confidence": 0.98,
+                        "independent_request": False,
+                    }
+                },
             }]),
             ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-2",
+                "turn_id": "turn-2",
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000102",
@@ -516,13 +539,23 @@ class ScenarioEngineTests(unittest.TestCase):
                 "is_public": True,
                 "zendesk_comment_id": "53820000000104",
             }]),
-            # Turn 5: nudge -> progress reply from the BOUND relay request.
+            # Turn 5: nudge -> report_progress from the BOUND relay request.
             ("FROM automation_hermes_agent_turns", [{
                 "turn_id": "turn-5",
+                "turn_kind": "message_action",
                 "direction": "automation",
-                "route": "conversation_followup",
-                "direction_reason": "conversation_followup_progress_inquiry",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
                 "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000106",
+                "work_result": {
+                    "message_action": {
+                        "action": "report_progress",
+                        "reason_code": "progress_inquiry",
+                        "confidence": 0.97,
+                        "independent_request": False,
+                    }
+                },
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13700-v1",
@@ -531,6 +564,8 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{"n": 1}]),
             ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-5",
+                "turn_id": "turn-5",
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000106",
@@ -609,8 +644,24 @@ class ScenarioEngineTests(unittest.TestCase):
             if kind == "approval_required":
                 self.assertEqual(data.get("kind"), "enablement_relay")
         step_names = [step.step for step in engine.steps]
-        self.assertIn("knowledge answer delivered with references (turn 2)", step_names)
-        self.assertIn("nudge leaves the bound relay application untouched (turn 5)", step_names)
+        self.assertIn("knowledge question answered by message_action (turn 2)", step_names)
+        self.assertIn("review nudge answered by message_action (turn 5)", step_names)
+        self.assertTrue(
+            any(
+                step.step == "knowledge question answered by message_action (turn 2)"
+                and "action=answer_related_question" in step.detail
+                and "route=enablement" in step.detail
+                for step in engine.steps
+            )
+        )
+        self.assertTrue(
+            any(
+                step.step == "review nudge answered by message_action (turn 5)"
+                and "action=report_progress" in step.detail
+                and "route=enablement" in step.detail
+                for step in engine.steps
+            )
+        )
         self.assertIn("dedicated project-not-found reply (turn 6)", step_names)
         self.assertIn("corrected App ID opens a new request version (turn 7)", step_names)
 
@@ -622,10 +673,12 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertEqual(engine.sent_emails, [])
         self.assertEqual(engine.steps, [])
 
-    def test_e3_fails_when_question_parks_to_human_review(self) -> None:
-        """The pre-fix defect (13733 turn 2) must fail the scenario: an
-        in-session knowledge question that parks to human review is a
-        contract violation, not a pass."""
+    def test_e3_fails_when_message_action_hands_off(self) -> None:
+        """A real message-action handoff is a contract failure for E3 turn 2.
+
+        The scenario runner records only a local failed step; it does not call
+        the product handoff path or emit a customer-facing failure message.
+        """
         engine = self._e3_engine()
         engine.db_queue = [
             ("FROM support_account_cases", [
@@ -643,13 +696,23 @@ class ScenarioEngineTests(unittest.TestCase):
                 "zendesk_comment_id": "53820000000201",
                 "content": "Could you share the App ID?",
             }]),
-            # The old broken contract: the question parks to human review.
+            # The fixed-task contract: the action itself fails closed to human.
             ("FROM automation_hermes_agent_turns", [{
                 "turn_id": "turn-2",
+                "turn_kind": "message_action",
                 "direction": "human",
-                "route": None,
-                "direction_reason": "new_ticket_conversation_follow_up_forbidden",
-                "status": "human_review",
+                "route": "enablement",
+                "direction_reason": "message_action_handoff",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13701:comment:53820000000102",
+                "work_result": {
+                    "message_action": {
+                        "action": "handoff_human",
+                        "reason_code": "invalid_message_action_output",
+                        "confidence": 0.0,
+                        "independent_request": False,
+                    }
+                },
             }]),
         ]
         with self.assertRaises(AssertionError):
@@ -657,6 +720,105 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertFalse(engine.all_passed())
         failed = [step for step in engine.steps if step.status == "FAIL"]
         self.assertTrue(any("knowledge question" in step.step for step in failed))
+        self.assertFalse(any(kind == "handoff" for kind, _ in engine.events))
+
+    def test_message_action_wait_uses_current_comment_event_and_turn_watermark(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13704",
+            client_ticket_id="13704",
+            account_case_id="AC-13704",
+        )
+        ctx.last_customer_comment_id = "comment-current"
+        ctx.seen_turn_ids.add("turn-old")
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            # A terminal turn from the current event that was already observed
+            # in the baseline must not satisfy the next wait.
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-old",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13704:comment:comment-current",
+                "work_result": {"message_action": {"action": "answer_related_question"}},
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-current",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13704:comment:comment-current",
+                "work_result": {
+                    "message_action": {
+                        "action": "answer_related_question",
+                        "reason_code": "related_question",
+                    }
+                },
+            }]),
+        ]
+        row = engine.wait_hermes_message_action(
+            ctx, "answer_related_question", "current message action"
+        )
+        self.assertEqual(row["turn_id"], "turn-current")
+        self.assertIn("action=answer_related_question", engine.steps[-1].detail)
+
+    def test_draft_wait_rejects_delivery_from_wrong_turn(self) -> None:
+        """A delivered draft from another turn must not satisfy a bound wait."""
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13705",
+            client_ticket_id="13705",
+            account_case_id="AC-13705",
+        )
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("d.turn_id = %s", [{
+                "draft_id": "draft-wrong",
+                "turn_id": "turn-other",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "comment-other",
+                "content": "late draft from another turn",
+            }]),
+            ("d.turn_id = %s", [{
+                "draft_id": "draft-current",
+                "turn_id": "turn-current",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "comment-current",
+                "content": "reply for the current turn",
+            }]),
+        ]
+
+        row = engine.wait_hermes_draft_delivered(
+            ctx, "bound draft delivered", expected_turn_id="turn-current"
+        )
+
+        self.assertEqual(row["draft_id"], "draft-current")
+        self.assertEqual(row["turn_id"], "turn-current")
+
+    def test_bound_draft_wait_fails_closed_when_turn_id_is_missing(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13706",
+            client_ticket_id="13706",
+            account_case_id="AC-13706",
+        )
+
+        with self.assertRaises(AssertionError):
+            engine.wait_hermes_draft_delivered(
+                ctx, "bound draft requires turn id", expected_turn_id=""
+            )
+
+        self.assertEqual(engine.db_queue, [])
+        self.assertEqual(engine.steps[-1].status, "FAIL")
 
     def test_binding_watermarks_ignore_observed_artifacts(self) -> None:
         """p2-178: waits observe per-turn baselines — an artifact recorded by

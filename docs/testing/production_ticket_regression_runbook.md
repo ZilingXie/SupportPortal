@@ -204,7 +204,9 @@
 > 真实 archer 开通 + solved。
 >
 > p2-178 之后的合同变化：
-> - 回合 2/5 不再停人工：direction=automation + route=`conversation_followup`，一次草稿管线公开答复；
+> - 固定 `case_task=enablement` 的 customer comment 进入 Hermes `message_action`，不重新路由；
+>   回合 2 必须为 `answer_related_question`，回合 5 必须为 `report_progress`，两者均为
+>   direction=automation + route=`enablement`，一次草稿管线公开答复；
 >   RAG 无依据/状态不可信/明确要求人工优先级时才真实人工交接（私有 note + 回原队列 + 负责人通知）。
 > - 已完成人工交接的 case，后续客户补 AppID **不会**自动夺回工单；恢复自动化须走人工 reroute/rerun 入口。
 > - 各等待绑定水位线（turn_id / reply job id / 新 comment id / relay request_version），
