@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T18:27:07Z",
-  "source_base_commit": "eb84eb168b38aad6a88d74c079e38d5b1bcb5425",
-  "registry_digest": "36564ade7662112806c84017a506f06aec350a3edad4bdc63ac79d2272788e0a",
+  "generated_at": "2026-10-10T18:27:30Z",
+  "source_base_commit": "bc9619917e794af2a35a50747c539eb68caf08aa",
+  "registry_digest": "5d3f23a9c3619a0bca0e10e926e6796b08699821ac295fda9f16b4eaea838d07",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5602,7 +5602,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "阶段 4 修复轮 2 回归（F5 可恢复 claim）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-          "result": "专项 32 passed（+3：崩溃 claim 租约内 in_flight 零发送/过期回收发送 post==1、陈旧 owner 完成被拒新 owner 落库、drain Phase 0 恢复过期 claim 为 delivered）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态）"
+          "result": "专项 32 passed（+3）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态；同步 origin/main 6600e4b8 合并后复测）"
         }
       ],
       "source_refs": [
@@ -17683,7 +17683,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "阶段 4 修复轮 2 回归（F5 可恢复 claim）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-          "result": "专项 32 passed（+3：崩溃 claim 租约内 in_flight 零发送/过期回收发送 post==1、陈旧 owner 完成被拒新 owner 落库、drain Phase 0 恢复过期 claim 为 delivered）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态）"
+          "result": "专项 32 passed（+3）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态；同步 origin/main 6600e4b8 合并后复测）"
         }
       ]
     },

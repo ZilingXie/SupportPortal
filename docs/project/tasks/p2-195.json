@@ -55,7 +55,7 @@
       "type": "test",
       "label": "阶段 4 修复轮 2 回归（F5 可恢复 claim）",
       "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-      "result": "专项 32 passed（+3：崩溃 claim 租约内 in_flight 零发送/过期回收发送 post==1、陈旧 owner 完成被拒新 owner 落库、drain Phase 0 恢复过期 claim 为 delivered）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态）"
+      "result": "专项 32 passed（+3）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态；同步 origin/main 6600e4b8 合并后复测）"
     }
   ]
 }
