@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-"""Validate versioned n8n workflow snapshots without contacting n8n."""
+"""Validate versioned n8n workflow snapshots without contacting n8n.
+
+Two enforcement classes (dual-write phase 2, stage 2):
+
+- legacy snapshots (the historical published chains): structural, redaction
+  and manifest checks stay hard; connection-endpoint closure and direct-write
+  node presence are REPORTED as LEGACY-EXPOSED warnings so the known problems
+  of the old AgentMemory chains stay visible without blocking the repository;
+- ``draftSourceOnly: true`` snapshots (the source-only drafts): the stage-2
+  contract is enforced as errors — every connection endpoint must close, only
+  allowlisted node types may appear, every static URL prefix must match the
+  source-only allowlist, and any knowledge-base write endpoint is fatal.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +40,43 @@ SECRET_PATTERNS = {
     ),
 }
 FORBIDDEN_KEYS = {"executionData", "pinData", "runData", "staticData"}
+
+# -- stage-2 source-only contract -------------------------------------------
+
+SOURCE_ONLY_ALLOWED_NODE_TYPES = frozenset(
+    {
+        "n8n-nodes-base.webhook",
+        "n8n-nodes-base.scheduleTrigger",
+        "n8n-nodes-base.manualTrigger",
+        "n8n-nodes-base.httpRequest",
+        "n8n-nodes-base.code",
+        "n8n-nodes-base.if",
+        "n8n-nodes-base.set",
+        "n8n-nodes-base.splitInBatches",
+        "n8n-nodes-base.splitOut",
+        "n8n-nodes-base.merge",
+        "n8n-nodes-base.noOp",
+        "n8n-nodes-base.stopAndError",
+        "n8n-nodes-base.aggregate",
+        "n8n-nodes-base.wait",
+    }
+)
+SOURCE_ONLY_URL_ALLOW = (
+    re.compile(r"^https://agoraio\.zendesk\.com/api/v2/"),
+    re.compile(r"^https://jira\.agoralab\.co/"),
+    re.compile(r"^https://oauth\.agoralab\.co/"),
+    re.compile(
+        r"^https://support\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"
+    ),
+)
+DIRECT_WRITE_URL_PATTERNS = (
+    ("agentmemory-wiki-api", re.compile(r"/api/v1/knowledge/wiki/", re.IGNORECASE)),
+    ("weknora-endpoint", re.compile(r"weknora", re.IGNORECASE)),
+    (
+        "engineer-knowledge-direct-write",
+        re.compile(r"support\.stellarix\.space/api/engineer/knowledge", re.IGNORECASE),
+    ),
+)
 
 
 def _walk(value: Any, path: tuple[str, ...] = ()):
@@ -69,13 +118,79 @@ def _validate_no_sensitive_values(workflow: dict[str, Any], path: Path) -> None:
             )
 
 
+def _static_url_prefix(url: str) -> str:
+    """The static prefix of an n8n URL parameter (before any ={{ expression)."""
+    value = url[1:] if url.startswith("=") else url
+    return value.split("{{", 1)[0].strip()
+
+
+def _validate_source_only_contract(
+    workflow: dict[str, Any], path: Path, *, source_only: bool, warnings: list[str]
+) -> None:
+    nodes = workflow.get("nodes") or []
+    connections = workflow.get("connections") or {}
+    node_names = {str(node.get("name") or "") for node in nodes}
+
+    # Closure: every connection endpoint must reference an existing node.
+    dangling = []
+    for source_name, targets in connections.items():
+        if str(source_name) not in node_names:
+            dangling.append(f"connection source {source_name!r}")
+        if not isinstance(targets, dict):
+            continue
+        for outputs in targets.values():
+            for group in outputs or []:
+                for link in group or []:
+                    target = str((link or {}).get("node") or "")
+                    if target not in node_names:
+                        dangling.append(
+                            f"connection target {target!r} (from {source_name!r})"
+                        )
+    for entry in dangling:
+        message = f"{path}: dangling endpoint: {entry}"
+        if source_only:
+            raise ValueError(message)
+        warnings.append(f"LEGACY-EXPOSED {message}")
+
+    for node in nodes:
+        name = str(node.get("name") or "")
+        node_type = str(node.get("type") or "")
+        if source_only and node_type not in SOURCE_ONLY_ALLOWED_NODE_TYPES:
+            raise ValueError(
+                f"{path}: source-only node {name!r} has non-allowlisted type {node_type!r}"
+            )
+        for parts, value in _walk(node.get("parameters") or {}):
+            if not isinstance(value, str):
+                continue
+            for label, pattern in DIRECT_WRITE_URL_PATTERNS:
+                if pattern.search(value):
+                    message = (
+                        f"{path}: node {name!r} references {label} at "
+                        f"{'.'.join(parts)}"
+                    )
+                    if source_only:
+                        raise ValueError(message)
+                    warnings.append(f"LEGACY-EXPOSED {message}")
+            url_key = parts[-1] if parts else ""
+            if source_only and url_key in {"url", "endpoint", "host"}:
+                prefix = _static_url_prefix(value)
+                if prefix and not any(p.search(prefix) for p in SOURCE_ONLY_URL_ALLOW):
+                    raise ValueError(
+                        f"{path}: source-only node {name!r} URL prefix {prefix!r} is not "
+                        f"in the source-only allowlist"
+                    )
+
+
 def _validate_snapshot(
     path: Path,
     *,
     workflow_id: str,
     version_id: str,
     snapshot_kind: str,
+    source_only: bool = False,
+    warnings: list[str] | None = None,
 ) -> int:
+    warnings = warnings if warnings is not None else []
     payload = json.loads(path.read_text(encoding="utf-8"))
     if payload.get("schemaVersion") != 1:
         raise ValueError(f"{path}: unsupported schemaVersion")
@@ -98,6 +213,9 @@ def _validate_snapshot(
     if source.get("workflowName") != workflow.get("name"):
         raise ValueError(f"{path}: workflow name mismatch")
     _validate_no_sensitive_values(workflow, path)
+    _validate_source_only_contract(
+        workflow, path, source_only=source_only, warnings=warnings
+    )
     redactions = (payload.get("restoreNotes") or {}).get("redactedValues")
     if not isinstance(redactions, list):
         raise ValueError(f"{path}: redaction ledger is missing")
@@ -113,6 +231,7 @@ def validate(root: Path) -> tuple[int, int, int]:
     if manifest.get("workflowCount") != len(workflows):
         raise ValueError("manifest workflowCount is stale")
 
+    warnings: list[str] = []
     expected_files = {manifest_path.resolve()}
     published_count = draft_count = redaction_count = 0
     workflow_ids: set[str] = set()
@@ -129,6 +248,7 @@ def validate(root: Path) -> tuple[int, int, int]:
             workflow_id=workflow_id,
             version_id=item["publishedVersionId"],
             snapshot_kind="published",
+            warnings=warnings,
         )
         if redactions != item["publishedRedactionCount"]:
             raise ValueError(f"{published_path}: redaction count is stale")
@@ -146,6 +266,8 @@ def validate(root: Path) -> tuple[int, int, int]:
                 workflow_id=workflow_id,
                 version_id=item["draftVersionId"],
                 snapshot_kind="draft",
+                source_only=bool(item.get("draftSourceOnly")),
+                warnings=warnings,
             )
             if redactions != item["draftRedactionCount"]:
                 raise ValueError(f"{draft_path}: redaction count is stale")
@@ -159,6 +281,13 @@ def validate(root: Path) -> tuple[int, int, int]:
     }
     if actual_files != expected_files - {manifest_path.resolve()}:
         raise ValueError("snapshot files and manifest entries do not match")
+    for warning in warnings:
+        print(warning)
+    if warnings:
+        print(
+            f"NOTE: {len(warnings)} LEGACY-EXPOSED finding(s) above belong to "
+            "historical published chains; source-only drafts are enforced strictly."
+        )
     return published_count, draft_count, redaction_count
 
 

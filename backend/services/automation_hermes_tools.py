@@ -857,6 +857,29 @@ async def tool_execute_automation_action(
     attempt: dict[str, Any] | None = None
     try:
         if handler_implementation == "account_verification" or normalized_route == "fraud_account":
+            # Legacy parity (main.py build_automation_attempt): carry the
+            # case's previously collected fields and the follow-up count so
+            # the second turn (after the ask) proceeds with the fields the
+            # customer supplied instead of re-asking from scratch —
+            # without these the extractor restarts empty every turn and
+            # the internal email never sends (live evidence: ticket 13978
+            # asked twice for the same fields).
+            prior_context = dict(account_case.get("automation_context") or {})
+            prior_follow_up_count = int(prior_context.get("follow_up_count") or 0)
+            if prior_follow_up_count == 0:
+                # Legacy parity: an outstanding ask reply job means the
+                # fields were already requested once (main.py derives this
+                # from already_requested_fields on the pending job).
+                latest_job = repository.get_latest_account_reply_job(ticket_id) or {}
+                latest_payload = (
+                    latest_job.get("payload")
+                    if isinstance(latest_job.get("payload"), dict)
+                    else {}
+                )
+                if str(latest_job.get("status") or "") not in {"cancelled"} and (
+                    list(latest_payload.get("asked_field_keys") or [])
+                ):
+                    prior_follow_up_count = 1
             attempt = _build_verification_attempt(
                 ticket_subject=subject,
                 customer_messages=messages,
@@ -865,6 +888,8 @@ async def tool_execute_automation_action(
                 account_case_id=account_case_id,
                 customer_email=str(ticket.get("customer_id") or ""),
                 zendesk_ticket_url=zendesk_ticket_url,
+                existing_fields=dict(account_case.get("collected_fields") or {}),
+                follow_up_count=prior_follow_up_count,
             )
         elif handler_implementation == "billing" or normalized_route in {"fraud_account", "detailed_invoice"}:
             attempt = _build_billing_attempt(
@@ -1136,6 +1161,7 @@ async def tool_execute_automation_action(
         normalized_route == "fraud_account"
         and missing_fields
         and zendesk_side_effects_enabled
+        and internal_email_status != "sent"
     ):
         from datetime import datetime, timezone
 
@@ -1209,8 +1235,15 @@ async def tool_execute_automation_action(
     if missing_fields and str(account_case.get("automation_status") or "") != "human_review_required":
         account_case["execution_reason_code"] = None
     repository.save_account_case(account_case)
+    # A sent internal email IS the business execution — the proceed-with-
+    # missing-fields contract sends with whatever was collected (legacy
+    # parity), so the status is "executed" even with fields still missing.
     result = {
-        "status": "missing_fields" if missing_fields else "executed",
+        "status": (
+            "executed"
+            if internal_email_status == "sent"
+            else ("missing_fields" if missing_fields else "executed")
+        ),
         "route": normalized_route,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,

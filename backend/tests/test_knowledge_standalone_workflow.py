@@ -106,6 +106,16 @@ class _NoMemory:
     has_memory_identity = lambda self: False  # noqa: E731
 
 
+class _AgentMemoryOk:
+    """Stage 3 (p2-194): a healthy AgentMemory retrieval surface (empty hits)."""
+
+    def configured(self) -> bool:
+        return True
+
+    def search_knowledge(self, query: str) -> dict:
+        return {"wiki_count": 2, "searched": 2, "hits": []}
+
+
 SUMMARY_OUTPUT = {
     "problem_description": "join failures in region eu",
     "candidates": [
@@ -619,7 +629,7 @@ class MalformedMemoryEvidenceDrainTests(unittest.TestCase):
         self.patcher = _enable_real_mode({})
         self.addCleanup(self.patcher.stop)
 
-    def _drain_with_memory_pages(self, pages):
+    def _drain_with_memory_pages(self, pages, agent_memory_client="__default__"):
         import io
         import urllib.request
 
@@ -680,11 +690,14 @@ class MalformedMemoryEvidenceDrainTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
         hermes = _ScriptedHermes(SUMMARY_OUTPUT, _MemoryReviewOutput.OUTPUT)
+        if agent_memory_client == "__default__":
+            agent_memory_client = _AgentMemoryOk()
         result = drain_standalone_knowledge_tasks(
             repository,
             client=hermes,
             weknora_client=_SearchOkKnowledge(),
             memory_client=memory_client,
+            agent_memory_client=agent_memory_client,
             limit=5,
         )
         # The review INPUT bundle (run 2) carries the memory_available flag
@@ -726,11 +739,31 @@ class MalformedMemoryEvidenceDrainTests(unittest.TestCase):
         result, repository, review_bundle = self._drain_with_memory_pages([{"data": []}])
         self.assertEqual(result, {"executed": 2, "failed": 0})
         self.assertTrue(review_bundle["weknora"]["memory_available"])
+        # Stage 3 (p2-194): the bundle carries BOTH retrieval sides; with the
+        # AgentMemory surface healthy (empty hits), the writable decision
+        # survives.
+        self.assertTrue(review_bundle["agent_memory"]["available"])
+        self.assertEqual(review_bundle["agent_memory"]["results"]["c1"], [])
         promotions = repository.list_weknora_promotions()
         self.assertEqual(len(promotions), 1)
         self.assertEqual(promotions[0]["candidate_type"], "memory")
         self.assertEqual(promotions[0]["decision"], "new")
         self.assertEqual(promotions[0]["status"], "queued")
+
+    def test_agent_memory_unavailable_downgrades_writable_to_human_review(self) -> None:
+        """Stage 3: one silent retrieval side is enough to refuse a write."""
+        result, repository, review_bundle = self._drain_with_memory_pages(
+            [{"data": []}], agent_memory_client=None
+        )
+        self.assertEqual(result, {"executed": 2, "failed": 0})
+        self.assertFalse(review_bundle["agent_memory"]["available"])
+        promotions = repository.list_weknora_promotions()
+        self.assertEqual(len(promotions), 1)
+        self.assertEqual(promotions[0]["decision"], "human_review")
+        self.assertIn(
+            "AgentMemory evidence unavailable",
+            promotions[0]["candidate_payload"]["note"],
+        )
 
 
 if __name__ == "__main__":

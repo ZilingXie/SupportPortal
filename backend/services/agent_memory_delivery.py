@@ -217,6 +217,171 @@ class AgentMemoryWikiClient:
             "POST", "/api/v1/knowledge/wiki/get", json_body={"wiki_id": str(wiki_id or "")}
         )
 
+    # -- read surface (dual-write phase 2, stage 3) --------------------------
+    # Verified against the live preproduction panel API (2026-10-10):
+    #   POST /api/v1/knowledge/wiki/list   {"team_id", "limit", "offset"}
+    #        -> data {items: [{wiki_id, name, status, version, page_count, ...}],
+    #                 total}
+    #   POST /api/v1/knowledge/wiki/search {"wiki_id", "query", "top_k"?}
+    #        -> data {count, results: [{title, snippet, score, path, type, hop}]}
+    # The API has no global knowledge search; the fan-out below (list ready
+    # wikis, search each) is the only verified way to answer "could this
+    # knowledge already exist in AgentMemory".
+
+    WIKI_LIST_PAGE_SIZE = 100
+    DEFAULT_EVIDENCE_WIKI_CAP = 100
+    DEFAULT_SEARCH_TOP_K = 5
+
+    def wiki_list(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """One page of the team's wiki inventory as ``{"items": [...], "total": n}``."""
+        payload = self._request(
+            "POST",
+            "/api/v1/knowledge/wiki/list",
+            json_body={
+                "team_id": self._team_id,
+                "limit": int(limit),
+                "offset": int(offset),
+            },
+        )
+        data = _data(payload)
+        items = data.get("items") if isinstance(data.get("items"), list) else None
+        total = data.get("total")
+        # bool is an int subclass in Python: JSON true/false must be rejected
+        # explicitly, a negative total is equally malformed (it would let the
+        # sweep report an empty-but-available surface), and every inventory
+        # entry must be an object.
+        for index, item in enumerate(items or []):
+            # Stage-3 review fix 4: an object-shaped entry still proves
+            # nothing without its identity (wiki_id) and lifecycle (status)
+            # fields — both must be non-empty strings or the sweep would skip
+            # wikis while staying "available".
+            for field in ("wiki_id", "status"):
+                value = item.get(field) if isinstance(item, dict) else None
+                if not isinstance(value, str) or not value.strip():
+                    raise AgentMemoryWikiError(
+                        f"AgentMemory wiki list entry #{index} is missing {field}",
+                        failure_kind="invalid_response",
+                        payload=payload,
+                    )
+        if (
+            items is None
+            or isinstance(total, bool)
+            or not isinstance(total, int)
+            or total < 0
+            or any(not isinstance(item, dict) for item in items)
+        ):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki list response is missing items/total",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        return {"items": items, "total": total}
+
+    def wiki_search(self, *, wiki_id: str, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
+        """Per-wiki knowledge search (verified contract; hits carry title,
+        snippet, score and path).
+
+        Stage-3 review fix: the response must prove itself — a missing or
+        non-numeric ``count`` raises, and ANY non-object entry in ``results``
+        raises. A malformed response can never masquerade as "no hits", which
+        would leave the evidence surface marked available and let a ``new``
+        decision bypass the duplicate check.
+        """
+        body: dict[str, Any] = {"wiki_id": str(wiki_id or ""), "query": str(query or "")}
+        if top_k is not None:
+            body["top_k"] = int(top_k)
+        payload = self._request("POST", "/api/v1/knowledge/wiki/search", json_body=body)
+        data = _data(payload)
+        count = data.get("count")
+        # bool is an int subclass in Python: JSON true/false must be rejected
+        # explicitly or a malformed response masquerades as a valid count.
+        if isinstance(count, bool) or not isinstance(count, int) or count < 0:
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search response is missing a numeric count",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        results = data.get("results")
+        if not isinstance(results, list):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search response is missing results",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        for index, item in enumerate(results):
+            if not isinstance(item, dict):
+                raise AgentMemoryWikiError(
+                    f"AgentMemory wiki search result #{index} is not an object",
+                    failure_kind="invalid_response",
+                    payload=payload,
+                )
+            # Stage-3 review fix 4: an object-shaped result without its
+            # content fields (title + path, present in every verified hit)
+            # would normalize to an empty hit and keep the surface available
+            # with fake evidence.
+            for field in ("title", "path"):
+                value = item.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise AgentMemoryWikiError(
+                        f"AgentMemory wiki search result #{index} is missing {field}",
+                        failure_kind="invalid_response",
+                        payload=payload,
+                    )
+        return results
+
+    def search_knowledge(
+        self, query: str, *, wiki_cap: int | None = None, top_k: int | None = None
+    ) -> dict[str, Any]:
+        """Fan-out knowledge search across the team's READY wikis.
+
+        Returns ``{"wiki_count", "searched", "hits": [...]}`` where every hit
+        carries its wiki identity.  Raises AgentMemoryWikiError on any list or
+        search failure — a partial sweep could miss a duplicate, so callers
+        treat the whole surface as unavailable (fail-closed).
+        """
+        cap = int(wiki_cap if wiki_cap is not None else self.DEFAULT_EVIDENCE_WIKI_CAP)
+        limit = self.WIKI_LIST_PAGE_SIZE
+        wikis: list[dict[str, Any]] = []
+        offset = 0
+        while offset < cap:
+            page = self.wiki_list(limit=min(limit, cap - offset), offset=offset)
+            wikis.extend(page["items"])
+            if len(wikis) >= page["total"]:
+                break
+            # Stage-3 review fix: an empty page that still owes items would
+            # never move the offset — raise instead of looping forever.
+            if len(page["items"]) == 0:
+                raise AgentMemoryWikiError(
+                    "AgentMemory wiki list returned an empty page before total",
+                    failure_kind="invalid_response",
+                    payload={"collected": len(wikis), "total": page["total"]},
+                )
+            offset = len(wikis)
+        ready = [
+            item for item in wikis
+            if str(item.get("status") or "") == "ready" and str(item.get("wiki_id") or "")
+        ]
+        hits: list[dict[str, Any]] = []
+        for item in ready:
+            results = self.wiki_search(
+                wiki_id=str(item["wiki_id"]), query=query,
+                top_k=top_k if top_k is not None else self.DEFAULT_SEARCH_TOP_K,
+            )
+            # wiki_search already rejects non-object entries, so every result
+            # here is a dict — a malformed entry invalidates the whole sweep
+            # (fail-closed) instead of silently counting as "no hits".
+            for result in results:
+                hits.append({
+                    "wiki_id": str(item.get("wiki_id") or ""),
+                    "wiki_name": str(item.get("name") or ""),
+                    "wiki_version": str(item.get("version") or ""),
+                    "title": str(result.get("title") or ""),
+                    "snippet": str(result.get("snippet") or "")[:500],
+                    "score": result.get("score"),
+                    "path": str(result.get("path") or ""),
+                })
+        return {"wiki_count": len(wikis), "searched": len(ready), "hits": hits}
+
 
 def _safe_json(body: str) -> Any:
     try:

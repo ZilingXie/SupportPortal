@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T13:54:21Z",
-  "source_base_commit": "4d1abd536c41c2684b899dd15c919900779fb9d4",
-  "registry_digest": "1e74e9587f9df5f25c064f1f04f91f23882dce8960fbd1c43f023a12dc63a18c",
+  "generated_at": "2026-10-10T16:13:40Z",
+  "source_base_commit": "6551b29d2bd3df26fb76ff7ba1b25bedb2265c18",
+  "registry_digest": "4747acadad6c70b98377c9506a05339a9c798c078d9cced0704ee0fb6e4afd39",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4455,6 +4455,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "#1449 第 6 缺口修复：验证回合缺 legacy existing_fields/follow_up_count 传递（多次 ask 不收敛）",
+          "command": "pytest test_hermes_fraud_reply_style.py(23 含第二回合 legacy 对等测试)+回归 120",
+          "result": "根因：hermes 工具的 _build_verification_attempt 调用未传 existing_fields（案例已收集字段）与 follow_up_count——抽取器每回合从零开始且 safe_count\u003c1 永远走再问分支，客户补部分信息后仍重复 ask （工单 13978 两个 ask job 实证）。legacy main.py build_automation_attempt 传 prior_collected_fields + prior_automation_context.follow_up_count（已有 ask job 时下限 1）。修复：(1)传 existing_fields=案例 collected_fields + follow_up_count（automation_context 或现存 ask job 的 asked_field_keys 推导≥1）；(2)ask 分支仅在邮件未发送时创建（proceed-with-missing-fields 发送后不再 ask）；(3)结果状态=邮件已发送即 executed（缺字段不改变已执行事实）。"
+        },
+        {
+          "type": "test",
           "label": "#1449 第 5 缺口修复（用户授权继续）：message_action 分类存根不被工具重放门当终态",
           "command": "pytest test_hermes_fraud_reply_style.py(22 含新 stub 测试)+相关回归 119",
           "result": "根因：message_action 相位预填 work_result={status: message_action_classified} 分类存根，execute 工具的幂等重放门把任何非 running 状态当终态直接重放——工具从不执行，发布门判 work_result_not_publishable:message_action_classified 转人工（工单 13976 turn-2 实证）。修复：重放门排除 message_action_classified（与 running 同为非终态标记）；work 结果覆写时 message_action 字段已被 #1449 的保留机制携带（验证过）。新测试：预填存根+message_action turn → 工具真实执行（missing_fields+ask job+skip_persona）、存根不被重放、分类信息保留在最终 work_result。"
@@ -5495,6 +5501,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第三轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 source-only 离线合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "18 passed（结构：双 Draft 节点类型/URL 允许清单+连接闭合+零直写引用；执行：真实 jsCode 跑分页/数量/CSD comment/回执三态/坏回执/重投乱序；A 契约：产出过 KnowledgeSourceSnapshot 模型校验）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 2 证据文档（C0-C5）",
+          "command": "n8n MCP 只读重读（HTTP MCP 直连）+ update_workflow Draft 操作（未 publish）+ 回读比对",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md；两链 Active 版本未变（b5cf6d6b/1f544830），Draft=5c3359cc/6a262f9a 与仓库快照一致；validate_workflow_snapshots.py 15 published+3 drafts+56 redactions 退出码 0（legacy 29 项 LEGACY-EXPOSED 警告显性暴露）；n8n 真实 execution 证据登记 waiting-for-evidence（阶段 6 授权后以自然调度/受控样本补齐）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 修复轮回归",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "22 passed（+4：total 缺失/字符串/数组三态 fail-closed、fields=*,comment 完整字段断言）；validate 15+3+56 退出码 0；CSD Draft 回读 6fed47a6、activeVersionId 未变"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 双侧检索全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （16 套件）",
+          "result": "444 passed / 0 failed（同步 origin/main 8e096b83 合并 ef4d948f 后实测，16 套件含隔离 PG；新 13+存量适配 3）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 3 AM 检索 API 实证",
+          "command": "只读探测公共面板 API（X-Tdai 凭据即取即用）",
+          "result": "wiki/list{team_id,limit,offset}→items/total（93 wiki 实测）；wiki/search{wiki_id,query,top_k}→count/results；全局搜索 404 实证不存在→fan-out 设计依据；详见 stage2-source-only.md 阶段 3 节"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮回归（fail-closed 加固）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 26 passed（+5：缺 count/非数值 count/results=[null]/空页死循环防护首抛/端到端 malformed→面不可用→new 降级）；全套 449 passed / 0 failed（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 2 回归（布尔 count/total 拒绝）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 28 passed（+2：count=true/false 与 total=true/false 四形态全部 invalid_response）；全套 451 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 3 回归（负数 total 与 items 形状）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 31 passed（+3：total=-1/-100 拒绝、items=[null]/['x']/[42] 拒绝、负 total 端到端面不可用）；全套 454 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 4 回归（必需字段）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 35 passed（+4：items 三形态/非字符串变体/results=[{}]/端到端降级链）；全套 458 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 3 第五轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（HEAD 6551b29d；必需字段 fail-closed 全确认、malformed→面不可用→new 降级、布尔/负数/空页/非对象全覆盖；定向 42、16 套件 458/0 含隔离 PG；编译/Overview/快照校验/diff-check 全过；LEGACY-EXPOSED 29 条属历史 active 链）；允许进入 finalize"
         }
       ],
       "source_refs": [
@@ -16740,7 +16806,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "第 5 缺口已修（重放门）：待合入→直发→PP-A4/A4b 全场景收口。",
+      "next_action": "第 6 缺口已修（legacy 对等传递）：待合入→直发→PP-A4/A4b 全场景收口。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16753,6 +16819,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "#1449 第 6 缺口修复：验证回合缺 legacy existing_fields/follow_up_count 传递（多次 ask 不收敛）",
+          "command": "pytest test_hermes_fraud_reply_style.py(23 含第二回合 legacy 对等测试)+回归 120",
+          "result": "根因：hermes 工具的 _build_verification_attempt 调用未传 existing_fields（案例已收集字段）与 follow_up_count——抽取器每回合从零开始且 safe_count\u003c1 永远走再问分支，客户补部分信息后仍重复 ask （工单 13978 两个 ask job 实证）。legacy main.py build_automation_attempt 传 prior_collected_fields + prior_automation_context.follow_up_count（已有 ask job 时下限 1）。修复：(1)传 existing_fields=案例 collected_fields + follow_up_count（automation_context 或现存 ask job 的 asked_field_keys 推导≥1）；(2)ask 分支仅在邮件未发送时创建（proceed-with-missing-fields 发送后不再 ask）；(3)结果状态=邮件已发送即 executed（缺字段不改变已执行事实）。"
+        },
         {
           "type": "test",
           "label": "#1449 第 5 缺口修复（用户授权继续）：message_action 分类存根不被工具重放门当终态",
@@ -17374,9 +17446,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-10",
-      "updated_at": "2026-10-10",
-      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。【修复轮 2 2026-10-10（第二轮验收三阻断后）】R2-1 人工批准必建双目标 delivery 行（禁用目标=queued 等待、执行边界零领取、候选不得单目标闭环；复开开关后自动补写完成）；R2-2 批准修改正文后重算 content_hash（InMemory+PG 双侧；AgentMemory 文件名随新哈希；promotion_id 保持候选槽稳定身份；同源三元组哈希冲突时 approve 拒绝并报错，PG 侧靠唯一索引 UniqueViolation→422）；R2-3 backend/sql/ticket_storage.sql 镜像补 support_knowledge_deliveries 表+双索引；并修复该镜像版本守卫自 v19 起失修的存量失败（断言更新至 v22+历史链 v18-v21 全查）。实测=知识区+repository_configuration 全套 409 passed/0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测，含 PG 集成；同步前旧基线 408 已更正）。【第三轮验收通过 2026-10-10】范围=阶段 0+阶段 1 代码及 R2 修复轮（HEAD 38e553eb；409/0 复验通过、MERGEABLE/CLEAN、计数更正确认；非阻断措辞 0dff3b36→2da4332d 已按验收方建议修正）。本通过不含阶段二整体完成（阶段 2-6 未实施）。",
-      "next_action": "阶段 0+1 代码验收通过，PR #1453 转 Ready 并 finalize 合入 main；运行态未部署（状态=已合并，运行验证未完成——部署属阶段 6 另行授权）。下一步=阶段 2 n8n source-only 改造（复用 p2-183 快照合同，发布前刷新 active/draft 快照+manifest+校验器）→阶段 3 Review 双侧检索输入→阶段 4 Slack 根线程与 operator 身份→阶段 5 页面→阶段 6 Preproduction 十步发布（部署前置=AGENT_MEMORY_WIKI_* SSM 参数+worker task def 注入+六开关显式 0）。",
+      "updated_at": "2026-10-11",
+      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。【修复轮 2 2026-10-10（第二轮验收三阻断后）】R2-1 人工批准必建双目标 delivery 行（禁用目标=queued 等待、执行边界零领取、候选不得单目标闭环；复开开关后自动补写完成）；R2-2 批准修改正文后重算 content_hash（InMemory+PG 双侧；AgentMemory 文件名随新哈希；promotion_id 保持候选槽稳定身份；同源三元组哈希冲突时 approve 拒绝并报错，PG 侧靠唯一索引 UniqueViolation→422）；R2-3 backend/sql/ticket_storage.sql 镜像补 support_knowledge_deliveries 表+双索引；并修复该镜像版本守卫自 v19 起失修的存量失败（断言更新至 v22+历史链 v18-v21 全查）。实测=知识区+repository_configuration 全套 409 passed/0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测，含 PG 集成；同步前旧基线 408 已更正）。【第三轮验收通过 2026-10-10】范围=阶段 0+阶段 1 代码及 R2 修复轮（HEAD 38e553eb；409/0 复验通过、MERGEABLE/CLEAN、计数更正确认；非阻断措辞 0dff3b36→2da4332d 已按验收方建议修正）。本通过不含阶段二整体完成（阶段 2-6 未实施）。【阶段 2 实施完成 2026-10-10（n8n source-only，待独立验收）】快照契约按计划推荐采用 A（接口不变/幂等三元组/snapshot_hash 入 references；交互确认未获答复，已在 PR 披露可推翻）。C0 线上重读与阶段 0 登记一致后才动手（CSD b5cf6d6b/Solved 1f544830，基线全图冻结 stage2/baseline-*.json）；两链改造成 source-only Draft（Solved 8 节点/CSD 12 节点，AI/本地 PG 去重/Wiki 直写/2_rag/KB 生成全删，新增完整性校验→建 knowledge-source-v1→投递 preproduction 接收接口（preprodcution httpHeaderAuth 凭据）→三态回执校验，失败 throw→errorWorkflow）；Active 两链版本全程未变（回读实证 draft 5c3359cc/6a262f9a vs active b5cf6d6b/1f544830）。校验器加固（端点闭合+节点类型/URL 允许清单+直写禁令；legacy=29 项 LEGACY-EXPOSED 警告、source-only=硬校验，15+3+56 全过）。离线合同测试 18 passed（node 真实执行快照内 jsCode：分页/数量/回执三态/重投乱序/直写禁全过，产出经 KnowledgeSourceSnapshot 真实模型校验；重投/乱序用真实 InMemory 仓库实测 already_exists/stale_ignored）。n8n 真实 execution 证据=waiting-for-evidence（采集需真实来源+接收开关开启，属阶段 6 第 3-4 步授权后补齐）。【阶段 2 修复轮 R1 2026-10-10（首轮验收两阻断后）】CSD total 缺失/非数字改为 throw（数值型 total 必备）；Get_CSD_Detail 改请求 fields=*,comment 完整 Jira 快照（首次 replace 误清参数已即时修正并回读确认零警告）；CSD Draft=6fed47a6（Active 未变）；合同测试 22 passed（+4 回归）。契约 A 按两轮评审一致推荐继续采用。【阶段 3 实施完成 2026-10-10（Review 双侧检索，同 PR #1461 延续，待独立验收）】AM 检索 API 实证（wiki/list+wiki/search fan-out，无全局搜索）；AgentMemoryWikiClient 读面（fail-closed）；_collect_agent_memory_evidence 证据面；两条 review 路径 bundle 增 agent_memory 面；降级合同扩展（可写需 WeKnora 各面 AND AM 全应答）；worker 双 drain 注入（未配置=面不可用，运行态零变更）。新测试 13+存量适配 3，全套 444 passed 含 PG（同步 origin/main 8e096b83 后复测）。【阶段 3 修复轮 2026-10-10（验收一项阻断后）】AM 读面 fail-closed 加固：wiki_search 严格校验 count+元素结构（results=[null]/缺 count→invalid_response）、search_knowledge 不再静默跳过非对象、分页空页+total>0 立即抛（死循环防护）；任一异常→面不可用→可写降级 human_review。回归 5 项复现验收场景，全套 449 passed 含 PG。【阶段 3 修复轮 2 2026-10-10】bool-is-int 同类缺口：wiki_search.count 与 wiki_list.total 显式拒绝布尔（JSON true/false 原以 isinstance(int) 放行）；回归 2 项四形态全拒；全套 451 passed 含 PG。【阶段 3 修复轮 3 2026-10-10】total 负数拒绝（-1/-100 实测曾得空可用面）+主动收口 items 元素对象校验（list 与 search 两端点响应自证完整：非布尔/非负/真整数+逐元素对象）；回归 3 项，全套 454 passed 含 PG。【阶段 3 修复轮 4 2026-10-10】必需字段校验：inventory 条目 wiki_id/status、搜索结果 title/path 必须非空字符串（对象形缺字段不再放行——四形态+非字符串变体+端到端降级回归）；AM 套件 35、全套 458 passed 含 PG。【第三轮~第五轮验收与通过 2026-10-10/11】第三/四轮各一项同族 fail-closed 缺口（负数 total；对象形缺必需字段）均修复；第五轮独立验收=通过（HEAD 6551b29d；定向 42、全套 458/0 含隔离 PG；五层响应自证确认：类型/数值/元素结构/必需字段/分页进展）。通过范围=阶段 2 Draft 代码与离线合同（前轮）+ 阶段 3 双侧检索代码；不含阶段二整体完成。",
+      "next_action": "阶段 2+3 代码验收通过，PR #1461 转 Ready 并 finalize 合入 main；运行态未部署（状态=已合并，运行验证未完成——n8n 发布与开关启用属阶段 6 另行授权；阶段 2 真实 execution 证据维持 waiting-for-evidence）。下一步=阶段 4（source-only Slack 根线程+operator 身份收紧）→阶段 5 页面→阶段 6 十步发布。",
       "acceptance_criteria": [
         "阶段二完成条件十条全部满足（计划 r1 第十节）：两条 n8n 链仅投快照、SP 唯一双写编排者、new 高质量无重复候选双写成功、merge/replace/supplement 进 Slack 人工 Review、source-only 候选建审核线程、页面/API 兜底、部分失败与超时恢复有效、Hermes AgentMemory 无回归、WeKnora Web/检索正常、观察期无重复写入/旧版本覆盖/审计缺失",
         "验证矩阵十六场景全过（计划 r1 第八节），证据含 n8n execution ID、source receipt、Summary/Review session+run、candidate ID、内容哈希、Slack channel/thread、人工决定、两目标独立状态与外部 ID/回读",
@@ -17437,6 +17509,66 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第三轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 source-only 离线合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "18 passed（结构：双 Draft 节点类型/URL 允许清单+连接闭合+零直写引用；执行：真实 jsCode 跑分页/数量/CSD comment/回执三态/坏回执/重投乱序；A 契约：产出过 KnowledgeSourceSnapshot 模型校验）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 2 证据文档（C0-C5）",
+          "command": "n8n MCP 只读重读（HTTP MCP 直连）+ update_workflow Draft 操作（未 publish）+ 回读比对",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md；两链 Active 版本未变（b5cf6d6b/1f544830），Draft=5c3359cc/6a262f9a 与仓库快照一致；validate_workflow_snapshots.py 15 published+3 drafts+56 redactions 退出码 0（legacy 29 项 LEGACY-EXPOSED 警告显性暴露）；n8n 真实 execution 证据登记 waiting-for-evidence（阶段 6 授权后以自然调度/受控样本补齐）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 修复轮回归",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "22 passed（+4：total 缺失/字符串/数组三态 fail-closed、fields=*,comment 完整字段断言）；validate 15+3+56 退出码 0；CSD Draft 回读 6fed47a6、activeVersionId 未变"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 双侧检索全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （16 套件）",
+          "result": "444 passed / 0 failed（同步 origin/main 8e096b83 合并 ef4d948f 后实测，16 套件含隔离 PG；新 13+存量适配 3）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 3 AM 检索 API 实证",
+          "command": "只读探测公共面板 API（X-Tdai 凭据即取即用）",
+          "result": "wiki/list{team_id,limit,offset}→items/total（93 wiki 实测）；wiki/search{wiki_id,query,top_k}→count/results；全局搜索 404 实证不存在→fan-out 设计依据；详见 stage2-source-only.md 阶段 3 节"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮回归（fail-closed 加固）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 26 passed（+5：缺 count/非数值 count/results=[null]/空页死循环防护首抛/端到端 malformed→面不可用→new 降级）；全套 449 passed / 0 failed（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 2 回归（布尔 count/total 拒绝）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 28 passed（+2：count=true/false 与 total=true/false 四形态全部 invalid_response）；全套 451 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 3 回归（负数 total 与 items 形状）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 31 passed（+3：total=-1/-100 拒绝、items=[null]/['x']/[42] 拒绝、负 total 端到端面不可用）；全套 454 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 3 修复轮 4 回归（必需字段）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_agent_memory_delivery.py -q && 全套 16 套件",
+          "result": "AM 套件 35 passed（+4：items 三形态/非字符串变体/results=[{}]/端到端降级链）；全套 458 passed / 0 failed（含隔离 PG）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 3 第五轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（HEAD 6551b29d；必需字段 fail-closed 全确认、malformed→面不可用→new 降级、布尔/负数/空页/非对象全覆盖；定向 42、16 套件 458/0 含隔离 PG；编译/Overview/快照校验/diff-check 全过；LEGACY-EXPOSED 29 条属历史 active 链）；允许进入 finalize"
         }
       ]
     },
