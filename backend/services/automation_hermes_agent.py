@@ -474,6 +474,48 @@ class HermesAgentTurnProcessor:
             if (
                 phase == HermesTurnPhase.WORK
                 and str(refreshed.get("direction") or "") == "automation"
+                and str(refreshed.get("turn_kind") or "") in {"fixed_task", "message_action"}
+                and str(refreshed.get("route") or "") != CONVERSATION_FOLLOWUP_ROUTE
+                and self._automation_route_contract_valid(refreshed)
+                and not self._claim_automation_ownership_before_work(payload, refreshed)
+            ):
+                # Fixed-task turns skip the route phase, so the route-phase
+                # completion block never claims the Zendesk ticket: without
+                # this claim the reply pipeline's publish gate finds the
+                # ticket human-held and the delivery fails (live evidence:
+                # tickets 13971/13972 zendesk_ownership_human_reassigned /
+                # zendesk_assignment_unverified). The claim runs as a guard
+                # clause merged into the existing chain head below.
+                return {
+                    "engine": "hermes",
+                    "turn_id": payload.turn_id,
+                    "status": "human_review",
+                    "reason": "ownership_gate_failed",
+                }
+            if (
+                phase == HermesTurnPhase.WORK
+                and str(refreshed.get("direction") or "") == "automation"
+                and str(refreshed.get("turn_kind") or "") in {"fixed_task", "message_action"}
+                and str(refreshed.get("route") or "") != CONVERSATION_FOLLOWUP_ROUTE
+                and self._automation_route_contract_valid(refreshed)
+                and not self._claim_automation_ownership_before_work(payload, refreshed)
+            ):
+                # Fixed-task turns skip the route phase, so the route-phase
+                # completion block never claims the Zendesk ticket: without
+                # this claim the reply pipeline's publish gate finds the
+                # ticket human-held and the delivery fails (live evidence:
+                # tickets 13971/13972 zendesk_ownership_human_reassigned /
+                # zendesk_assignment_unverified). The claim runs as a guard
+                # clause merged into the existing chain head below.
+                return {
+                    "engine": "hermes",
+                    "turn_id": payload.turn_id,
+                    "status": "human_review",
+                    "reason": "ownership_gate_failed",
+                }
+            if (
+                phase == HermesTurnPhase.WORK
+                and str(refreshed.get("direction") or "") == "automation"
                 and not self._automation_route_contract_valid(refreshed)
             ):
                 # Resume/restart entry: the same contract gate before Work
