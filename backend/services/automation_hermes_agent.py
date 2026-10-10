@@ -1344,6 +1344,17 @@ class HermesAgentTurnProcessor:
             return True
         if not str(account_case.get("route_family") or "").strip():
             account_case["route_family"] = "automated"
+        # Fixed-task turns reach Work before any tool execution populated
+        # the case mirror's execution_action: eligibility resolves it via
+        # route_family, so seed it from the turn's deterministic route or
+        # the claim silently no-ops (live evidence: ticket 13973 — zero
+        # ownership events, ask delivery failed human_reassigned).
+        if (
+            not str(account_case.get("execution_action") or "").strip()
+            and not str(account_case.get("route") or "").strip()
+            and str(turn.get("route") or "").strip()
+        ):
+            account_case["execution_action"] = str(turn["route"]).strip()
         if not ownership_gate_eligible(account_case):
             return True
         updated_at = str(turn.get("created_at") or "")
