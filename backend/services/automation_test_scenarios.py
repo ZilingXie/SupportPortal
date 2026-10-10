@@ -1631,9 +1631,13 @@ class ScenarioEngine:
         expected_turn_id: str | None = None,
     ) -> dict:
         since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+        if expected_turn_id is not None and not expected_turn_id:
+            detail = "cannot bind Hermes draft delivery: expected turn id is missing"
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
 
         def probe():
-            if expected_turn_id:
+            if expected_turn_id is not None:
                 # A message-action turn can have a late draft from another
                 # turn in the same time window. Bind the delivery to the
                 # exact turn returned by wait_hermes_message_action instead
@@ -1667,7 +1671,7 @@ class ScenarioEngine:
             row = rows[0] if rows else None
             if not row or str(row.get("delivery_status") or "") != "delivered":
                 return None
-            if expected_turn_id and str(row.get("turn_id") or "") != expected_turn_id:
+            if expected_turn_id is not None and str(row.get("turn_id") or "") != expected_turn_id:
                 return None
             comment_id = str(row.get("zendesk_comment_id") or "")
             if comment_id and comment_id in ctx.baseline_comment_ids:

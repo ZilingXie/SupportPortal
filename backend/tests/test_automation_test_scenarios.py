@@ -803,6 +803,23 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertEqual(row["draft_id"], "draft-current")
         self.assertEqual(row["turn_id"], "turn-current")
 
+    def test_bound_draft_wait_fails_closed_when_turn_id_is_missing(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13706",
+            client_ticket_id="13706",
+            account_case_id="AC-13706",
+        )
+
+        with self.assertRaises(AssertionError):
+            engine.wait_hermes_draft_delivered(
+                ctx, "bound draft requires turn id", expected_turn_id=""
+            )
+
+        self.assertEqual(engine.db_queue, [])
+        self.assertEqual(engine.steps[-1].status, "FAIL")
+
     def test_binding_watermarks_ignore_observed_artifacts(self) -> None:
         """p2-178: waits observe per-turn baselines — an artifact recorded by
         a PREVIOUS leg (turn row, reply job, delivered comment) can never
