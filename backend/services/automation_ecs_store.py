@@ -4199,8 +4199,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                            input_version,case_revision,turn_kind,phase,direction,route,direction_reason,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -4215,6 +4215,8 @@ class PostgresAutomationEcsStore:
                         "investigation_feedback" if inherited else ("message_action" if message_action else ("fixed_task" if initial_fixed_task else "normal")),
                         "work" if inherited or message_action or initial_fixed_task else None,
                         "investigation" if inherited else (fixed_task.get("direction") if message_action or initial_fixed_task else None),
+                        # InMemory twin parity: persist the fixed-task route.
+                        fixed_task.get("route") if message_action or initial_fixed_task else None,
                         inherited["direction_reason"] if inherited else ("message_action_pending" if message_action else (fixed_task.get("reason_code") if initial_fixed_task else None)),
                         request_id,
                         str(prompt_release_id or binding.get("case_task_prompt_release_id") or "") or None,
