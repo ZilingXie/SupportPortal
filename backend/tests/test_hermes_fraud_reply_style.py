@@ -446,3 +446,168 @@ class JudgeScenarioTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FraudAskChannelTests(unittest.TestCase):
+    """Channel A (user decision 2026-10-09): the fraud missing-information
+    ask is delivered automatically through the reply-job pipeline — the
+    Production behavior — and the job is the sole reply (skip persona)."""
+
+    def _run_fraud_turn(self, *, missing):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        if missing:
+            attempt["missing_fields"] = list(ALL_FIELDS)
+            attempt["internal_email_to_send"] = None
+            attempt["internal_email_payload"] = None
+
+        async def delivered(**kwargs):
+            delivered_case = email_harness._account_case(
+                route="fraud_account",
+                status="sent",
+                payload={
+                    "delivery_key": email_harness._expected_key("fraud_account"),
+                    "action": "fraud_account",
+                },
+            )
+            repository.save_account_case(delivered_case)
+            from types import SimpleNamespace as NS
+
+            return NS(status="sent", reason=""), delivered_case
+
+        from unittest.mock import AsyncMock
+
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ), patch(
+            "backend.services.automation_account_intake._run_internal_email_delivery",
+            new=delivered,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        return store, repository, handoff, result
+
+    def test_missing_fields_creates_automatic_ask_reply_job_and_skips_persona(self):
+        store, repository, handoff, result = self._run_fraud_turn(missing=True)
+
+        self.assertEqual(result["status"], "missing_fields")
+        # The ask reply job is created with the Production intent and the
+        # trigger binding; real create_account_reply_job on the InMemory twin.
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertEqual(
+            (job.get("payload") or {}).get("reply_intent"),
+            "request_missing_information",
+        )
+        self.assertEqual(
+            sorted((job.get("payload") or {}).get("asked_field_keys") or []),
+            sorted(ALL_FIELDS),
+        )
+        # The job is the SOLE reply: the tool result skips persona.
+        self.assertTrue(result["skip_persona"])
+        self.assertIn("ask_reply_job_created", result["executed_actions"])
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        self.assertTrue((turn.get("work_result") or {}).get("skip_persona"))
+
+    def test_retry_reuses_ask_job_without_recreate(self):
+        store, repository, handoff, first = self._run_fraud_turn(missing=True)
+        with store._lock:
+            store._hermes_turns[handoff["turn_id"]]["work_result"] = None
+        # Direct second invocation (crash-retry simulation).
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            second = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertIn("ask_reply_job_reused", second["executed_actions"])
+        self.assertNotIn("ask_reply_job_created", second["executed_actions"])
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+
+    def test_complete_fields_no_ask_job(self):
+        store, repository, handoff, result = self._run_fraud_turn(missing=False)
+        self.assertEqual(result["status"], "executed")
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        # The email-confirmation job (intent fraud_handoff_confirmation).
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            (jobs[0].get("payload") or {}).get("reply_intent"),
+            "fraud_handoff_confirmation",
+        )
