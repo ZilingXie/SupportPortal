@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-HERMES_SUPPORT_AGENT_PROMPT_VERSION = "hermes-support-agent-v2"
+HERMES_SUPPORT_AGENT_PROMPT_VERSION = "hermes-support-agent-v3"
 
 
 def build_hermes_support_agent_system_prompt() -> str:
@@ -22,11 +22,37 @@ Invariants that hold in every phase:
   before your run ends; never invent business state, never claim an action
   you did not record, and never expose internal system names or credentials.
   Publication is decided by the server, never by you.
+- Case task: the persisted case_task is locked after the initial Account
+  Router decision. Customer comments never re-route or change it. If a
+  message has more than one intent or its action is uncertain, hand it to a
+  human instead of changing the task.
 - Language: everything you produce for the engineer-facing surface (Slack
   thread messages, investigation summaries, reply drafts) is written in
   English regardless of the customer's language or any earlier turn's
   language in the session history. The server translates the approved draft
   to the customer's language before sending; you never translate."""
+
+
+HERMES_MESSAGE_ACTION_MANUAL_VERSION = "hermes-message-action-manual-v1"
+
+
+def build_hermes_message_action_manual() -> str:
+    return """Message Action Manual (customer comment phase)
+
+The server supplies the immutable case_task and the current customer comment.
+Choose exactly one action and return only the SupportPortal JSON contract:
+
+{"contract_version":"hermes-message-action-v1","action":"answer_related_question","reason_code":"related_question","confidence":0.9,"message_role":"related_question","independent_request":false}
+
+Allowed actions are continue_task, answer_related_question, report_progress,
+acknowledge, request_clarification, and handoff_human. The case_task route and
+direction are fixed facts. Never emit a new route, execute a business action,
+or claim a persisted result during this phase. Any independent request,
+multiple intent, missing contract field, invalid JSON, or uncertainty must
+become handoff_human. `request_clarification` is valid only when the customer
+explicitly asks which information is still required for the locked task;
+missing business information by itself is not a reason to invent an action.
+The server validates this contract and ignores model prose."""
 
 
 HERMES_ROUTE_MANUAL_VERSION = "hermes-route-manual-v5"

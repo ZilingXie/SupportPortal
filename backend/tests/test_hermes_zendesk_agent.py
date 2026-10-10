@@ -6,8 +6,9 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -259,6 +260,7 @@ class FakeHermesClient:
     submissions: list[dict[str, Any]] = field(default_factory=list)
     stopped: list[str] = field(default_factory=list)
     fail_submit: bool = False
+    terminal_output: Any = "ok"
 
     def start_run(self, *, session_id, instructions, input_text, idempotency_key,
                   workspace_key=None, enabled_toolsets=None, model=None, model_options=None):
@@ -284,7 +286,7 @@ class FakeHermesClient:
 
     def get_run(self, run_id):
         status = "cancelled" if run_id in self.stopped else self.terminal_status
-        return {"run_id": run_id, "status": status, "output": "ok"}
+        return {"run_id": run_id, "status": status, "output": self.terminal_output}
 
     def stop_run(self, run_id):
         self.stopped.append(run_id)
@@ -311,6 +313,83 @@ class TestAgentTurnProcessor:
             agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
             assert agent_job is not None
         return handoff, agent_job
+
+    def test_invalid_hermes_message_action_output_fails_closed(self) -> None:
+        assert HermesAgentTurnProcessor._parse_message_action_output("model prose")["action"] == "handoff_human"
+
+    def test_message_action_is_submitted_to_hermes_and_validated(self) -> None:
+        from backend.services.prompt_runtime import current_prompt_runtime_snapshot
+
+        store = _store()
+        prompt = current_prompt_runtime_snapshot()
+        case_task = {
+            "schema_version": "hermes-case-task-v1",
+            "source": "account_router",
+            "source_event_id": "zendesk:ticket:123:created",
+            "route_family": "automated",
+            "route_target": "automation",
+            "execution_action": "enablement",
+            "route": "enablement",
+            "direction": "automation",
+            "primary_label": "Agora",
+            "secondary_label": "Backend Operation / Enablement",
+            "reason_code": "registered_enablement",
+            "automation_handler": "enablement",
+            "confidence": 0.98,
+            "prompt_release_id": "prompt-1",
+            "prompt_snapshot": dict(prompt.prompts),
+            "locked": True,
+            "hermes_eligible": True,
+            "classification_only": False,
+        }
+        # Build a fixed-task binding for this focused end-to-end check.
+        receipt = store.accept_intake(_event(), _settings().provenance())
+        route_job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert route_job is not None and route_job.execution_id == receipt.execution_id
+        handoff = store.hand_off_to_hermes_agent(
+            route_job, prompt_release_id="prompt-1", case_task=case_task
+        )
+        agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert agent_job is not None
+
+        def on_first_run(run_id, idempotency_key):
+            if idempotency_key.endswith(":work"):
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={"status": "executed", "route": "enablement"},
+                )
+
+        first = FakeHermesClient(on_run_completed=on_first_run)
+        processor = self._processor(store, first)
+        assert processor.process(agent_job)["status"] == "completed"
+
+        comment = _event("zendesk:ticket:123:comment:55", event_type=IntakeEventType.COMMENT_CREATED)
+        receipt = store.accept_intake(comment, _settings().provenance())
+        route_job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert route_job is not None and route_job.execution_id == receipt.execution_id
+        comment_handoff = store.hand_off_to_hermes_agent(route_job, prompt_release_id="prompt-1")
+        comment_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
+        assert comment_job is not None
+        action_json = json.dumps(
+            {
+                "contract_version": "hermes-message-action-v1",
+                "action": "answer_related_question",
+                "reason_code": "related_app_id_question",
+                "confidence": 0.96,
+                "message_role": "related_question",
+                "independent_request": False,
+            }
+        )
+        client = FakeHermesClient(terminal_output=action_json)
+        result = self._processor(store, client).process(comment_job)
+        assert result["status"] == "completed"
+        submission = client.submissions[0]
+        assert submission["enabled_toolsets"] == []
+        assert "Message Action Manual" in submission["instructions"]
+        assert "My app id is app-123." in submission["input_text"]
+        turn = store.get_hermes_turn(comment_handoff["turn_id"])
+        assert turn is not None
+        assert turn["work_result"]["message_action"]["action"] == "answer_related_question"
 
     def test_customer_comment_with_appid_mirrored_into_ticket(self) -> None:
         # p2-163 ticket 13560 regression: the deterministic enablement tools
@@ -1677,25 +1756,42 @@ class TestExpiryRecovery:
 
 
 class TestRouteWorkerHandOff:
-    def test_hermes_engine_bypasses_legacy_route_llm(self) -> None:
+    def test_hermes_engine_uses_account_router_once_for_new_case(self) -> None:
         from backend.automation_ecs_route_worker import RouteWorker
 
         store = _store()
         store.accept_intake(_event(), _settings("route").provenance())
 
-        def _fail_decider(*args: Any, **kwargs: Any) -> Any:
-            raise AssertionError("legacy route LLM must not run for hermes cases")
+        decider = Mock(return_value=SimpleNamespace(
+            decision=SimpleNamespace(
+                scope_label="backend_operation", route_family="automated",
+                execution_action="enablement", route="enablement",
+                route_target="automation", reason="registered_enablement",
+                confidence=0.98, router_source="layered", matched_signals=[],
+                semantic_intent="enablement", automation_eligibility="eligible",
+                policy_decision="automate", not_automated_reason=None,
+                risk_flags=[], evidence_spans=[], intent_router_attempted=True,
+                intent_router_confidence_threshold=0.82,
+                intent_router_fallback_reason=None, intent_router_failure_type=None,
+                intent_router_failure_source=None,
+            ),
+            classification={"automation_handler": "enablement"},
+            prompt_snapshots={"route": {"version": "1"}},
+            stage_attempts=[],
+        ))
 
         worker = RouteWorker(
             settings=_settings("route"),
             store=store,
             persona_resolver=lambda _ticket_id: None,
-            route_decider=_fail_decider,
+            route_decider=decider,
             default_case_engine="hermes",
         )
         assert worker.process_once() is True
         binding = store.get_hermes_case_binding("123")
         assert binding is not None
+        assert binding["case_task"]["route"] == "enablement"
+        decider.assert_called_once()
         agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-1", lease_seconds=300)
         assert agent_job is not None
 

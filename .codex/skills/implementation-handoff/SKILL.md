@@ -16,6 +16,8 @@ Roles follow the task, not the client or model. Codex, ZCode, and other executor
 
 Only load the applicable mode. For small work, use objective, scope, and verification rather than filling every section. This skill does not grant network, deployment, business-write, cross-thread messaging, or delegation permission.
 
+For a nontrivial handoff, use [the implementation plan template](references/implementation-plan-template.md). The template is a compact execution aid: the current plan must still carry its own baseline, contracts, evidence, decisions, and stopping point so an executor does not need to reconstruct them from chat history.
+
 ## Human decisions are explicit stops
 
 The user normally reads the goal and final acceptance, not intermediate handoffs. Every role must directly ask the user about unresolved product choices, material architecture/scope changes, unapproved migrations/resources/side effects, weaker acceptance, or uncertain ownership/authorization. A PR note or a proposed default is not a decision.
@@ -34,6 +36,8 @@ Use a stable plan name and revision. Give critical contracts stable IDs (C1, C2)
 Evidence identifies command/check, actual result, source commit, environment, and artifact location. Separate confirmed observations, executor reports, assumptions, and unavailable evidence. Counts, mocks, health checks, and accepted requests prove only their actual layer.
 
 Keep code acceptance, deployment verification, and complete business acceptance distinct. A partial pass names its scope and remaining gates. Waiting for external samples is not a new implementation failure; resubmit when evidence changes. Bundle nonblocking record corrections with the next meaningful handoff.
+
+Use `waiting-for-evidence` when code is ready but a required external sample, environment, credential, or natural execution is unavailable. Record the resumption event; do not create another repair round from unchanged implementation work.
 
 ## PR as the handoff artifact
 
