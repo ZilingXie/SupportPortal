@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T18:55:11Z",
-  "source_base_commit": "21887811adf841b03d40875a54fac0eb5a34688c",
-  "registry_digest": "cee5056308da7fbe4604a01ed47844d255bf5f3b9cdc724a2e535ac150480b74",
+  "generated_at": "2026-10-10T18:57:17Z",
+  "source_base_commit": "3c1cfe7e37c8bde8f0407f8c67835ef529cf9019",
+  "registry_digest": "d17d51a27f562ed1be9fee7b4e80630296d0dd3db328f3a49734b9a261184d4b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1405,6 +1405,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ownership mismatch r1 本地受影响回归",
           "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
           "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         },
         {
           "type": "test",
@@ -15823,6 +15829,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "ownership mismatch r1 本地受影响回归",
           "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
           "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         }
       ],
       "source_refs": [
