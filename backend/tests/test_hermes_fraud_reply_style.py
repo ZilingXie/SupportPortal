@@ -701,3 +701,127 @@ class MessageActionWorkTests(unittest.TestCase):
             if job.get("ticket_id") == "123"
         ]
         self.assertEqual(len(jobs), 1)
+
+    def test_second_turn_carries_existing_fields_and_proceeds(self):
+        """Legacy parity: after the first ask, the next verification turn
+        carries the case's collected fields and follow_up_count=1 so the
+        builder proceeds toward the internal email instead of re-asking."""
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        # Case carries 3 previously collected fields (turn-1 ask answered
+        # partially) and an outstanding ask job with asked_field_keys.
+        case = email_harness._account_case(route="fraud_account", status="not_ready")
+        case["collected_fields"] = {
+            "account_type": "Enterprise",
+            "name": "Zac Tester",
+            "contact_email": "zac.tester@example.com",
+        }
+        repository = email_harness._repository(case)
+        from backend.services.account_reply_jobs import create_account_reply_job
+        from backend.services.automation_account_intake import _reply_facts
+
+        create_account_reply_job(
+            repository,
+            ticket_id="123",
+            trigger_message_created_at="2026-09-08T10:00:00Z",
+            created_at="2026-09-08T10:00:05Z",
+            delay_seconds=30,
+            draft_content="",
+            reply_facts=_reply_facts(
+                handler="billing",
+                action="fraud_account",
+                missing_fields=list(ALL_FIELDS),
+                collected_fields={},
+                submitted=False,
+                customer_name=None,
+            ),
+            asked_field_keys=list(ALL_FIELDS),
+            persona_assignment=None,
+            close_after_publish=False,
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        captured = {}
+
+        def verification_attempt(**kwargs):
+            captured.update(kwargs)
+            attempt = email_harness._attempt("fraud_account")
+            # Simulate the builder proceeding with the carried fields:
+            attempt["missing_fields"] = [
+                f
+                for f in ALL_FIELDS
+                if f
+                not in {
+                    "account_type",
+                    "name",
+                    "contact_email",
+                }
+            ]
+            attempt["internal_email_to_send"] = {"action": "fraud_account"}
+            attempt["internal_email_payload"] = {"action": "fraud_account"}
+            attempt["collected_fields"] = {
+                "account_type": "Enterprise",
+                "name": "Zac Tester",
+                "contact_email": "zac.tester@example.com",
+            }
+            return attempt
+
+        async def delivered(**kwargs):
+            delivered_case = email_harness._account_case(
+                route="fraud_account",
+                status="sent",
+                payload={
+                    "delivery_key": email_harness._expected_key("fraud_account"),
+                    "action": "fraud_account",
+                },
+            )
+            repository.save_account_case(delivered_case)
+            from types import SimpleNamespace as NS
+
+            return NS(status="sent", reason=""), delivered_case
+
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            side_effect=verification_attempt,
+        ), patch(
+            "backend.services.automation_account_intake._run_internal_email_delivery",
+            new=delivered,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        # The attempt received the case's collected fields and a non-zero
+        # follow-up count — legacy parity for the second turn.
+        self.assertEqual(
+            captured.get("existing_fields"),
+            {"account_type": "Enterprise", "name": "Zac Tester", "contact_email": "zac.tester@example.com"},
+        )
+        self.assertEqual(captured.get("follow_up_count"), 1)
+        # The email executed and the confirmation job replaced the ask.
+        self.assertEqual(result["status"], "executed")
+        self.assertEqual(result["internal_email_send_status"], "sent")
+        self.assertTrue(result["skip_persona"])
