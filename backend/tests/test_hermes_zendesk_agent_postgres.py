@@ -181,6 +181,11 @@ class TestPostgresHandOff:
         assert turn["turn_kind"] == "fixed_task"
         assert turn["direction"] == "automation"
         assert turn["route"] == "fraud_account"
+        # The work-phase execute tool gates on the case binding direction;
+        # the fixed-task hand-off must record the deterministic decision
+        # there too (live evidence: ticket 13968 direction_mismatch).
+        binding = store.get_hermes_case_binding("123")
+        assert binding["direction"] == "automation"
 
     def test_intake_replay_returns_same_execution(self, store) -> None:
         event = _event("zendesk:ticket:123:created")
