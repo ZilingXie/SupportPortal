@@ -492,6 +492,8 @@ class ScenarioEngineTests(unittest.TestCase):
                 },
             }]),
             ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-2",
+                "turn_id": "turn-2",
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000102",
@@ -562,6 +564,8 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{"n": 1}]),
             ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-5",
+                "turn_id": "turn-5",
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000106",
@@ -762,6 +766,42 @@ class ScenarioEngineTests(unittest.TestCase):
         )
         self.assertEqual(row["turn_id"], "turn-current")
         self.assertIn("action=answer_related_question", engine.steps[-1].detail)
+
+    def test_draft_wait_rejects_delivery_from_wrong_turn(self) -> None:
+        """A delivered draft from another turn must not satisfy a bound wait."""
+        engine = ScriptedEngine()
+        ctx = ScenarioContext(
+            scenario_id="T",
+            zendesk_ticket_id="13705",
+            client_ticket_id="13705",
+            account_case_id="AC-13705",
+        )
+        ctx.stamp_turn_baseline()
+        engine.db_queue = [
+            ("d.turn_id = %s", [{
+                "draft_id": "draft-wrong",
+                "turn_id": "turn-other",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "comment-other",
+                "content": "late draft from another turn",
+            }]),
+            ("d.turn_id = %s", [{
+                "draft_id": "draft-current",
+                "turn_id": "turn-current",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "comment-current",
+                "content": "reply for the current turn",
+            }]),
+        ]
+
+        row = engine.wait_hermes_draft_delivered(
+            ctx, "bound draft delivered", expected_turn_id="turn-current"
+        )
+
+        self.assertEqual(row["draft_id"], "draft-current")
+        self.assertEqual(row["turn_id"], "turn-current")
 
     def test_binding_watermarks_ignore_observed_artifacts(self) -> None:
         """p2-178: waits observe per-turn baselines — an artifact recorded by

@@ -1628,22 +1628,46 @@ class ScenarioEngine:
     def wait_hermes_draft_delivered(
         self, ctx: ScenarioContext, step: str,
         *, content_check: Callable[[str], str | None] | None = None,
+        expected_turn_id: str | None = None,
     ) -> dict:
         since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
 
         def probe():
-            rows = self.db_query(
-                "SELECT d.status AS draft_status, d.content, dl.status AS delivery_status, "
-                "dl.zendesk_comment_id "
-                "FROM automation_hermes_case_drafts d "
-                "LEFT JOIN support_account_zendesk_comment_deliveries dl "
-                "ON dl.message_id = d.draft_id "
-                "WHERE d.zendesk_ticket_id = %s AND d.created_at >= %s "
-                "ORDER BY d.created_at DESC LIMIT 1",
-                (ctx.zendesk_ticket_id, since),
-            )
+            if expected_turn_id:
+                # A message-action turn can have a late draft from another
+                # turn in the same time window. Bind the delivery to the
+                # exact turn returned by wait_hermes_message_action instead
+                # of selecting the latest ticket draft.
+                rows = self.db_query(
+                    "SELECT d.draft_id, d.turn_id, d.status AS draft_status, d.content, "
+                    "dl.status AS delivery_status, dl.zendesk_comment_id "
+                    "FROM automation_hermes_case_drafts d "
+                    "JOIN automation_hermes_agent_turns t "
+                    "ON t.turn_id = d.turn_id "
+                    "LEFT JOIN support_account_zendesk_comment_deliveries dl "
+                    "ON dl.message_id = d.draft_id "
+                    "WHERE d.zendesk_ticket_id = %s AND d.turn_id = %s "
+                    "AND t.zendesk_ticket_id = %s "
+                    "ORDER BY d.created_at DESC LIMIT 1",
+                    (ctx.zendesk_ticket_id, expected_turn_id, ctx.zendesk_ticket_id),
+                )
+            else:
+                # Turn 1 and legacy callers have no message-action turn to
+                # bind to; retain their ticket/time-window contract.
+                rows = self.db_query(
+                    "SELECT d.draft_id, d.turn_id, d.status AS draft_status, d.content, "
+                    "dl.status AS delivery_status, dl.zendesk_comment_id "
+                    "FROM automation_hermes_case_drafts d "
+                    "LEFT JOIN support_account_zendesk_comment_deliveries dl "
+                    "ON dl.message_id = d.draft_id "
+                    "WHERE d.zendesk_ticket_id = %s AND d.created_at >= %s "
+                    "ORDER BY d.created_at DESC LIMIT 1",
+                    (ctx.zendesk_ticket_id, since),
+                )
             row = rows[0] if rows else None
             if not row or str(row.get("delivery_status") or "") != "delivered":
+                return None
+            if expected_turn_id and str(row.get("turn_id") or "") != expected_turn_id:
                 return None
             comment_id = str(row.get("zendesk_comment_id") or "")
             if comment_id and comment_id in ctx.baseline_comment_ids:
@@ -1949,7 +1973,7 @@ class ScenarioEngine:
         # Turn 2 contract (fixed-task/message-action): the customer comment
         # reuses the locked enablement task and is answered by a reply-only
         # message_action. It must not create a new relay application.
-        self.wait_hermes_message_action(
+        turn2 = self.wait_hermes_message_action(
             ctx,
             "answer_related_question",
             "knowledge question answered by message_action (turn 2)",
@@ -1957,6 +1981,7 @@ class ScenarioEngine:
         self.wait_hermes_draft_delivered(
             ctx, "knowledge answer delivered with references (turn 2)",
             content_check=_knowledge_answer_content_check,
+            expected_turn_id=str(turn2.get("turn_id") or ""),
         )
         self.wait_case_field(
             ctx, "automation_status", "automation",
@@ -1996,7 +2021,7 @@ class ScenarioEngine:
         # Turn 5 contract (fixed-task/message-action): a polite review nudge
         # produces a reply-only progress action from the BOUND relay request's
         # actual state — no acceleration promise, new application, or release.
-        self.wait_hermes_message_action(
+        turn5 = self.wait_hermes_message_action(
             ctx,
             "report_progress",
             "review nudge answered by message_action (turn 5)",
@@ -2014,6 +2039,7 @@ class ScenarioEngine:
         self.wait_hermes_draft_delivered(
             ctx, "progress answer delivered (turn 5)",
             content_check=_progress_answer_content_check,
+            expected_turn_id=str(turn5.get("turn_id") or ""),
         )
         self.wait_case_field(
             ctx, "automation_status", "automation",
