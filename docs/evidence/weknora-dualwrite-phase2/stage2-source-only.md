@@ -67,3 +67,29 @@ n8n 侧真实 execution 证据（execution ID→投递→回执→快照 hash �
 - 修复后 CSD Draft 版本 `6fed47a6`（回读确认 activeVersionId=b5cf6d6b 未变）；仓库快照由回读重建（3 处 secret 脱敏+ledger 保持）。
 - 契约选择：A（两轮评审一致推荐，继续采用；PR 披露可推翻）。
 - 验证：合同测试 **22 passed**（18+4 新回归）；快照校验 15+3+56 退出码 0；overview --check、git diff --check 通过。
+
+
+# 阶段 3 证据 — Summary/Review 双侧检索（p2-194，同 PR 延续）
+
+- 范围：Review 证据面加入 AgentMemory 检索结果（计划 r1 §四）；Summary 结构不变（既有 structured packet）。
+
+## AgentMemory 检索 API 实证（2026-10-10，只读探测）
+
+经公共面板 API（X-Tdai-Service-Id + X-Tdai-User-Key，密钥即取即用不落盘）实证：
+
+- `POST /api/v1/knowledge/wiki/list {"team_id","limit","offset"}` → `data{items[{wiki_id,name,status,version,page_count,summary,…}],total}`（实测团队 93 wiki，limit=100 全量返回）；
+- `POST /api/v1/knowledge/wiki/search {"wiki_id","query","top_k"?}` → `data{count,results[{title,snippet,score,path,type,hop}]}`（实测命中 13 条）；
+- 无全局搜索端点（/knowledge/search 等 404 实证）——检索=fan-out：list 全部 ready wiki（上限 100）+逐 wiki search（top_k 5）。
+
+## 实现
+
+- `AgentMemoryWikiClient` 新增读面：`wiki_list`（items/total 校验，invalid_response fail-closed）、`wiki_search`、`search_knowledge`（ready-only fan-out，任一失败整体抛错=面不可用）。
+- `_collect_agent_memory_evidence`：每候选用 statement（≤256 字符）检索；未配置/任一失败→面不可用（与 WeKnora 面同语义）。
+- 两条 review 路径（case 绑定 + standalone）bundle 均新增 `agent_memory{available,results,wiki_count,searched}`；`_downgrade_decisions_without_evidence` 新增 `agent_memory_available`：可写决策需 WeKnora 各面 AND AgentMemory 全应答，理由区分"WeKnora 与 AgentMemory 均不可用"/"AgentMemory 不可用"；skill 降级不变。
+- worker 两个 drain 注入 `AgentMemoryWikiClient()`（未配置即 fail-closed 降级，运行态零变更：Preprod 未配 AGENT_MEMORY_WIKI_* 时检索面恒不可用=现状更保守）。
+
+## 验证
+
+- 新测试 13 项：客户端读面 5（list 校验/search 归一/ready-only/失败传播/缺 total fail-closed）+ 降级 4（AM 不可用双侧类型降级/双侧应答存活/双侧不可用合并理由/skill 独立）+ 采集器 3（hits/未配置/中途失败）+ standalone bundle 面 1（available+results 断言+AM 不可用变体降级）。
+- 存量适配 3 处（e2e/sessions/legal-empty 注入 AM 假客户端——新合同下"可写存活"必须双侧应答）。
+- 全套回归 **444 passed / 0 failed**（RUN_POSTGRES_INTEGRATION=1，16 套件）。

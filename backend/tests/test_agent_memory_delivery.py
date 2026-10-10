@@ -370,3 +370,121 @@ def test_targeted_without_base_version_fails_closed() -> None:
     assert outcome.status == "failed"
     assert outcome.failure_code == "targeted_delivery_without_base_version"
     assert client.get_calls == []
+
+
+# ------------------------------- stage 3 read surface (dual retrieval) ----
+
+
+class _ScriptedTransport:
+    """Stands in for AgentMemoryWikiClient._request with canned payloads."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, method, path, *, json_body=None):
+        self.calls.append((path, json_body or {}))
+        if not self.responses:
+            raise AssertionError("unexpected extra request")
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _client_with(transport) -> AgentMemoryWikiClient:
+    client = AgentMemoryWikiClient(
+        base_url="https://am.test", user_key="k", service_id="default", team_id="team-1"
+    )
+    import unittest.mock as mock
+
+    patcher = mock.patch.object(client, "_request", side_effect=transport)
+    patcher.start()
+    import pytest
+
+    pytest.addcleanup(patcher.stop)  # noqa: PLW0212 - test wiring
+    return client
+
+
+def test_wiki_list_normalizes_items_and_total(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}},
+    ])
+    client = AgentMemoryWikiClient(
+        base_url="https://am.test", user_key="k", team_id="team-1"
+    )
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        page = client.wiki_list(limit=100, offset=0)
+    assert page == {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}
+    assert transport.calls[0][0] == "/api/v1/knowledge/wiki/list"
+    assert transport.calls[0][1]["team_id"] == "team-1"
+
+
+def test_wiki_list_missing_total_is_invalid_response(monkeypatch) -> None:
+    transport = _ScriptedTransport([{"data": {"items": []}}])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_list()
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+    assert raised
+
+
+def test_wiki_search_normalizes_results(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"count": 1, "results": [{"title": "T", "snippet": "S", "score": 0.9, "path": "p"}]}},
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        results = client.wiki_search(wiki_id="w1", query="q", top_k=5)
+    assert results[0]["title"] == "T"
+    assert transport.calls[0][1] == {"wiki_id": "w1", "query": "q", "top_k": 5}
+
+
+def test_search_knowledge_fans_out_over_ready_wikis_only(monkeypatch) -> None:
+    wikis = [
+        {"wiki_id": "w-ready", "name": "A", "status": "ready", "version": "3"},
+        {"wiki_id": "w-building", "name": "B", "status": "processing", "version": "1"},
+        {"wiki_id": "w-ready2", "name": "C", "status": "ready", "version": "2"},
+    ]
+    transport = _ScriptedTransport([
+        {"data": {"items": wikis, "total": 3}},
+        {"data": {"count": 1, "results": [{"title": "hit", "snippet": "s", "score": 1, "path": "x"}]}},
+        {"data": {"count": 0, "results": []}},
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        sweep = client.search_knowledge("query text")
+    assert sweep["wiki_count"] == 3 and sweep["searched"] == 2
+    assert len(sweep["hits"]) == 1 and sweep["hits"][0]["wiki_id"] == "w-ready"
+    assert sweep["hits"][0]["wiki_version"] == "3"
+    searched_paths = [c[0] for c in transport.calls]
+    assert searched_paths.count("/api/v1/knowledge/wiki/search") == 2
+
+
+def test_search_knowledge_any_wiki_failure_propagates(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}},
+        AgentMemoryWikiError("timeout", failure_kind="timeout"),
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.search_knowledge("q")
+            raised = False
+        except AgentMemoryWikiError:
+            raised = True
+    assert raised, "a partial sweep must fail closed, not return partial hits"

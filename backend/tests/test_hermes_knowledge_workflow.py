@@ -133,6 +133,27 @@ class FakeWeKnora:
         return self.results
 
 
+class _FakeAgentMemoryEvidence:
+    """Stage 3 (p2-194): the AgentMemory wiki retrieval surface.
+
+    ``available`` mirrors the fail-closed contract; ``hits`` are returned per
+    candidate query."""
+
+    def __init__(self, *, available: bool = True, hits: list[dict] | None = None) -> None:
+        self.available = available
+        self.hits = hits or []
+        self.queries: list[str] = []
+
+    def configured(self) -> bool:
+        return self.available
+
+    def search_knowledge(self, query: str) -> dict:
+        if not self.available:
+            raise RuntimeError("agent memory unavailable")
+        self.queries.append(query)
+        return {"wiki_count": 2, "searched": 2, "hits": list(self.hits)}
+
+
 class _FakeMemoryEvidence:
     """Contract-shaped memory evidence surface (available by default).
 
@@ -785,7 +806,9 @@ def test_summary_then_review_run_on_separate_sessions_with_readonly_toolsets(mon
         summary_output=_summary_output(), review_output=_review_output([_supplement_decision()])
     )
     processed = drain_hermes_knowledge_tasks(
-        repository, client=client, weknora_client=weknora, limit=5, sleeper=lambda _: None
+        repository, client=client, weknora_client=weknora,
+        agent_memory_client=_FakeAgentMemoryEvidence(),
+        limit=5, sleeper=lambda _: None,
     )
     assert processed == 2
 
@@ -1005,6 +1028,7 @@ def test_completed_review_feeds_the_weknora_promotion_worker_end_to_end(monkeypa
               "title": "Join failures", "snippet": "Existing entry.", "score": 0.9}]
         ),
         memory_client=_FakeMemoryEvidence(),
+        agent_memory_client=_FakeAgentMemoryEvidence(),
         limit=5, sleeper=lambda _: None,
     )
     assert processed == 2

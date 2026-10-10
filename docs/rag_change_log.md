@@ -11,6 +11,14 @@ For each new entry, record:
 - Data impact
 - Verification
 
+## 2026-10-10 - Review dual-side retrieval: AgentMemory evidence surface (p2-194 stage 3)
+
+- Summary: the Hermes knowledge Review now reads BOTH retrieval sides. The review bundle (case-bound and standalone) gains an `agent_memory` surface: per-candidate hits from the AgentMemory wiki knowledge API (verified live: wiki/list + per-wiki search fan-out over ready wikis, cap 100, top_k 5; no global search endpoint exists — 404-probed). A writable decision (new/supplement/replace/merge) survives only when the WeKnora surfaces AND AgentMemory all answered; any unavailable surface downgrades it to human_review with an explicit single/dual-sided reason. The AgentMemoryWikiClient read methods fail closed (invalid shapes raise, a mid-sweep failure marks the whole surface unavailable); the worker injects the client into both review drains (unconfigured = surface unavailable = strictest behaviour, so Preproduction runtime behaviour is unchanged until the AGENT_MEMORY_WIKI_* parameters are deployed in stage 6).
+- Reason: plan r1 §四 — the Review must read AgentMemory and WeKnora retrieval results before any dual-write.
+- Affected files/config: backend/services/agent_memory_delivery.py (read surface), backend/services/hermes_knowledge_workflow.py (collector, downgrade, case-bound bundle), backend/services/knowledge_standalone_workflow.py (standalone bundle), backend/worker.py (drain injection), tests (13 new + 3 adapted), docs/prompt_change_log.md (review input surface).
+- Data impact: none (no runtime deployment; the AM read surface is unconfigured in Preproduction today, so every review fails the AM side closed — strictly more conservative than before).
+- Verification: 444 passed / 0 failed across 16 suites including isolated PostgreSQL; AM API contract probed read-only against live preproduction (93 wikis listed, 13-hit search sample).
+
 ## 2026-10-10 - Stage-2 review R1: CSD completeness strictness (p2-194)
 
 - Summary: the CSD source-only draft's completeness gate is now strictly fail-closed — a missing or non-numeric `fields.comment.total` throws instead of falling back to the comments length, and `Get_CSD_Detail` requests `fields=*,comment` (the complete Jira issue object the ingestion contract requires) instead of a fixed field list. Both changes live in the n8n DRAFT (new draft version 6fed47a6; the active version b5cf6d6b remains untouched), the repo snapshot was rebuilt from the live readback, and four regression tests pin the behaviour.

@@ -217,6 +217,104 @@ class AgentMemoryWikiClient:
             "POST", "/api/v1/knowledge/wiki/get", json_body={"wiki_id": str(wiki_id or "")}
         )
 
+    # -- read surface (dual-write phase 2, stage 3) --------------------------
+    # Verified against the live preproduction panel API (2026-10-10):
+    #   POST /api/v1/knowledge/wiki/list   {"team_id", "limit", "offset"}
+    #        -> data {items: [{wiki_id, name, status, version, page_count, ...}],
+    #                 total}
+    #   POST /api/v1/knowledge/wiki/search {"wiki_id", "query", "top_k"?}
+    #        -> data {count, results: [{title, snippet, score, path, type, hop}]}
+    # The API has no global knowledge search; the fan-out below (list ready
+    # wikis, search each) is the only verified way to answer "could this
+    # knowledge already exist in AgentMemory".
+
+    WIKI_LIST_PAGE_SIZE = 100
+    DEFAULT_EVIDENCE_WIKI_CAP = 100
+    DEFAULT_SEARCH_TOP_K = 5
+
+    def wiki_list(self, *, limit: int = 100, offset: int = 0) -> dict[str, Any]:
+        """One page of the team's wiki inventory as ``{"items": [...], "total": n}``."""
+        payload = self._request(
+            "POST",
+            "/api/v1/knowledge/wiki/list",
+            json_body={
+                "team_id": self._team_id,
+                "limit": int(limit),
+                "offset": int(offset),
+            },
+        )
+        data = _data(payload)
+        items = data.get("items") if isinstance(data.get("items"), list) else None
+        total = data.get("total")
+        if items is None or not isinstance(total, int):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki list response is missing items/total",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        return {"items": items, "total": total}
+
+    def wiki_search(self, *, wiki_id: str, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
+        """Per-wiki knowledge search (verified contract; hits carry title,
+        snippet, score and path)."""
+        body: dict[str, Any] = {"wiki_id": str(wiki_id or ""), "query": str(query or "")}
+        if top_k is not None:
+            body["top_k"] = int(top_k)
+        payload = self._request("POST", "/api/v1/knowledge/wiki/search", json_body=body)
+        data = _data(payload)
+        results = data.get("results") if isinstance(data.get("results"), list) else None
+        if results is None:
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search response is missing results",
+                failure_kind="invalid_response",
+                payload=payload,
+            )
+        return results
+
+    def search_knowledge(
+        self, query: str, *, wiki_cap: int | None = None, top_k: int | None = None
+    ) -> dict[str, Any]:
+        """Fan-out knowledge search across the team's READY wikis.
+
+        Returns ``{"wiki_count", "searched", "hits": [...]}`` where every hit
+        carries its wiki identity.  Raises AgentMemoryWikiError on any list or
+        search failure — a partial sweep could miss a duplicate, so callers
+        treat the whole surface as unavailable (fail-closed).
+        """
+        cap = int(wiki_cap if wiki_cap is not None else self.DEFAULT_EVIDENCE_WIKI_CAP)
+        limit = self.WIKI_LIST_PAGE_SIZE
+        wikis: list[dict[str, Any]] = []
+        offset = 0
+        while offset < cap:
+            page = self.wiki_list(limit=min(limit, cap - offset), offset=offset)
+            wikis.extend(page["items"])
+            if len(wikis) >= page["total"]:
+                break
+            offset = len(wikis)
+        ready = [
+            item for item in wikis
+            if str(item.get("status") or "") == "ready" and str(item.get("wiki_id") or "")
+        ]
+        hits: list[dict[str, Any]] = []
+        for item in ready:
+            results = self.wiki_search(
+                wiki_id=str(item["wiki_id"]), query=query,
+                top_k=top_k if top_k is not None else self.DEFAULT_SEARCH_TOP_K,
+            )
+            for result in results:
+                if not isinstance(result, dict):
+                    continue
+                hits.append({
+                    "wiki_id": str(item.get("wiki_id") or ""),
+                    "wiki_name": str(item.get("name") or ""),
+                    "wiki_version": str(item.get("version") or ""),
+                    "title": str(result.get("title") or ""),
+                    "snippet": str(result.get("snippet") or "")[:500],
+                    "score": result.get("score"),
+                    "path": str(result.get("path") or ""),
+                })
+        return {"wiki_count": len(wikis), "searched": len(ready), "hits": hits}
+
 
 def _safe_json(body: str) -> Any:
     try:
