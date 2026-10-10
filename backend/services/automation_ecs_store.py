@@ -1395,6 +1395,19 @@ class InMemoryAutomationEcsStore:
                 binding["case_task_prompt_snapshot"] = copy.deepcopy(case_task.get("prompt_snapshot") or {})
                 binding["flow_version"] = "hermes-fixed-task-comment-action-v1"
                 binding["updated_at"] = _iso()
+                if (
+                    str(case_task.get("direction") or "") == "automation"
+                    and str(binding.get("direction") or "") == "pending"
+                ):
+                    # Fixed-task turns skip the route phase (and its
+                    # direction tool): the deterministic case task IS the
+                    # routing decision, so record it on the case binding or
+                    # the work-phase execute tool rejects with
+                    # direction_mismatch (live evidence: ticket 13968).
+                    binding["direction"] = "automation"
+                    binding["direction_reason"] = str(
+                        case_task.get("reason_code") or "fixed_task_automation"
+                    )
             inherited = initial_investigation_route(binding, case or {}, self._turn_rows(ticket_id)) if comment_advances_case(event) else None
             fixed_task = binding.get("case_task") if isinstance(binding.get("case_task"), dict) else None
             initial_fixed_task = event.event_type == IntakeEventType.TICKET_CREATED and fixed_task is not None
@@ -4160,7 +4173,10 @@ class PostgresAutomationEcsStore:
                     cursor.execute(
                         sql.SQL(
                             "UPDATE {} SET case_task=%s,case_task_prompt_release_id=%s,"
-                            "case_task_prompt_snapshot=%s,flow_version=COALESCE(flow_version,%s),updated_at=NOW() "
+                            "case_task_prompt_snapshot=%s,flow_version=COALESCE(flow_version,%s),"
+                            "direction=CASE WHEN (%s='automation' AND direction='pending') THEN 'automation' ELSE direction END,"
+                            "direction_reason=CASE WHEN (%s='automation' AND direction='pending') THEN %s ELSE direction_reason END,"
+                            "updated_at=NOW() "
                             "WHERE namespace=%s AND zendesk_ticket_id=%s"
                         ).format(self._table("automation_hermes_case_bindings")),
                         (
@@ -4168,6 +4184,9 @@ class PostgresAutomationEcsStore:
                             str(case_task.get("prompt_release_id") or prompt_release_id or "") or None,
                             Jsonb(case_task.get("prompt_snapshot") or {}),
                             "hermes-fixed-task-comment-action-v1",
+                            str(case_task.get("direction") or ""),
+                            str(case_task.get("direction") or ""),
+                            str(case_task.get("reason_code") or "fixed_task_automation"),
                             namespace,
                             ticket_id,
                         ),
@@ -4199,8 +4218,8 @@ class PostgresAutomationEcsStore:
                     sql.SQL(
                         """
                         INSERT INTO {} (turn_id,namespace,zendesk_ticket_id,execution_id,event_id,event_type,
-                            input_version,case_revision,turn_kind,phase,direction,direction_reason,request_id,prompt_release_id,status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                            input_version,case_revision,turn_kind,phase,direction,route,direction_reason,request_id,prompt_release_id,status)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
                         """
                     ).format(self._table("automation_hermes_agent_turns")),
                     (
@@ -4215,6 +4234,8 @@ class PostgresAutomationEcsStore:
                         "investigation_feedback" if inherited else ("message_action" if message_action else ("fixed_task" if initial_fixed_task else "normal")),
                         "work" if inherited or message_action or initial_fixed_task else None,
                         "investigation" if inherited else (fixed_task.get("direction") if message_action or initial_fixed_task else None),
+                        # InMemory twin parity: persist the fixed-task route.
+                        fixed_task.get("route") if message_action or initial_fixed_task else None,
                         inherited["direction_reason"] if inherited else ("message_action_pending" if message_action else (fixed_task.get("reason_code") if initial_fixed_task else None)),
                         request_id,
                         str(prompt_release_id or binding.get("case_task_prompt_release_id") or "") or None,

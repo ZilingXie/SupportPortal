@@ -145,6 +145,48 @@ class TestPostgresHandOff:
         assert execution is not None
         assert all(job["kind"] != "processing" for job in execution["jobs"])
 
+    def test_fixed_task_hand_off_persists_turn_route(self, store) -> None:
+        """#1449 twin gap regression: the PG hand-off INSERT must persist the
+        fixed-task route on the turn (live evidence: tickets 13963-13966
+        all failed route_contract_invalid with an empty turn route)."""
+        store.accept_intake(_event("zendesk:ticket:123:created"), _settings_provenance(store))
+        job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=60)
+        assert job is not None
+        handoff = store.hand_off_to_hermes_agent(
+            job,
+            prompt_release_id="prompt-1",
+            case_task={
+                "schema_version": "hermes-case-task-v1",
+                "source": "account_router",
+                "source_event_id": "zendesk:ticket:123:created",
+                "route_family": "automated",
+                "route_target": "automation",
+                "execution_action": "fraud_account",
+                "route": "fraud_account",
+                "direction": "automation",
+                "primary_label": "Agora",
+                "secondary_label": "",
+                "reason_code": "registered_fraud_account",
+                "automation_handler": "billing",
+                "confidence": 0.99,
+                "prompt_release_id": "prompt-1",
+                "prompt_snapshot": {},
+                "locked": True,
+                "hermes_eligible": True,
+                "classification_only": False,
+            },
+        )
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn is not None
+        assert turn["turn_kind"] == "fixed_task"
+        assert turn["direction"] == "automation"
+        assert turn["route"] == "fraud_account"
+        # The work-phase execute tool gates on the case binding direction;
+        # the fixed-task hand-off must record the deterministic decision
+        # there too (live evidence: ticket 13968 direction_mismatch).
+        binding = store.get_hermes_case_binding("123")
+        assert binding["direction"] == "automation"
+
     def test_intake_replay_returns_same_execution(self, store) -> None:
         event = _event("zendesk:ticket:123:created")
         first = store.accept_intake(event, _settings_provenance(store))
