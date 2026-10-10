@@ -112,6 +112,7 @@ class RelayFailureChainTests(unittest.TestCase):
         self.assertEqual(escalation["handoff_status"], "queued")
         request = self.repository.get_enablement_relay_request(self.request["request_id"])
         self.assertEqual(request["status"], "failed")
+        self.assertEqual(self.repository._account_reply_jobs, {})
         events = [item["event_type"] for item in self.repository._events]
         self.assertIn("enablement_relay_failure", events)
 
@@ -264,6 +265,168 @@ class RelayProjectNotFoundReplyTests(unittest.TestCase):
         self.assertEqual(
             saved_before["payload"]["automation_delivery_key"],
             saved_after["payload"]["automation_delivery_key"],
+        )
+
+
+
+class RelayOwnershipMismatchReplyTests(unittest.TestCase):
+    """Ownership mismatch is a normal close outcome, independent of writes."""
+
+    def setUp(self) -> None:
+        self.repository = InMemoryTicketRepository()
+        self.case = relay_helpers._seed_auto_case(self.repository)
+        self.request_id = relay_helpers._seed_gated_request(self.repository, self.case)
+        self.repository._enablement_relay_requests[self.request_id]["status"] = "dispatched"
+
+    def _apply(self, *, write_attempted: bool) -> dict:
+        from types import SimpleNamespace
+
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        result = {
+            "outcome": "ownership_mismatch",
+            "write_attempted": write_attempted,
+            "created_at": "2026-09-24T11:00:00+00:00",
+            "detail": "the project belongs to another account",
+        }
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+            patch.object(WORKER, "_close_enablement_relay_task"),
+            patch.object(WORKER, "_record_enablement_relay_failure") as failure,
+        ):
+            WORKER._apply_enablement_relay_result(
+                request=request,
+                result=result,
+                client=Mock(),
+                task_detail={"task": {"task_id": "task-1"}},
+            )
+            failure.assert_not_called()
+        return self.repository.get_enablement_relay_request(self.request_id)
+
+    def test_ownership_mismatch_closes_without_failure_chain_or_human_takeover(self) -> None:
+        request = self._apply(write_attempted=False)
+        job = self.repository.get_account_reply_job(
+            f"enablement-relay-ownership-mismatch-{self.request_id}"
+        )
+        self.assertIsNotNone(job)
+        self.assertEqual(
+            job["payload"]["reply_intent"], "enablement_appid_ownership_mismatch"
+        )
+        self.assertTrue(job["payload"]["internal_resolution"])
+        self.assertTrue(job["payload"]["close_after_publish"])
+        self.assertNotIn("app_id", job["payload"]["reply_facts"]["known_information"])
+        self.assertIn(
+            self.case["collected_fields"]["app_id"],
+            job["payload"]["reply_facts"]["_forbidden_values"],
+        )
+        self.assertEqual(request["status"], "completed")
+        self.assertEqual(request["suppression_reason"], "ownership_mismatch")
+        case = self.repository.get_account_case(self.case["account_case_id"])
+        self.assertEqual(case["automation_status"], "automation")
+        self.assertEqual(
+            case["automation_context"]["enablement_auto_workflow"]["state"],
+            "ownership_mismatch_archived",
+        )
+        events = [item["event_type"] for item in self.repository._events]
+        self.assertIn("enablement_relay_ownership_mismatch_reply_queued", events)
+        self.assertNotIn("enablement_relay_failure", events)
+
+    def test_ownership_mismatch_does_not_branch_on_write_attempted_or_duplicate(self) -> None:
+        self._apply(write_attempted=True)
+        before = self.repository.get_account_reply_job(
+            f"enablement-relay-ownership-mismatch-{self.request_id}"
+        )
+        self._apply(write_attempted=False)
+        after = self.repository.get_account_reply_job(
+            f"enablement-relay-ownership-mismatch-{self.request_id}"
+        )
+        self.assertEqual(before["job_id"], after["job_id"])
+        self.assertEqual(
+            before["payload"]["automation_delivery_key"],
+            after["payload"]["automation_delivery_key"],
+        )
+
+    def test_apply_failure_after_job_save_keeps_result_pending_for_idempotent_retry(self) -> None:
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        recorded = self.repository.record_enablement_relay_result(
+            request_id=self.request_id,
+            outcome="ownership_mismatch",
+            write_attempted=False,
+            detail="cross-account fixture",
+            readback=None,
+            approval_ref=None,
+            relay_message_id="relay-msg-1",
+            now="2026-09-24T11:00:00+00:00",
+        )
+        self.assertTrue(recorded["winner"])
+        result = recorded["result"]
+        from types import SimpleNamespace
+
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+            patch.object(WORKER, "_close_enablement_relay_task"),
+            patch.object(
+                WORKER.ticket_repository,
+                "mark_enablement_relay_result_applied",
+                side_effect=RuntimeError("crash after reply job save"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "crash after reply job save"):
+                WORKER._apply_enablement_relay_result(
+                    request=request,
+                    result=result,
+                    client=Mock(),
+                    task_detail={"task": {"task_id": "task-1"}},
+                )
+
+        job_id = f"enablement-relay-ownership-mismatch-{self.request_id}"
+        first_job = self.repository.get_account_reply_job(job_id)
+        self.assertIsNotNone(first_job)
+        self.assertEqual(
+            self.repository.get_enablement_relay_result(self.request_id)["applied_status"],
+            "pending",
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_request(self.request_id)["status"],
+            "result_received",
+        )
+
+        # A deferred/replayed apply sees the durable job, marks the result,
+        # and reuses the same idempotency identity without creating another job.
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+            patch.object(WORKER, "_close_enablement_relay_task"),
+        ):
+            WORKER._apply_enablement_relay_result(
+                request=self.repository.get_enablement_relay_request(self.request_id),
+                result=self.repository.get_enablement_relay_result(self.request_id),
+                client=Mock(),
+                task_detail={"task": {"task_id": "task-1"}},
+            )
+        second_job = self.repository.get_account_reply_job(job_id)
+        self.assertEqual(first_job["job_id"], second_job["job_id"])
+        self.assertEqual(
+            first_job["payload"]["automation_delivery_key"],
+            second_job["payload"]["automation_delivery_key"],
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_result(self.request_id)["applied_status"],
+            "applied",
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_request(self.request_id)["status"],
+            "completed",
         )
 
 

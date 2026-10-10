@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T18:12:01Z",
-  "source_base_commit": "ceed7b817f60ac1c1eeac896684a6837285a4322",
-  "registry_digest": "9c4c9375667b6b44a1ce738604fce67bb47c85f6a1d2c9bfcb66b6aa74a423d4",
+  "generated_at": "2026-10-10T18:57:17Z",
+  "source_base_commit": "3c1cfe7e37c8bde8f0407f8c67835ef529cf9019",
+  "registry_digest": "d17d51a27f562ed1be9fee7b4e80630296d0dd3db328f3a49734b9a261184d4b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1399,6 +1399,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 三条真实验证（评审 A 方案，新测试工单 13751/13753）",
           "command": "ScenarioEngine 驱动（zendesk_api 客户回合，驱动脚本为本轮临时件未入库）",
           "result": "A1 知识问句→conversation_followup/knowledge_question→一次公开 RAGFlow 答案（含 docs.agora.io 引用，comment 54037381461396，未新建 relay 申请）；A2 催促→progress_inquiry→绑定申请实际状态答复（enr-AC-13751-v1 保持 dispatched/v1，无加速承诺）；B 优先级请求→conversation_priority_request→真实人工交接（note 54037553482260、回 queue、owner email ok、无公开回复）"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 本地受影响回归",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         },
         {
           "type": "test",
@@ -15752,8 +15764,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "AppID 追问修复：Hermes 会话知识问句 RAG 答复、进度答复与真实人工交接",
       "status": "review",
       "owner": "codex",
-      "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
-      "next_action": "实跑缺陷修复中：not-found 回复 job 缺 internal_resolution 被客户时效门禁取消（13751 实跑发现）；修复部署后一次性重排该回复并验证。",
+      "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。 本轮 r1 修复 ownership_mismatch：跨账号 App ID 作为正常终止结果进入专用幂等 customer reply/solved 链路，不进入 failure 或 human_review；新增 E3_OWNERSHIP 场景并保留 project_not_found 独立合同。",
+      "next_action": "代码验收完成后创建 Draft PR；等待独立验收通过，再按授权发布 Preproduction 并执行 E3_OWNERSHIP 与 E3 运行验收；Production 保持禁止。",
       "acceptance_criteria": [
         "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
         "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
@@ -15811,6 +15823,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 三条真实验证（评审 A 方案，新测试工单 13751/13753）",
           "command": "ScenarioEngine 驱动（zendesk_api 客户回合，驱动脚本为本轮临时件未入库）",
           "result": "A1 知识问句→conversation_followup/knowledge_question→一次公开 RAGFlow 答案（含 docs.agora.io 引用，comment 54037381461396，未新建 relay 申请）；A2 催促→progress_inquiry→绑定申请实际状态答复（enr-AC-13751-v1 保持 dispatched/v1，无加速承诺）；B 优先级请求→conversation_priority_request→真实人工交接（note 54037553482260、回 queue、owner email ok、无公开回复）"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 本地受影响回归",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         }
       ],
       "source_refs": [
@@ -15823,7 +15847,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "created_at": "2026-09-28T00:00:00Z",
-      "updated_at": "2026-09-29T16:10:00Z",
+      "updated_at": "2026-10-11T00:00:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -15849,6 +15873,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-29T16:10:00Z",
           "note": "13751 真实全链实跑（经 p2-179 本地闭环回传 project_not_found 结果）暴露缺陷：not-found 回复 job 到期领取时被 _account_reply_trigger_is_latest 客户消息时效门禁取消——完成链有 internal_resolution=True 绕过该门禁，not-found 分支遗漏。修复补齐标志并加回归断言。"
+        },
+        {
+          "at": "2026-10-11T00:00:00Z",
+          "note": "r1 修复 ownership_mismatch：新增专用 reply intent/Persona 合同、幂等 solved worker 分支、E3_OWNERSHIP 场景与回归夹具；本地受影响套件 188 passed，等待独立验收。"
+        },
+        {
+          "at": "2026-10-11T00:00:00Z",
+          "note": "独立验收 F-OWN-001：修复 ownership_mismatch 先 applied 后落 job 的结果丢失窗口；改为先持久化确定性 reply job，再标记 result applied；异常边界回归证明 pending/result_received 可重试且不重复回复。"
         }
       ]
     },
