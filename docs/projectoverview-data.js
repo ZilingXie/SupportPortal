@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T17:43:18Z",
-  "source_base_commit": "3f6cb65989df2087bdc937035cc5ea01630448c3",
-  "registry_digest": "48c02b963fcb486827578faefeb689bef92db940215a1f82935db03b54d7c0dc",
+  "generated_at": "2026-10-10T17:43:47Z",
+  "source_base_commit": "8adcb5864d3462c652f2462867d6ec780d15b1a7",
+  "registry_digest": "96f877e38a6e4e1b853bf15d32d9869e0991451bdd5dde8c6801dbc138fd28b8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -17613,7 +17613,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-11",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage4。前置=阶段 0-3（main bcbda671）。范围=Slack Review 代码/持久化/Draft 交互链/自动化测试；不开治理开关、不发布 n8n、不发真实业务消息、不部署。交付（分支 codex/weknora-dualwrite-phase4）：v23 schema（六字段：human_decided_by_email/human_decided_slack_user_id/slack_review_event_id/slack_review_status/slack_review_message_ts/slack_review_failure_code，InMemory+PG+静态镜像+版本守卫同步）；resolve_slack_operator（bot token users.info→邮箱，五类失败拒绝：user_not_found/api_failed/empty_email/id_mismatch/bot_message，客户端字段不可覆盖）；可靠通知状态机（knowledge_slack_review.py：确定性 event id=f\"knowledge-review:{promotion_id}\"，queued→delivered/failed/outcome_unknown，source-only 根消息/工单线程回复/频道不匹配拒绝/重试不重复）；knowledge_review_required 入根消息类型；出站消息含来源/判断/证据/正文/target/base_version/promotion/source/candidate；入站 source-only 路径（C5 mention 证据=raw_text 含 \u003c@bot>，C6 channel/thread 绑定，C7 单候选消歧，C4 身份解析失败零状态变更，C8 既有 generation/hash/delivery 状态机，C9 定向操作必带 target+base_version）；decision API 收紧（客户端 operator 一律 422 拒绝；服务端主体=dashboard session 或 automation-api）；n8n Forward Thread Draft（r1HIW8UNuCabiOPn：hermes messages 转发载荷加 raw_text+bot_user_id=U08RVQSJQF2，draft 4ed2c0c3 未发布、active b02f3ed5 未变；改前刷新 active 快照+manifest）。验证：阶段 4 专项 23 项（C1-C10 全矩阵）+ 存量适配（知识 Slack 决策测试加身份桩、API 测试改服务端主体）+PG v23 集成 7 项；全套 17 套件 481 passed/0 failed（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）。",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage4。前置=阶段 0-3（main bcbda671）。范围=Slack Review 代码/持久化/Draft 交互链/自动化测试；不开治理开关、不发布 n8n、不发真实业务消息、不部署。交付（分支 codex/weknora-dualwrite-phase4）：v23 schema（六字段：human_decided_by_email/human_decided_slack_user_id/slack_review_event_id/slack_review_status/slack_review_message_ts/slack_review_failure_code，InMemory+PG+静态镜像+版本守卫同步）；resolve_slack_operator（bot token users.info→邮箱，五类失败拒绝：user_not_found/api_failed/empty_email/id_mismatch/bot_message，客户端字段不可覆盖）；可靠通知状态机（knowledge_slack_review.py：确定性 event id=f\"knowledge-review:{promotion_id}\"，queued→delivered/failed/outcome_unknown，source-only 根消息/工单线程回复/频道不匹配拒绝/重试不重复）；knowledge_review_required 入根消息类型；出站消息含来源/判断/证据/正文/target/base_version/promotion/source/candidate；入站 source-only 路径（C5 mention 证据=raw_text 含 \u003c@bot>，C6 channel/thread 绑定，C7 单候选消歧，C4 身份解析失败零状态变更，C8 既有 generation/hash/delivery 状态机，C9 定向操作必带 target+base_version）；decision API 收紧（客户端 operator 一律 422 拒绝；服务端主体=dashboard session 或 automation-api）；n8n Forward Thread Draft（r1HIW8UNuCabiOPn：hermes messages 转发载荷加 raw_text+bot_user_id=U08RVQSJQF2，draft 4ed2c0c3 未发布、active b02f3ed5 未变；改前刷新 active 快照+manifest）。验证：阶段 4 专项 23 项（C1-C10 全矩阵）+ 存量适配（知识 Slack 决策测试加身份桩、API 测试改服务端主体）+PG v23 集成 7 项；全套 17 套件 482 passed/0 failed（同步 main ceed7b81 后复测）（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）。",
       "next_action": "阶段 4 待独立验收（Draft PR 就绪后）；验收点=C1-C10、v23 镜像三方一致、身份解析五类失败、n8n Draft 快照与 Active 未变、真实 Slack 发送证据=waiting-for-evidence（阶段 6 授权后补齐）。通过后进入阶段 5（页面/API 展示增强）。",
       "acceptance_criteria": [
         "C1 source-only 根线程创建并持久化绑定；失败保留 human_review",
