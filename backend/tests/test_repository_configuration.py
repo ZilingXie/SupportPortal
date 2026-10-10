@@ -2019,8 +2019,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
             _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS,
         )
 
+        # v19 governance-pipeline -> v20 standalone-retry -> v21
+        # investigation-attachments -> v22 knowledge-dualwrite (kept current
+        # on every bump; the assertion had gone stale at v18, failing on
+        # main since v19).
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v18-n8n-summary-trigger"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v22-knowledge-dualwrite"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
@@ -2029,6 +2033,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "2026-single-ai-managed-v14-weknora-promotions",
             "2026-single-ai-managed-v15-weknora-candidate-key",
             "2026-single-ai-managed-v15-weknora-skill-review",
+            "2026-single-ai-managed-v18-n8n-summary-trigger",
+            "2026-single-ai-managed-v19-governance-pipeline",
+            "2026-single-ai-managed-v20-standalone-retry",
+            "2026-single-ai-managed-v21-investigation-attachments",
         ):
             self.assertIn(previous, _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS)
         migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(

@@ -64,6 +64,10 @@ from backend.repositories.weknora_promotion_repository import (
     InMemoryWeKnoraPromotionRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
 )
+from backend.repositories.knowledge_delivery_repository import (
+    InMemoryKnowledgeDeliveryRepositoryMixin,
+    PostgresKnowledgeDeliveryRepositoryMixin,
+)
 from backend.repositories.knowledge_source_repository import (
     InMemoryKnowledgeSourceRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
@@ -1314,8 +1318,13 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v21-investigation-attachments"
+# v22 adds the dual-write phase-2 delivery table: per-target
+# (agent_memory | weknora) knowledge delivery rows keyed by promotion with an
+# independent lease/status machine, external object capture, receipts and
+# readback evidence.
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v22-knowledge-dualwrite"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v21-investigation-attachments",
     "2026-single-ai-managed-v20-standalone-retry",
     "2026-single-ai-managed-v19-governance-pipeline",
     "2026-single-ai-managed-v18-n8n-summary-trigger",
@@ -3185,6 +3194,7 @@ class InMemoryTicketRepository(
     InMemoryHermesCaseRepositoryMixin,
     InMemoryEnablementRelayRepositoryMixin,
     InMemoryWeKnoraPromotionRepositoryMixin,
+    InMemoryKnowledgeDeliveryRepositoryMixin,
     InMemoryKnowledgeSourceRepositoryMixin,
     InMemoryStandaloneKnowledgeRepositoryMixin,
 ):
@@ -8484,6 +8494,7 @@ class PostgresTicketRepository(
     PostgresHermesCaseRepositoryMixin,
     PostgresEnablementRelayRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
+    PostgresKnowledgeDeliveryRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
     PostgresStandaloneKnowledgeRepositoryMixin,
 ):
@@ -12938,6 +12949,7 @@ class PostgresTicketRepository(
                 self._initialize_hermes_schema(cur)
                 self._initialize_enablement_relay_schema(cur)
                 self._initialize_weknora_schema(cur)
+                self._initialize_knowledge_delivery_schema(cur)
                 self._initialize_knowledge_source_schema(cur)
                 self._initialize_standalone_knowledge_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)

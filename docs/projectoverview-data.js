@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T07:21:21Z",
-  "source_base_commit": "b8e51af745f5226903aac89831438e9443b2713c",
-  "registry_digest": "276ab1704731d2113bbbbef491b1efad7dd6e63d2390006df45e494f9995ecaa",
+  "generated_at": "2026-10-10T08:55:47Z",
+  "source_base_commit": "38e553eb86d186025c375426d4e937bdaae745b6",
+  "registry_digest": "06725ac0c002a998d0f78bdcc6329be0c44f63de41abbc9551a1716403e3130a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5407,6 +5407,98 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 3,
+      "done_count": 0,
+      "blocked_count": 0
+    },
+    {
+      "schema_version": 2,
+      "function_id": "weknora-dualwrite-governance",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "title": "WeKnora 并行双写与人工治理链（阶段二）",
+      "goal": "Preproduction 上由 SupportPortal 作为唯一双写编排者：n8n 只投来源快照，SupportPortal 完成 Summary、AI Review、自动双写或 Slack 人工 Review，并分别向 AgentMemory 与 WeKnora 两个目标做独立 delivery（幂等、版本保护、回读对账）；Hermes 全程继续读取 AgentMemory。",
+      "acceptance_criteria": [
+        "两条 n8n 链只投递 source snapshot，不再直写任一知识库",
+        "候选级唯一键（source_type+source_id+source_version+candidate_type+content_hash）下重复投递只复用原候选",
+        "agent_memory 与 weknora 两个 delivery 目标状态独立，单侧失败只补失败目标",
+        "自动双写仅限 new+质量证据完整+无重复+双侧读取成功+版本有效+哈希校验通过",
+        "merge/replace/supplement 与证据不足/检索失败/版本变化/超时未知等一律进入人工 Review，不得降级自动写入",
+        "source-only 候选在知识审核频道自动创建 Slack 根线程并可在线程内完成决策",
+        "Slack 命令多候选歧义拒绝、操作人来自已验证 Slack 身份、通知失败不丢候选",
+        "页面/API 可处理 Slack 失败、outcome_unknown 与双写部分失败",
+        "六类独立开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知）默认关闭部署",
+        "Hermes AgentMemory 读取无回归，WeKnora Web 与检索链持续正常"
+      ],
+      "evidence": [
+        {
+          "type": "document",
+          "label": "阶段 0 冻结基线（只读采集）",
+          "command": "n8n MCP get_workflow_details ×2 + aws ecs/ssm describe（只读）+ 源码审读（main d958c66f）",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md：n8n 两链 active 版本钉定（CSD b5cf6d6b-34b0-4e64-9d40-8e7c50512266 / Solved 1f544830-fc6d-4212-bbca-bd4b84d936c1，versionId=activeVersionId 无发散草稿，仓库快照与线上一致）；hermes:45 容器结构与环境、WeKnora 集群五服务 ACTIVE（td:4）；治理开关线上全关；SSM 无 SP→WeKnora 客户端参数（缺口）；差距清单八项与历史登记收敛（p2-182/183/186/188）"
+        },
+        {
+          "type": "document",
+          "label": "计划正本入仓（r1）",
+          "command": "git add docs/plans/weknora-dualwrite-phase2.md",
+          "result": "用户批准的阶段二计划原文登记为 docs/plans/weknora-dualwrite-phase2.md（修订 r1），作为后续阶段实施与验收的合同正本"
+        },
+        {
+          "type": "test",
+          "label": "阶段 1 知识区全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "268 passed / 0 failed（新测试 56：适配器失败模型 13、delivery 仓库 InMemory 8、编排门禁/drain/互锁 15、PG 集成 5、API 契约 2，存量套件 env 补 KNOWLEDGE_* 开关后全绿）；test_worker.py 14 失败=stash 复核确认的 p2-187 已披露存量"
+        },
+        {
+          "type": "document",
+          "label": "阶段 1 变更清单",
+          "command": "git diff --stat 1d1a5175..HEAD（分支 codex/weknora-dualwrite-phase2）",
+          "result": "新文件：knowledge_dual_write.py/agent_memory_delivery.py/knowledge_delivery_repository.py+四套测试；修改：ticket_repository（v22+mixin）、weknora_promotion_repository（decide/invalidate 级联）、worker（drain+互锁）、automation_ecs_api（intake 开关+deliveries 端点）、hermes_knowledge_workflow（summary/review 开关）；docs/rag_change_log.md 已记 2026-10-10 条目"
+        },
+        {
+          "type": "test",
+          "label": "修复轮全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "276 passed / 0 failed（较首轮 +10 回归：B1 worker 拒绝 1、B2 边界跳过+approve 只补启用目标 2、B3 amfp 三态 3、B4 invalidated 不容假成功 1、B5 主开关 1、其余为既有用例随契约更新）；validate_workflow_snapshots.py 通过（15 published+1 divergent+53 redacted）"
+        },
+        {
+          "type": "document",
+          "label": "首轮证据更正披露",
+          "command": "（验收方复跑）",
+          "result": "首轮登记 268 passed/0 failed 有误；验收方同命令=267 passed/1 failed，失败项为根区 main 亦失败的存量 Slack published snapshot 缺失，非本 diff 引入；登记以本条更正为准"
+        },
+        {
+          "type": "test",
+          "label": "修复轮 2 全套回归（含隔离 PostgreSQL 集成与 schema 镜像守卫）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （知识区 13 套件 + test_repository_configuration）",
+          "result": "409 passed / 0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测；同步前旧基线为 408，本条为更正后计数）（新增回归 5：R2-1 禁用目标等待且候选不闭环+复开补写、R2-2 哈希重算+文件名一致+冲突拒绝（InMemory+PG 双侧）、R2-3 镜像含表与索引；另修复 test_case_llm_usage_source_migration_is_versioned_and_mirrored 在 main 上自 v19 起的存量失败（断言停 v18，更新至 v22 并全查 v18-v21 兼容链）"
+        },
+        {
+          "type": "document",
+          "label": "同步 origin/main 与计数更正（第三轮验收前置）",
+          "command": "git merge origin/main（合并提交 9ba63834，main 侧父提交 2da4332d，仅 projectoverview-data.js 冲突→取 main 侧后脚本重生+校验过）→ 重跑完整回归",
+          "result": "合并 9ba63834；p2-193（并行线程）/p2-194 双登记共存无损；完整回归 409 passed / 0 failed（合并带入 main 新增用例 1 项，与验收方计数一致）；此前登记的 408 为同步前旧基线计数，已统一更正为 409"
+        },
+        {
+          "type": "document",
+          "label": "第三轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
+        }
+      ],
+      "source_refs": [
+        "backend/automation_ecs_api.py",
+        "backend/services/hermes_knowledge_workflow.py",
+        "backend/services/knowledge_standalone_workflow.py",
+        "backend/services/weknora_client.py",
+        "backend/services/weknora_promotion_adapter.py",
+        "backend/services/engineer_slack.py",
+        "backend/services/automation_hermes_slack_actions.py",
+        "docs/plans/weknora-dualwrite-phase2.md",
+        "docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md"
+      ],
+      "legacy_ids": [],
+      "status": "active",
+      "task_count": 1,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -17245,6 +17337,82 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-194",
+      "title": "WeKnora 并行双写与人工治理链（阶段二）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-dualwrite-governance",
+      "created_at": "2026-10-10",
+      "updated_at": "2026-10-10",
+      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。【修复轮 2 2026-10-10（第二轮验收三阻断后）】R2-1 人工批准必建双目标 delivery 行（禁用目标=queued 等待、执行边界零领取、候选不得单目标闭环；复开开关后自动补写完成）；R2-2 批准修改正文后重算 content_hash（InMemory+PG 双侧；AgentMemory 文件名随新哈希；promotion_id 保持候选槽稳定身份；同源三元组哈希冲突时 approve 拒绝并报错，PG 侧靠唯一索引 UniqueViolation→422）；R2-3 backend/sql/ticket_storage.sql 镜像补 support_knowledge_deliveries 表+双索引；并修复该镜像版本守卫自 v19 起失修的存量失败（断言更新至 v22+历史链 v18-v21 全查）。实测=知识区+repository_configuration 全套 409 passed/0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测，含 PG 集成；同步前旧基线 408 已更正）。【第三轮验收通过 2026-10-10】范围=阶段 0+阶段 1 代码及 R2 修复轮（HEAD 38e553eb；409/0 复验通过、MERGEABLE/CLEAN、计数更正确认；非阻断措辞 0dff3b36→2da4332d 已按验收方建议修正）。本通过不含阶段二整体完成（阶段 2-6 未实施）。",
+      "next_action": "阶段 0+1 代码验收通过，PR #1453 转 Ready 并 finalize 合入 main；运行态未部署（状态=已合并，运行验证未完成——部署属阶段 6 另行授权）。下一步=阶段 2 n8n source-only 改造（复用 p2-183 快照合同，发布前刷新 active/draft 快照+manifest+校验器）→阶段 3 Review 双侧检索输入→阶段 4 Slack 根线程与 operator 身份→阶段 5 页面→阶段 6 Preproduction 十步发布（部署前置=AGENT_MEMORY_WIKI_* SSM 参数+worker task def 注入+六开关显式 0）。",
+      "acceptance_criteria": [
+        "阶段二完成条件十条全部满足（计划 r1 第十节）：两条 n8n 链仅投快照、SP 唯一双写编排者、new 高质量无重复候选双写成功、merge/replace/supplement 进 Slack 人工 Review、source-only 候选建审核线程、页面/API 兜底、部分失败与超时恢复有效、Hermes AgentMemory 无回归、WeKnora Web/检索正常、观察期无重复写入/旧版本覆盖/审计缺失",
+        "验证矩阵十六场景全过（计划 r1 第八节），证据含 n8n execution ID、source receipt、Summary/Review session+run、candidate ID、内容哈希、Slack channel/thread、人工决定、两目标独立状态与外部 ID/回读",
+        "六独立开关默认关闭部署，回滚不删除 AgentMemory 或 WeKnora 数据"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "label": "阶段 0 冻结基线（只读采集）",
+          "command": "n8n MCP get_workflow_details ×2 + aws ecs/ssm describe（只读）+ 源码审读（main d958c66f）",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md：n8n 两链 active 版本钉定（CSD b5cf6d6b-34b0-4e64-9d40-8e7c50512266 / Solved 1f544830-fc6d-4212-bbca-bd4b84d936c1，versionId=activeVersionId 无发散草稿，仓库快照与线上一致）；hermes:45 容器结构与环境、WeKnora 集群五服务 ACTIVE（td:4）；治理开关线上全关；SSM 无 SP→WeKnora 客户端参数（缺口）；差距清单八项与历史登记收敛（p2-182/183/186/188）"
+        },
+        {
+          "type": "document",
+          "label": "计划正本入仓（r1）",
+          "command": "git add docs/plans/weknora-dualwrite-phase2.md",
+          "result": "用户批准的阶段二计划原文登记为 docs/plans/weknora-dualwrite-phase2.md（修订 r1），作为后续阶段实施与验收的合同正本"
+        },
+        {
+          "type": "test",
+          "label": "阶段 1 知识区全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "268 passed / 0 failed（新测试 56：适配器失败模型 13、delivery 仓库 InMemory 8、编排门禁/drain/互锁 15、PG 集成 5、API 契约 2，存量套件 env 补 KNOWLEDGE_* 开关后全绿）；test_worker.py 14 失败=stash 复核确认的 p2-187 已披露存量"
+        },
+        {
+          "type": "document",
+          "label": "阶段 1 变更清单",
+          "command": "git diff --stat 1d1a5175..HEAD（分支 codex/weknora-dualwrite-phase2）",
+          "result": "新文件：knowledge_dual_write.py/agent_memory_delivery.py/knowledge_delivery_repository.py+四套测试；修改：ticket_repository（v22+mixin）、weknora_promotion_repository（decide/invalidate 级联）、worker（drain+互锁）、automation_ecs_api（intake 开关+deliveries 端点）、hermes_knowledge_workflow（summary/review 开关）；docs/rag_change_log.md 已记 2026-10-10 条目"
+        },
+        {
+          "type": "test",
+          "label": "修复轮全套回归（含隔离 PostgreSQL 集成）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest test_agent_memory_delivery.py test_knowledge_delivery_repository.py test_knowledge_dual_write.py test_knowledge_delivery_postgres.py test_knowledge_source_repository.py test_hermes_knowledge_workflow.py test_knowledge_standalone_workflow.py test_weknora_promotion_worker.py test_weknora_promotion_adapter.py test_weknora_client.py test_weknora_promotion_postgres.py test_hermes_slack_knowledge_review.py test_automation_ecs_deploy.py",
+          "result": "276 passed / 0 failed（较首轮 +10 回归：B1 worker 拒绝 1、B2 边界跳过+approve 只补启用目标 2、B3 amfp 三态 3、B4 invalidated 不容假成功 1、B5 主开关 1、其余为既有用例随契约更新）；validate_workflow_snapshots.py 通过（15 published+1 divergent+53 redacted）"
+        },
+        {
+          "type": "document",
+          "label": "首轮证据更正披露",
+          "command": "（验收方复跑）",
+          "result": "首轮登记 268 passed/0 failed 有误；验收方同命令=267 passed/1 failed，失败项为根区 main 亦失败的存量 Slack published snapshot 缺失，非本 diff 引入；登记以本条更正为准"
+        },
+        {
+          "type": "test",
+          "label": "修复轮 2 全套回归（含隔离 PostgreSQL 集成与 schema 镜像守卫）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest （知识区 13 套件 + test_repository_configuration）",
+          "result": "409 passed / 0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测；同步前旧基线为 408，本条为更正后计数）（新增回归 5：R2-1 禁用目标等待且候选不闭环+复开补写、R2-2 哈希重算+文件名一致+冲突拒绝（InMemory+PG 双侧）、R2-3 镜像含表与索引；另修复 test_case_llm_usage_source_migration_is_versioned_and_mirrored 在 main 上自 v19 起的存量失败（断言停 v18，更新至 v22 并全查 v18-v21 兼容链）"
+        },
+        {
+          "type": "document",
+          "label": "同步 origin/main 与计数更正（第三轮验收前置）",
+          "command": "git merge origin/main（合并提交 9ba63834，main 侧父提交 2da4332d，仅 projectoverview-data.js 冲突→取 main 侧后脚本重生+校验过）→ 重跑完整回归",
+          "result": "合并 9ba63834；p2-193（并行线程）/p2-194 双登记共存无损；完整回归 409 passed / 0 failed（合并带入 main 新增用例 1 项，与验收方计数一致）；此前登记的 408 为同步前旧基线计数，已统一更正为 409"
+        },
+        {
+          "type": "document",
+          "label": "第三轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
         }
       ]
     },

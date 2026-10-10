@@ -3057,6 +3057,31 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
     from backend.services.hermes_knowledge_workflow import (
         weknora_promotion_generation_current,
     )
+    from backend.services.knowledge_dual_write import knowledge_dualwrite_worker_enabled
+
+    # Exclusive ownership, bidirectional (review B1): when the dual-write
+    # worker switch is on, the legacy single-target path must not run AT ALL —
+    # a fresh candidate has no delivery rows yet, so a row-level skip could
+    # never close that window while this poller step runs first.  Both
+    # switches on means NEITHER worker runs (fail-closed misconfiguration).
+    if knowledge_dualwrite_worker_enabled():
+        LOGGER.error(
+            "legacy weknora promotion drain disabled: KNOWLEDGE_DUALWRITE_WORKER_ENABLED "
+            "is on (the two workers own the same candidates exclusively)"
+        )
+        return 0
+
+    # Defense in depth: a candidate that already has delivery rows is owned
+    # by the dual-target worker — the legacy single-target path must never
+    # claim it, or the WeKnora side would be written twice.
+    try:
+        dual_owned = {
+            str(row.get("promotion_id") or "")
+            for row in ticket_repository.list_knowledge_deliveries()
+            if isinstance(row, dict)
+        }
+    except Exception:  # noqa: BLE001 - no delivery surface -> no dual ownership
+        dual_owned = set()
 
     adapter = WeKnoraPromotionAdapter(WeKnoraClient())
     native_state_store: Any = None
@@ -3065,6 +3090,8 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
         now = datetime.now(timezone.utc)
         status = str(promotion.get("status") or "")
         if processed >= limit or status not in {"queued", "active"}:
+            continue
+        if str(promotion.get("promotion_id") or "") in dual_owned:
             continue
         if status == "active" and str(promotion.get("lease_expires_at") or "") > now.isoformat():
             continue
@@ -3852,6 +3879,22 @@ def process_account_automation_once() -> None:
     _drain_hermes_knowledge_tasks(limit=5)
     _drain_standalone_knowledge_tasks(limit=5)
     _drain_weknora_promotions(limit=20)
+    _drain_knowledge_dual_write(limit=20)
+
+
+def _drain_knowledge_dual_write(*, limit: int = 20) -> int:
+    """Dual-write phase 2: per-target delivery worker (all switches off by
+    default; the drain is a no-op until KNOWLEDGE_DUALWRITE_WORKER_ENABLED
+    and the master governance switch are both on)."""
+    from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+    from backend.services.knowledge_dual_write import drain_knowledge_dual_write
+
+    return drain_knowledge_dual_write(
+        ticket_repository,
+        limit=limit,
+        agent_memory_client=AgentMemoryWikiClient(),
+        weknora_client=WeKnoraClient(),
+    )
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:

@@ -751,6 +751,36 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_support_weknora_promotions_candidate_uniqu
 CREATE INDEX IF NOT EXISTS idx_support_weknora_promotions_claim
     ON support_weknora_promotions (status, created_at, promotion_id);
 
+-- v22 (dual-write phase 2): one delivery row per (candidate promotion,
+-- target); AgentMemory and WeKnora never share a success state.
+CREATE TABLE IF NOT EXISTS support_knowledge_deliveries (
+    delivery_id TEXT PRIMARY KEY,
+    promotion_id TEXT NOT NULL REFERENCES support_weknora_promotions(promotion_id) ON DELETE CASCADE,
+    target TEXT NOT NULL CHECK (target IN ('agent_memory', 'weknora')),
+    status TEXT NOT NULL CHECK (status IN (
+        'queued', 'active', 'accepted', 'failed', 'outcome_unknown', 'invalidated'
+    )),
+    external_object_id TEXT,
+    external_version TEXT,
+    idempotency_key TEXT NOT NULL,
+    operation_receipt JSONB,
+    readback_result JSONB,
+    failure_code TEXT,
+    failure_detail TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    owner_token TEXT,
+    claimed_at TIMESTAMPTZ,
+    lease_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_knowledge_deliveries_claim
+    ON support_knowledge_deliveries (status, created_at, delivery_id);
+
+CREATE INDEX IF NOT EXISTS idx_support_knowledge_deliveries_promotion
+    ON support_knowledge_deliveries (promotion_id);
+
 CREATE TABLE IF NOT EXISTS support_hermes_summary_tasks (
     summary_task_id TEXT PRIMARY KEY,
     engineer_case_id TEXT NOT NULL REFERENCES support_engineer_cases(engineer_case_id) ON DELETE CASCADE,

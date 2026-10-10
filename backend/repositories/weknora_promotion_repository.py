@@ -165,6 +165,15 @@ def normalize_weknora_promotion_task(task: dict[str, Any], *, now_value: str) ->
     return normalized
 
 
+def _approved_candidate_hash(payload: dict[str, Any]) -> str:
+    """Recompute the candidate payload hash with the SAME helper the enqueue
+    bridge used (review R2-2): a human-approved body must never keep the
+    pre-edit hash."""
+    from backend.services.hermes_case_workflow import _weknora_candidate_hash
+
+    return _weknora_candidate_hash(payload)
+
+
 def _normalize_human_resolution(
     resolution: dict[str, Any] | None, payload: dict[str, Any]
 ) -> dict[str, Any]:
@@ -195,6 +204,12 @@ def _normalize_human_resolution(
         value = str(resolution.get(field) or "").strip()
         if value:
             updated[field] = value
+    # Dual-write phase 2 (review B3): the AgentMemory target anchors targeted
+    # writes on its own state fingerprint (amfp:...), separate from the
+    # WeKnora-facing base_version the review evidence produced.
+    agent_memory_base = str(resolution.get("agent_memory_base_version") or "").strip()
+    if agent_memory_base:
+        updated["agent_memory_base_version"] = agent_memory_base
     if resolution.get("importance") is not None:
         try:
             updated["importance"] = int(resolution["importance"])
@@ -312,6 +327,7 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                     "queued", "active", "human_review", "failed", "outcome_unknown",
                 }:
                     row.update(status="invalidated", lease_expires_at=None, updated_at=invalidated_at)
+                    self._cascade_invalidate_deliveries(str(row.get("promotion_id") or ""), invalidated_at=invalidated_at)
                     invalidated += 1
             return invalidated
 
@@ -363,11 +379,34 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 return None
             next_payload = row["candidate_payload"]
             next_decision = row["decision"]
+            next_hash = row["content_hash"]
             if decision == "approve":
                 next_payload = _normalize_human_resolution(resolution, row["candidate_payload"])
                 next_decision = next_payload["decision"]
+                # Review round 2 fix (R2-2): a human-edited body must re-earn
+                # its content hash — the stored hash drives the AgentMemory
+                # content-addressed filename and the candidate-level
+                # consistency checks, so it can never keep the pre-edit
+                # value.  promotion_id stays the stable candidate-slot
+                # identity minted at enqueue.
+                next_hash = _approved_candidate_hash(next_payload)
+                for other_id, other in self._weknora_promotion_state().items():
+                    if other_id == str(promotion_id) or not isinstance(other, dict):
+                        continue
+                    if (
+                        str(other.get("source_type") or "") == str(row["source_type"] or "")
+                        and str(other.get("source_id") or "") == str(row["source_id"] or "")
+                        and str(other.get("source_version") or "") == str(row["source_version"] or "")
+                        and str(other.get("candidate_type") or "") == str(row["candidate_type"] or "")
+                        and str(other.get("content_hash") or "") == next_hash
+                    ):
+                        raise ValueError(
+                            "approved content collides with another candidate's content hash "
+                            "for the same source version"
+                        )
                 row["candidate_payload"] = copy.deepcopy(next_payload)
                 row["decision"] = next_decision
+                row["content_hash"] = next_hash
                 # Review round 3, R3-4: drop the parked attempt's recorded
                 # WeKnora object/version — on re-execution the recovery
                 # reconcile would compare the OLD stored body with the
@@ -386,7 +425,31 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 human_decided_at=decided_at,
                 updated_at=decided_at,
             )
+            # Dual-write phase 2: an approval repairs ONLY the failed/unknown
+            # targets (accepted deliveries are never re-executed); a reject
+            # retires every non-terminal delivery of the candidate.
+            if decision == "approve":
+                self._cascade_requeue_deliveries(
+                    str(row.get("promotion_id") or ""), requeued_at=decided_at,
+                    reason="human approve",
+                )
+            else:
+                self._cascade_invalidate_deliveries(
+                    str(row.get("promotion_id") or ""), invalidated_at=decided_at
+                )
             return copy.deepcopy(row)
+
+    def _cascade_requeue_deliveries(self, promotion_id: str, *, requeued_at: str, reason: str) -> int:
+        cascade = getattr(self, "_requeue_candidate_deliveries_locked", None)
+        if not callable(cascade):
+            return 0
+        return cascade(promotion_id, requeued_at=requeued_at, reason=reason)
+
+    def _cascade_invalidate_deliveries(self, promotion_id: str, *, invalidated_at: str) -> int:
+        cascade = getattr(self, "_invalidate_candidate_deliveries_locked", None)
+        if not callable(cascade):
+            return 0
+        return cascade(promotion_id, invalidated_at=invalidated_at)
 
 
 _WEKNORA_PROMOTION_TABLE = "support_weknora_promotions"
@@ -725,11 +788,17 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s
                         WHERE engineer_case_id=%s
                         AND status IN ('queued','active','human_review','failed','outcome_unknown')
+                        RETURNING promotion_id
                         """
                     ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
                     (invalidated_at, engineer_case_id),
                 )
-                return cur.rowcount
+                affected = [str(record[0]) for record in cur.fetchall()]
+                for promotion_id in affected:
+                    self._cascade_deliveries_cur(
+                        cur, promotion_id, action="invalidate", timestamp=invalidated_at
+                    )
+                return len(affected)
 
         return self._run_with_connection_retry("invalidate_weknora_promotions_for_case", operation)
 
@@ -790,40 +859,67 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 stored_payload = _json_value(record[0]) or {}
                 next_decision = str(record[1] or "")
                 next_payload = stored_payload
+                # Review round 2 fix (R2-2): a human-edited body re-earns its
+                # content hash (drives the AgentMemory content-addressed
+                # filename and candidate consistency); promotion_id keeps the
+                # stable candidate-slot identity minted at enqueue.
+                next_hash = None
                 clear_object = False
                 if decision == "approve":
                     next_payload = _normalize_human_resolution(resolution, stored_payload)
                     next_decision = next_payload["decision"]
+                    next_hash = _approved_candidate_hash(next_payload)
                     clear_object = True
-                cur.execute(
-                    sql.SQL(
-                        """
-                        UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
-                        lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
-                        human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s,
-                        weknora_object_id=%s, weknora_version=%s
-                        WHERE promotion_id=%s AND status='human_review'
-                        RETURNING promotion_id
-                        """
-                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
-                    (
-                        next_status,
-                        "approved" if decision == "approve" else "rejected",
-                        detail or None,
-                        decided_at,
-                        decided_at,
-                        next_decision,
-                        Json(next_payload),
-                        # Review round 3, R3-4: clear the parked attempt's
-                        # recorded object/version so the approved write is not
-                        # re-parked by the recovery reconcile.
-                        None if clear_object else record[2] if len(record) > 2 else None,
-                        None if clear_object else record[3] if len(record) > 3 else None,
-                        promotion_id,
-                    ),
-                )
+                try:
+                    cur.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {} SET status=%s, owner_token=NULL, claimed_at=NULL,
+                            lease_expires_at=NULL, human_decision=%s, human_decision_detail=%s,
+                            human_decided_at=%s, updated_at=%s, decision=%s, candidate_payload=%s,
+                            content_hash=COALESCE(%s, content_hash),
+                            weknora_object_id=%s, weknora_version=%s
+                            WHERE promotion_id=%s AND status='human_review'
+                            RETURNING promotion_id
+                            """
+                        ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                        (
+                            next_status,
+                            "approved" if decision == "approve" else "rejected",
+                            detail or None,
+                            decided_at,
+                            decided_at,
+                            next_decision,
+                            Json(next_payload),
+                            next_hash,
+                            # Review round 3, R3-4: clear the parked attempt's
+                            # recorded object/version so the approved write is not
+                            # re-parked by the recovery reconcile.
+                            None if clear_object else record[2] if len(record) > 2 else None,
+                            None if clear_object else record[3] if len(record) > 3 else None,
+                            promotion_id,
+                        ),
+                    )
+                except psycopg.errors.UniqueViolation as exc:
+                    # The approved body now hashes to a 5-tuple another
+                    # candidate of the same source version already owns —
+                    # refuse the decision instead of silently merging the two.
+                    raise ValueError(
+                        "approved content collides with another candidate's content hash "
+                        "for the same source version"
+                    ) from exc
                 if cur.fetchone() is None:
                     return None
+                # Dual-write phase 2, in the SAME transaction: an approval
+                # repairs only the failed/unknown targets (accepted deliveries
+                # are never re-executed); a reject retires every non-terminal
+                # delivery so a rejected candidate can never be claimed and
+                # written by the dual-write worker afterwards.
+                self._cascade_deliveries_cur(
+                    cur, promotion_id,
+                    action="requeue" if decision == "approve" else "invalidate",
+                    timestamp=decided_at,
+                )
                 return {
                     "promotion_id": promotion_id,
                     "status": next_status,
@@ -831,6 +927,58 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 }
 
         return self._run_with_connection_retry("decide_weknora_promotion", operation)
+
+    def _cascade_deliveries_cur(
+        self, cur: psycopg.Cursor[Any], promotion_id: str, *, action: str, timestamp: str
+    ) -> int:
+        """Cascade a promotion decision to its delivery rows (same transaction).
+
+        Silently skips when the delivery table does not exist yet (legacy
+        standalone contexts that only bootstrap the promotion schema).
+        """
+        from backend.repositories.knowledge_delivery_repository import (
+            _KNOWLEDGE_DELIVERY_TABLE,
+        )
+
+        cur.execute(
+            "SELECT to_regclass(%s)",
+            (f"{self._schema}.{_KNOWLEDGE_DELIVERY_TABLE}",),
+        )
+        if cur.fetchone()[0] is None:
+            return 0
+        if action == "requeue":
+            # Review B2: only targets whose delivery switch is currently
+            # enabled are repaired; a disabled target never re-enters
+            # execution.  Invalidate is NOT switch-gated — retiring rows is
+            # always safe.
+            from backend.services.knowledge_dual_write import enabled_delivery_targets
+
+            enabled = enabled_delivery_targets()
+            if not enabled:
+                return 0
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE {} SET status='queued', owner_token=NULL, claimed_at=NULL,
+                    lease_expires_at=NULL, failure_detail=%s, updated_at=%s
+                    WHERE promotion_id=%s AND status IN ('failed','outcome_unknown')
+                    AND target = ANY(%s)
+                    """
+                ).format(sql.Identifier(self._schema, _KNOWLEDGE_DELIVERY_TABLE)),
+                ("requeued: human approve", timestamp, promotion_id, enabled),
+            )
+        else:
+            cur.execute(
+                sql.SQL(
+                    """
+                    UPDATE {} SET status='invalidated', lease_expires_at=NULL, updated_at=%s
+                    WHERE promotion_id=%s
+                    AND status IN ('queued','active','failed','outcome_unknown')
+                    """
+                ).format(sql.Identifier(self._schema, _KNOWLEDGE_DELIVERY_TABLE)),
+                (timestamp, promotion_id),
+            )
+        return cur.rowcount
 
 
 def _json_value(value: Any) -> Any:

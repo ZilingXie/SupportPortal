@@ -142,6 +142,10 @@ def knowledge_workflow_active() -> bool:
     """The pipeline only runs against the real Hermes case workflow + gateway."""
     if not knowledge_governance_enabled():
         return False
+    from backend.services.knowledge_dual_write import knowledge_summary_review_enabled
+
+    if not knowledge_summary_review_enabled():
+        return False
     if hermes_workflow_mode() != "real":
         return False
     return HermesAgentSettings.from_env().configured()
