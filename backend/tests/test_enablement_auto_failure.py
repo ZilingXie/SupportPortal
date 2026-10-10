@@ -349,6 +349,86 @@ class RelayOwnershipMismatchReplyTests(unittest.TestCase):
             after["payload"]["automation_delivery_key"],
         )
 
+    def test_apply_failure_after_job_save_keeps_result_pending_for_idempotent_retry(self) -> None:
+        request = self.repository.get_enablement_relay_request(self.request_id)
+        recorded = self.repository.record_enablement_relay_result(
+            request_id=self.request_id,
+            outcome="ownership_mismatch",
+            write_attempted=False,
+            detail="cross-account fixture",
+            readback=None,
+            approval_ref=None,
+            relay_message_id="relay-msg-1",
+            now="2026-09-24T11:00:00+00:00",
+        )
+        self.assertTrue(recorded["winner"])
+        result = recorded["result"]
+        from types import SimpleNamespace
+
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+            patch.object(WORKER, "_close_enablement_relay_task"),
+            patch.object(
+                WORKER.ticket_repository,
+                "mark_enablement_relay_result_applied",
+                side_effect=RuntimeError("crash after reply job save"),
+            ),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "crash after reply job save"):
+                WORKER._apply_enablement_relay_result(
+                    request=request,
+                    result=result,
+                    client=Mock(),
+                    task_detail={"task": {"task_id": "task-1"}},
+                )
+
+        job_id = f"enablement-relay-ownership-mismatch-{self.request_id}"
+        first_job = self.repository.get_account_reply_job(job_id)
+        self.assertIsNotNone(first_job)
+        self.assertEqual(
+            self.repository.get_enablement_relay_result(self.request_id)["applied_status"],
+            "pending",
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_request(self.request_id)["status"],
+            "result_received",
+        )
+
+        # A deferred/replayed apply sees the durable job, marks the result,
+        # and reuses the same idempotency identity without creating another job.
+        with (
+            patch.object(WORKER, "ticket_repository", self.repository),
+            patch(
+                "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                return_value=SimpleNamespace(ticket_status="open"),
+            ),
+            patch.object(WORKER, "_close_enablement_relay_task"),
+        ):
+            WORKER._apply_enablement_relay_result(
+                request=self.repository.get_enablement_relay_request(self.request_id),
+                result=self.repository.get_enablement_relay_result(self.request_id),
+                client=Mock(),
+                task_detail={"task": {"task_id": "task-1"}},
+            )
+        second_job = self.repository.get_account_reply_job(job_id)
+        self.assertEqual(first_job["job_id"], second_job["job_id"])
+        self.assertEqual(
+            first_job["payload"]["automation_delivery_key"],
+            second_job["payload"]["automation_delivery_key"],
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_result(self.request_id)["applied_status"],
+            "applied",
+        )
+        self.assertEqual(
+            self.repository.get_enablement_relay_request(self.request_id)["status"],
+            "completed",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

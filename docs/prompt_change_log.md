@@ -5,6 +5,7 @@
 - 行为：ownership mismatch 走单条幂等 customer reply job（`internal_resolution=true`、`close_after_publish=true`）并按现有 Zendesk solved 链路结案；不发送 failure email、不添加 failure private note、不设置 `human_review_required`。`project_not_found` 与其他 relay outcome 合同保持独立。
 - 安全：回复事实只保留可见的 Media Relay 名称，App ID/邮箱进入 forbidden-value guard；validator 拒绝 enablement、人工跟进、SLA 或内部配置泄露。
 - 验证：`test_automation_persona.py` ownership intent 合同/Prompt 脱敏用例；`test_enablement_auto_failure.py` ownership mismatch 双 `write_attempted` 分支、幂等、状态和无失败链断言；E3 新增 `E3_OWNERSHIP` 终止场景，原 E3 继续验证 `project_not_found`。Preproduction 发布与真实业务验证待代码验收后执行。
+- r1 修复轮：reply job 持久化成功后才标记 relay result `applied`；标记前进程中断时保留 `pending/result_received`，deferred/replay 复用同一 job/delivery key；缺失上下文保持可重试，人类接管只保存 evidence 不夺回 ownership。
 
 ## 2026-10-10 - Review bundle gains the AgentMemory retrieval surface (p2-194 stage 3)
 

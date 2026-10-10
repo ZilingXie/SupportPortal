@@ -68,7 +68,7 @@
       "type": "test",
       "label": "ownership mismatch r1 本地受影响回归",
       "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
-      "result": "188 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+      "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
     }
   ],
   "source_refs": [
@@ -111,6 +111,10 @@
     {
       "at": "2026-10-11T00:00:00Z",
       "note": "r1 修复 ownership_mismatch：新增专用 reply intent/Persona 合同、幂等 solved worker 分支、E3_OWNERSHIP 场景与回归夹具；本地受影响套件 188 passed，等待独立验收。"
+    },
+    {
+      "at": "2026-10-11T00:00:00Z",
+      "note": "独立验收 F-OWN-001：修复 ownership_mismatch 先 applied 后落 job 的结果丢失窗口；改为先持久化确定性 reply job，再标记 result applied；异常边界回归证明 pending/result_received 可重试且不重复回复。"
     }
   ]
 }

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T18:41:34Z",
-  "source_base_commit": "6600e4b8765198f6daca491dd54e94c09c90f58a",
-  "registry_digest": "ab9ede4a3407dffad236a21bb5810a816e00dddf3f20311648cadbaef94e3702",
+  "generated_at": "2026-10-10T18:55:11Z",
+  "source_base_commit": "21887811adf841b03d40875a54fac0eb5a34688c",
+  "registry_digest": "cee5056308da7fbe4604a01ed47844d255bf5f3b9cdc724a2e535ac150480b74",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1404,7 +1404,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ownership mismatch r1 本地受影响回归",
           "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
-          "result": "188 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
         },
         {
           "type": "test",
@@ -15822,7 +15822,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "ownership mismatch r1 本地受影响回归",
           "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
-          "result": "188 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
         }
       ],
       "source_refs": [
@@ -15865,6 +15865,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-10-11T00:00:00Z",
           "note": "r1 修复 ownership_mismatch：新增专用 reply intent/Persona 合同、幂等 solved worker 分支、E3_OWNERSHIP 场景与回归夹具；本地受影响套件 188 passed，等待独立验收。"
+        },
+        {
+          "at": "2026-10-11T00:00:00Z",
+          "note": "独立验收 F-OWN-001：修复 ownership_mismatch 先 applied 后落 job 的结果丢失窗口；改为先持久化确定性 reply job，再标记 result applied；异常边界回归证明 pending/result_received 可重试且不重复回复。"
         }
       ]
     },
