@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-09T18:19:55Z",
-  "source_base_commit": "8666ff0e75ef5e5bc50d35db99c4df2c8fbcc45f",
-  "registry_digest": "d3587ed489b307357cae5cf113f23ac1d9ee2a21d205d154ca1625e9b7a4e48c",
+  "generated_at": "2026-10-10T02:19:31Z",
+  "source_base_commit": "a59ba230be0837683f4ec4b4e9a7a50895d1f409",
+  "registry_digest": "c7b9e599d73273fc6a504ea15eb46cf5097bf79265b4aa87c3538b417616be26",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1523,7 +1523,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "r4-repair-2：Route Worker/store/handoff focused suite 95 passed、27 skipped（PostgreSQL 因本机无 DSN）；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件首轮证据仍为 195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。"
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
         },
         {
           "type": "document",
@@ -17182,7 +17188,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "不执行三方 benchmark、Prompt Release 创建、PR merge、Preproduction/Production deploy。"
       ],
       "blockers": [
-        "真实隔离 PostgreSQL 集成尚未运行：本机无 DSN，相关 27 项测试 skip。",
         "独立验收尚未完成。"
       ],
       "evidence": [
@@ -17194,7 +17199,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Contract and route worker focused tests",
-          "details": "r4-repair-2：Route Worker/store/handoff focused suite 95 passed、27 skipped（PostgreSQL 因本机无 DSN）；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件首轮证据仍为 195 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。"
+          "details": "r4-repair-2：Route Worker/store/contract/handoff focused suite 122 passed，其中一次性 PostgreSQL 14.19 隔离 cluster/database 中 27 项真实集成全部通过；新增 classification-only case 后续 comment 回归，确认不调用 Account Router、不创建 Hermes turn。完整 r4 套件 197 passed；message-action 实际 Hermes client 输入、无工具集和 action 持久化由集成用例覆盖。测试后确认 PG 进程和数据目录已清理。"
+        },
+        {
+          "type": "test",
+          "label": "Isolated PostgreSQL integration",
+          "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
+          "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
         },
         {
           "type": "document",
