@@ -47,3 +47,11 @@
 | F5 classification-only 未形成 case 锁 | 首轮只结束当前 execution；后续 comment 无持久化查询依据，会按默认 Hermes engine 创建 turn | Store 增加 `is_classification_only_case()`；InMemory/PostgreSQL 从历史 execution route 查询锁；Route Worker 在 engine resolution 前优先锁定并调用 `complete_classification_only()`，后续 comment 不调用 Account Router、不创建 Hermes turn；新增 InMemory intake→comment 回归测试；隔离 PostgreSQL 迁移/事务套件通过 | closed |
 
 修复后验证：`PYTHONDONTWRITEBYTECODE=1 uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_store.py backend/tests/test_automation_ecs_contracts.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_zendesk_agent_postgres.py backend/tests/test_automation_ecs_store_postgres.py`，122 passed（其中 PostgreSQL 隔离集成 27 passed）；`compileall` 与 `git diff --check` 通过。待同一验收线程复核新的完整 HEAD。
+
+## 独立验收结果（r4-repair-2）
+
+验收线程 `01a11e82-d6a6-7791-97df-653ad1bc651c` 对 HEAD `9d723d66868efde075f0f79312cf6f665ca5f20a` 给出唯一结论：**通过**。
+
+- 已确认 C1–C5、F4、F5 的代码路径和真实隔离 PostgreSQL 证据；focused suite 197 passed，隔离 PostgreSQL 27 passed。
+- 仍未创建 Prompt Release、合并 PR、部署 ECS 或运行完整 Preproduction/业务验收；三方 benchmark 仍不在本计划范围。
+- PR #1449 保持 Draft，等待后续单独的合并和 Preproduction 部署授权。

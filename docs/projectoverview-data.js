@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T02:19:31Z",
-  "source_base_commit": "a59ba230be0837683f4ec4b4e9a7a50895d1f409",
-  "registry_digest": "c7b9e599d73273fc6a504ea15eb46cf5097bf79265b4aa87c3538b417616be26",
+  "generated_at": "2026-10-10T02:52:20Z",
+  "source_base_commit": "9d723d66868efde075f0f79312cf6f665ca5f20a",
+  "registry_digest": "2451cf8fa0c5f2b7205b9b1867f075e68eed545456775f9be1ac0c20dd54f0fc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1530,6 +1530,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Isolated PostgreSQL integration",
           "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
           "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
         },
         {
           "type": "document",
@@ -17178,7 +17184,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "owner": "codex",
       "created_at": "2026-10-10",
       "updated_at": "2026-10-10",
-      "next_action": "r4-repair-2 已完成，提交同一 branch/PR 后交给 Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c 复核；通过前不得 merge/deploy。",
+      "next_action": "独立验收已通过（HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a）；PR #1449 保持 Draft，等待后续单独的 merge/Preproduction deploy 授权。",
       "acceptance_criteria": [
         "ticket.created 在 Hermes 引擎中只调用一次 Account Router；automation/investigation 固化为 hermes case_task，其他分类只保存 classification-only。",
         "binding 持久化 case_task、case_task_prompt_release_id、case_task_prompt_snapshot、flow_version；route lock 后 comment 不可覆盖。",
@@ -17187,9 +17193,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "InMemory 与 PostgreSQL schema/迁移保持同名行为；重复事件和 active turn 保护保留。",
         "不执行三方 benchmark、Prompt Release 创建、PR merge、Preproduction/Production deploy。"
       ],
-      "blockers": [
-        "独立验收尚未完成。"
-      ],
+      "blockers": [],
       "evidence": [
         {
           "type": "document",
@@ -17206,6 +17210,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Isolated PostgreSQL integration",
           "command": "AUTOMATION_ECS_TEST_POSTGRES_DSN=\u003cone-shot PostgreSQL 14.19 DSN> RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=\u003csame one-shot DSN> uv run pytest -q -p no:cacheprovider backend/tests/test_automation_ecs_store_postgres.py backend/tests/test_hermes_zendesk_agent_postgres.py",
           "details": "27 passed；fixture 为每项创建独立 schema 并 DROP CASCADE；一次性 cluster 停止后确认 postgres 进程为 0、cluster 数据目录已移除。"
+        },
+        {
+          "type": "decision",
+          "label": "Independent acceptance",
+          "command": "Codex thread 01a11e82-d6a6-7791-97df-653ad1bc651c review of HEAD 9d723d66868efde075f0f79312cf6f665ca5f20a",
+          "details": "结论：通过。确认 C1–C5、F4、F5；PR #1449 保持 Draft，未合并、未部署。"
         },
         {
           "type": "document",
