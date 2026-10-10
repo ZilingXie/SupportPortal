@@ -5242,9 +5242,10 @@ class InMemoryTicketRepository(
         empty rerun_job_id) plus the automation delivery key, across ALL
         statuses — the caller decides whether the found job is reusable.
         """
+        # An empty key matches ask-style jobs with no delivery key.
         normalized_trigger = _normalize_account_reply_trigger(trigger_message_created_at)
         normalized_key = str(automation_delivery_key or "").strip()
-        if not normalized_trigger or not normalized_key:
+        if not normalized_trigger:
             return None
         matches: list[dict[str, Any]] = []
         with self._assignment_lock:
@@ -19394,9 +19395,11 @@ class PostgresTicketRepository(
         so a retry reuses the persisted job instead of colliding with
         idx_support_account_reply_jobs_ticket_trigger_rerun.
         """
+        # An empty key matches ask-style jobs that carry no delivery key
+        # (COALESCE semantics, same as the covering unique index).
         normalized_key = str(automation_delivery_key or "").strip()
         parsed_trigger = _parse_account_reply_trigger(trigger_message_created_at)
-        if parsed_trigger is None or not normalized_key:
+        if parsed_trigger is None:
             return None
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
@@ -19407,7 +19410,7 @@ class PostgresTicketRepository(
                         "payload,attempt_count,claimed_at,published_at,created_at,updated_at "
                         "FROM {} WHERE ticket_id=%s AND trigger_message_created_at=%s "
                         "AND COALESCE(payload->>'rerun_job_id', '') = '' "
-                        "AND payload->>'automation_delivery_key' = %s "
+                        "AND COALESCE(payload->>'automation_delivery_key', '') = %s "
                         "ORDER BY created_at DESC LIMIT 1"
                     ).format(self._table("support_account_reply_jobs")),
                     (str(ticket_id), parsed_trigger, normalized_key),
