@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-09T17:30:19.035Z",
+  "capturedAt": "2026-10-10T02:17:38.265Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "r1HIW8UNuCabiOPn",
     "workflowName": "[slack]Forward Thread|Prod+Preprod",
     "snapshotKind": "published",
-    "versionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
-    "draftVersionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
-    "publishedVersionId": "8a3fd560-76b8-454e-9369-653e46ce73d2",
-    "updatedAt": "2026-10-09T17:23:13.835Z",
+    "versionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
+    "draftVersionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
+    "publishedVersionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
+    "updatedAt": "2026-10-10T02:12:49.754Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
@@ -324,6 +324,89 @@
           },
           "options": {}
         }
+      },
+      {
+        "id": "p2192-resolve-hermes-attachment-binding",
+        "name": "Resolve Hermes Attachment Binding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -304,
+          480
+        ],
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "p2192-hermes-attachment-bound",
+        "name": "Hermes Attachment Bound",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -80,
+          480
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.status === 'bound' && !!$json.zendesk_ticket_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "p2192-ignore-non-investigation-attachment",
+        "name": "Ignore Non-Investigation Attachment",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          144,
+          560
+        ],
+        "parameters": {
+          "jsCode": "return [];"
+        }
       }
     ],
     "connections": {
@@ -411,7 +494,7 @@
         "main": [
           [
             {
-              "node": "Resolve Hermes Binding",
+              "node": "Resolve Hermes Attachment Binding",
               "type": "main",
               "index": 0
             }
@@ -419,6 +502,35 @@
           [
             {
               "node": "Validate Slack Mention",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Hermes Attachment Binding": {
+        "main": [
+          [
+            {
+              "node": "Hermes Attachment Bound",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Hermes Attachment Bound": {
+        "main": [
+          [
+            {
+              "node": "Send Hermes Message",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Ignore Non-Investigation Attachment",
               "type": "main",
               "index": 0
             }
