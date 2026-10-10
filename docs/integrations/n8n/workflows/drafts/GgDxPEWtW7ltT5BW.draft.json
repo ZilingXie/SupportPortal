@@ -1,0 +1,450 @@
+{
+ "capturedAt": "2026-10-10T00:00:00Z",
+ "restoreNotes": {
+  "note": "source-only draft (p2-194 stage 2); NOT published; active version unchanged",
+  "redactedValues": [
+   {
+    "field": "=client_secret",
+    "nodeName": "get_access_token",
+    "path": "nodes.get_access_token.parameters.bodyParameters.parameters.2.value",
+    "reason": "secret_named_field"
+   },
+   {
+    "field": "username",
+    "nodeName": "get_access_token",
+    "path": "nodes.get_access_token.parameters.bodyParameters.parameters.3.value",
+    "reason": "secret_named_field"
+   },
+   {
+    "field": "password",
+    "nodeName": "get_access_token",
+    "path": "nodes.get_access_token.parameters.bodyParameters.parameters.4.value",
+    "reason": "secret_named_field"
+   }
+  ]
+ },
+ "schemaVersion": 1,
+ "source": {
+  "snapshotKind": "draft",
+  "sourceOnly": true,
+  "updatedAt": "2026-10-10T10:44:41.401Z",
+  "versionId": "5c3359cc-83c1-46ae-9521-220243f2ba4b",
+  "workflowId": "GgDxPEWtW7ltT5BW",
+  "workflowName": "[kb]Build|CSD"
+ },
+ "workflow": {
+  "connections": {
+   "Build csd_issue Snapshot": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Deliver Source Snapshot",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Deliver Source Snapshot": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Verify Receipt",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Get_CSD_Detail": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Validate CSD Snapshot",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Loop Over Items": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Scan Complete",
+       "type": "main"
+      }
+     ],
+     [
+      {
+       "index": 0,
+       "node": "Get_CSD_Detail",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Query_CSD_list": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Url_list",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Schedule Trigger": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "get_access_token",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Url_list": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Loop Over Items",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Validate CSD Snapshot": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Build csd_issue Snapshot",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "Verify Receipt": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Loop Over Items",
+       "type": "main"
+      }
+     ]
+    ]
+   },
+   "get_access_token": {
+    "main": [
+     [
+      {
+       "index": 0,
+       "node": "Query_CSD_list",
+       "type": "main"
+      }
+     ]
+    ]
+   }
+  },
+  "name": "[kb]Build|CSD",
+  "nodes": [
+   {
+    "id": "3632676f-7f3b-4a47-a2b9-8599159d0619",
+    "name": "get_access_token",
+    "parameters": {
+     "bodyParameters": {
+      "parameters": [
+       {
+        "name": "grant_type",
+        "value": "password"
+       },
+       {
+        "name": "client_id",
+        "value": "4k1O3js73PX7FjjN7mH9CGc7FIWlHTdc"
+       },
+       {
+        "name": "=client_secret",
+        "value": "__REDACTED__"
+       },
+       {
+        "name": "username",
+        "value": "__REDACTED__"
+       },
+       {
+        "name": "password",
+        "value": "__REDACTED__"
+       }
+      ]
+     },
+     "contentType": "form-urlencoded",
+     "method": "POST",
+     "options": {
+      "response": {
+       "response": {
+        "fullResponse": true
+       }
+      }
+     },
+     "sendBody": true,
+     "url": "https://oauth.agoralab.co/oauth/token"
+    },
+    "position": [
+     -2192,
+     1232
+    ],
+    "retryOnFail": true,
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.3
+   },
+   {
+    "id": "f4e552ed-77d4-4e7a-9cd2-0fd8890a1297",
+    "name": "Loop Over Items",
+    "parameters": {
+     "batchSize": "={{ 1 }}",
+     "options": {
+      "reset": false
+     }
+    },
+    "position": [
+     -1520,
+     1232
+    ],
+    "type": "n8n-nodes-base.splitInBatches",
+    "typeVersion": 3
+   },
+   {
+    "credentials": {
+     "httpBasicAuth": {
+      "id": "9byFt3NhaDVn6IKb",
+      "name": "jira_zac"
+     }
+    },
+    "id": "b344fd9d-0d39-4ae9-b6de-452fd3d8fe70",
+    "name": "Query_CSD_list",
+    "parameters": {
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpBasicAuth",
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "accessToken",
+        "value": "={{ $json.body.access_token }}"
+       }
+      ]
+     },
+     "options": {
+      "redirect": {
+       "redirect": {}
+      }
+     },
+     "queryParameters": {
+      "parameters": [
+       {
+        "name": "jql",
+        "value": "=project = CSD AND status = RESOLVED AND Updated > -24h AND created > -60d AND resolution != \"不做任何操作（Won't Do）\" AND resolution != \"重复（Duplicate）\" AND resolution !=  \"拒绝（Reject）\" AND type = Bug ORDER BY updated ASC"
+       },
+       {
+        "name": "fields",
+        "value": "description, assignee, customfield_10700, customfield_13915, comment"
+       }
+      ]
+     },
+     "sendHeaders": true,
+     "sendQuery": true,
+     "url": "https://jira.agoralab.co/rest/api/2/search"
+    },
+    "position": [
+     -1968,
+     1232
+    ],
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2
+   },
+   {
+    "id": "3a0d707f-27be-4f5e-a79b-79edd9a0963d",
+    "name": "Url_list",
+    "parameters": {
+     "jsCode": "// Access the issues array from the previous node\nconst issues = $input.first().json.issues || [];\n\n// Map the data into the standard n8n format: an array of objects\nreturn issues.map((item, index) => {\n  return {\n    json: {\n      index: index + 1,\n      url: item.self\n    }\n  };\n});"
+    },
+    "position": [
+     -1744,
+     1232
+    ],
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2
+   },
+   {
+    "credentials": {
+     "httpBasicAuth": {
+      "id": "9byFt3NhaDVn6IKb",
+      "name": "jira_zac"
+     }
+    },
+    "id": "f3d13846-191a-4f01-b488-cf2747c4fd2c",
+    "name": "Get_CSD_Detail",
+    "parameters": {
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpBasicAuth",
+     "headerParameters": {
+      "parameters": [
+       {
+        "name": "accessToken",
+        "value": "={{ $('get_access_token').item.json.body.access_token }}"
+       }
+      ]
+     },
+     "options": {
+      "redirect": {
+       "redirect": {}
+      }
+     },
+     "queryParameters": {
+      "parameters": [
+       {
+        "name": "fields",
+        "value": "summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915"
+       }
+      ]
+     },
+     "sendHeaders": true,
+     "sendQuery": true,
+     "url": "={{ $json.url }}"
+    },
+    "position": [
+     -1296,
+     1088
+    ],
+    "retryOnFail": true,
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "waitBetweenTries": 5000
+   },
+   {
+    "id": "d4ba4cac-6268-4ac6-80c5-4acc53e03d09",
+    "name": "Schedule Trigger",
+    "parameters": {
+     "rule": {
+      "interval": [
+       {}
+      ]
+     }
+    },
+    "position": [
+     -2416,
+     1232
+    ],
+    "type": "n8n-nodes-base.scheduleTrigger",
+    "typeVersion": 1.3
+   },
+   {
+    "id": "8b7d8a8b-7edc-4ea0-bbeb-9bf639cc2efa",
+    "name": "When clicking ‘Execute workflow’",
+    "parameters": {},
+    "position": [
+     -2416,
+     672
+    ],
+    "type": "n8n-nodes-base.manualTrigger",
+    "typeVersion": 1
+   },
+   {
+    "id": "1aa74b6a-3789-41aa-b21f-3a8da1c9c4af",
+    "name": "Validate CSD Snapshot",
+    "parameters": {
+     "jsCode": "// Stage 2 source-only (p2-194): CSD completeness gate — fail-closed before\n// any delivery when fields.comment is missing or the array is short of total.\nconst issue = $input.first().json;\nconst fields = issue && issue.fields;\nif (!issue || !issue.key || !fields) { throw new Error('CSD snapshot incomplete: issue key/fields missing'); }\nconst comment = fields.comment;\nif (!comment || !Array.isArray(comment.comments)) { throw new Error('CSD snapshot incomplete: fields.comment missing'); }\nconst total = typeof comment.total === 'number' ? comment.total : comment.comments.length;\nif (comment.comments.length < total) {\n  throw new Error('CSD snapshot incomplete: got ' + comment.comments.length + ' comments, total ' + total);\n}\nreturn [{ json: { issue: issue, comment_total: total } }];",
+     "mode": "runOnceForAllItems"
+    },
+    "position": [
+     -1076,
+     1088
+    ],
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2
+   },
+   {
+    "id": "89d12c34-d6b8-4337-990d-b8d02a1af17d",
+    "name": "Build csd_issue Snapshot",
+    "parameters": {
+     "jsCode": "// Stage 2 source-only (p2-194): build a csd_issue knowledge-source-v1 snapshot.\nconst source = $input.first().json;\nconst issue = source.issue;\nif (!issue || !issue.key || !issue.fields) { throw new Error('snapshot build: issue key/fields missing'); }\nconst payload = {\n  issue: issue,\n  comment_count: source.comment_total,\n};\nconst canonical = JSON.stringify(payload);\nconst snapshot_hash = crypto.createHash('sha256').update(canonical).digest('hex');\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(issue.key),\n  source_updated_at: String(issue.fields.updated || issue.fields.created || ''),\n  payload: payload,\n  references: {\n    snapshot_hash: snapshot_hash,\n    snapshot_builder: 'n8n-csd-source-only',\n    captured_fields: 'issue.fields=*,comment'\n  }\n}}];",
+     "mode": "runOnceForAllItems"
+    },
+    "position": [
+     -856,
+     1088
+    ],
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2
+   },
+   {
+    "credentials": {
+     "httpHeaderAuth": {
+      "id": "wk9Nn0OELBE6MOb7",
+      "name": "preprodcution"
+     }
+    },
+    "id": "bf6d10b4-615c-408b-9d1c-f444a7585713",
+    "maxTries": 3,
+    "name": "Deliver Source Snapshot",
+    "parameters": {
+     "authentication": "genericCredentialType",
+     "genericAuthType": "httpHeaderAuth",
+     "jsonBody": "={{ JSON.stringify($json) }}",
+     "method": "POST",
+     "options": {
+      "timeout": 30000
+     },
+     "sendBody": true,
+     "specifyBody": "json",
+     "url": "https://support.stellarix.space/automation/preproduction/v1/knowledge/sources"
+    },
+    "position": [
+     -636,
+     1088
+    ],
+    "retryOnFail": true,
+    "type": "n8n-nodes-base.httpRequest",
+    "typeVersion": 4.2,
+    "waitBetweenTries": 5000
+   },
+   {
+    "id": "7b1fce8a-b2e6-40e6-8975-e798f6e6a8d9",
+    "name": "Verify Receipt",
+    "parameters": {
+     "jsCode": "// Stage 2 source-only (p2-194): three-state receipt gate. Only accepted /\n// already_exists / stale_ignored with a non-empty task_id pass; anything else\n// throws so the workflow error path (ops alert) fires.\nconst body = $input.first().json;\nconst status = body ? body.status : null;\nconst taskId = body ? body.task_id : null;\nconst allowed = ['accepted', 'already_exists', 'stale_ignored'];\nif (!allowed.includes(status)) {\n  throw new Error('receipt check: unexpected status ' + JSON.stringify(status));\n}\nif (!taskId || !String(taskId).trim()) {\n  throw new Error('receipt check: empty task_id');\n}\nreturn [{ json: { delivered: true, status: String(status), task_id: String(taskId) } }];",
+     "mode": "runOnceForAllItems"
+    },
+    "position": [
+     -416,
+     1088
+    ],
+    "type": "n8n-nodes-base.code",
+    "typeVersion": 2
+   },
+   {
+    "id": "4338baa7-7b33-4e48-a639-15a181424efa",
+    "name": "Scan Complete",
+    "parameters": {},
+    "position": [
+     -1076,
+     1288
+    ],
+    "type": "n8n-nodes-base.noOp",
+    "typeVersion": 1
+   }
+  ],
+  "settings": {
+   "availableInMCP": true,
+   "binaryMode": "separate",
+   "callerPolicy": "workflowsFromSameOwner",
+   "errorWorkflow": "dV5vNA6l1MbDMHZt",
+   "executionOrder": "v1",
+   "timeSavedMode": "fixed"
+  }
+ }
+}

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T08:55:47Z",
-  "source_base_commit": "38e553eb86d186025c375426d4e937bdaae745b6",
-  "registry_digest": "06725ac0c002a998d0f78bdcc6329be0c44f63de41abbc9551a1716403e3130a",
+  "generated_at": "2026-10-10T10:55:45Z",
+  "source_base_commit": "812f6601caca16f7131f743f6168184dbf2a213f",
+  "registry_digest": "eca1d3da37a2a49fda12ccd7d2de421097ee676908cbb9b52eef2c315aab5993",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5483,6 +5483,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第三轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 source-only 离线合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "18 passed（结构：双 Draft 节点类型/URL 允许清单+连接闭合+零直写引用；执行：真实 jsCode 跑分页/数量/CSD comment/回执三态/坏回执/重投乱序；A 契约：产出过 KnowledgeSourceSnapshot 模型校验）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 2 证据文档（C0-C5）",
+          "command": "n8n MCP 只读重读（HTTP MCP 直连）+ update_workflow Draft 操作（未 publish）+ 回读比对",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md；两链 Active 版本未变（b5cf6d6b/1f544830），Draft=5c3359cc/6a262f9a 与仓库快照一致；validate_workflow_snapshots.py 15 published+3 drafts+56 redactions 退出码 0（legacy 29 项 LEGACY-EXPOSED 警告显性暴露）；n8n 真实 execution 证据登记 waiting-for-evidence（阶段 6 授权后以自然调度/受控样本补齐）"
         }
       ],
       "source_refs": [
@@ -17351,8 +17363,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-10",
       "updated_at": "2026-10-10",
-      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。【修复轮 2 2026-10-10（第二轮验收三阻断后）】R2-1 人工批准必建双目标 delivery 行（禁用目标=queued 等待、执行边界零领取、候选不得单目标闭环；复开开关后自动补写完成）；R2-2 批准修改正文后重算 content_hash（InMemory+PG 双侧；AgentMemory 文件名随新哈希；promotion_id 保持候选槽稳定身份；同源三元组哈希冲突时 approve 拒绝并报错，PG 侧靠唯一索引 UniqueViolation→422）；R2-3 backend/sql/ticket_storage.sql 镜像补 support_knowledge_deliveries 表+双索引；并修复该镜像版本守卫自 v19 起失修的存量失败（断言更新至 v22+历史链 v18-v21 全查）。实测=知识区+repository_configuration 全套 409 passed/0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测，含 PG 集成；同步前旧基线 408 已更正）。【第三轮验收通过 2026-10-10】范围=阶段 0+阶段 1 代码及 R2 修复轮（HEAD 38e553eb；409/0 复验通过、MERGEABLE/CLEAN、计数更正确认；非阻断措辞 0dff3b36→2da4332d 已按验收方建议修正）。本通过不含阶段二整体完成（阶段 2-6 未实施）。",
-      "next_action": "阶段 0+1 代码验收通过，PR #1453 转 Ready 并 finalize 合入 main；运行态未部署（状态=已合并，运行验证未完成——部署属阶段 6 另行授权）。下一步=阶段 2 n8n source-only 改造（复用 p2-183 快照合同，发布前刷新 active/draft 快照+manifest+校验器）→阶段 3 Review 双侧检索输入→阶段 4 Slack 根线程与 operator 身份→阶段 5 页面→阶段 6 Preproduction 十步发布（部署前置=AGENT_MEMORY_WIKI_* SSM 参数+worker task def 注入+六开关显式 0）。",
+      "summary": "【改号说明 2026-10-10：本任务原拟登记 p2-193，因并行线程（Hermes 固定 Case Task，PR#1449）先行占用 main 的 p2-193 而改号 p2-194；计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r1（docs/plans/weknora-dualwrite-phase2.md）。阶段 0（2026-10-10）完成：只读冻结基线 docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md（n8n 两链 active 无发散草稿=CSD b5cf6d6b/Solved 1f544830 仍为 p2-186 AgentMemory 直写链；hermes td:45；治理开关线上全关 api:121/worker:121/route:120；WeKnora 集群 td:4 五服务 ACTIVE；SP→WeKnora 客户端 SSM 参数全缺=部署前置；差距清单八项+历史收敛 p2-182/183/186/188）。阶段 1（2026-10-10）代码完成（分支 codex/weknora-dualwrite-phase2，待独立验收）：新增 support_knowledge_deliveries 表（schema v22，per-target 独立租约状态机/外部对象/幂等键/回执/回读/失败分类）；AgentMemory 投递适配器（Wiki API create→raw/write→ingest→get 回读，wiki_id 先行持久捕获，create 超时无 ID 禁止盲重创）；自动双写七条件门禁（new+证据完整+无重复+双侧可读+代际有效+哈希校验，任一失败转人工）；人工 approve 只补 failed/outcome_unknown 目标（accepted 不重跑）、reject 原子作废全部未终态 delivery；六个独立 fail-closed 开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知，全默认关）；双写 worker 与旧 WEKNORA_PROMOTION_ENABLED worker 互斥（双向互锁）；API 新增 GET /v1/knowledge/promotions/{id}/deliveries，来源接收端点关闭时 503 fail-closed。验证：知识区全套 268 passed/0 failed（含隔离 PG 集成 11 项：v22 建表/FK/租约守卫/decide 原子级联/InMemory-PG 生命周期一致）；test_worker 14 个失败为 p2-187 已披露存量（stash 复核与本 diff 无关）。未做：阶段 2 n8n source-only 改造、阶段 3 Summary/Review 双侧检索输入、阶段 4 source-only Slack 根线程与 operator 身份收紧、阶段 5 页面、阶段 6 发布（含 AGENT_MEMORY_WIKI_* SSM 参数与 task def 注入=部署前置）。【修复轮 2026-10-10（阶段 1 验收未通过后）】五项阻断全部修复+回归：B1 旧 worker 互锁补为双向（KNOWLEDGE_DUALWRITE_WORKER_ENABLED=1 时旧 drain 整体拒绝，双开=双不跑 fail-closed）；B2 目标开关双层（decide 级联与 approve fanout 只重排当前启用目标+执行边界 claim 前跳过关闭目标的行；invalidate 不受开关限制）；B3 AgentMemory 定向写入锚点校验（amfp: 状态指纹两段确认：无锚点→拒绝写入并回显当前指纹；锚点不符→拒绝覆盖；相符→写入；resolution 新增 agent_memory_base_version 字段与 WeKnora base_version 分离）；B4 resolve 要求全部 delivery 行 accepted（accepted+invalidated 混合→human_review 不容假成功；全 invalidated→交还 promotion 级失效）；B5 来源接收叠加治理主开关（intake 开+主关=503 fail-closed）。证据更正：阶段 1 首轮登记的 268/0 有误，验收方复跑=267 passed/1 failed（失败为根区 main 同样失败的存量 Slack published snapshot 问题，非本 diff）；修复轮后当前实测=276 passed/0 failed（同命令同环境含 PG 集成）。同步与改号：分支已 rebase 至 origin/main cf055118；并行线程占用 p2-193（Hermes 固定 Case Task，PR#1449）故本任务改号 p2-194；rebase theirs 反转误覆盖的 main p2-193 登记已恢复。【修复轮 2 2026-10-10（第二轮验收三阻断后）】R2-1 人工批准必建双目标 delivery 行（禁用目标=queued 等待、执行边界零领取、候选不得单目标闭环；复开开关后自动补写完成）；R2-2 批准修改正文后重算 content_hash（InMemory+PG 双侧；AgentMemory 文件名随新哈希；promotion_id 保持候选槽稳定身份；同源三元组哈希冲突时 approve 拒绝并报错，PG 侧靠唯一索引 UniqueViolation→422）；R2-3 backend/sql/ticket_storage.sql 镜像补 support_knowledge_deliveries 表+双索引；并修复该镜像版本守卫自 v19 起失修的存量失败（断言更新至 v22+历史链 v18-v21 全查）。实测=知识区+repository_configuration 全套 409 passed/0 failed（同步 origin/main（合并 9ba63834，main 父 2da4332d）后实测，含 PG 集成；同步前旧基线 408 已更正）。【第三轮验收通过 2026-10-10】范围=阶段 0+阶段 1 代码及 R2 修复轮（HEAD 38e553eb；409/0 复验通过、MERGEABLE/CLEAN、计数更正确认；非阻断措辞 0dff3b36→2da4332d 已按验收方建议修正）。本通过不含阶段二整体完成（阶段 2-6 未实施）。【阶段 2 实施完成 2026-10-10（n8n source-only，待独立验收）】快照契约按计划推荐采用 A（接口不变/幂等三元组/snapshot_hash 入 references；交互确认未获答复，已在 PR 披露可推翻）。C0 线上重读与阶段 0 登记一致后才动手（CSD b5cf6d6b/Solved 1f544830，基线全图冻结 stage2/baseline-*.json）；两链改造成 source-only Draft（Solved 8 节点/CSD 12 节点，AI/本地 PG 去重/Wiki 直写/2_rag/KB 生成全删，新增完整性校验→建 knowledge-source-v1→投递 preproduction 接收接口（preprodcution httpHeaderAuth 凭据）→三态回执校验，失败 throw→errorWorkflow）；Active 两链版本全程未变（回读实证 draft 5c3359cc/6a262f9a vs active b5cf6d6b/1f544830）。校验器加固（端点闭合+节点类型/URL 允许清单+直写禁令；legacy=29 项 LEGACY-EXPOSED 警告、source-only=硬校验，15+3+56 全过）。离线合同测试 18 passed（node 真实执行快照内 jsCode：分页/数量/回执三态/重投乱序/直写禁全过，产出经 KnowledgeSourceSnapshot 真实模型校验；重投/乱序用真实 InMemory 仓库实测 already_exists/stale_ignored）。n8n 真实 execution 证据=waiting-for-evidence（采集需真实来源+接收开关开启，属阶段 6 第 3-4 步授权后补齐）。",
+      "next_action": "阶段 2 Draft PR 待独立验收（重点：C0-C5 合同、A 契约选择确认、waiting-for-evidence 边界）；验收通过后不发布 n8n——发布属阶段 6 发布顺序第 3 步另行授权。后续：阶段 3 Summary/Review 双侧检索输入→阶段 4 Slack 根线程+operator 身份→阶段 5 页面→阶段 6 十步发布（含 AGENT_MEMORY_WIKI_* SSM、六开关显式 0、n8n Draft 发布与真实执行证据补齐）。",
       "acceptance_criteria": [
         "阶段二完成条件十条全部满足（计划 r1 第十节）：两条 n8n 链仅投快照、SP 唯一双写编排者、new 高质量无重复候选双写成功、merge/replace/supplement 进 Slack 人工 Review、source-only 候选建审核线程、页面/API 兜底、部分失败与超时恢复有效、Hermes AgentMemory 无回归、WeKnora Web/检索正常、观察期无重复写入/旧版本覆盖/审计缺失",
         "验证矩阵十六场景全过（计划 r1 第八节），证据含 n8n execution ID、source receipt、Summary/Review session+run、candidate ID、内容哈希、Slack channel/thread、人工决定、两目标独立状态与外部 ID/回读",
@@ -17413,6 +17425,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第三轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（范围：阶段二阶段 0+阶段 1 代码及 R2 修复轮，不代表阶段二整体完成）；复验 HEAD 38e553eb，PR MERGEABLE/CLEAN 且包含 origin/main 2da4332d，完整回归 409/0，PG 集成/双目标等待与复开补写/hash 重算与冲突拒绝/镜像守卫/快照校验/Overview 校验全过，计数更正确认；允许下一步=转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 2 source-only 离线合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_n8n_source_only_contracts.py -q",
+          "result": "18 passed（结构：双 Draft 节点类型/URL 允许清单+连接闭合+零直写引用；执行：真实 jsCode 跑分页/数量/CSD comment/回执三态/坏回执/重投乱序；A 契约：产出过 KnowledgeSourceSnapshot 模型校验）"
+        },
+        {
+          "type": "document",
+          "label": "阶段 2 证据文档（C0-C5）",
+          "command": "n8n MCP 只读重读（HTTP MCP 直连）+ update_workflow Draft 操作（未 publish）+ 回读比对",
+          "result": "docs/evidence/weknora-dualwrite-phase2/stage2-source-only.md；两链 Active 版本未变（b5cf6d6b/1f544830），Draft=5c3359cc/6a262f9a 与仓库快照一致；validate_workflow_snapshots.py 15 published+3 drafts+56 redactions 退出码 0（legacy 29 项 LEGACY-EXPOSED 警告显性暴露）；n8n 真实 execution 证据登记 waiting-for-evidence（阶段 6 授权后以自然调度/受控样本补齐）"
         }
       ]
     },
