@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T02:57:03Z",
-  "source_base_commit": "de2841760770ec0443033efd937b592ce3696f5b",
-  "registry_digest": "e8c9ed5547b2a2c8e26fde3078f82eb5ac4078aebdf93627a7c40c1333b803ac",
+  "generated_at": "2026-10-10T02:58:17Z",
+  "source_base_commit": "ac7a27ac0274ab3d023b2070d72a0fca3cea5bf8",
+  "registry_digest": "c82be33d70ee723660cf4f8a93b7ad75ca096c817846180ee626063b32888c04",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -4427,12 +4427,6 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
         },
         {
-          "type": "test",
-          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
-          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
-          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
-        },
-        {
           "type": "deployment",
           "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
           "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
@@ -4443,6 +4437,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
           "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
           "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
+          "type": "test",
+          "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
+          "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
+          "result": "用户选定通道 A：fraud 首轮缺资料的补信息回复不再走工程师评审草稿门，由工具直接创建 request_missing_information reply job（Production/enablement 同款自动管线）。实现：tool_execute_automation_action fraud missing_fields 分支——find_account_reply_job_by_chain(ticket, trigger, delivery_key=空) 幂等复用（空 key 匹配无 delivery key 的 ask job，PG COALESCE 归一化+InMemory 守卫同步修正）或 create_account_reply_job（reply_facts 含嵌套 request_missing_information intent、asked_field_keys=缺失字段、trigger 绑定客户消息时间戳）；skip_persona=True（job 为唯一客户回复，processor 门已验证）。测试 21 项：缺资料建 job+skip_persona、重试复用不重建（唯一索引槽）、完整资料走邮件确认 job 无 ask。A4/A4b 场景级实测待部署后执行。"
         },
         {
           "type": "test",
@@ -4983,6 +4983,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Focused regression for persona-assembled replies",
           "command": "ENGINEER_MULTI_AGENT_ENABLED=1 .venv/bin/python -m pytest backend/tests/test_automation_persona.py backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_engineer_execute_agent.py backend/tests/test_investigation_flow.py backend/tests/test_engineer_guardrail_agent.py backend/tests/test_engineer_slack.py backend/tests/test_automation_comment_sync.py backend/tests/test_account_zendesk_comment_sync.py backend/tests/test_automation_account_intake.py backend/tests/test_automation_ecs_api.py backend/tests/test_prompt_modules.py -q",
           "details": "314 passed + 48 subtests。新增：collab 组装三用例（awaiting 组装含 facts 蒸馏/persona_meta/事件 Persona 前缀+guardrail 按钮；persona 失败落事件 502；active 不触发）；persona 新 intent 四用例（渲染/prompt 版本/provided_answer 必填/防幻觉标识符/客户名缺失）；investigation_flow awaiting 无 draft 正例（schema 放宽）；prompt_modules 断言更新至 v10 纯调查语义（含三条已删客户文案规则的 NotIn）。"
+        },
+        {
+          "type": "test",
+          "label": "Investigation length contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_persona.py backend/tests/test_engineer_slack.py backend/tests/test_hermes_zendesk_agent_tools.py",
+          "details": "181 passed，92 subtests passed；覆盖 Persona v2 首次超长触发一次重生成、两次超长阻断、draft 含 greeting 超过 1200 字符 reply_too_long 且 guardrail 前拒绝、Investigation 记录完整保存而 Slack 投影受限、investigation/ad-hoc/review pending Slack 文本不超过 2000 字符。"
+        },
+        {
+          "type": "test",
+          "label": "Build and diff checks",
+          "command": ".venv/bin/python -m compileall -q \u003cchanged Python files>; git diff --check 42a2da28^ 42a2da28",
+          "details": "compileall exit 0；git diff --check exit 0。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release evidence",
+          "command": "release pipeline for r20261009-1a7b6e5 from source 1a7b6e511d3a670ac3b471bc5c42a291b6042760",
+          "details": "正式 evidence status=complete；CodeBuild、preflight、schema bootstrap、Route/Worker/API rollout、heartbeats、collector、Prompt activation/sync、provider probe、public health、CloudWatch（三角色 error_count=0）、Terraform pre/post zero-drift、runtime digest verification 全通过。API/Route/Worker task definitions 为 :121/:120/:121，digest 分别 sha256:5aabff9d、sha256:3cb47613、sha256:4ecf7c05；Prompt Release pr-ee28a3c51d44 active。证据：.deployments/ecs-pipeline-r20261009-1a7b6e5/preproduction-deploy/evidence.json。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live release and connectivity readback",
+          "command": "GET https://supportcenter.stellarix.space/automation/preproduction/health/release; .venv/bin/python -m scripts.testing.preproduction --check",
+          "details": "release endpoint 返回 status=ok、release_id=r20261009-1a7b6e5、git_commit=1a7b6e511d3a、schema_revision=automation-ecs-014、prompt_release_id=pr-ee28a3c51d44、Hermes case workflow=real；Preproduction check 的 DB/Zendesk/SMTP/Relay/Pilot connectivity 全通过。该检查未创建工单、未发送客户消息或 Slack 消息。"
+        },
+        {
+          "type": "decision",
+          "label": "Explicit non-goals",
+          "command": "",
+          "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
         }
       ],
       "source_refs": [
@@ -4990,9 +5020,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 5,
-      "done_count": 4,
+      "done_count": 5,
       "blocked_count": 0
     },
     {
@@ -5596,9 +5626,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "deployment/weknora/"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 1,
-      "done_count": 0,
+      "done_count": 1,
       "blocked_count": 0
     }
   ],
@@ -16593,6 +16623,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [],
       "evidence": [
         {
+          "type": "deployment",
+          "label": "fraud 回复风格对齐阶段六（B 方案发布+实测全过）：pr-ee28a3c51d44 激活+13949 草稿 C1-C8 全过",
+          "command": "Prompt schedule(draft v4×2)→prepare pr-ee28a3c51d44→ECS 管线 r20261009-1a7b6e5 全阶段 passed→DB 回读→工单 13949 实测+判定器",
+          "result": "发布链：服务层 create_draft+schedule（hermes-persona-manual v4/hermes-reply-contract v4，标签与 legacy _FIELD_LABELS 对齐）→prepare pr-ee28a3c51d44（41 项）→管线发布 r20261009-1a7b6e5（main@1a7b6e51，含他线 #1443/#1444/#1445 合并）全阶段 passed（activation 通过）→DB 回读：pr-ee28a3c51d44 active（pr-43cee390c4b7 superseded）、两 key v4 active、B 模式内容在库验证。实测：工单 13949（hermes fraud 首轮零字段）→work_result.reply_basis=fraud_account_reply_basis_v1（ask_layout=bullets、connector=To proceed, please provide:）→persona prompt=hermes-persona-manual→草稿与 Production 风格逐字一致（lead-in/connector/七字段 canonical 标签 bullets/closing anchor 全 verbatim、英文）→C1-C8 判定器全 PASS。发布过程披露：(1)他线并发发布三次撞 main 后置变更守卫（6eed5d0→e8ff95b→1a7b6e5 重建）；(2)他线 direct-r20261009-1a7b6e5-c47 直发用旧源目录 prompt（pr-c47f99044ae0 在 preprod 不存在）致 worker/route 启动崩溃循环，其共享日志组 ERROR 污染我方 collector 窗口（误判一次）——已用窗口戳调和排除；该坏 task def（worker:120 等）仍在 family 中待其线程处理；(3)本地代理 env（source .env 的 HTTP_PROXY=127.0.0.1:1082）曾炸 heartbeat 一次；aws login 会话过期重登一次；(4)api 服务 platform_version 漂移（1.4.0 vs LATEST）terraform apply 归零一次。残余：A4/A4b 场景级实测与 ask 投递通道（草稿评审门 vs 自动 reply job）决策仍待用户。"
+        },
+        {
+          "type": "test",
+          "label": "fraud 回复风格对齐（阶段一-五）：生成源绑定+prompt v4 三轮迭代+离线评估（未发布，发布路径待决策）",
+          "command": "pytest test_hermes_fraud_reply_style.py(12)+离线评估 scripts/testing/fraud_reply_style_eval（gpt-6-sol@medium 5 样本三轮）",
+          "result": "阶段一（硬门槛）通过：13939 草稿实证由 Hermes Persona 路径生成（persona 阶段 prompt_version=hermes-persona-manual、DB active v3 与代码 fallback 字节一致、零 automation-persona-v32 reply job、无 delivery 记录）——修改 Hermes prompt 层目标正确。阶段二/三：hermes-persona-manual v4（零/部分/完整字段三段结构、逐字标准标签、连字符列表、coordinate 收尾锚点、禁空泛道歉/meta 句式/语言镜像）+ hermes-reply-contract v4 fraud 节（七字段 canonical display labels、保存前六点核对清单、结构形状参考）。阶段四：12 项测试全过（真实 phase_instructions 组装断言+真实 tool_save_reply_draft 入口+C1-C8 结构化判定器 fraud_reply_style.py 9 场景正反例）；hermes 相关回归 99+10 全绿。阶段五（离线真实模型，与 13939 实跑 usage 同模型 gpt-6-sol，usage 表实证）：三轮迭代五样本，硬安全合同全绿（不重问已收集 5/5、不问支付 5/5、不提前承诺 5/5），措辞锚点不可靠（逐字标签 2/5、coordinate 收尾 1/5、完整资料转交+24h 4/5、英文草稿 4/5 含中文镜像 1 例）——未达全过门槛。阶段六（Prompt Release 发布+新工单实测）按计划门槛未执行。决策项待用户：A=接受残余风格偏移×工程师评审门；B=服务端确定性 reply basis（billing_automation 风格代码生成字段清单，计划自带的回退路径）；C=提升 hermes persona 档位。证据：/tmp/fraud_reply_style_results_round3.json（脱敏，含完整 system prompt sha、模型/档位、逐样本原始输出与结构化判定）。"
+        },
+        {
           "type": "test",
           "label": "fraud ask 投递通道 A（用户决策）：缺资料回复自动 reply job 管线（对齐 Production）",
           "command": "pytest test_hermes_fraud_reply_style.py(21)+相关回归 143；工具入口真实创建/复用 ask job 断言",
@@ -16790,15 +16832,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 2,
       "task_id": "p2-188",
       "title": "WeKnora 并行建设（阶段一：独立部署与 Web 可用）",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "phase_id": "phase-2",
       "module_id": "rag-knowledge",
       "function_id": "weknora-standalone-deployment",
       "created_at": "2026-10-07",
-      "updated_at": "2026-10-08",
-      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。",
-      "next_action": "R16（本轮）：rm 成功证据化（条件置位+CTRM 证据行）、S15d 断言 rm-succeeded 证据、S15e rm 失败独立验证（PARTIAL+ownership 保留）；sc32 单轮 34 PASS。待办：独立复验 R16；通过后 finalize PR#1435 收口 p2-188。",
+      "updated_at": "2026-10-09",
+      "summary": "计划名称：WeKnora 并行建设计划（阶段一：独立部署与 Web 可用）。R2（2026-10-07）：独立 WeKnora 上线 https://supportcenter.stellarix.space/dashboard/weknora/（五服务 :3，发布链=归档钉定→CodeBuild→ECR tag=commit；terraform 根零漂移；管理员 bootstrap+注册关闭）。R2 独立验收（只读）结论=**未通过**，四项发现：(1)[P1] 前端受保护文件请求（protectedFileAccess 四条 URL）与 token 失效重登录/登出跳转仍落域名根路径（/api/v1/.../files 根路径 404、/login 404，前缀路径 401 正确）；(2)[P1] deploy 脚本 wait_stable 未绑定目标 task definition/rollout 状态，新版本失败回滚到旧 PRIMARY 仍判成功（验收方以模拟边界复现）；(3)[P1] register 脚本数据守卫默认关闭，常规重注册会把 :3 已启用的 REQUIRE_EXISTING_PGDATA 回退为 false；(4)[P1 缺口] 持久化/备份恢复只证明了账号与 PGDATA 保留（restore 仅断言 users>=1 即输出 verified:true），知识对象/索引/检索回读未证；[P2] restore 固定容器名+无条件 EXIT 删除可能在名称冲突时误删他轮容器。R3（2026-10-08 修复轮）：(1) 前端五处子路径缺口修复（protectedFileAccess/authRefresh loginRoutePath/TenantInfo×2/initialization 原生 fetch/tenantSwitchTarget 拆分纯模块），api-base 新增 getRouterBase()+测试 override；回归 subpathPrefix.test.mjs 7 用例（npm test 只发现 .test.mjs——新测试按该约定落位，根 tsconfig 补 paths），全套 397 tests 396 pass；(2) wait_stable 重写绑定目标 TD+rolloutState+计数，回滚/FAILED 即失败；回归 run_deploy_tests.sh 15 项 stub 用例全过；(3) 守卫默认开启，--initial-bootstrap 显式允许空库；运行时回归 run_pgdata_guard_runtime_test.sh（真实 paradedb：空卷拒绝且零写入/初始化成功/既有数据放行）全过；(4) backup 新增基线计数清单 manifest 落 S3，restore 对比基线+--expect-knowledge 精确断言+输出分层（appLevelRetrievalVerified=false 显式注明），清理改唯一资源身份仅删自建。口径收窄：R2 报告的 6/8 收回，按验收方重判定（构建可复现✅未重建复验/访问控制✅登录沿用执行方证据/Web 路由修复待复验/持久化+备份恢复=部分证明/隔离✅）。撤回\"基础设施和脚本不适用自动化测试\"表述。fork 修复 commit=714065ba（:4 镜像构建部署后复验 Web 路由）。剩余：文档闭环/异常表现/知识持久化与恢复后检索回读，唯一前置=模型凭据（已向用户提问未获答复）。【收口 2026-10-09】R16 独立复验=通过（rm 成功证据化/S15d rm-proof/S15e rm 失败保留全确认；sc32 34 PASS + 跨轮 S7/S8/kill/race 证据边界已登记）；PR#1435 已 finalize 合入 main（a3a9c2dd，含 origin/main 冲突再生成解决 33c9e1a5），CodeSight 已刷新，worktree 已清理。阶段一八项验收全部有证据闭环。",
+      "next_action": "阶段一已收口 done（R16 复验通过→PR#1435 合入 a3a9c2dd→codesight 刷新→worktree 清理）。交接提醒：WeKnora 管理员密码建议轮换（SSM /supportportal/weknora/admin_password，历轮浏览器会话中出现过）；知识链依赖 SiliconFlow（与 AgentMemory 共享 key）与 OpenAI 额度；文件桶备份/恢复链为登记边界（如需完整对象备份另立任务）。阶段二（n8n 接入/治理链恢复/Hermes 切换/历史迁移）另行规划。",
       "acceptance_criteria": [
         "构建可复现：固定源码归档可重新构建，部署镜像与发布记录一致",
         "访问控制：管理员正常登录；未授权请求不能读取私有知识；公开注册关闭",
@@ -17038,8 +17080,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "Investigation 回复长度优化 v1",
       "summary": "为 Investigation 客户草稿和工程师 Slack 调查展示增加确定性长度契约：客户 draft（含 greeting）最多 1200 字符，Slack 调查消息最多 2000 字符；复用一次重生成，最终超长 fail-closed。",
-      "status": "active",
-      "next_action": "完成定向回归、全量相关套件和 diff 检查后，提交 Preproduction 发布与技术验收证据。",
+      "status": "done",
+      "next_action": "已完成 Preproduction 技术验收与隔离长度回归；不重放 Ticket 13923、不发送真实客户或 Slack 消息、不发布 Production。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-09",
@@ -17051,8 +17093,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C5: 相关单元、Hermes 工具入口和 Preproduction 技术检查通过；不重放 Ticket 13923，不发送真实客户回复，不发布 Production"
       ],
       "blockers": [],
-      "evidence": [],
-      "legacy_ids": []
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Investigation length contracts",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_engineer_collab_assembly.py backend/tests/test_automation_persona.py backend/tests/test_engineer_slack.py backend/tests/test_hermes_zendesk_agent_tools.py",
+          "details": "181 passed，92 subtests passed；覆盖 Persona v2 首次超长触发一次重生成、两次超长阻断、draft 含 greeting 超过 1200 字符 reply_too_long 且 guardrail 前拒绝、Investigation 记录完整保存而 Slack 投影受限、investigation/ad-hoc/review pending Slack 文本不超过 2000 字符。"
+        },
+        {
+          "type": "test",
+          "label": "Build and diff checks",
+          "command": ".venv/bin/python -m compileall -q \u003cchanged Python files>; git diff --check 42a2da28^ 42a2da28",
+          "details": "compileall exit 0；git diff --check exit 0。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release evidence",
+          "command": "release pipeline for r20261009-1a7b6e5 from source 1a7b6e511d3a670ac3b471bc5c42a291b6042760",
+          "details": "正式 evidence status=complete；CodeBuild、preflight、schema bootstrap、Route/Worker/API rollout、heartbeats、collector、Prompt activation/sync、provider probe、public health、CloudWatch（三角色 error_count=0）、Terraform pre/post zero-drift、runtime digest verification 全通过。API/Route/Worker task definitions 为 :121/:120/:121，digest 分别 sha256:5aabff9d、sha256:3cb47613、sha256:4ecf7c05；Prompt Release pr-ee28a3c51d44 active。证据：.deployments/ecs-pipeline-r20261009-1a7b6e5/preproduction-deploy/evidence.json。"
+        },
+        {
+          "type": "deployment",
+          "label": "Live release and connectivity readback",
+          "command": "GET https://supportcenter.stellarix.space/automation/preproduction/health/release; .venv/bin/python -m scripts.testing.preproduction --check",
+          "details": "release endpoint 返回 status=ok、release_id=r20261009-1a7b6e5、git_commit=1a7b6e511d3a、schema_revision=automation-ecs-014、prompt_release_id=pr-ee28a3c51d44、Hermes case workflow=real；Preproduction check 的 DB/Zendesk/SMTP/Relay/Pilot connectivity 全通过。该检查未创建工单、未发送客户消息或 Slack 消息。"
+        },
+        {
+          "type": "decision",
+          "label": "Explicit non-goals",
+          "command": "",
+          "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
+        }
+      ],
+      "source_refs": [
+        "backend/services/automation_persona.py",
+        "backend/services/automation_hermes_tools.py",
+        "backend/services/engineer_slack.py",
+        "backend/tests/test_automation_persona.py",
+        "backend/tests/test_hermes_zendesk_agent_tools.py",
+        "backend/tests/test_engineer_slack.py",
+        "docs/plans/investigation-reply-length-v1.md",
+        "docs/prompt_change_log.md"
+      ],
+      "legacy_ids": [],
+      "history": [
+        {
+          "at": "2026-10-10",
+          "event": "completed",
+          "summary": "代码验收、Preproduction 正式发布和隔离长度回归完成；release r20261009-1a7b6e5 evidence=complete，三角色 runtime digest 与 Prompt/flags 对账一致。"
+        }
+      ]
     },
     {
       "schema_version": 2,
