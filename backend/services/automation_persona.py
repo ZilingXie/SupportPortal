@@ -11,6 +11,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
@@ -70,6 +71,12 @@ _SAFETY_FEEDBACK = {
         "State only that Media Relay is already enabled."
     ),
     "automation_persona_archer_error_overclaim": "Do not claim enablement, handoff, an SLA, or closure for this recoverable App ID error.",
+    "automation_persona_ownership_mismatch_account_missing": "State that the App ID belongs to another account.",
+    "automation_persona_ownership_mismatch_activation_missing": "State that Media Relay activation cannot continue.",
+    "automation_persona_ownership_mismatch_close_missing": "State that this case is closing now.",
+    "automation_persona_ownership_mismatch_login_missing": "Tell the customer to sign in to the correct account.",
+    "automation_persona_ownership_mismatch_resubmit_missing": "Tell the customer to submit a new support request.",
+    "automation_persona_ownership_mismatch_overclaim": "Do not claim enablement or human follow-up, and do not include an SLA.",
     "automation_persona_reply_too_long": (
         "Rewrite the complete customer reply more concisely. Keep only the conclusion, the key limitation or "
         "evidence, and the next step. The final draft, including the greeting, must be within the character limit."
@@ -378,10 +385,17 @@ def _normalize_ownership_facts(reply_facts: dict[str, Any]) -> dict[str, Any]:
     if reply_intent in {
         ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_INVALID,
         ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+        ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
     }:
         facts["performed_actions"] = []
-        facts["next_step"] = None
-        facts["resolution_status"] = "awaiting_customer"
+        if reply_intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH:
+            facts["next_step"] = "sign_in_to_correct_account_and_submit_new_support_request"
+            facts["resolution_status"] = "completed"
+            facts["ownership_state"] = "support_owned_after_case_close"
+            facts["customer_update_commitment"] = "case_closed"
+        else:
+            facts["next_step"] = None
+            facts["resolution_status"] = "awaiting_customer"
         return facts
     if reply_intent in {
         ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
@@ -560,6 +574,39 @@ def _assert_enablement_appid_not_found_contract(reply: str) -> None:
     _assert_no_enablement_error_overclaim(reply)
 
 
+def _assert_enablement_appid_ownership_mismatch_contract(reply: str) -> None:
+    """Require a bounded, customer-safe closure for a cross-account App ID."""
+    lowered = str(reply or "").casefold()
+    if not re.search(
+        r"\b(?:the\s+)?app\s+id\b.*\b(?:belongs\s+to|is\s+(?:associated|linked)\s+to)\s+"
+        r"(?:another|a\s+different|the\s+other)\s+account\b",
+        lowered,
+    ):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_account_missing")
+    if (
+        not re.search(r"\bmedia\s+relay\b", lowered)
+        or not re.search(r"\b(?:activation|activate|enablement)\b", lowered)
+        or not re.search(r"\b(?:cannot|can\s*not|unable|not\s+able)\b.*\b(?:continue|proceed)\b", lowered)
+    ):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_activation_missing")
+    if not re.search(r"\b(?:close|closed|closing|archive|archived|archiving)\b", lowered):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_close_missing")
+    if not re.search(
+        r"\b(?:correct|right)\s+account\b|\bsign\s+in\b|\blog\s+in\b", lowered
+    ):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_login_missing")
+    if not re.search(
+        r"\b(?:new|another)\s+(?:support\s+)?(?:request|ticket)\b|\bsubmit\b.*\b(?:request|ticket)\b",
+        lowered,
+    ):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_resubmit_missing")
+    if re.search(
+        r"\b(?:enabled|activated|provisioned|turned\s+on)\b|\b(?:handoff|handed\s+off|internal\s+team|24\s*[- ]?hours?)\b",
+        lowered,
+    ):
+        raise AutomationPersonaError("automation_persona_ownership_mismatch_overclaim")
+
+
 def _conversation_customer_messages(facts: dict[str, Any]) -> list[dict[str, Any]]:
     context = facts.get("conversation_context")
     if not isinstance(context, dict) or context.get("version") != "automation-context-v1":
@@ -689,6 +736,8 @@ def validate_account_reply_contract(
         _assert_enablement_appid_invalid_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND:
         _assert_enablement_appid_not_found_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH:
+        _assert_enablement_appid_ownership_mismatch_contract(normalized_reply)
     return facts, derived_close
 
 
@@ -899,6 +948,17 @@ def render_automation_reply(
         current_intent_policy = (
             "Explain that no matching project was found and ask the customer to verify and resend the App ID. "
             "Do not claim enablement, handoff, an SLA, or case closure. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH:
+        current_intent_policy = (
+            "Explain in natural customer-facing language that the submitted App ID belongs to another account, "
+            "so we cannot continue Media Relay activation for this request. State that this case is being closed "
+            "now. Tell the customer to sign in to the correct account and submit a new support request. Do not "
+            "claim that Media Relay was enabled, promise human follow-up, mention an SLA, reveal the full App ID, "
+            "email address, Archer, or internal configuration. Style reference (match the tone and rhythm, do not "
+            "copy the wording): 'It looks like this App ID belongs to another account, so we cannot continue "
+            "the Media Relay activation here. I am closing this case now; please sign in to the correct account and "
+            "submit a new support request from there.' "
         )
     elif intent == ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE:
         current_intent_policy = (

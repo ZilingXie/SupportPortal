@@ -196,7 +196,7 @@
 
 ### E3：Enablement 全生命周期（preproduction）
 
-> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**
+> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**；**2026-10-11 r1 增加 ownership mismatch 终止剧本**
 > （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 改为专门客户回复）。
 > 客户旅程：缺 AppID 追问（草稿管线）→ **会话知识问句经可信 RAG 一次公开作答** → 31 位格式错拒绝 →
 > 32 位有效格式提交进 review → **催促按绑定的 relay 申请实际状态作答（不承诺加速）** →
@@ -215,6 +215,19 @@
 >   `--check` 按所选通道检查（zendesk_api 时校验 Zendesk 凭据，不再探测 163 SMTP/IMAP）。
 > - CLI relay 审批横幅按 `kind=enablement_relay` 打印 Mac 审批指引（修复旧监听器 KeyError）。
 
+- **ownership mismatch 分支（E3_OWNERSHIP）**：`fcd0dab13017495bbe25a63bfdb236fd` 是
+  专用跨账号夹具。relay 返回 `ownership_mismatch` 时，客户收到一条专用公开回复，说明
+  App ID 属于其他账号、当前无法继续 Media Relay activation、当前 case 正在关闭，并要求
+  登录正确账号后提交新的 support request。该结果是正常业务终态：不会进入 failure
+  private note、`human_review_required` 或人工跟进链，也不会声称已开通。与
+  `project_not_found` 分开验证：后者仍保持 automation ownership、请求客户更正 App ID，
+  不关闭当前 case。
+- **E3_OWNERSHIP 终态断言**：reply intent=`enablement_appid_ownership_mismatch`；只生成一条
+  专用 reply job（重复 relay result 使用相同 job/delivery key，不重复回复）；relay request
+  `status=completed`、`suppression_reason=ownership_mismatch`；workflow state=
+  `ownership_mismatch_archived`；Zendesk delivery `target_status='solved'` 且主单回读为
+  `solved`；无 failure event、无 `human_review_required`。
+
 - **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
   两次 `approve_execution`（relay 任务在确认回复送达后派发）。
 - **AppID 夹具**（模块常量）：`8cb7...0247`（31 位，格式错）/ `8cb7...2475`（32 位，
@@ -223,12 +236,14 @@
 - **时长**：回复各含设计延迟，回合 1-5 约 30-50 分钟；relay 等待上限默认 240 分钟
   （`AUTOMATION_TEST_RELAY_TIMEOUT_MIN` 或 CLI `--relay-timeout-min` 覆盖）。
 - **运行**：与 E1P 同环境变量，另需 `AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
-  与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`。
+  与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`；
+  ownership mismatch 终止链使用同一前置条件运行 `--scenario E3_OWNERSHIP --yes`。
   CLI 会在 relay 段打印 `approval_required` 提示（工单链接 + Mac 审批指引）。
 - **终态断言**：`enablement_archer_enabled` 完成回复（内容含 media relay + enabled +
   关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
-- **待实跑确认**：回合 6（not-found 专门回复）与回合 7 终段的实跑合同来自 p2-178 实现
-  与本地钉死测试，首次授权 E3 实跑后如与实况不符，先修断言再定稿。
+- **待实跑确认**：E3 的 not-found 专门回复与终段开通仍需按原计划实跑；E3_OWNERSHIP
+  需使用新工单验证单条专用公开回复、solved、无 failure/human takeover。两者均不能
+  重放旧工单 13985；如与实况不符，先修断言再定稿。
 
 ## 9. Preproduction PP 剧本（独立 CLI，不进 legacy 控制台）
 

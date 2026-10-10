@@ -65,7 +65,10 @@ def print_approval_banner(data: dict) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--scenario", choices=["E1", "E2", "F1", "S1", "D1", "E1P", "E3", "all"])
+    parser.add_argument(
+        "--scenario",
+        choices=["E1", "E2", "F1", "S1", "D1", "E1P", "E3", "E3_OWNERSHIP", "all"],
+    )
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--list", action="store_true", help="list scenarios and exit")
     parser.add_argument("--check", action="store_true", help="verify DB/SMTP/IMAP reachability only")
@@ -113,7 +116,7 @@ def main() -> int:
     # customer-turn channel is not the selected one (E3 needs the Zendesk
     # API channel; the 163 email path is unusable on preproduction).
     for scenario_id in selected:
-        if scenario_id == "E3" and engine.customer_turn_transport != "zendesk_api":
+        if scenario_id in {"E3", "E3_OWNERSHIP"} and engine.customer_turn_transport != "zendesk_api":
             print(
                 f"scenario {scenario_id} requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT="
                 "zendesk_api plus AUTOMATION_TEST_ZENDESK_AUTH; aborting before any "

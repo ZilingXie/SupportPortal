@@ -1,4 +1,11 @@
 # Prompt Change Log
+## 2026-10-11 - Enablement ownership mismatch customer closure intent（r1）
+
+- 范围：`automation-persona-v32` 新增 `enablement_appid_ownership_mismatch` reply intent，并加入已知/结案 intent 白名单；Persona 合同要求说明 App ID 属于其他账号、无法继续 Media Relay activation、当前 case 关闭、登录正确账号后重新提交新的 support request。
+- 行为：ownership mismatch 走单条幂等 customer reply job（`internal_resolution=true`、`close_after_publish=true`）并按现有 Zendesk solved 链路结案；不发送 failure email、不添加 failure private note、不设置 `human_review_required`。`project_not_found` 与其他 relay outcome 合同保持独立。
+- 安全：回复事实只保留可见的 Media Relay 名称，App ID/邮箱进入 forbidden-value guard；validator 拒绝 enablement、人工跟进、SLA 或内部配置泄露。
+- 验证：`test_automation_persona.py` ownership intent 合同/Prompt 脱敏用例；`test_enablement_auto_failure.py` ownership mismatch 双 `write_attempted` 分支、幂等、状态和无失败链断言；E3 新增 `E3_OWNERSHIP` 终止场景，原 E3 继续验证 `project_not_found`。Preproduction 发布与真实业务验证待代码验收后执行。
+
 ## 2026-10-10 - Review bundle gains the AgentMemory retrieval surface (p2-194 stage 3)
 
 - 变更：Hermes 知识 Review 的输入 bundle（case 绑定 `hermes-knowledge-review-bundle-v1` 与 standalone `knowledge-review-bundle-v1`）新增 `agent_memory` 面：`{available, results, wiki_count, searched}`——AgentMemory wiki 检索证据（verified API：wiki/list+wiki/search 扇出，仅 ready wiki、上限 100、top_k 5）。可写决策（new/supplement/replace/merge）现要求 WeKnora 各面 AND AgentMemory 同时应答，任一不可用降级 human_review（理由区分单侧/双侧）。无 prompt 文本变更；仅 Review 模型可见的输入结构扩展（向后兼容的加字段）。
