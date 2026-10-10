@@ -696,7 +696,13 @@ async def tool_execute_automation_action(
     if (
         isinstance(prior_work, dict)
         and str(prior_work.get("status") or "").strip()
-        and str(prior_work.get("status") or "").strip() != "running"
+        # "message_action_classified" is the message-action phase's
+        # classification stub, not a business conclusion: replaying it would
+        # skip execution entirely and the publication gate would park the
+        # turn (live evidence: ticket 13976 turn-2
+        # work_result_not_publishable:message_action_classified).
+        and str(prior_work.get("status") or "").strip()
+        not in {"running", "message_action_classified"}
     ):
         return dict(prior_work)
     binding = context["binding"]
@@ -1182,6 +1188,15 @@ async def tool_execute_automation_action(
             )
             executed_actions.append("ask_reply_job_created")
         skip_persona = True
+        # Legacy attempt-builder semantics: a case with missing fields is
+        # "not_ready" (fields missing, email not ready) — not the mirror's
+        # initial "not_applicable" (no email configured for the route).
+        if str(account_case.get("internal_email_send_status") or "") in {
+            "", "not_applicable"
+        }:
+            account_case["internal_email_send_status"] = "not_ready"
+            account_case["internal_email_send_reason"] = "missing_required_fields"
+            repository.save_account_case(account_case)
 
     # Refresh fields from the post-execution case: downstream validation
     # (e.g. the enablement app-id format check) mutates them, and the tool

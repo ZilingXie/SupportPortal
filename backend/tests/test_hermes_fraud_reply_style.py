@@ -545,6 +545,15 @@ class FraudAskChannelTests(unittest.TestCase):
         self.assertIn("ask_reply_job_created", result["executed_actions"])
         turn = store.get_hermes_turn(handoff["turn_id"])
         self.assertTrue((turn.get("work_result") or {}).get("skip_persona"))
+        # Legacy semantics: missing fields -> not_ready (not the mirror's
+        # initial not_applicable).
+        persisted = repository.get_account_case("AC-123")
+        self.assertEqual(
+            persisted.get("internal_email_send_status"), "not_ready"
+        )
+        self.assertEqual(
+            persisted.get("internal_email_send_reason"), "missing_required_fields"
+        )
 
     def test_retry_reuses_ask_job_without_recreate(self):
         store, repository, handoff, first = self._run_fraud_turn(missing=True)
@@ -611,3 +620,84 @@ class FraudAskChannelTests(unittest.TestCase):
             (jobs[0].get("payload") or {}).get("reply_intent"),
             "fraud_handoff_confirmation",
         )
+
+
+class MessageActionWorkTests(unittest.TestCase):
+    """#1449 fifth gap: the message-action classification stub must not be
+    replayed as a terminal business result — the Work tool must execute."""
+
+    def test_tool_executes_past_message_action_stub(self):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        # The message-action phase pre-fills this classification stub; the
+        # replay gate must NOT treat it as a terminal business result.
+        store.record_hermes_turn_work(
+            handoff["turn_id"],
+            work_result={
+                "status": "message_action_classified",
+                "message_action": {
+                    "action": "continue_task",
+                    "confidence": 0.99,
+                    "reason_code": "provided_information",
+                },
+            },
+        )
+        with store._lock:
+            store._hermes_turns[handoff["turn_id"]]["turn_kind"] = "message_action"
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        # The tool EXECUTED (not replayed the stub): business result with
+        # ask job + skip_persona, and the classification is preserved.
+        self.assertEqual(result["status"], "missing_fields")
+        self.assertNotEqual(result["status"], "message_action_classified")
+        self.assertTrue(result["skip_persona"])
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        recorded = turn.get("work_result") or {}
+        self.assertEqual(recorded.get("status"), "missing_fields")
+        self.assertEqual(
+            (recorded.get("message_action") or {}).get("action"), "continue_task"
+        )
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
