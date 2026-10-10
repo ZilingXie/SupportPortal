@@ -17,7 +17,7 @@ For each new entry, record:
 - Reason: second independent review round on PR #1453.
 - Affected files/config: backend/services/knowledge_dual_write.py, backend/repositories/weknora_promotion_repository.py, backend/sql/ticket_storage.sql, backend/tests/test_repository_configuration.py plus regressions in test_knowledge_dual_write.py / test_knowledge_delivery_repository.py / test_knowledge_delivery_postgres.py.
 - Data impact: none beyond the stage-1 entries (no runtime deployment; switches default off).
-- Verification: knowledge-area + repository-configuration suites 408 passed / 0 failed including isolated PostgreSQL integration (unique-index collision refusal exercised on real PG).
+- Verification: knowledge-area + repository-configuration suites 409 passed / 0 failed after syncing origin/main 0dff3b36 (the pre-sync baseline counted 408; corrected) including isolated PostgreSQL integration (unique-index collision refusal exercised on real PG).
 
 ## 2026-10-10 - Dual-write stage-1 review repair round (p2-194)
 
