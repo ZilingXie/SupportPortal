@@ -1,4 +1,11 @@
 # Prompt Change Log
+## 2026-10-11 - Investigation 客户续轮英文展示（p2-192，R1）
+
+- 计划名称：Investigation 附件传输与续轮英文展示修复。客户续轮通知复用现有英文转换能力，Slack 展示英文译文并保留 comment/turn/来源时间/Zendesk 链接；原文完整保存在 ticket mirror 与通知账本。
+- 安全与兼容：客户引用使用 plain_text，不变成 mention 或工程师指令；翻译失败展示英文不可用提示及 Zendesk 原文入口，已完成回执不重复翻译或发送。不改变调查输入、route、客户回复语言或审批流程。
+- 验证：真实通知 delivery 与 processor/drain 入口回归、隔离 PostgreSQL、三项反向验证；发布镜像隔离 probe 仅证明代码入口行为，翻译与外部发送边界均为 mock，不能替代真实业务样本。
+- 发布：代码 PR #1451；沿用现有 Prompt Release pr-68ed5b0cbda8，无 managed Prompt catalog 更新。独立代码复审通过 HEAD 38c1a3fd63af40a4837855b4fe95313040ca3ae4。
+
 ## 2026-10-11 - Knowledge review Slack message rebuilt (p2-195 stage 4)
 
 - 变更：知识 Review 通知消息由 knowledge_slack_review._build_review_message 重建：标题/判断/完整候选正文（1500 字符截断+API 全文指引）/target+base_version/Rationale/来源三元组/Promotion ID/回复指引（含 @bot mention 示例与定向操作说明）。source-only 根消息与工单线程回复共用同一模板；knowledge_review_required 成为合法根消息类型。无 Hermes prompt 文本变更（仅 Slack 展示层）。
