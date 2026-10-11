@@ -139,6 +139,11 @@ def list_knowledge_review_promotions(
     rows = [
         row for row in repository.list_weknora_promotions() if isinstance(row, dict)
     ]
+    # C2/C14: the CONTRACT ordering is enforced here, not inherited from the
+    # repository — the InMemory store returns insertion order, which would
+    # paginate differently from PostgreSQL's (created_at, promotion_id) index
+    # order for the same data.
+    rows.sort(key=lambda row: (_clean(row.get("created_at")), _clean(row.get("promotion_id"))))
     items: list[dict[str, Any]] = []
     for row in rows:
         if status and _clean(row.get("status")) != _clean(status):
@@ -303,6 +308,18 @@ def _duplicate_evidence(lineage: dict[str, Any]) -> dict[str, Any]:
     for key in bundle_keys:
         surface = report.get(key)
         surfaces[key] = surface if isinstance(surface, dict) else None
+    decisions = report.get("decisions")
+    if not isinstance(decisions, list) and not any(
+        value is not None for value in surfaces.values()
+    ):
+        # C7: an empty report has neither decisions nor surfaces — malformed,
+        # not a silently empty "available" evidence surface.
+        return {
+            "state": "malformed",
+            "reason": "review_report_empty",
+            "report": report,
+            "retrieval_surfaces": surfaces,
+        }
     return {"state": "available", "report": report, "retrieval_surfaces": surfaces}
 
 
@@ -312,14 +329,26 @@ def _summary_projection(lineage: dict[str, Any]) -> dict[str, Any]:
     summary = lineage.get("summary")
     if not isinstance(summary, dict):
         return {"state": "not_recorded", "reason": "summary_task_not_recorded"}
-    packet = summary.get("packet") if isinstance(summary.get("packet"), dict) else None
+    status = _clean(summary.get("status")) or None
+    # C6: a completed Summary whose packet is not a structured object is
+    # malformed — never "available" with a silently dropped packet.
+    packet = summary.get("packet")
+    if status == "completed" and not isinstance(packet, dict):
+        return {
+            "state": "malformed",
+            "malformed_reason": "summary_packet_missing_or_not_object",
+            "status": status,
+            "session_id": _clean(summary.get("summary_session_id")) or None,
+            "run_id": _clean(summary.get("run_id")) or None,
+            "error": _clean(summary.get("error")) or None,
+        }
     return {
         "state": "available",
-        "status": _clean(summary.get("status")) or None,
+        "status": status,
         "session_id": _clean(summary.get("summary_session_id")) or None,
         "run_id": _clean(summary.get("run_id")) or None,
         "error": _clean(summary.get("error")) or None,
-        "packet": packet,
+        "packet": packet if isinstance(packet, dict) else None,
     }
 
 
@@ -330,9 +359,21 @@ def _review_projection(lineage: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(review, dict):
         return {"state": "not_recorded", "reason": "review_task_not_recorded"}
     report = review.get("report") if isinstance(review.get("report"), dict) else None
+    state = "available" if report is not None else "malformed"
+    malformed_reason = None if report is not None else "review_report_missing"
+    if report is not None:
+        # C7: an EMPTY report object carries no decisions and no retrieval
+        # surfaces — it proves nothing and must not grade as available.
+        decisions = report.get("decisions")
+        surfaces = [report.get(key) for key in ("weknora", "agent_memory")]
+        if not isinstance(decisions, list) and not any(
+            isinstance(surface, dict) for surface in surfaces
+        ):
+            state = "malformed"
+            malformed_reason = "review_report_empty"
     return {
-        "state": "available" if report is not None else "malformed",
-        "malformed_reason": None if report is not None else "review_report_missing",
+        "state": state,
+        "malformed_reason": malformed_reason,
         "status": _clean(review.get("status")) or None,
         "session_id": _clean(review.get("review_session_id")) or None,
         "run_id": _clean(review.get("run_id")) or None,

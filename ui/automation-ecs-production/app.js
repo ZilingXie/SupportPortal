@@ -829,6 +829,38 @@ function bindEvents() {
       await loadCases({ selectFirst: true });
     });
   });
+  document.getElementById("tab-cases")?.addEventListener("click", () => {
+    state.activeView = "cases";
+    render();
+  });
+  document.getElementById("tab-knowledge")?.addEventListener("click", async () => {
+    state.activeView = "knowledge";
+    state.knowledge.page = 1;
+    render();
+    await loadKnowledgePromotions({ selectFirst: true });
+  });
+  const knowledgeFilters = document.getElementById("knowledge-filters");
+  knowledgeFilters?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    state.knowledge.filters = {
+      status: String(data.get("status") || ""),
+      decision: String(data.get("decision") || "").trim(),
+      source_type: String(data.get("source_type") || "").trim(),
+      slack_review_status: String(data.get("slack_review_status") || ""),
+    };
+    state.knowledge.page = 1;
+    loadKnowledgePromotions({ selectFirst: true });
+  });
+  document.querySelectorAll("[data-knowledge-promotion]").forEach((button) => {
+    button.addEventListener("click", () => loadKnowledgeDetail(button.dataset.knowledgePromotion));
+  });
+  document.querySelectorAll("[data-knowledge-page]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      state.knowledge.page = Number(button.dataset.knowledgePage);
+      await loadKnowledgePromotions({ selectFirst: false });
+    });
+  });
   document.getElementById("clear-filters")?.addEventListener("click", async () => {
     state.filters = {
       route_group: "all",

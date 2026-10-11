@@ -44,3 +44,15 @@
 
 - 无新表/新迁移/新字段（只读投影）；无页面写接口；不发布 n8n；真实证据维持 waiting-for-evidence（阶段 6）
 - 事件披露：调试期间一次 cwd 漂移致 stash 误在根区 pop 外来 p2-184 stash→已 checkout HEAD 复原，根区干净复核过
+
+
+## 修复轮（2026-10-12，首轮验收四阻断后）
+
+| 阻断 | 修复 | 回归 |
+|---|---|---|
+| B1 Tab 未接入交互 | bindEvents 补齐四组处理器（#tab-knowledge 切换并加载队列、knowledge-filters 提交、data-knowledge-promotion 详情、data-knowledge-page 翻页；此前的插入因一次 python 编辑脚本在编辑链中丢失，本轮重插并验证） | test_knowledge_tab_handlers_are_bound（源码断言 bindEvents 内含全部四组+切换触发加载） |
+| B2 InMemory 无合同排序 | 投影层显式 `rows.sort(key=(created_at, promotion_id))`——合同排序由投影保证，不继承仓库返回顺序（InMemory=插入序、PG=索引序，同数据同分页） | 插入序倒置种子（较新先插）断言输出按 created_at 升序 |
+| B3 malformed 误标 available | Summary：completed 且 packet 非对象→malformed(summary_packet_missing_or_not_object)；Review/重复证据：report 为空对象（无 decisions 且无任何检索面）→malformed(review_report_empty) | 字符串 packet→malformed；空 report 对象→review+duplicate_evidence 双 malformed |
+| B4 Overview 过期 | 重新 --write（5c80251c）并通过 --check | 命令复跑通过 |
+
+验证：专项 **12 passed**（8+4 新回归）；PG parity 1 passed；全套 19 套件 **528 passed / 0 failed**；node --check/compileall/diff-check/Overview --check/快照校验全过。

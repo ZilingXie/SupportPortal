@@ -461,3 +461,101 @@ def test_human_audit_projection(monkeypatch) -> None:
     assert item["human_audit"]["email"] == "engineer@example.com"
     assert item["human_audit"]["slack_user_id"] == "U-9"
     assert item["status"] == "queued"
+
+
+# --------------------- stage-5 review fixes B1-B4 (regressions) -------------
+
+
+def test_projection_orders_by_contract_key_regardless_of_insertion(monkeypatch) -> None:
+    """B2: the contract ordering is enforced by the projection — an InMemory
+    store that returns insertion order (newer row first) still paginates in
+    (created_at, promotion_id) order like PostgreSQL."""
+    from backend.services.knowledge_review_projection import (
+        list_knowledge_review_promotions,
+    )
+
+    repository = _seed_repository()
+    # a second candidate with an EARLIER created_at, inserted LAST
+    older = {
+        "source_type": "knowledge_source_review",
+        "source_id": f"{_summary_task_id()}:kb-0",
+        "source_version": SOURCE_UPDATED_AT,
+        "content_hash": "0" * 64,
+        "candidate_type": "knowledge",
+        "decision": "human_review",
+        "candidate_payload": {
+            "schema_version": "v1", "candidate_type": "knowledge", "decision": "new",
+            "title": "Older candidate", "content": "older",
+        },
+        "review_run_id": "run-rev-1",
+    }
+    repository.enqueue_weknora_promotions([older], now_value="2026-10-11T00:00:00+00:00")
+    for row in repository.list_weknora_promotions():
+        if row["promotion_id"].endswith("kb-0"):
+            repository.park_knowledge_candidate(row["promotion_id"], reasons=["gate"], now_value=NOW)
+
+    result = list_knowledge_review_promotions(repository, page=1, page_size=10)
+    ids = [item["promotion_id"] for item in result["items"]]
+    assert len(ids) == 2
+    assert ids == sorted(
+        ids, key=lambda promotion_id: promotion_id
+    ) or True  # ids alone don't prove it; assert by created_at explicitly
+    created = [item["created_at"] for item in result["items"]]
+    assert created == sorted(created), created
+
+
+def test_string_summary_packet_is_malformed(monkeypatch) -> None:
+    """B3: a completed Summary whose packet is a string grades malformed,
+    never available-with-dropped-packet."""
+    client, _store = _client_and_store()
+    repository = _seed_repository()
+    promotion_id = _promotion_id(repository)
+    _patch_repository(client, monkeypatch, repository)
+    _login(client)
+    repository._standalone_summary_tasks[_summary_task_id()]["packet"] = "not-a-dict"
+
+    detail = client.get(
+        f"/automation/production/dashboard/api/knowledge/promotions/{promotion_id}"
+    )
+    aggregate = detail.json()
+    assert aggregate["summary"]["state"] == "malformed"
+    assert aggregate["summary"]["malformed_reason"] == "summary_packet_missing_or_not_object"
+    assert "packet" not in aggregate["summary"] or aggregate["summary"].get("packet") is None
+
+
+def test_empty_review_report_is_malformed(monkeypatch) -> None:
+    """B3: an empty report object (no decisions, no surfaces) grades
+    malformed for BOTH the review projection and the duplicate evidence."""
+    client, _store = _client_and_store()
+    repository = _seed_repository()
+    promotion_id = _promotion_id(repository)
+    _patch_repository(client, monkeypatch, repository)
+    _login(client)
+    review_id = f"{_summary_task_id()}:review"
+    repository._standalone_review_tasks[review_id]["report"] = {}
+
+    detail = client.get(
+        f"/automation/production/dashboard/api/knowledge/promotions/{promotion_id}"
+    )
+    aggregate = detail.json()
+    assert aggregate["review"]["state"] == "malformed"
+    assert aggregate["review"]["malformed_reason"] == "review_report_empty"
+    assert aggregate["duplicate_evidence"]["state"] == "malformed"
+    assert aggregate["duplicate_evidence"]["reason"] == "review_report_empty"
+
+
+def test_knowledge_tab_handlers_are_bound() -> None:
+    """B1: the knowledge view's interactive elements have registered
+    handlers in bindEvents — the page must actually be operable."""
+    src = open("ui/automation-ecs-production/app.js", encoding="utf-8").read()
+    bind_start = src.index("function bindEvents()")
+    bind_src = src[bind_start:]
+    for fragment in (
+        'getElementById("tab-knowledge")',
+        'getElementById("knowledge-filters")',
+        '[data-knowledge-promotion]',
+        '[data-knowledge-page]',
+    ):
+        assert fragment in bind_src, f"bindEvents missing handler for {fragment}"
+    # the tab switch actually loads the queue
+    assert "loadKnowledgePromotions({ selectFirst: true })" in bind_src
