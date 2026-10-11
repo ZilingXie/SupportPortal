@@ -1,4 +1,12 @@
 # RAG Change Log
+## 2026-10-11 - Stage-4 review fix 6: non-2xx receipts graded through the same allowlist (p2-195)
+
+- Summary: the HTTPError branch of chat.postMessage now parses the body error and applies the SAME proven-unposted allowlist as the HTTP-200 branch. 4xx with an allowlist code (channel_not_found, rate_limited, ...) stays a retriable definite refusal; 4xx with an unknown/missing code or an unparseable body lands in outcome_unknown and never auto-retries. 5xx is server-failure territory — Slack documents internal errors as possibly partially succeeded — so it is ALWAYS outcome_unknown, even when the body carries an allowlist code.
+- Reason: stage-4 sixth-round review blocker (the non-2xx branch bypassed the allowlist; 400+internal_error/unknown/empty-body all re-posted).
+- Affected files/config: backend/services/engineer_slack.py, tests.
+- Data impact: none (no runtime deployment).
+- Verification: stage-4 suite 50 passed (+6 real-adapter regressions covering the reviewer's table rows plus 429 rate_limited and 500+allowlist); full 17-suite regression 515 passed / 0 failed including isolated PostgreSQL with the same forms.
+
 ## 2026-10-11 - Stage-4 review fix 5: refusal errors graded by proven-unposted semantics (p2-195)
 
 - Summary: an ``ok=false`` refusal is retriable ONLY when its error code is on a new proven-unposted allowlist (request-precondition refusals: unknown/archived channel, membership/permission, payload/auth/limit — semantically zero side effects). Slack documents internal_error/fatal_error as "possibly some aspect of the operation succeeded before the error", and unknown or missing codes prove nothing — all of those now land in outcome_unknown and are never auto-retried. The round-4 comment and evidence wording that treated every ok=false as definitely-not-created are corrected.

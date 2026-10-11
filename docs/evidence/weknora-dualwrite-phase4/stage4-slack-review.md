@@ -127,3 +127,17 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 回归：真实适配器 HTTP 边界——internal_error/fatal_error/未知码/缺失 error 四形态 ×（首次 unknown + 重试零新增 POST）；channel_not_found 保持 failed+恰一次重试。InMemory+PG 双侧（PG 同链四形态+真拒绝）。
 
 验证：专项 **44 passed**（42+2）；全套 17 套件 **509 passed / 0 failed**（PG 13）；compileall / diff-check 通过。
+
+
+## 修复轮 6（2026-10-11，六轮验收 F5 非 2xx 分支阻断后）
+
+阻断：`HTTPError` 分支只按 `exc.code >= 500` 判 unknown——400 + internal_error/未知码/空正文全部落 failed 可重试（复现第二次 POST）。
+
+修复（非 2xx 同过允许清单）：解析 HTTPError 正文 `error` 后——
+
+- **5xx**：服务器故障域（Slack 文档：内部错误可能部分成功）→ **恒 outcome_unknown**（即使正文带允许清单码）；
+- **4xx**：与 HTTP 200 分支**同一个** proven-unposted 允许清单——清单码（channel_not_found/rate_limited 等前置拒绝）→ failed 可重试；清单外/未知码/缺失码/正文不可解析 → **outcome_unknown 永不自动重试**。
+
+回归（真实适配器 HTTP 边界，InMemory+PG 双侧）：400+internal_error / 400+未知码 / 400+空正文 → unknown+重试零新增 POST；400+channel_not_found 与 **429+rate_limited** → failed+恰一次重试；500+channel_not_found → unknown 不重试。
+
+验证：专项 **50 passed**（44+6）；全套 17 套件 **515 passed / 0 failed**（PG 13 项含非 2xx 全形态）；compileall / diff-check 通过。

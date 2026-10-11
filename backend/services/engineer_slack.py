@@ -540,9 +540,25 @@ def post_engineer_slack_event(
             payload = json.loads(exc.read().decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError):
             payload = {}
+        error_code = ""
+        if isinstance(payload, dict):
+            error_code = str(payload.get("error") or "").strip()
+        # Stage-4 review F5 round 6: 5xx is server-failure territory —
+        # Slack's own docs warn internal errors may have partially
+        # succeeded, so it is ALWAYS outcome_unknown regardless of body.
+        if exc.code >= 500:
+            raise EngineerSlackDeliveryError(
+                _failure_code(error_code or f"http_{exc.code}"), outcome_unknown=True
+            ) from exc
+        # 4xx goes through the SAME proven-unposted allowlist as the
+        # HTTP-200 branch: a request-precondition refusal definitely created
+        # nothing (retriable failed); anything else — an unknown code, a
+        # missing code, or an unparseable body — proves nothing and never
+        # auto-retries.
+        if error_code and error_code in SLACK_REFUSAL_ERRORS_PROVEN_UNPOSTED:
+            raise EngineerSlackDeliveryError(_failure_code(error_code)) from exc
         raise EngineerSlackDeliveryError(
-            _failure_code(payload.get("error") or f"http_{exc.code}"),
-            outcome_unknown=exc.code >= 500,
+            _failure_code(error_code or f"http_{exc.code}"), outcome_unknown=True
         ) from exc
     except (TimeoutError, socket.timeout, urllib.error.URLError) as exc:
         raise EngineerSlackDeliveryError(

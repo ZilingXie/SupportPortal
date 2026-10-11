@@ -651,6 +651,75 @@ def test_pg_receipt_classification_never_double_posts(repository) -> None:
             assert retry["status"] == "in_flight", (_u, retry)
         assert len(calls) == 1, f"{_u!r}: no second POST"
 
+    # non-2xx through the same allowlist (round 6): 400 unknown/internal/
+    # empty body -> outcome_unknown with zero retry posts; 400/429 allowlist
+    # refusal -> failed with exactly one retry post; 500 stays unknown.
+    import urllib.error as _urlerr
+
+    def _http_err(status, body):
+        raw = _json.dumps(body).encode() if isinstance(body, dict) else (
+            body.encode() if isinstance(body, str) else body
+        )
+        err = _urlerr.HTTPError(
+            "https://slack.com/api/chat.postMessage", status, "err", {}, None
+        )
+        err.read = lambda: raw
+        return err
+
+    for bad in (
+        _http_err(400, {"ok": False, "error": "internal_error"}),
+        _http_err(400, {"ok": False, "error": "brand_new_code"}),
+        _http_err(400, ""),
+        _http_err(500, {"ok": False, "error": "channel_not_found"}),
+    ):
+        promotion_id = _pg_parked(repository)
+        calls = []
+
+        def fake_raise(request, timeout=None, _bad=bad, _c=calls):
+            _c.append(request)
+            raise _bad
+
+        with mock.patch.dict(os.environ, env), mock.patch(
+            "urllib.request.urlopen", side_effect=fake_raise
+        ):
+            first = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=NOW
+            )
+            assert first["status"] == "outcome_unknown", first
+            retry = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=LATER
+            )
+            assert retry["status"] == "in_flight", retry
+        assert len(calls) == 1, f"{bad!r}: no second POST"
+
+    for refusal in (
+        _http_err(400, {"ok": False, "error": "channel_not_found"}),
+        _http_err(429, {"ok": False, "error": "rate_limited"}),
+    ):
+        promotion_id = _pg_parked(repository)
+        calls = []
+        receipts = [refusal, _resp({"ok": True, "channel": "C-REVIEW", "ts": "1700.001"})]
+
+        def fake_seq(r, timeout=None):
+            calls.append(r)
+            item = receipts.pop(0)
+            if isinstance(item, Exception):
+                raise item
+            return item
+
+        with mock.patch.dict(os.environ, env), mock.patch(
+            "urllib.request.urlopen", side_effect=fake_seq
+        ):
+            first = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=NOW
+            )
+            assert first["status"] == "failed", first
+            second = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=LATER
+            )
+            assert second["status"] == "delivered", second
+        assert len(calls) == 2, "allowlist refusal + exactly one retry post"
+
     # genuine refusal: exactly one retry post, then delivered
     promotion_id = _pg_parked(repository)
     calls = []

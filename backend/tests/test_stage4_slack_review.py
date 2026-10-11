@@ -1124,3 +1124,116 @@ def test_proven_refusal_channel_not_found_stays_retriable(monkeypatch) -> None:
     )
     assert ok["status"] == "delivered"
     assert calls + calls2 == 2, "refusal + exactly one retry post"
+
+
+# ------------- stage-4 review F5 round 6: non-2xx through the allowlist ------
+
+
+def _http_error(status: int, body) -> Exception:
+    import urllib.error
+
+    raw = (
+        body.encode() if isinstance(body, str)
+        else _json.dumps(body).encode() if isinstance(body, dict)
+        else body
+    )
+
+    def _reader():
+        return raw
+
+    error = urllib.error.HTTPError(
+        "https://slack.com/api/chat.postMessage", status, "err", {}, None
+    )
+    error.read = _reader
+    return error
+
+
+def test_http400_internal_error_is_outcome_unknown_no_retry(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_error(400, {"ok": False, "error": "internal_error"})],
+    )
+    assert result["status"] == "outcome_unknown", result
+    assert calls == 1
+    assert row["slack_review_status"] == "outcome_unknown"
+
+    retry, calls2, _ = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert retry["status"] == "in_flight"
+    assert calls2 == 0, "400 + internal_error must never auto-retry"
+
+
+def test_http400_unknown_code_is_outcome_unknown_no_retry(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, _ = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_error(400, {"ok": False, "error": "brand_new_code"})],
+    )
+    assert result["status"] == "outcome_unknown"
+    assert calls == 1
+
+
+def test_http400_empty_body_is_outcome_unknown_no_retry(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, _ = _deliver_with_http(
+        monkeypatch, host, promotion_id, [_http_error(400, "")],
+    )
+    assert result["status"] == "outcome_unknown"
+    assert calls == 1
+
+
+def test_http400_allowlist_refusal_stays_retriable(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    refusal, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_error(400, {"ok": False, "error": "channel_not_found"})],
+    )
+    assert refusal["status"] == "failed", refusal
+    assert row["slack_review_status"] == "failed"
+
+    ok, calls2, _ = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert ok["status"] == "delivered"
+    assert calls + calls2 == 2, "400 allowlist refusal + exactly one retry post"
+
+
+def test_http429_rate_limited_is_definite_refusal(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    refusal, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_error(429, {"ok": False, "error": "rate_limited"})],
+    )
+    assert refusal["status"] == "failed", refusal
+    assert refusal["failure_code"] == "engineer_slack_api_rate_limited"
+    assert row["slack_review_status"] == "failed"
+    assert calls == 1
+
+
+def test_http500_with_allowlist_code_stays_outcome_unknown(monkeypatch) -> None:
+    """5xx is server-failure territory (possibly partially succeeded) even
+    when the body carries an allowlist code — never auto-retried."""
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_error(500, {"ok": False, "error": "channel_not_found"})],
+    )
+    assert result["status"] == "outcome_unknown", result
+    assert calls == 1
+    assert row["slack_review_status"] == "outcome_unknown"
