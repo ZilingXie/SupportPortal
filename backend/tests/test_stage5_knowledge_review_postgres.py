@@ -53,6 +53,7 @@ def _seed(repository) -> str:
         "HERMES_CASE_WORKFLOW_MODE": "real",
         "HERMES_AGENT_BASE_URL": "http://hermes.test",
         "HERMES_AGENT_API_TOKEN": "test-token",
+        "KNOWLEDGE_SOURCE_ALLOWLIST": "csd_issue:*",
     }
     from backend.services.knowledge_standalone_workflow import (
         queue_standalone_summary_for_source,
