@@ -1095,6 +1095,16 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
     if not job_id or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
     payload = dict(job.get("payload") or {})
+    if payload.get("hermes_compatibility_only") is True:
+        # Enablement keeps this legacy job id for relay readback identity, but
+        # Hermes owns the actual customer text and Zendesk delivery.  Park the
+        # compatibility job before any persona rendering can occur.
+        payload["persona_render_status"] = "hermes_compatibility_only"
+        job["payload"] = payload
+        job["status"] = "manual_attention"
+        job["updated_at"] = now_iso()
+        _update_claimed_account_reply_job(job, expected_status=claimed_status)
+        return
     if (
         (isinstance(payload.get("reply_facts"), dict) and payload.get("reply_facts"))
         or payload.get("reply_intent")
@@ -1342,6 +1352,16 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
     ):
         return
     payload = dict(current_job.get("payload") or {})
+    if payload.get("hermes_compatibility_only") is True:
+        # A legacy Enablement job may still be claimed by an older scheduler
+        # after Hermes has already taken ownership.  Park it before any
+        # legacy persona rendering can produce a second customer reply.
+        payload["persona_render_status"] = "hermes_compatibility_only"
+        current_job["payload"] = payload
+        current_job["status"] = "manual_attention"
+        current_job["updated_at"] = now_iso()
+        _update_claimed_account_reply_job(current_job, expected_status=claimed_status)
+        return
     existing_message = next(
         (
             message
@@ -2216,6 +2236,124 @@ def _complete_engineer_delivery_round(delivery: dict[str, Any], *, comment_id: s
     )
 
 
+def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> None:
+    """Finish business state after a Hermes public comment is confirmed.
+
+    Enablement keeps its legacy ``account_reply_job_id`` solely as a relay
+    compatibility identity.  The assistant message is projected from the
+    immutable Hermes delivery so the relay can release its internal email,
+    while the shared final-reply handoff closes Fraud/Suspension ownership.
+    Every operation is idempotent and runs only after a delivered readback.
+    """
+    account_case_id = str(delivery.get("account_case_id") or "").strip()
+    message_id = str(delivery.get("message_id") or "").strip()
+    zendesk_ticket_id = str(delivery.get("zendesk_ticket_id") or "").strip()
+    if not account_case_id or not message_id:
+        return
+    try:
+        account_case = ticket_repository.get_account_case(account_case_id)
+    except Exception:
+        account_case = None
+    if not isinstance(account_case, dict):
+        return
+    route = str(account_case.get("execution_action") or account_case.get("route") or "").strip()
+    context = account_case.get("automation_context") if isinstance(account_case.get("automation_context"), dict) else {}
+    workflow = context.get("enablement_manual_workflow")
+    compatibility_job_id = (
+        str(workflow.get("reply_job_id") or "").strip()
+        if isinstance(workflow, dict)
+        else ""
+    )
+    if not compatibility_job_id:
+        workflow = context.get("enablement_auto_workflow")
+        compatibility_job_id = (
+            str(workflow.get("reply_job_id") or "").strip()
+            if isinstance(workflow, dict)
+            else ""
+        )
+    if route == "enablement" and compatibility_job_id:
+        ticket_id = str(account_case.get("client_ticket_id") or zendesk_ticket_id or "").strip()
+        try:
+            ticket = ticket_repository.get_ticket(ticket_id) if ticket_id else None
+        except Exception:
+            ticket = None
+        if isinstance(ticket, dict):
+            messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+            existing = next(
+                (
+                    item for item in messages
+                    if isinstance(item, dict)
+                    and str((item.get("meta") or {}).get("account_reply_job_id") or "") == compatibility_job_id
+                ),
+                None,
+            )
+            if existing is None:
+                projected = {
+                    "role": "assistant",
+                    "content": str(delivery.get("immutable_content") or "").strip(),
+                    "created_at": now_iso(),
+                    "content_format": "plaintext",
+                    "source": "account_ai",
+                    "message_id": message_id,
+                    "meta": {
+                        "account_reply_job_id": compatibility_job_id,
+                        "reply_intent": "submission_confirmation",
+                        "source": "hermes",
+                        "visibility": "account_only",
+                        "published_at": now_iso(),
+                    },
+                }
+                ticket.setdefault("messages", []).append(projected)
+                ticket["updated_at"] = projected["created_at"]
+                try:
+                    ticket_repository.save_ticket(ticket, new_messages=[projected])
+                except Exception:
+                    LOGGER.exception(
+                        "hermes_enablement_compatibility_message_persist_failed "
+                        "account_case_id=%s message_id=%s",
+                        account_case_id,
+                        message_id,
+                    )
+        try:
+            ticket_repository.release_account_internal_email_after_public_reply(
+                account_case_id,
+                released_at=now_iso(),
+            )
+        except Exception:
+            LOGGER.exception(
+                "hermes_enablement_public_reply_release_failed account_case_id=%s message_id=%s",
+                account_case_id,
+                message_id,
+            )
+        try:
+            ticket_repository.release_enablement_relay_requests_after_public_reply(
+                limit=10,
+                now=now_iso(),
+            )
+        except Exception:
+            LOGGER.exception(
+                "hermes_enablement_auto_public_reply_release_failed account_case_id=%s message_id=%s",
+                account_case_id,
+                message_id,
+            )
+
+    reply_intent = str(delivery.get("reply_intent") or "").strip()
+    missing_fields = account_case.get("missing_fields") if isinstance(account_case.get("missing_fields"), list) else []
+    internal_email_status = str(account_case.get("internal_email_send_status") or "").strip().lower()
+    if not reply_intent:
+        if route == "fraud_account" and internal_email_status == "sent":
+            reply_intent = ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION
+        elif route == "account_suspension":
+            reply_intent = ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE
+    if reply_intent:
+        _hand_off_review_after_public_reply(
+            account_case=account_case,
+            ticket_id=str(account_case.get("client_ticket_id") or zendesk_ticket_id or ""),
+            message_id=message_id,
+            reply_intent=reply_intent,
+        )
+
+
 def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
     """Deliver a Hermes agent draft through the immutable ledger.
 
@@ -2598,6 +2736,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
             failure_code=None,
             completed_at=now_iso(),
         )
+        _complete_hermes_customer_reply_side_effects(delivery)
         return
 
     try:
@@ -2619,6 +2758,7 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         failure_code=None,
         completed_at=now_iso(),
     )
+    _complete_hermes_customer_reply_side_effects(delivery)
 
 
 def _deliver_engineer_approved_zendesk_comment(delivery: dict[str, Any]) -> None:

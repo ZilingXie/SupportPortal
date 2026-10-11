@@ -314,29 +314,18 @@ class SuspensionFreshSendTests(unittest.TestCase):
         )
         # Delivery ran exactly once after prepare.
         self.assertEqual(chain.delivery.await_count, 1)
-        # F4: the closing reply job is created with the chain-bound key.
-        self.assertEqual(len(chain.reply_jobs), 1)
-        job_kwargs = chain.reply_jobs[0]
-        self.assertEqual(
-            job_kwargs["reply_intent"], "account_suspension_handoff_and_close"
-        )
-        self.assertEqual(
-            job_kwargs["automation_delivery_key"], _expected_key("account_suspension")
-        )
-        self.assertFalse(job_kwargs["close_after_publish"])
-        # The tool result prevents the persona from drafting a second reply.
+        # Hermes owns the customer reply; the legacy job is not created.
+        self.assertEqual(len(chain.reply_jobs), 0)
         self.assertEqual(result["status"], "executed")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         self.assertEqual(result["internal_email_send_status"], "sent")
         self.assertIn("internal_email_submitted", result["executed_actions"])
-        self.assertTrue(
-            any(a.startswith("reply_job_created:") for a in result["executed_actions"])
-        )
+        self.assertIn("hermes_persona_reply_owned", result["executed_actions"])
         # The turn's recorded work result carries the same skip_persona gate.
         turn = store.get_hermes_turn(handoff["turn_id"])
         work = turn.get("work_result")
         self.assertEqual(work["status"], "executed")
-        self.assertTrue(work["skip_persona"])
+        self.assertFalse(work["skip_persona"])
         # No escalation side effects on the happy path.
         self.assertEqual(chain.escalations, [])
         self.assertEqual(chain.notifications, [])
@@ -354,7 +343,7 @@ class SuspensionFreshSendTests(unittest.TestCase):
 
         self.assertEqual(second, first)
         self.assertEqual(chain.delivery.await_count, 1)
-        self.assertEqual(len(chain.reply_jobs), 1)
+        self.assertEqual(len(chain.reply_jobs), 0)
 
 
 class SuspensionPrepareBranchTests(unittest.TestCase):
@@ -381,15 +370,12 @@ class SuspensionPrepareBranchTests(unittest.TestCase):
         self.assertEqual(chain.prepare_returns, [False])
         # …the fresh read saw the matching sent delivery (F2)…
         self.assertEqual(chain.delivery.await_count, 0)
-        # …and the reuse still creates the reply job (F4).
-        self.assertEqual(len(chain.reply_jobs), 1)
-        self.assertEqual(
-            chain.reply_jobs[0]["reply_intent"], "account_suspension_handoff_and_close"
-        )
+        # …and the reuse remains Hermes-owned.
+        self.assertEqual(len(chain.reply_jobs), 0)
         self.assertEqual(result["status"], "executed")
         self.assertEqual(result["internal_email_send_status"], "sent")
         self.assertEqual(result["internal_email_send_reason"], "reused_existing_delivery")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         self.assertIn("internal_email_reused", result["executed_actions"])
         self.assertEqual(chain.escalations, [])
 
@@ -537,15 +523,9 @@ class FraudChainTests(unittest.TestCase):
             _HERMES_EMAIL_PREPARABLE,
         )
         self.assertEqual(chain.delivery.await_count, 1)
-        self.assertEqual(len(chain.reply_jobs), 1)
-        job_kwargs = chain.reply_jobs[0]
-        self.assertEqual(job_kwargs["reply_intent"], "fraud_handoff_confirmation")
-        self.assertEqual(
-            job_kwargs["automation_delivery_key"], _expected_key("fraud_account")
-        )
-        self.assertFalse(job_kwargs["close_after_publish"])
+        self.assertEqual(len(chain.reply_jobs), 0)
         self.assertEqual(result["status"], "executed")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         self.assertEqual(result["internal_email_send_status"], "sent")
         self.assertEqual(chain.escalations, [])
 
@@ -566,15 +546,9 @@ class FraudChainTests(unittest.TestCase):
         result = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
 
         self.assertEqual(chain.delivery.await_count, 0)
-        self.assertEqual(len(chain.reply_jobs), 1)
-        self.assertEqual(
-            chain.reply_jobs[0]["reply_intent"], "fraud_handoff_confirmation"
-        )
-        self.assertEqual(
-            chain.reply_jobs[0]["automation_delivery_key"], _expected_key("fraud_account")
-        )
+        self.assertEqual(len(chain.reply_jobs), 0)
         self.assertEqual(result["internal_email_send_status"], "sent")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         self.assertIn("internal_email_reused", result["executed_actions"])
         self.assertEqual(chain.escalations, [])
 
@@ -606,9 +580,7 @@ class CrashRecoveryTests(unittest.TestCase):
         first = chain.run_tool(store, repository, turn_id=handoff["turn_id"])
         self.assertEqual(first["status"], "executed")
         jobs_after_first = dict(repository._account_reply_jobs)
-        self.assertEqual(len(jobs_after_first), 1)
-        original_job_id = next(iter(jobs_after_first))
-        original_status = str(jobs_after_first[original_job_id].get("status") or "")
+        self.assertEqual(len(jobs_after_first), 0)
 
         # Crash simulation: the turn's terminal work result never landed, so
         # the idempotent replay gate cannot fire on the retry.
@@ -620,21 +592,11 @@ class CrashRecoveryTests(unittest.TestCase):
         # The email delivery is reused (one send total)…
         self.assertEqual(chain.delivery.await_count, 1)
         self.assertIn("internal_email_reused", second["executed_actions"])
-        # …and the reply job is REUSED, not cancelled-and-recreated.
-        self.assertIn("reply_job_reused", second["executed_actions"])
-        self.assertNotIn(
-            "reply_job_created:account_suspension_handoff_and_close",
-            second["executed_actions"],
-        )
+        # …and no legacy reply job is created on retry.
         jobs_after_retry = dict(repository._account_reply_jobs)
-        self.assertEqual(len(jobs_after_retry), 1)
-        self.assertIn(original_job_id, jobs_after_retry)
-        self.assertEqual(
-            str(jobs_after_retry[original_job_id].get("status") or ""),
-            original_status,
-        )
+        self.assertEqual(len(jobs_after_retry), 0)
         self.assertEqual(second["status"], "executed")
-        self.assertTrue(second["skip_persona"])
+        self.assertFalse(second["skip_persona"])
         self.assertEqual(chain.escalations, [])
 
 
@@ -679,10 +641,10 @@ class PrepareRaceTests(unittest.TestCase):
         # …the re-read observed the concurrent completion (F2)…
         self.assertEqual(result["internal_email_send_status"], "sent")
         self.assertEqual(result["internal_email_send_reason"], "reused_existing_delivery")
-        # …no second send happened, and the reply job is still created once.
+        # …no second send happened, and Hermes still owns the reply.
         self.assertEqual(chain.delivery.await_count, 0)
-        self.assertEqual(len(chain.reply_jobs), 1)
-        self.assertTrue(result["skip_persona"])
+        self.assertEqual(len(chain.reply_jobs), 0)
+        self.assertFalse(result["skip_persona"])
         self.assertEqual(chain.escalations, [])
 
 

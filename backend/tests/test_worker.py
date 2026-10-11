@@ -5554,6 +5554,35 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertTrue(transition_call.kwargs["transitioned_at"])
         repository.save_account_reply_job.assert_not_called()
 
+    def test_hermes_compatibility_job_cannot_render_legacy_persona(self) -> None:
+        job = {
+            "job_id": "account-reply-hermes-compat",
+            "ticket_id": "TK-HERMES-COMPAT",
+            "trigger_message_created_at": "2026-03-22T00:00:00+00:00",
+            "status": "persona_publishing",
+            "claimed_at": "2026-03-22T00:00:01+00:00",
+            "attempt_count": 0,
+            "payload": {
+                "hermes_compatibility_only": True,
+                "reply_owner": "hermes_persona",
+                "reply_facts": {"reply_intent": "submission_confirmation"},
+            },
+        }
+        repository = Mock()
+        repository.get_account_reply_job.return_value = job
+        repository.get_ticket.return_value = {"ticket_id": "TK-HERMES-COMPAT", "messages": []}
+        repository.update_claimed_account_reply_job.return_value = job
+
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "render_automation_reply"
+        ) as render:
+            worker._publish_account_reply_job(job)
+
+        render.assert_not_called()
+        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(job["payload"]["persona_render_status"], "hermes_compatibility_only")
+        repository.update_claimed_account_reply_job.assert_called_once()
+
     def test_rag_fallback_job_renders_through_persona(self) -> None:
         job = {
             "job_id": "account-reply-rag-fallback",

@@ -68,3 +68,56 @@ def test_greeting_projection_keeps_one_fallback_greeting():
     assert rendered.count("Hi ") == 1
     assert rendered.startswith("Hi Customer,")
 
+
+@pytest.mark.parametrize("content", [
+    "Hi Customer,\n\nPlease provide your payment method.",
+    "Hi Customer,\n\nPlease send the billing address for the account.",
+])
+def test_validator_rejects_payment_or_billing_requests(content):
+    with pytest.raises(HermesReplyBasisError) as exc:
+        validate_customer_reply_draft(content, _basis())
+    assert exc.value.code in {"payment_information_request", "forbidden_topic"}
+
+
+def test_validator_allows_negative_sensitive_statement_and_network_route():
+    basis = _basis()
+    assert validate_customer_reply_draft(
+        "Hi Customer,\n\nNo credit card information is needed. We checked the network route.",
+        basis,
+    )["decision"] == "pass"
+
+
+def test_validator_rejects_collected_field_reask_and_unsupported_claims():
+    with pytest.raises(HermesReplyBasisError) as reask:
+        validate_customer_reply_draft(
+            "Hi Customer,\n\nPlease share your name again.", _basis()
+        )
+    assert reask.value.code == "collected_field_reask"
+
+    with pytest.raises(HermesReplyBasisError) as state:
+        validate_customer_reply_draft(
+            "Hi Customer,\n\nYour account has been restored within 24 hours.", _basis()
+        )
+    assert state.value.code == "unsupported_account_state_claim"
+
+
+def test_validator_accepts_authorized_handoff_commitment_and_blocks_handoff_reask():
+    basis = _basis(
+        missing_fields=[],
+        trusted_conclusion={
+            "status": "executed",
+            "handoff": True,
+            "reply_intent": "fraud_handoff_confirmation",
+        },
+        allowed_claims=["handoff", "team_contact_within_24_hours"],
+        extra={"allowed_commitments": ["team_contact_within_24_hours"]},
+    )
+    assert validate_customer_reply_draft(
+        "Hi Customer,\n\nThe relevant team will contact you within 24 hours.", basis
+    )["decision"] == "pass"
+    with pytest.raises(HermesReplyBasisError) as reask:
+        validate_customer_reply_draft(
+            "Hi Customer,\n\nPlease provide your office address.", basis
+        )
+    assert reask.value.code == "handoff_reasks_information"
+

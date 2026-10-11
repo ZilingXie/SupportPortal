@@ -5147,3 +5147,16 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
   unsupported time promise rules.
 - Runtime prompt text remains English; customer-language translation continues
   in the existing Hermes delivery preparation path.
+
+### 2026-10-11 — Hermes Unified Customer Reply v3.1-repair
+
+- Persona assembly no longer instructs Hermes to copy basis sentences or
+  anchors `VERBATIM` / character-for-character. The server basis remains the
+  complete fact boundary, while Hermes may organize the allowed facts,
+  missing fields, stage and commitments into natural support prose.
+- Enablement `workflow_completed` is an explicitly publishable Work status
+  when `skip_persona=false` and `reply_owner=hermes_persona`; the Persona phase
+  therefore remains in the route → work → persona chain.
+- The legacy `account_reply_job_id` is retained only as a compatibility relay
+  identity; it is marked `hermes_compatibility_only` so the legacy worker does
+  not render a second customer reply.

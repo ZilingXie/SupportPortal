@@ -422,8 +422,9 @@ async def _execute_hermes_internal_email(
     F1: prepare uses restricted statuses that EXCLUDE awaiting_public_reply.
     F2: on prepare failure, re-reads the authoritative repository state.
     F3: on delivery failure, checks if escalation already ran (no double).
-    F4: on success/reuse, idempotently creates the reply job and returns
-    skip_persona so the tool result prevents a second customer reply.
+    F4: on success/reuse, either retains a compatibility reply-job identity
+    or leaves customer wording to Hermes Persona, and returns the explicit
+    owner/skip gate so no second customer reply is produced.
 
     Returns a dict with keys: status, reason, account_case, reply_job_id,
     skip_persona, _return (set when the caller must return immediately).
@@ -550,7 +551,9 @@ async def _execute_hermes_internal_email(
             }
         executed_actions.append("internal_email_submitted")
 
-    # F4: success or reuse → create reply job idempotently + skip_persona.
+    # F4: success or reuse → preserve the legacy identity only when the
+    # caller explicitly requests it; Hermes-owned routes leave reply wording
+    # to Persona and keep the compatibility gate separate.
     from backend.services.account_suspension_automation import (
         SUSPENSION_STATE_CLOSING_REPLY_PENDING,
         update_direct_handoff_workflow,
@@ -1067,7 +1070,7 @@ async def tool_execute_automation_action(
         elif attempt.get("internal_email_to_send") and zendesk_side_effects_enabled:
             if automation_handler == "enablement":
                 try:
-                    account_case, _reply_job, workflow_outcome = (
+                    account_case, compatibility_reply_job, workflow_outcome = (
                         await _run_enablement_workflow(
                             repository=repository,
                             account_case=account_case,
@@ -1103,12 +1106,40 @@ async def tool_execute_automation_action(
                 # Persona must not draft a second one (review #3), and the
                 # relay gate binds to exactly that job's delivered public
                 # reply.
+                compatibility_job_id = str(
+                    (compatibility_reply_job or {}).get("job_id")
+                    if isinstance(compatibility_reply_job, dict)
+                    else ""
+                ).strip()
+                if not compatibility_job_id:
+                    compatibility_job_id = str(
+                        (account_case.get("automation_context") or {}).get("enablement_auto_workflow", {}).get("reply_job_id")
+                        if isinstance((account_case.get("automation_context") or {}).get("enablement_auto_workflow"), dict)
+                        else ""
+                    ).strip()
+                if compatibility_job_id:
+                    # Keep the legacy job id because Enablement relay release
+                    # still binds its readback to account_reply_job_id.  Mark
+                    # the job as compatibility-only so the legacy worker
+                    # cannot generate or publish a second customer reply.
+                    compatibility_job = repository.get_account_reply_job(compatibility_job_id)
+                    if isinstance(compatibility_job, dict):
+                        compatibility_payload = dict(compatibility_job.get("payload") or {})
+                        compatibility_payload.update(
+                            {
+                                "reply_owner": "hermes_persona",
+                                "hermes_compatibility_only": True,
+                            }
+                        )
+                        compatibility_job["payload"] = compatibility_payload
+                        repository.save_account_reply_job(compatibility_job)
                 skip_persona_result = {
                     "status": "workflow_completed",
                     "route": normalized_route,
                     "outcome": workflow_outcome,
-                    "skip_persona": True,
-                    "reply_owner": "account_reply_job_legacy",
+                    "skip_persona": False,
+                    "reply_owner": "hermes_persona",
+                    "compatibility_account_reply_job_id": compatibility_job_id,
                     "missing_fields": list(account_case.get("missing_fields") or []),
                     "collected_fields": dict(account_case.get("collected_fields") or {}),
                     "executed_actions": list(executed_actions),
@@ -1125,11 +1156,6 @@ async def tool_execute_automation_action(
                     store.record_hermes_turn_work(turn_id, work_result=skip_persona_result)
                 except Exception:
                     pass
-                # Normal business waiting on the relay result: a neutral park,
-                # not an escalation trace (ticket 13601 review #2).
-                store.pause_hermes_case(
-                    turn_id, reason=f"enablement_{workflow_outcome}_awaiting_relay_result"
-                )
                 return skip_persona_result
             else:
                 # Fraud/detailed_invoice take the same unified
@@ -1245,6 +1271,12 @@ async def tool_execute_automation_action(
     # A sent internal email IS the business execution — the proceed-with-
     # missing-fields contract sends with whatever was collected (legacy
     # parity), so the status is "executed" even with fields still missing.
+    public_missing_fields = (
+        []
+        if internal_email_status == "sent"
+        and normalized_route in {"fraud_account", "detailed_invoice"}
+        else missing_fields
+    )
     result = {
         "status": (
             "executed"
@@ -1252,7 +1284,7 @@ async def tool_execute_automation_action(
             else ("missing_fields" if missing_fields else "executed")
         ),
         "route": normalized_route,
-        "missing_fields": missing_fields,
+        "missing_fields": public_missing_fields,
         "collected_fields": collected_fields,
         "executed_actions": executed_actions,
         "internal_email_send_status": internal_email_status,
@@ -1260,6 +1292,17 @@ async def tool_execute_automation_action(
         # A reply job created by the tool (fresh send or sent-reuse) is the
         # SOLE customer reply; persona must not draft a second one (F4).
         "skip_persona": bool(skip_persona),
+        "reply_intent": (
+            "fraud_handoff_confirmation"
+            if normalized_route == "fraud_account" and internal_email_status == "sent"
+            else "request_missing_information"
+            if normalized_route == "fraud_account" and missing_fields
+            else "account_suspension_handoff_and_close"
+            if normalized_route == "account_suspension" and internal_email_status == "sent"
+            else "submission_confirmation"
+            if normalized_route == "detailed_invoice" and internal_email_status == "sent"
+            else None
+        ),
     }
     # Every successful automation result now carries the same server-owned
     # reply contract as investigation/follow-up turns.  ``skip_persona`` is
@@ -1275,28 +1318,26 @@ async def tool_execute_automation_action(
         stage="automation_result",
     )
     if normalized_route == "fraud_account":
-        # Option B (fraud reply style alignment): the structured parts of
-        # the ask/confirmation are server-built and deterministic; the
-        # persona renders them verbatim and only composes narrative.
-        from backend.services.account_fraud_reply_basis import build_fraud_reply_basis
+        # Fraud uses the same unified basis as every other route.  The server
+        # supplies labels and allowed commitments; Hermes chooses the natural
+        # sentence shape.  The legacy fixed-anchor builder remains available
+        # to the old account-reply pipeline but is not called from Hermes.
+        from backend.services.account_fraud_reply_basis import fraud_field_display_label
 
-        result["reply_basis"] = build_fraud_reply_basis(
-            missing_fields=missing_fields,
-            collected_fields=collected_fields,
-        )
-        # Preserve the legacy fraud keys while adding the unified identity
-        # and binding fields used by Hermes Persona.
-        result["reply_basis"] = {
-            **basis_from_work_result(turn=turn, work_result=result, stage="request_missing_information"),
-            **dict(result["reply_basis"]),
-            "kind": "hermes_customer_reply_basis_v1",
-            "basis_version": "hermes_customer_reply_basis_v1",
-            "reply_owner": HERMES_REPLY_OWNER,
-            "source_turn_id": str(turn.get("turn_id") or ""),
-            "source_direction": str(turn.get("direction") or "automation"),
-            "source_route": normalized_route,
-            "route": normalized_route,
+        fraud_basis = result["reply_basis"]
+        fraud_basis["missing_field_labels"] = {
+            str(field): fraud_field_display_label(str(field))
+            for field in public_missing_fields
         }
+        fraud_basis["allowed_commitments"] = (
+            ["handoff", "team_contact_within_24_hours"]
+            if result.get("reply_intent") == "fraud_handoff_confirmation"
+            else ["request_missing_fields"]
+        )
+        conclusion = dict(fraud_basis.get("trusted_conclusion") or {})
+        conclusion["handoff"] = result.get("reply_intent") == "fraud_handoff_confirmation"
+        conclusion["reply_intent"] = result.get("reply_intent")
+        fraud_basis["trusted_conclusion"] = conclusion
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result
 
@@ -1656,17 +1697,24 @@ def tool_save_reply_draft(
         validate_customer_reply_draft,
     )
 
-    # The Work phase is the server-owned source of facts.  A model-supplied
-    # basis is accepted only when it carries the same versioned identity and
-    # current turn; otherwise it is replaced by the persisted Work basis.
+    # The Work phase is the only source of facts.  The model can provide a
+    # basis-shaped argument as a rendering hint, but it can never merge or
+    # replace server-owned fields (route, stage, facts, claims, owner, or
+    # publication policy).  This is deliberately fail-closed when no
+    # authoritative Work/investigation record exists.
     work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else {}
     investigation = binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
-    candidate_basis = dict(basis or {})
     persisted_basis = work_result.get("reply_basis") if isinstance(work_result, dict) else None
+    if isinstance(basis, dict) and basis.get("source_turn_id") not in (None, "", str(turn.get("turn_id") or "")):
+        raise HermesToolError("basis_turn_mismatch", "reply basis is not bound to the current turn")
     if isinstance(persisted_basis, dict) and persisted_basis.get("kind") == HERMES_CUSTOMER_REPLY_BASIS_KIND:
-        candidate_basis = {**dict(persisted_basis), **candidate_basis}
-    if candidate_basis.get("kind") != HERMES_CUSTOMER_REPLY_BASIS_KIND:
+        candidate_basis = dict(persisted_basis)
+    elif work_result:
         candidate_basis = basis_from_work_result(turn=turn, work_result=work_result)
+    elif investigation:
+        candidate_basis = basis_from_work_result(turn=turn, work_result={}, stage="investigation_result")
+    else:
+        raise HermesToolError("reply_basis_unavailable", "a server-owned Work or investigation result is required before drafting")
     if str(turn.get("direction") or "") == "investigation":
         investigation_facts = {
             key: investigation.get(key)

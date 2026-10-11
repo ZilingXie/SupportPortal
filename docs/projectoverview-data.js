@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T13:05:33Z",
-  "source_base_commit": "c6addcc0ccf74f0b75007ed8186d109f63e5a317",
-  "registry_digest": "9cb842c777080b3cc976a34562b94559bbf8aafd0f6f39c9d6bd41ec431e23c0",
+  "generated_at": "2026-10-11T14:35:54Z",
+  "source_base_commit": "e1f7c2a88577a57e5a03a665ff8296292cf2ebde",
+  "registry_digest": "0e5b633aa46c9f91729a210214c591bfdee8b1cc2452db9a45095f0d4b5fba27",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1557,8 +1557,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
-          "command": "uv run pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py -q",
-          "result": "64 passed"
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "200 passed"
+        },
+        {
+          "type": "test",
+          "label": "Enablement Persona ownership regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_tool_failure_handoff.py::ToolFailureHandoffTests::test_enablement_workflow_completed_with_hermes_owner_runs_persona -q",
+          "result": "passed; route → work(workflow_completed, skip_persona=false) → persona"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility delivery guard",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py::WorkerResilienceTests::test_hermes_compatibility_job_cannot_render_legacy_persona backend/tests/test_worker.py::WorkerResilienceTests::test_automation_delivery_with_valid_ownership_sends -q",
+          "result": "2 passed"
         },
         {
           "type": "test",
@@ -17925,23 +17937,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-11",
       "updated_at": "2026-10-11",
       "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。",
-      "next_action": "完成代表性 automation 路径、Persona draft validator 和定向回归；Enablement legacy relay 绑定待范围决策；保留 Draft PR 等待独立验收与 Preproduction 证据。",
+      "next_action": "提交 v3.1-repair 完整 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
         "有姓名使用 Hi \u003cName>,，无姓名使用唯一 Hi Customer,；Persona 不重复生成称呼。",
         "支付凭据、内部实现、handoff 后重复索取资料、basis/turn 不匹配和重复称呼均被服务端 validator 拒绝。",
-        "automation auto 与 investigation manual 的发布策略继续由服务端决定。"
+        "automation auto 与 investigation manual 的发布策略继续由服务端决定。",
+        "Enablement/Fraud/Suspension 的 Hermes delivery readback 完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
       ],
       "blockers": [
-        "Enablement relay release still requires legacy account_reply_job_id; a material scope decision is pending before changing that protocol."
+        "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
       ],
       "evidence": [
         {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
-          "command": "uv run pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py -q",
-          "result": "64 passed"
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "200 passed"
+        },
+        {
+          "type": "test",
+          "label": "Enablement Persona ownership regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_tool_failure_handoff.py::ToolFailureHandoffTests::test_enablement_workflow_completed_with_hermes_owner_runs_persona -q",
+          "result": "passed; route → work(workflow_completed, skip_persona=false) → persona"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility delivery guard",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py::WorkerResilienceTests::test_hermes_compatibility_job_cannot_render_legacy_persona backend/tests/test_worker.py::WorkerResilienceTests::test_automation_delivery_with_valid_ownership_sends -q",
+          "result": "2 passed"
         },
         {
           "type": "test",

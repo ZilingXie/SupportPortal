@@ -308,7 +308,16 @@ class HermesTurnDeferred(RuntimeError):
 _PHASE_COMPLETED = "completed"
 # Only explicitly publishable business conclusions may reach persona; an
 # unknown/failed status must never produce a customer reply (13601 review #2).
-_PERSONA_ALLOWED_WORK_STATUSES = ("executed", "missing_fields")
+_PERSONA_ALLOWED_WORK_STATUSES = (
+    "executed",
+    "missing_fields",
+    # Enablement completes its server-side workflow before Hermes Persona
+    # writes the customer-facing wording.  The result is publishable only
+    # because the tool also returns the authoritative reply basis; keeping
+    # this status explicit prevents the generic unknown-status fail-closed
+    # branch from escalating a valid Enablement turn.
+    "workflow_completed",
+)
 
 _PHASE_FAILED = "failed"
 _PHASE_SUPERSEDED = "superseded"

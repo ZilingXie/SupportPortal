@@ -15,12 +15,16 @@ HERMES_CUSTOMER_REPLY_BASIS_VERSION = "hermes_customer_reply_basis_v1"
 HERMES_REPLY_OWNER = "hermes_persona"
 
 _PAYMENT_PATTERNS = (
-    re.compile(r"\b(?:credit|debit|bank|card)\s+(?:card|number|details|information)\b", re.I),
+    re.compile(
+        r"\b(?:payment\s+method|billing\s+address|credit|debit|bank|card)"
+        r"(?:\s+(?:card|number|details|information|method|address))?\b",
+        re.I,
+    ),
     re.compile(r"\b(?:cvv|cvc|security code|password|one[- ]time code|otp)\b", re.I),
     re.compile(r"支付(?:宝|信息|凭据)|银行卡|信用卡|验证码|密码"),
 )
 _INTERNAL_PATTERNS = (
-    re.compile(r"\b(?:prompt|workflow|work result|reply basis|route|tool call|internal ticket)\b", re.I),
+    re.compile(r"\b(?:prompt|workflow|work result|reply basis|tool call|internal ticket)\b", re.I),
     re.compile(r"\b(?:automation[- ]persona|account[- ]reply[- ]job|hermes persona)\b", re.I),
 )
 _HANDOFF_REASK_PATTERNS = (
@@ -28,6 +32,34 @@ _HANDOFF_REASK_PATTERNS = (
     re.compile(r"请(?:提供|发送|补充|再次提供)"),
 )
 _GREETING_RE = re.compile(r"^\s*hi\s+[^,\n]+,\s*(?:\n\s*\n)?", re.I)
+_REQUEST_VERB_RE = re.compile(
+    r"\b(?:please|kindly|need|needs|required|required to|provide|send|share|"
+    r"confirm|enter|submit|tell us|let us know)\b|请(?:提供|发送|补充|确认|告知)",
+    re.I,
+)
+_NEGATED_REQUEST_RE = re.compile(
+    r"\b(?:no|without|don't|do not|doesn't|does not|not required|not needed|"
+    r"unnecessary|never)\b|无需|不用|不需要|无需提供",
+    re.I,
+)
+_RECOVERY_CLAIM_RE = re.compile(
+    r"\b(?:account|access|service)\b[^.?!\n]{0,40}\b(?:restored|recovered|"
+    r"reactivated|reopened|enabled|activated)\b|\b(?:restored|recovered|"
+    r"reactivated|reopened|enabled|activated)\s+(?:your\s+)?account\b",
+    re.I,
+)
+_TIME_COMMITMENT_RE = re.compile(
+    r"\b(?:within|in)\s+(?:the\s+next\s+)?(?:24|48|72)\s+hours?\b|24小时|48小时|72小时",
+    re.I,
+)
+_FIELD_ALIASES: dict[str, set[str]] = {
+    "name": {"name", "full name", "customer name", "姓名", "名字"},
+    "payment_method": {"payment method", "付款方式", "支付方式"},
+    "billing_address": {"billing address", "账单地址"},
+    "office_address": {"office address", "办公地址"},
+    "contact_number": {"contact number", "official contact number", "phone number", "联系电话"},
+    "contact_email": {"contact email", "official contact email", "email address", "联系邮箱"},
+}
 
 
 class HermesReplyBasisError(ValueError):
@@ -153,11 +185,84 @@ def basis_from_work_result(
 
 def _basis_field_values(basis: dict[str, Any]) -> list[str]:
     values: list[str] = []
-    for key in ("collected_facts", "trusted_conclusion"):
+    for key in (
+        "collected_facts",
+        "trusted_conclusion",
+        "allowed_claims",
+        "allowed_commitments",
+        "missing_field_labels",
+        "confirmation_anchor",
+        "contact_commitment_anchor",
+    ):
         value = basis.get(key)
         if isinstance(value, dict):
-            values.extend(str(item).strip().lower() for item in value.values() if str(item).strip())
+            for item in value.values():
+                if isinstance(item, (list, tuple, set)):
+                    values.extend(str(entry).strip().lower() for entry in item if str(entry).strip())
+                else:
+                    values.extend(str(item).strip().lower() for item in (item,) if str(item).strip())
+        elif isinstance(value, (list, tuple, set)):
+            for item in value:
+                if isinstance(item, dict):
+                    values.extend(str(entry).strip().lower() for entry in item.values() if str(entry).strip())
+                elif str(item).strip():
+                    values.append(str(item).strip().lower())
+        elif str(value).strip():
+            values.append(str(value).strip().lower())
     return values
+
+
+def _basis_collected_keys(basis: dict[str, Any]) -> set[str]:
+    value = basis.get("collected_facts") or basis.get("collected_fields")
+    keys: set[str] = set()
+    if isinstance(value, dict):
+        keys.update(str(key).strip().lower() for key in value if str(key).strip())
+    elif isinstance(value, (list, tuple, set)):
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("field") or "").strip().lower()
+            if label:
+                keys.add(label)
+    return keys
+
+
+def _basis_missing_keys(basis: dict[str, Any]) -> set[str]:
+    return {str(item).strip().lower() for item in _clean_list(basis.get("missing_fields")) if str(item).strip()}
+
+
+def _field_key_from_text(text: str) -> str | None:
+    lowered = str(text or "").strip().lower()
+    for key, aliases in _FIELD_ALIASES.items():
+        if any(alias in lowered for alias in aliases):
+            return key
+    return None
+
+
+def _has_negation_before(text: str, start: int) -> bool:
+    prefix = str(text or "")[max(0, start - 48):start]
+    return bool(_NEGATED_REQUEST_RE.search(prefix))
+
+
+def _contains_authorized_claim(text: str, basis: dict[str, Any], pattern: re.Pattern[str]) -> bool:
+    match = pattern.search(text)
+    if not match:
+        return True
+    if _has_negation_before(text, match.start()):
+        return True
+    normalized_values = _basis_field_values(basis)
+    # The claim is authorized only when its semantic marker appears in a
+    # server-owned conclusion/commitment.  Customer names and arbitrary
+    # collected values cannot authorize a state transition.
+    marker = match.group(0).lower()
+    markers = {
+        token
+        for token in ("restored", "recovered", "reactivated", "reopened", "enabled", "activated")
+        if token in marker
+    }
+    if pattern is _TIME_COMMITMENT_RE:
+        return any("24" in value or "48" in value or "72" in value for value in normalized_values)
+    return any(any(token in value for token in markers) for value in normalized_values)
 
 
 def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[str, Any]:
@@ -168,14 +273,18 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
     if not isinstance(basis, dict) or basis.get("kind") != HERMES_CUSTOMER_REPLY_BASIS_KIND:
         raise HermesReplyBasisError("basis_required")
     for pattern in _PAYMENT_PATTERNS:
-        if pattern.search(text):
+        match = pattern.search(text)
+        if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 64):match.end() + 24]) and not _has_negation_before(text, match.start()):
             raise HermesReplyBasisError("payment_information_request")
     for pattern in _INTERNAL_PATTERNS:
         if pattern.search(text):
             raise HermesReplyBasisError("internal_implementation_exposed")
     forbidden = " ".join(_clean_list(basis.get("forbidden_topics"))).lower()
-    if forbidden and any(token in text.lower() for token in ("payment information", "credit card", "银行卡")):
-        raise HermesReplyBasisError("forbidden_topic")
+    if forbidden:
+        for token in ("payment information", "credit card", "银行卡"):
+            position = text.lower().find(token)
+            if position >= 0 and _REQUEST_VERB_RE.search(text[max(0, position - 64):position + len(token) + 24]) and not _has_negation_before(text, position):
+                raise HermesReplyBasisError("forbidden_topic")
     if str(basis.get("source_direction") or basis.get("direction") or "") == "automation":
         if str(basis.get("trusted_conclusion", {}).get("status") or "") == "human_review_required":
             raise HermesReplyBasisError("human_review_reply_forbidden")
@@ -191,9 +300,25 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
     }
     if missing and collected and missing.intersection(collected):
         raise HermesReplyBasisError("basis_missing_collected_conflict")
+    # A model may restate a collected field, but it may not ask the customer
+    # to provide it again.  Use aliases so ``full name`` and ``name`` share
+    # one server-owned identity.
+    for field_key in _FIELD_ALIASES:
+        if field_key not in collected:
+            continue
+        aliases = _FIELD_ALIASES[field_key]
+        for alias in aliases:
+            match = re.search(rf"\b{re.escape(alias)}\b", text, re.I)
+            if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 20]):
+                raise HermesReplyBasisError("collected_field_reask")
+    if _contains_authorized_claim(text, basis, _RECOVERY_CLAIM_RE) is False:
+        raise HermesReplyBasisError("unsupported_account_state_claim")
+    if _contains_authorized_claim(text, basis, _TIME_COMMITMENT_RE) is False:
+        raise HermesReplyBasisError("unsupported_time_commitment")
     # A handoff basis may never ask for new customer data.
     conclusion = basis.get("trusted_conclusion") if isinstance(basis.get("trusted_conclusion"), dict) else {}
-    if conclusion.get("handoff") is True and any(pattern.search(text) for pattern in _HANDOFF_REASK_PATTERNS):
+    handoff = conclusion.get("handoff") is True or "handoff" in str(conclusion.get("reply_intent") or "").lower()
+    if handoff and any(pattern.search(text) for pattern in _HANDOFF_REASK_PATTERNS):
         raise HermesReplyBasisError("handoff_reasks_information")
     return {
         "decision": "pass",
