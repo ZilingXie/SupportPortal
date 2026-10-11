@@ -1,4 +1,36 @@
 # RAG Change Log
+## 2026-10-12 - Stage-5 review fix 3: summary anomaly reasons reach the page (p2-196)
+
+- Summary: the Knowledge Review detail page now consumes the backend's dedicated anomaly fields — summaryAnomalyReason() falls through failure_reason → malformed_reason → reason → error, a failed Summary additionally renders its recorded error in a dedicated failure element, and knowledgeQualityTone maps failed to the danger tone (previously unknown). Real rendering assertions were added: a Node harness executes the REAL app.js render functions extracted from the source file against REAL API payloads from the injected anomaly states, asserting the failure reason ("boom") and the malformed reason actually appear in the rendered HTML with the correct tone.
+- Reason: stage-5 third-round review blocker (C6 failure reasons invisible on the page).
+- Affected files/config: ui/automation-ecs-production/app.js, backend/tests/test_stage5_ui_rendering.py (new).
+- Data impact: none (no runtime deployment).
+- Verification: UI rendering suite 3 passed (real render functions × real API payloads); stage-5 suite 15 passed; full 20-suite regression 534 passed / 0 failed; all verification commands pass.
+
+## 2026-10-12 - Stage-5 review fix 2: failed summaries and structurally invalid reports grade explicitly (p2-196)
+
+- Summary: two second-round blockers close the anomaly-state boundary. A Summary row with status=failed now projects as an explicit ``state="failed"`` carrying the recorded error as failure_reason — never "available" with a dropped packet. Review reports are structurally validated by a shared grader: decisions present but not a list (``review_report_decisions_not_a_list``), a retrieval surface present but not an object (``review_report_surface_not_an_object``), or a completely empty report (``review_report_empty``) all grade malformed for BOTH the review projection and the duplicate evidence — structurally invalid retrieval evidence can no longer enter the available path.
+- Reason: stage-5 second-round review blockers (C6/C7 anomaly-state contract).
+- Affected files/config: backend/services/knowledge_review_projection.py, backend/tests/test_stage5_knowledge_review.py.
+- Data impact: none (no runtime deployment).
+- Verification: stage-5 suite 15 passed (+3 regressions covering the reviewer's repro shapes); full 19-suite regression 531 passed / 0 failed; all verification commands pass.
+
+## 2026-10-12 - Stage-5 review fixes: tab wiring, contract ordering, malformed grading (p2-196)
+
+- Summary: four first-round blockers fixed. (B1) the Knowledge Review tab's interactive elements are wired in bindEvents — tab switch loads the queue, filter form submits, list buttons open details, pagination pages (the earlier insertion had been lost in an editing chain). (B2) the projection now enforces the (created_at, promotion_id) contract ordering itself instead of inheriting repository return order, so InMemory insertion order and PostgreSQL index order paginate identically. (B3) malformed states grade correctly: a completed Summary whose packet is not an object is malformed (summary_packet_missing_or_not_object), and a Review report that is an empty object (no decisions, no retrieval surfaces) grades malformed for both the review projection and the duplicate evidence — never a silently-empty "available". (B4) the stale Project Overview was regenerated.
+- Reason: stage-5 first-round review blockers.
+- Affected files/config: ui/automation-ecs-production/app.js, backend/services/knowledge_review_projection.py, docs/projectoverview-data.js, tests.
+- Data impact: none (no runtime deployment).
+- Verification: stage-5 suite 12 passed (+4 regressions incl. an insertion-order-inverted seed and bindEvents source assertions); full 19-suite regression 528 passed / 0 failed; Overview --check passes.
+
+## 2026-10-12 - Knowledge Review dashboard tab and read-only evidence APIs (p2-196 stage 5)
+
+- Summary: the Admin dashboard gains a Knowledge Review tab backed by two session-protected, no-store, read-only APIs (list with status/decision/source_type/delivery_status/slack_review_status filters, fixed (created_at, promotion_id) ordering, page_size capped at 100; full detail aggregate). A dedicated projection service assembles every evidence surface per candidate: promotion lineage, the accepted source snapshot with payload/references, the standalone Summary packet and Review report, graded duplicate evidence (available / not_recorded / unavailable / malformed — never a silent empty), the complete candidate body with target/base_version/content_hash, Slack thread binding with a URL generated ONLY from persisted channel/thread plus the configured workspace domain (missing pieces yield url:null with an explicit reason), both delivery targets independently (status, external ids/versions, receipts, readbacks, failure codes), and the human audit (server principal, Slack user id, email, decided_at). The UI renders list badges, six detail sections and unknown/error states; it has NO write controls — approvals stay in the Slack thread (C12), and all text is HTML-escaped (C13).
+- Reason: plan r2-stage5 — 页面/API 作为 Slack 失败、无线程、多候选与长正文场景的正式补充入口.
+- Affected files/config: backend/services/knowledge_review_projection.py (new), backend/automation_ecs_api.py (two dashboard endpoints), ui/automation-ecs-production/app.js + styles.css (Knowledge Review tab), backend/tests/test_stage5_knowledge_review.py + test_stage5_knowledge_review_postgres.py (new).
+- Data impact: none — read-only projections over existing tables; no new tables, migrations, or runtime deployment.
+- Verification: stage-5 suite 8 passed (real login session, real InMemory repository seeded through the real accept/queue/complete surfaces, before/after state snapshot proving zero writes); PostgreSQL parity 1 passed (identical projections on isolated PG, C14); full 19-suite regression 524 passed / 0 failed including stages 0-4; node --check, compileall, Overview --check, snapshot validator, git diff --check all pass.
+
 ## 2026-10-11 - Stage-4 review fix 6: non-2xx receipts graded through the same allowlist (p2-195)
 
 - Summary: the HTTPError branch of chat.postMessage now parses the body error and applies the SAME proven-unposted allowlist as the HTTP-200 branch. 4xx with an allowlist code (channel_not_found, rate_limited, ...) stays a retriable definite refusal; 4xx with an unknown/missing code or an unparseable body lands in outcome_unknown and never auto-retries. 5xx is server-failure territory — Slack documents internal errors as possibly partially succeeded — so it is ALWAYS outcome_unknown, even when the body carries an allowlist code.

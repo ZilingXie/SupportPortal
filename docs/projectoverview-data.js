@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T06:39:12Z",
-  "source_base_commit": "e3b2378714ecef0be78ae264508ec9b1be288c12",
-  "registry_digest": "d031acabe3ddb4b67037346461ba8315fc62beb582f914dfe06bddd0981ca4f6",
+  "generated_at": "2026-10-11T11:10:48Z",
+  "source_base_commit": "0d3ee95f152500824eb5a38718b281dd6931b3ad",
+  "registry_digest": "ce4c2bb1a9ea5276256ac3629ddd1a27c63b3370cfd27a249be2258deb88f40a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5651,6 +5651,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第七轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD e3b23787；全返回通道分类确认、proven-unposted 清单、outcome_unknown 不自动重投、5xx 恒 unknown；定向 111 项全过含阶段 4/Slack 入站/适配器/PG 集成；diff-check/Overview/快照校验通过）；允许转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 专项合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "8 passed（真实 session+API 入口+真实仓库种子；含读前后快照一致证明零写入）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 PostgreSQL parity + 全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review_postgres.py + 全套 19 套件",
+          "result": "PG parity 1 passed（C14 同一 projection 双侧字段级一致含 outcome_unknown/缺源/malformed）；全套 524 passed / 0 failed（阶段 0-4 行为不变）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮回归（B1-B4）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q && 全套 19 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 12 passed（+4：插入序倒置合同排序、字符串 packet malformed、空 report 双 malformed、bindEvents 四组处理器源码断言）；全套 528 passed / 0 failed；Overview --check 通过（5c80251c）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮 2 回归（B5/B6）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q && 全套 19 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 15 passed（+3：failed summary 显式失败态、decisions 非列表双 malformed、surface 非对象双 malformed）；全套 531 passed / 0 failed"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮 3 回归（B7 页面消费+真实渲染断言）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_ui_rendering.py backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "UI 渲染 3 passed（failed+boom 渲染断言含 danger tone、malformed reason 渲染、健康回归）；专项 15 passed；全套 20 套件 534 passed / 0 failed"
+        },
+        {
+          "type": "document",
+          "label": "第四轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（HEAD 054b8fb1；summaryAnomalyReason 展示失败/malformed 原因+tone-danger、页面只读边界+Session/no-store 维持、真实渲染测试用真实 API 响应与当前 app.js；UI 3+专项 15+PG parity 1）；允许 finalize"
         }
       ],
       "source_refs": [
@@ -5666,7 +5702,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 2,
+      "task_count": 3,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -17793,6 +17829,75 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-196",
+      "title": "Knowledge Review 页面/API 展示增强（阶段五）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-dualwrite-governance",
+      "created_at": "2026-10-12",
+      "updated_at": "2026-10-12",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage5。基线 main@bb18dd56。范围=Admin 页面 Knowledge Review Tab+只读审核证据+Session 保护 API；不含页面写操作/n8n 发布/部署/开关/真实 Slack。交付（分支 codex/weknora-dualwrite-phase5）：knowledge_review_projection.py（列表分页过滤+详情聚合：promotion lineage/来源快照/Summary/Review/重复证据分级（available/not_recorded/unavailable/malformed）/双目标 delivery 明细/人工审计/Slack thread URL 生成——仅持久化绑定+workspace 配置，缺则 url:null 带原因）；两个 Session 保护 no-store 只读 API（列表 status/decision/source_type/delivery_status/slack_review_status/page/page_size，排序 created_at,promotion_id，page_size≤100；详情 404 语义）；UI Knowledge Review Tab（视图切换/过滤栏/列表徽标/详情六分区：Candidate/Source snapshot/AI Summary/AI Review/Duplicate evidence/Dual-target delivery+Human audit，Slack 链接 noopener noreferrer，无任何写按钮）；styles.css 状态徽标/unknown/错误/链接样式。验证：专项 8 passed（真实 TestClient 登录 session+真实 InMemory 仓库经真实 accept/queue/complete 种子；401/只读快照对比/过滤分页稳定/缺源 unavailable/malformed 证据分级/outcome_unknown+无 workspace 链接缺失/404/审计投影）；PG parity 1 passed（同一 projection 双侧一致 C14）；全套 19 套件 524 passed/0 failed 含隔离 PG。【修复轮 2026-10-12（首轮验收四阻断后）】B1 bindEvents 补齐 Knowledge Tab 四组处理器（此前的插入在编辑链中丢失）；B2 投影层显式合同排序（不依赖仓库返回序，InMemory/PG 同分页）；B3 malformed 分级修正（字符串 packet/空 report 对象→malformed 不再误标 available）；B4 Overview 重生成。专项 12（+4）、全套 528 passed 含 PG。【修复轮 2 2026-10-12（二轮验收 B5/B6 后）】失败 Summary 显式 failed 态（failure_reason=记录 error）；report 结构校验（decisions 非 list/检索面非对象/全空→malformed，review+duplicate 双侧）；专项 15（+3）、全套 531 含 PG。【修复轮 3 2026-10-12（三轮验收 B7 后）】页面消费 failure_reason/malformed_reason（summaryAnomalyReason 链式回退+failed 附加 error 段+tone 补 failed→danger）；新增真实渲染断言测试（Node 执行真实 app.js 渲染函数×真实 API 异常响应）。UI 渲染 3、专项 15、全套 20 套件 534 passed 含 PG。【第四轮验收通过 2026-10-12】HEAD 054b8fb1：B7 页面消费+真实渲染断言确认（boom/malformed 原因到 DOM、failed 用 tone-danger、Session+no-store+只读边界维持）；UI 渲染 3+专项 15+PG parity 1。本通过范围=阶段 5 代码与离线合同；真实 Slack/execution/部署证据属阶段 6。",
+      "next_action": "阶段 5 代码验收通过，PR #1476 转 Ready 并 finalize 合入 main；运行态未部署（状态=已合并，运行验证未完成）。阶段二剩余=阶段 6（Preproduction 十步发布+n8n Draft×2 转发布+AGENT_MEMORY_WIKI_* SSM+受控样本+真实双写/Slack/execution 证据闭环）另行授权。",
+      "acceptance_criteria": [
+        "C1 未登录 401；响应 no-store",
+        "C2 过滤分页稳定只读",
+        "C3 持久化 ID 关联全部 lineage",
+        "C4 缺失/冲突 lineage 显式状态不猜测",
+        "C5 缺源显原因不伪装空快照",
+        "C6 Summary/Review 缺失/失败/malformed 显式状态",
+        "C7 重复证据四态分级",
+        "C8 完整正文+target/base_version/content_hash",
+        "C9 Slack URL 仅持久化绑定+配置，缺则 null 带原因",
+        "C10 双目标独立状态/外部 ID/版本/回执/回读/错误",
+        "C11 审计含 principal/Slack ID/邮箱/时间",
+        "C12 页面零写操作",
+        "C13 全部安全转义",
+        "C14 InMemory/PG 投影语义一致"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "阶段 5 专项合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "8 passed（真实 session+API 入口+真实仓库种子；含读前后快照一致证明零写入）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 PostgreSQL parity + 全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review_postgres.py + 全套 19 套件",
+          "result": "PG parity 1 passed（C14 同一 projection 双侧字段级一致含 outcome_unknown/缺源/malformed）；全套 524 passed / 0 failed（阶段 0-4 行为不变）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮回归（B1-B4）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q && 全套 19 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 12 passed（+4：插入序倒置合同排序、字符串 packet malformed、空 report 双 malformed、bindEvents 四组处理器源码断言）；全套 528 passed / 0 failed；Overview --check 通过（5c80251c）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮 2 回归（B5/B6）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q && 全套 19 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 15 passed（+3：failed summary 显式失败态、decisions 非列表双 malformed、surface 非对象双 malformed）；全套 531 passed / 0 failed"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 修复轮 3 回归（B7 页面消费+真实渲染断言）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_ui_rendering.py backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "UI 渲染 3 passed（failed+boom 渲染断言含 danger tone、malformed reason 渲染、健康回归）；专项 15 passed；全套 20 套件 534 passed / 0 failed"
+        },
+        {
+          "type": "document",
+          "label": "第四轮独立验收通过",
+          "command": "（验收方复验）",
+          "result": "通过（HEAD 054b8fb1；summaryAnomalyReason 展示失败/malformed 原因+tone-danger、页面只读边界+Session/no-store 维持、真实渲染测试用真实 API 响应与当前 app.js；UI 3+专项 15+PG parity 1）；允许 finalize"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -23204,7 +23309,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "ECS `/automation/production/` 提供独立管理员 session 保护的 Ticket-centric 只读工作台：每个 Ticket 一条并按 Zendesk 更新时间倒序，Ticket Status 默认 Active（隐藏 solved/closed），支持 Category/Subcategory/Ticket Status 与 Ticket ID、Execution ID、Execution Status、Event Type 组合分页；Case detail 安全展示 Persona、Route result、handler 白名单 Collected fields、Public/Internal Conversation 和待发送 Preview，完整 Execution steps/jobs/delivery/timeline/provenance 与 API/Route/Worker heartbeat 收入默认折叠的 Runtime audit。看板无任何业务写入口。",
         "Workspace Admin（`/workspace/admin/`）是唯一的 Admin 控制台；ECS 环境侧不提供 Admin 页面（`/automation/\u003cenvironment>/admin/` 不存在），ticket dashboard 照常独立提供。",
         "Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。",
-        "Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。"
+        "Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。",
+        "ECS Ticket Dashboard 新增 Knowledge Review Tab（Session 保护、只读）：按 promotion status/decision/source_type/Slack review 状态过滤分页浏览知识治理候选，详情分区展示来源快照（payload+references）、AI Summary packet、AI Review 报告、四态分级的重复检索证据、完整候选正文（target/base_version/content_hash）、AgentMemory 与 WeKnora 双目标 delivery 明细（外部 ID/版本/回执/回读/错误）与人工审计（principal/Slack ID/邮箱/时间）；Slack thread 链接仅由持久化 channel/thread 与 workspace 配置生成，缺失显式显示原因；页面无任何写操作，审批只在 Slack 线程完成。"
       ],
       "planned": [
         "待补充。"
