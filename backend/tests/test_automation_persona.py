@@ -16,6 +16,9 @@ from backend.services.automation_persona import (
     sanitize_enablement_completion_note,
     validate_account_reply_contract,
 )
+from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+)
 from backend.services.account_suspension_automation import closing_reply_facts
 from backend.services.detailed_invoice_field_extractor import extract_detailed_invoice_fields
 from backend.services.billing_automation import build_billing_automation_result
@@ -294,6 +297,55 @@ class AutomationPersonaTests(unittest.TestCase):
             with self.subTest(text=text):
                 with self.assertRaisesRegex(AutomationPersonaError, "archer_error_overclaim"):
                     validate_account_reply_contract(text, facts)
+
+    def test_ownership_mismatch_contract_requires_bounded_close_and_resubmission(self) -> None:
+        facts = self._archer_facts(
+            ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+            "ownership_mismatch",
+        )
+        valid = (
+            "This App ID belongs to another account, so we cannot continue Media Relay activation here. "
+            "I am closing this case now; please sign in to the correct account and submit a new support request."
+        )
+        normalized, close = validate_account_reply_contract(
+            valid, facts, close_after_publish=True
+        )
+        self.assertTrue(close)
+        self.assertEqual(
+            normalized["reply_intent"],
+            ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+        )
+        for unsafe in (
+            "The App ID belongs to another account, so Media Relay is enabled. I am closing this case.",
+            "The App ID belongs to another account. I am closing this case and our internal team will follow up.",
+            "The App ID belongs to another account, so we cannot continue Media Relay activation. Please verify.",
+        ):
+            with self.subTest(unsafe=unsafe), self.assertRaises(AutomationPersonaError):
+                validate_account_reply_contract(unsafe, facts, close_after_publish=True)
+
+    def test_ownership_mismatch_persona_prompt_excludes_identifier_and_states_contract(self) -> None:
+        facts = self._archer_facts(
+            ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+            "ownership_mismatch",
+        )
+        profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
+        response = SimpleNamespace(
+            text=(
+                "This App ID belongs to another account, so we cannot continue Media Relay activation here. "
+                "I am closing this case now; please sign in to the correct account and submit a new support request."
+            ),
+            model_name="persona-model",
+        )
+        with patch("backend.services.automation_persona.resolve_model_profile", return_value=profile), patch(
+            "backend.services.automation_persona.invoke_responses_text", return_value=response
+        ) as invoke:
+            result = render_automation_reply(
+                reply_facts=facts,
+                persona_assignment={"content": {"instruction": "Warm and precise"}},
+                account_scope=True,
+            )
+        self.assertIn("another account", result.content.casefold())
+        self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_archer_persona_prompt_keeps_v22_and_excludes_appid(self) -> None:
         facts = self._archer_facts("enablement_appid_invalid", "appid_invalid")

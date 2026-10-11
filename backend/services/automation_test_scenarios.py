@@ -87,6 +87,7 @@ def _enablement_request_body() -> str:
 E3_APPID_INVALID = "8cb7aea984c4457daad802e6960e247"
 E3_APPID_NOT_FOUND = "8cb7aea984c4457daad802e6960e2475"
 E3_APPID_VALID = "4b7634a0d0f1418b8135918292f6a507"
+E3_APPID_OWNERSHIP_MISMATCH = "fcd0dab13017495bbe25a63bfdb236fd"
 
 E3_NUDGE_BODY = (
     "Hi May,\n\n"
@@ -144,6 +145,28 @@ def _appid_not_found_content_check(content: str) -> str | None:
         return "reply does not mention the App ID"
     if not any(word in lowered for word in ("not find", "not found", "no project", "check", "verify", "double-check")):
         return "reply does not ask the customer to check the App ID"
+    if any(word in lowered for word in ("enabled", "activated", "turned on")):
+        return "reply claims enablement"
+    return None
+
+
+def _appid_ownership_mismatch_content_check(content: str) -> str | None:
+    """Acceptance check for the normal cross-account closure outcome."""
+    lowered = str(content or "").casefold()
+    if "belongs to another account" not in lowered and "belongs to a different account" not in lowered:
+        return "reply does not explain that the App ID belongs to another account"
+    if (
+        "media relay" not in lowered
+        or "activation" not in lowered
+        or "cannot continue" not in lowered
+    ):
+        return "reply does not explain that Media Relay activation cannot continue"
+    if not any(word in lowered for word in ("close", "closed", "closing", "archive", "archived")):
+        return "reply does not state that the case is closing"
+    if not any(word in lowered for word in ("correct account", "right account", "sign in", "log in")):
+        return "reply does not direct the customer to the correct account"
+    if "new support request" not in lowered and "new ticket" not in lowered:
+        return "reply does not direct the customer to submit a new support request"
     if any(word in lowered for word in ("enabled", "activated", "turned on")):
         return "reply claims enablement"
     return None
@@ -2102,6 +2125,61 @@ class ScenarioEngine:
         self.wait_zendesk_delivery_delivered(ctx, "ticket solved delivery")
         self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ticket solved + case closed")
 
+    def run_e3_ownership(self) -> None:
+        """Preproduction ownership-mismatch termination path.
+
+        This deliberately ends after the first valid-format submission: an
+        App ID owned by another account is a terminal customer closure, not a
+        project-not-found correction loop.
+        """
+        if self.customer_turn_transport != "zendesk_api":
+            raise AutomationTestScenarioError(
+                "E3_OWNERSHIP requires AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api "
+                "and AUTOMATION_TEST_ZENDESK_AUTH"
+            )
+        ctx = ScenarioContext("E3_OWNERSHIP")
+        self.start_ticket(
+            ctx,
+            "Enable media relay for our project",
+            "Hello Agora team,\n\nI want to enable media relay.\n\nThanks.",
+        )
+        self.find_case(ctx)
+        self.wait_case_field(ctx, "execution_action", "enablement", "routed to enablement")
+        self.wait_hermes_draft_delivered(
+            ctx, "ask for App ID draft delivered (ownership turn 1)",
+            content_check=_ask_appid_content_check,
+        )
+        self.next_customer_turn(ctx, f"My App ID is {E3_APPID_OWNERSHIP_MISMATCH}")
+        self.wait_reply_intent(
+            ctx, {"submission_confirmation"}, "submission confirmation (ownership turn 2)"
+        )
+        request = self.wait_enablement_relay_request(
+            ctx, "ownership mismatch relay request created"
+        )
+        self.wait_public_comment_delivered(
+            ctx, "ownership submission confirmation delivered"
+        )
+        self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
+        self.wait_enablement_relay_result(
+            ctx,
+            {"ownership_mismatch"},
+            "relay result: ownership mismatch (ownership turn 3)",
+            request_id=str(request.get("request_id") or ""),
+        )
+        self.wait_reply_intent(
+            ctx,
+            {"enablement_appid_ownership_mismatch"},
+            "ownership mismatch closure reply",
+        )
+        self.wait_published_reply_content(
+            ctx,
+            expected_intent="enablement_appid_ownership_mismatch",
+            check=_appid_ownership_mismatch_content_check,
+            step="ownership mismatch content closes without enablement claim",
+        )
+        self.wait_zendesk_delivery_delivered(ctx, "ownership mismatch solved delivery")
+        self.wait_case_field(ctx, "zendesk_ticket_status", "solved", "ownership case closed")
+
     def run_e1(self) -> None:
         ctx = ScenarioContext("E1")
         self.start_ticket(
@@ -2279,6 +2357,14 @@ class ScenarioEngine:
                 "approve_execution approvals, and the zendesk_api customer-turn channel)"
             ),
             "run": run_e3,
+        },
+        "E3_OWNERSHIP": {
+            "label": "Enablement ownership mismatch termination (preproduction)",
+            "description": (
+                "valid-format App ID owned by another account → dedicated customer closure "
+                "→ solved; no project-not-found correction loop"
+            ),
+            "run": run_e3_ownership,
         },
         "E1P": {
             "label": "Enablement auto (preproduction)",
