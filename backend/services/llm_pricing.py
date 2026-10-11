@@ -8,6 +8,7 @@ docs/prompt_change_log.md "gpt54-token-only-observability-v1").
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 LLM_PRICING_USD_PER_1M: dict[str, dict[str, float | None]] = {
@@ -39,6 +40,45 @@ def _pricing_key(provider: Any, model: Any) -> str:
     normalized_provider = " ".join(str(provider or "").split()).strip().lower()
     normalized_model = " ".join(str(model or "").split()).strip()
     return f"{normalized_provider}:{normalized_model}"
+
+
+def normalize_pricing(provider: Any, model: Any, prices: dict[str, Any] | None = None) -> dict[str, Any]:
+    values = dict(prices or {})
+    return {
+        "provider": " ".join(str(provider or "").split()).strip().lower(),
+        "model": " ".join(str(model or "").split()).strip(),
+        "input_usd_per_1m": values.get("input_usd_per_1m", values.get("input")),
+        "cached_input_usd_per_1m": values.get("cached_input_usd_per_1m", values.get("cached_input")),
+        "output_usd_per_1m": values.get("output_usd_per_1m", values.get("output")),
+        "embedding_usd_per_1m": values.get("embedding_usd_per_1m", values.get("embedding")),
+        "pricing_source": str(values.get("pricing_source") or "unpriced"),
+        "source_url": str(values.get("source_url") or "").strip() or None,
+        "pricing_observed_at": values.get("pricing_observed_at") or values.get("observed_at"),
+    }
+
+
+def pricing_from_row(row: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not row:
+        return None
+    result = normalize_pricing(row.get("provider"), row.get("model"), row)
+    result["pricing_source"] = str(row.get("pricing_source") or "unpriced")
+    result["last_checked_at"] = row.get("last_checked_at")
+    result["last_error"] = row.get("last_error")
+    return result
+
+
+def cost_from_snapshot(snapshot: dict[str, Any], usage: dict[str, Any]) -> float | None:
+    prices = {
+        "input": snapshot.get("input_usd_per_1m"),
+        "cached_input": snapshot.get("cached_input_usd_per_1m"),
+        "output": snapshot.get("output_usd_per_1m"),
+        "embedding": snapshot.get("embedding_usd_per_1m"),
+    }
+    try:
+        prices = {key: (None if value is None else float(value)) for key, value in prices.items()}
+    except (TypeError, ValueError):
+        return None
+    return _model_cost_usd(prices, usage)
 
 
 def _model_cost_usd(prices: dict[str, float | None], model_usage: dict[str, Any]) -> float | None:

@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-195",
+  "phase_id": "phase-1",
+  "module_id": "admin-operations",
+  "function_id": "admin-case-operations",
+  "title": "Admin 模型价格自动发现与 usage 价格快照",
+  "summary": "Admin 自动发现未定价模型，保存候选价格和来源，并在每次 Account LLM usage 写入时冻结价格快照；页面显示助手查找/用户确认状态，不增加采纳按钮。",
+  "status": "active",
+  "owner": "codex",
+  "created_at": "2026-10-11",
+  "updated_at": "2026-10-11",
+  "next_action": "完成 migration、usage 快照、查价端点、Admin reader/UI 和定向合同测试；本轮不部署 Production。",
+  "acceptance_criteria": [
+    "C1-C6 见 docs/plans/admin-pricing-discovery-v1.md",
+    "RAG usage 保持 excluded_by_admin_policy，历史 usage 不回填",
+    "未知模型查价失败不影响 Admin 页面，缺配置保持 unpriced",
+    "定向 Python、PostgreSQL migration、UI contract、node --check 和 diff check 通过"
+  ],
+  "blockers": [],
+  "evidence": [
+    {"type": "document", "url": "docs/plans/admin-pricing-discovery-v1.md", "label": "v1 implementation contract"}
+  ],
+  "source_refs": [
+    "backend/services/llm_pricing.py",
+    "backend/services/llm_usage_capture.py",
+    "backend/repositories/ticket_repository.py",
+    "backend/services/automation_ecs_admin_reader.py",
+    "backend/main.py",
+    "ui/workspace-ui/admin/app.js"
+  ],
+  "legacy_ids": []
+}

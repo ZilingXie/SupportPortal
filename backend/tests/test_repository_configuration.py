@@ -2020,11 +2020,12 @@ class RepositoryConfigurationTests(unittest.TestCase):
         )
 
         # v19 governance-pipeline -> v20 standalone-retry -> v21
-        # investigation-attachments -> v22 knowledge-dualwrite (kept current
+        # investigation-attachments -> v22 knowledge-dualwrite -> v23
+        # admin-llm-pricing (kept current
         # on every bump; the assertion had gone stale at v18, failing on
         # main since v19).
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v22-knowledge-dualwrite"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v23-admin-llm-pricing"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
@@ -2037,6 +2038,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "2026-single-ai-managed-v19-governance-pipeline",
             "2026-single-ai-managed-v20-standalone-retry",
             "2026-single-ai-managed-v21-investigation-attachments",
+            "2026-single-ai-managed-v22-knowledge-dualwrite",
         ):
             self.assertIn(previous, _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS)
         migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(
@@ -2048,6 +2050,9 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_case_llm_usage_source_run",
             migration,
         )
+        pricing_migration = Path("backend/sql/migrations/2026_10_11_admin_llm_pricing.sql").read_text(encoding="utf-8")
+        self.assertIn("support_llm_pricing", pricing_migration)
+        self.assertIn("pricing_source", pricing_migration)
 
     def test_schema_already_current_gate_variants(self) -> None:
         import os as _os

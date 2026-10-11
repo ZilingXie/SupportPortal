@@ -923,14 +923,17 @@ function renderTokenStageRows(stageTotals) {
 function renderTokenModelRows(models, costByModel) {
   const list = Array.isArray(models) ? models : [];
   const costs = costByModel || {};
-  if (!list.length) return `<tr><td colspan="6" class="admin-token-empty-cell">No recorded models.</td></tr>`;
+  if (!list.length) return `<tr><td colspan="7" class="admin-token-empty-cell">No recorded models.</td></tr>`;
   return list.map((model) => {
     const modelKey = `${model.provider}:${model.model}`;
     const cost = costs[modelKey];
     const costCell = cost === undefined || cost === null
       ? `<span class="admin-token-cost-unknown" title="model pricing not configured">—</span>`
       : formatTokenCostUsd(cost);
-    return `<tr><td>${escapeHtml(modelKey)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.cached_input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td><td>${costCell}</td></tr>`;
+    const source = String(model.pricing_source || "legacy_unpriced");
+    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
+    const sourceCell = model.pricing_source_url ? `<a href="${escapeHtml(model.pricing_source_url)}" target="_blank" rel="noreferrer">${sourceLabel}</a>` : sourceLabel;
+    return `<tr><td>${escapeHtml(modelKey)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.cached_input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td><td>${costCell}${source === "assistant_found" ? " <small>估算</small>" : ""}</td><td>${sourceCell}</td></tr>`;
   }).join("");
 }
 
@@ -966,7 +969,7 @@ function renderTokenDetailRow(item) {
       </section>
       <section aria-label="Token usage by model">
         <header>By model</header>
-        <table class="admin-token-table"><thead><tr><th>Model</th><th>In</th><th>Cached</th><th>Out</th><th>Embedding</th><th>Cost</th></tr></thead><tbody>${renderTokenModelRows(usage.token_by_model, costByModel)}</tbody></table>
+        <table class="admin-token-table"><thead><tr><th>Model</th><th>In</th><th>Cached</th><th>Out</th><th>Embedding</th><th>Cost</th><th>Source</th></tr></thead><tbody>${renderTokenModelRows(usage.token_by_model, costByModel)}</tbody></table>
       </section>
     </div>
   </td></tr>`;
@@ -989,10 +992,14 @@ function renderModelPricingStrip() {
       entry.output_usd_per_1m != null ? `out ${formatModelRateUsd(entry.output_usd_per_1m)}` : "",
       entry.embedding_usd_per_1m != null ? `emb ${formatModelRateUsd(entry.embedding_usd_per_1m)}` : "",
     ].filter(Boolean);
+    const source = String(entry.pricing_source || "unpriced");
+    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
+    const date = entry.observed_at ? ` · ${escapeHtml(String(entry.observed_at).slice(0, 10))}` : "";
+    const link = entry.source_url ? ` · <a href="${escapeHtml(entry.source_url)}" target="_blank" rel="noreferrer">查看来源</a>` : "";
     if (!entry.priced || !dimensions.length) {
-      return `<span class="admin-model-pricing-item is-unpriced">${escapeHtml(label)} · pricing not configured</span>`;
+      return `<span class="admin-model-pricing-item is-unpriced">${escapeHtml(label)} · pricing not configured · ${sourceLabel}${date}</span>`;
     }
-    return `<span class="admin-model-pricing-item">${escapeHtml(label)} · ${escapeHtml(dimensions.join(" / "))} per 1M</span>`;
+    return `<span class="admin-model-pricing-item">${escapeHtml(label)} · ${escapeHtml(dimensions.join(" / "))} per 1M · ${sourceLabel}${date}${link}</span>`;
   });
   return `<section class="admin-model-pricing" aria-label="Model pricing"><header>Model pricing · USD per 1M tokens</header><div class="admin-model-pricing-list">${items.join("")}</div></section>`;
 }
@@ -1787,6 +1794,13 @@ async function loadAdminData() {
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
+    const discoverable = [];
+    (automationData.cases || []).forEach((item) => ((item.token_usage || {}).token_by_model || []).forEach((model) => {
+      if (model.pricing_source === "legacy_unpriced" || model.pricing_source === "unpriced") discoverable.push({ provider: model.provider, model: model.model });
+    }));
+    if (discoverable.length) {
+      fetchJson("/api/workspace/admin/pricing/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: discoverable }) }).catch(() => {});
+    }
   } catch (error) {
     loadError = error.message;
   } finally {

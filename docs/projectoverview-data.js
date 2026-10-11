@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T03:00:33Z",
-  "source_base_commit": "daa5f112ecc721116a651d047eabd558063f71da",
-  "registry_digest": "e35548af8b98e1763e879a580b975d59c021bd488ab51655b595251a122a6394",
+  "generated_at": "2026-10-11T06:03:40Z",
+  "source_base_commit": "434ee3565e49544d562a8afaa3aa48f589419702",
+  "registry_digest": "37ed4cb69985441c854e74ecec4f37bd964495f8bbb10d05f7489ca9659ff2a9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2580,6 +2580,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Post-merge official stack live verification",
           "command": "bash scripts/workflow/inspect_single_host_stack_mode.sh",
           "details": "PR#953 合并后官方栈运行 root main 5d858c5（5d858c51e936）：build_provenance_status=matched；/workspace/admin/ 服务 app.js?v=20260825-cached-display-1；admin 登录后实测 account-automation：page_total 含 total_cached_input_tokens、case 两 source 均含、by_model 分桶含 cached_input_tokens（当前全 0——实测缓存未命中，符合预期）。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/admin-pricing-discovery-v1.md",
+          "label": "v1 implementation contract"
         }
       ],
       "source_refs": [
@@ -2589,7 +2594,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 11,
+      "task_count": 12,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -17642,6 +17647,43 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     },
     {
       "schema_version": 2,
+      "task_id": "p2-195",
+      "phase_id": "phase-1",
+      "module_id": "admin-operations",
+      "function_id": "admin-case-operations",
+      "title": "Admin 模型价格自动发现与 usage 价格快照",
+      "summary": "Admin 自动发现未定价模型，保存候选价格和来源，并在每次 Account LLM usage 写入时冻结价格快照；页面显示助手查找/用户确认状态，不增加采纳按钮。",
+      "status": "active",
+      "owner": "codex",
+      "created_at": "2026-10-11",
+      "updated_at": "2026-10-11",
+      "next_action": "完成 migration、usage 快照、查价端点、Admin reader/UI 和定向合同测试；本轮不部署 Production。",
+      "acceptance_criteria": [
+        "C1-C6 见 docs/plans/admin-pricing-discovery-v1.md",
+        "RAG usage 保持 excluded_by_admin_policy，历史 usage 不回填",
+        "未知模型查价失败不影响 Admin 页面，缺配置保持 unpriced",
+        "定向 Python、PostgreSQL migration、UI contract、node --check 和 diff check 通过"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/admin-pricing-discovery-v1.md",
+          "label": "v1 implementation contract"
+        }
+      ],
+      "source_refs": [
+        "backend/services/llm_pricing.py",
+        "backend/services/llm_usage_capture.py",
+        "backend/repositories/ticket_repository.py",
+        "backend/services/automation_ecs_admin_reader.py",
+        "backend/main.py",
+        "ui/workspace-ui/admin/app.js"
+      ],
+      "legacy_ids": []
+    },
+    {
+      "schema_version": 2,
       "task_id": "p2-31",
       "title": "Client 对话支持图片和更多日志附件",
       "status": "planned",
@@ -23093,7 +23135,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "本地 lightweight 线上路径已支持 RAG+KG 辅助调用，KG 在 query expansion、rerank boost、结构化 fact 三个钩子作为可降级辅助信号，生产灰度仍由 flag 控制。"
       ],
       "planned": [
-        "RAG+KG 生产 shadow/灰度需要补齐真实 query 对照数据、telemetry 审计和一键回滚门禁。"
+        "RAG+KG 生产 shadow/灰度需要补齐真实 query 对照数据、telemetry 审计和一键回滚门禁。",
+        "Admin 模型价格自动发现与 usage 快照（p2-195，代码实施中）：Account LLM usage 在写入事务内冻结单价、来源和费用；Admin 对未定价模型异步复用 OpenAI Web Search 查找官方价格，页面显示助手查找/用户确认/历史未定价；RAG 保持费用统计排除。"
       ]
     }
   ],

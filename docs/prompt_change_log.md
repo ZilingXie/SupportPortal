@@ -5130,3 +5130,6 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。
 - r4-repair-1：移除 customer comment 的本地 message-action 分类，改由 Hermes 专用无工具 phase 输出并由服务端严格校验；固定 case 的完整 managed prompt catalog 在每个 Hermes phase 使用，comment 继承 case-level Prompt Release；澄清 `request_clarification` 与 contract 缺字段的边界。源码 catalog 仍未创建或激活 Prompt Release。
 - r4-repair-2：classification-only 结果现在作为 case 级路由锁持久化查询；后续 comment 继续只记录分类结果，不进入 Hermes，也不重新调用 Account Router。此修复未创建或激活 Prompt Release。
+# 2026-10-11 - Admin 模型价格自动发现与 usage 价格快照（p2-195）
+
+- Account Admin usage 价格改为按调用冻结快照；自动搜索结果标记 `assistant_found`，确认命令写入 `user_confirmed`，迁移前记录为 `legacy_unpriced`。RAG 继续以 `excluded_by_admin_policy` 排除。无来源、模型不匹配或查价失败保持 `unpriced`，页面展示 provisional/partial 状态。
