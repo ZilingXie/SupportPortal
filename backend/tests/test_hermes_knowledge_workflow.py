@@ -86,6 +86,14 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    # Stage 6 plan A: these suites exercise the governance pipeline itself;
+    # the per-source allowlist is monkeypatched to a pass-through so the
+    # pre-existing contracts run unchanged (its own fail-closed behaviour is
+    # covered by the stage-6 allowlist tests).
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     monkeypatch.delenv("AGENT_MODEL_ID", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_BASE_URL", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_API_TOKEN", raising=False)

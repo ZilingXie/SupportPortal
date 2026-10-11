@@ -65,6 +65,14 @@ def test_source_intake_is_versioned_and_queues_summary(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, _store = _client()
     repository = _repository()
     token = "secret"
@@ -119,6 +127,10 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -286,6 +298,10 @@ def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, _store = _client()
     repository = _repository()
     from backend.services.hermes_knowledge_workflow import (
@@ -378,6 +394,10 @@ def test_open_ticket_snapshot_is_recorded_but_never_summarized(monkeypatch) -> N
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -463,6 +483,10 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -587,6 +611,10 @@ def test_native_context_turn_cap_refuses_instead_of_truncating(monkeypatch) -> N
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -652,6 +680,10 @@ def test_human_review_decision_endpoint_closes_the_loop(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, _store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -871,6 +903,10 @@ def test_late_older_solved_delivery_never_rolls_mirror_back(monkeypatch) -> None
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -911,6 +947,10 @@ def test_reclosed_generation_can_be_approved_without_waiting(monkeypatch) -> Non
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -975,6 +1015,10 @@ def test_raw_zendesk_ticket_snapshot_keeps_internal_contract(monkeypatch) -> Non
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
@@ -1067,6 +1111,10 @@ def test_promotion_deliveries_endpoint_reports_per_target_state(monkeypatch) -> 
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     client, _store = _client()
     repository = InMemoryTicketRepository()
     repository.initialize()
