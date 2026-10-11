@@ -1962,10 +1962,10 @@ class ScenarioEngine:
         under the p2-178 contracts: missing App ID ask -> in-session RAG
         knowledge answer -> invalid App ID -> valid-format submit (relay
         review) -> progress nudge answered from the bound relay request ->
-        archer project_not_found (dedicated not-found reply) -> corrected
-        App ID (new request version) -> real enablement + solved. Turn 6/7
-        contracts beyond the local pinned implementation still need the
-        first live run for final confirmation (see the runbook).
+        a terminal relay result. ``project_not_found`` continues through the
+        corrected-App-ID request and real enablement; ``ownership_mismatch``
+        uses the dedicated solved closure and ends the scenario. The live
+        fixture determines which valid terminal result is observed.
         """
         if self.customer_turn_transport != "zendesk_api":
             # Fail BEFORE any ticket is created: the 163 email path is broken
@@ -2074,10 +2074,36 @@ class ScenarioEngine:
         )
 
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
-        self.wait_enablement_relay_result(
-            ctx, {"project_not_found"}, "relay result: project not found (turn 6 leg)",
+        relay_result = self.wait_enablement_relay_result(
+            ctx,
+            {"project_not_found", "ownership_mismatch"},
+            "relay result: project-not-found or ownership-mismatch (turn 6 leg)",
             request_id=turn4_request_id,
         )
+        if relay_result.get("outcome") == "ownership_mismatch":
+            # A valid-format App ID owned by another account is terminal. It
+            # must use the dedicated idempotent solved reply and must not enter
+            # the project-not-found correction loop.
+            self.wait_reply_intent(
+                ctx,
+                {"enablement_appid_ownership_mismatch"},
+                "ownership-mismatch closure reply (turn 6)",
+            )
+            self.wait_published_reply_content(
+                ctx,
+                expected_intent="enablement_appid_ownership_mismatch",
+                check=_appid_ownership_mismatch_content_check,
+                step="ownership-mismatch content closes without enablement claim",
+            )
+            self.wait_zendesk_delivery_delivered(
+                ctx, "ownership-mismatch solved delivery (turn 6)"
+            )
+            self.wait_case_field(
+                ctx, "zendesk_ticket_status", "solved",
+                "ownership-mismatch ticket solved (turn 6)",
+            )
+            return
+
         # Turn 6 contract (p2-178 implementation): a clean project_not_found
         # result answers the customer with the dedicated not-found reply and
         # keeps the case automation-owned for the corrected-App-ID turn.

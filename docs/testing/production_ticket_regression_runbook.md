@@ -196,12 +196,12 @@
 
 ### E3：Enablement 全生命周期（preproduction）
 
-> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**；**2026-10-11 r1 增加 ownership mismatch 终止剧本**
-> （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 改为专门客户回复）。
+> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**；**2026-10-11 r1 增加 ownership mismatch 终止剧本**；**r2 接受真实 fixture 的 ownership mismatch 终态**
+> （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 与 ownership_mismatch 均使用各自专门客户回复）。
 > 客户旅程：缺 AppID 追问（草稿管线）→ **会话知识问句经可信 RAG 一次公开作答** → 31 位格式错拒绝 →
 > 32 位有效格式提交进 review → **催促按绑定的 relay 申请实际状态作答（不承诺加速）** →
-> relay 查无项目（**专门 not-found 回复，case 保持自动化持有**）→ 客户更正 AppID（**新版本申请 v2**）→
-> 真实 archer 开通 + solved。
+> relay 终态：查无项目时使用**专门 not-found 回复，case 保持自动化持有**并进入更正 AppID（**新版本申请 v2**）；
+> 跨账号时使用**专门 ownership-mismatch 回复并 solved**。前者继续真实 archer 开通，后者在关闭链结束。
 >
 > p2-178 之后的合同变化：
 > - 固定 `case_task=enablement` 的 customer comment 进入 Hermes `message_action`，不重新路由；
@@ -231,7 +231,8 @@
 - **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
   两次 `approve_execution`（relay 任务在确认回复送达后派发）。
 - **AppID 夹具**（模块常量）：`8cb7...0247`（31 位，格式错）/ `8cb7...2475`（32 位，
-  archer 查无项目）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，
+  预期 project_not_found，但以真实预检结果为准）/ `fcd0...36fd`（跨账号，
+  预期 ownership_mismatch）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，
   **终段会真实写入 archer**，load=10 等目标参数）。
 - **时长**：回复各含设计延迟，回合 1-5 约 30-50 分钟；relay 等待上限默认 240 分钟
   （`AUTOMATION_TEST_RELAY_TIMEOUT_MIN` 或 CLI `--relay-timeout-min` 覆盖）。
@@ -239,11 +240,13 @@
   与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`；
   ownership mismatch 终止链使用同一前置条件运行 `--scenario E3_OWNERSHIP --yes`。
   CLI 会在 relay 段打印 `approval_required` 提示（工单链接 + Mac 审批指引）。
-- **终态断言**：`enablement_archer_enabled` 完成回复（内容含 media relay + enabled +
-  关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
-- **待实跑确认**：E3 的 not-found 专门回复与终段开通仍需按原计划实跑；E3_OWNERSHIP
-  需使用新工单验证单条专用公开回复、solved、无 failure/human takeover。两者均不能
-  重放旧工单 13985；如与实况不符，先修断言再定稿。
+- **终态断言**：E3 的 relay turn 6 接受 `project_not_found` 或 `ownership_mismatch`。
+  前者必须进入更正 AppID 的新版本申请并继续到 `enablement_archer_enabled`；后者必须使用
+  `enablement_appid_ownership_mismatch` 专用回复、delivery `target_status='solved'`、
+  case `zendesk_ticket_status=solved`，且无 failure/human takeover。E3_OWNERSHIP 仍单独验证
+  ownership mismatch 的完整终止合同。
+- **待实跑确认**：E3 的实际结果决定采用哪条终态分支；不得把真实 `ownership_mismatch`
+  伪造为 `project_not_found`，也不能重放旧工单 13985。
 
 ## 9. Preproduction PP 剧本（独立 CLI，不进 legacy 控制台）
 

@@ -665,6 +665,165 @@ class ScenarioEngineTests(unittest.TestCase):
         self.assertIn("dedicated project-not-found reply (turn 6)", step_names)
         self.assertIn("corrected App ID opens a new request version (turn 7)", step_names)
 
+    def test_e3_accepts_ownership_mismatch_as_terminal_turn_six_result(self) -> None:
+        """The live fixture may resolve the submitted App ID cross-account."""
+        engine = self._e3_engine()
+        engine.db_queue = [
+            ("FROM support_account_cases", [{
+                "account_case_id": "AC-13702",
+                "client_ticket_id": "13702",
+                "zendesk_ticket_id": "13702",
+                "title": engine.tagged("Enable media relay for our project"),
+            }]),
+            ("WHERE account_case_id", [{"execution_action": "enablement"}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000301",
+                "content": "Hi Ziling, could you share the project's App ID so I can proceed?",
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-2",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000102",
+                "work_result": {"message_action": {
+                    "action": "answer_related_question",
+                    "reason_code": "related_question",
+                    "confidence": 0.98,
+                    "independent_request": False,
+                }},
+            }]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-2",
+                "turn_id": "turn-2",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000102",
+                "content": (
+                    "The App ID is the 32-character project identifier on the Agora Console. "
+                    "References: https://docs.agora.io/en/help/general-use/app-id"
+                ),
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            ("FROM support_enablement_relay_requests", [{"n": 0}]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-3",
+                "status": "published",
+                "reply_intent": "enablement_appid_invalid",
+                "close_after_publish": None,
+            }]),
+            ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-4",
+                "status": "published",
+                "reply_intent": "submission_confirmation",
+                "close_after_publish": None,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-4",
+                "status": "published",
+                "content": "Thank you for your request. Our team is reviewing it.",
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13702-v1",
+                "status": "gated",
+                "app_id": "fcd0dab13017495bbe25a63bfdb236fd",
+                "request_version": 1,
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
+                "zendesk_comment_id": "53820000000304",
+            }]),
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-5",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000106",
+                "work_result": {"message_action": {
+                    "action": "report_progress",
+                    "reason_code": "progress_inquiry",
+                    "confidence": 0.97,
+                    "independent_request": False,
+                }},
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13702-v1",
+                "status": "dispatched",
+                "request_version": 1,
+            }]),
+            ("FROM support_enablement_relay_requests", [{"n": 1}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-5",
+                "turn_id": "turn-5",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000106",
+                "content": "Your Media Relay request is under review by our reviewing engineer.",
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            ("FROM support_enablement_relay_results", [{
+                "outcome": "ownership_mismatch",
+                "write_attempted": False,
+                "request_status": "applied",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-6",
+                "status": "published",
+                "reply_intent": "enablement_appid_ownership_mismatch",
+                "close_after_publish": True,
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-6",
+                "status": "published",
+                "content": (
+                    "This App ID belongs to another account, so we cannot continue "
+                    "Media Relay activation. We are closing this case; please sign in "
+                    "to the correct account and submit a new support request if needed."
+                ),
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "zendesk_comment_id": "53820000000308",
+            }]),
+            ("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}]),
+        ]
+
+        engine.run_scenario("E3")
+
+        self.assertTrue(engine.all_passed())
+        step_names = [step.step for step in engine.steps]
+        self.assertIn("ownership-mismatch closure reply (turn 6)", step_names)
+        self.assertIn("ownership-mismatch ticket solved (turn 6)", step_names)
+        self.assertNotIn("corrected App ID opens a new request version (turn 7)", step_names)
+
+    def test_e3_turn_six_rejects_unrelated_relay_outcome(self) -> None:
+        """The widened contract still fails closed for every other outcome."""
+        engine = self._e3_engine()
+        ctx = ScenarioContext("E3")
+        engine.db_queue = [
+            ("FROM support_enablement_relay_results", [{
+                "outcome": "enable_failed",
+                "write_attempted": False,
+                "request_status": "applied",
+            }]),
+        ]
+
+        with self.assertRaises(AssertionError):
+            engine.wait_enablement_relay_result(
+                ctx,
+                {"project_not_found", "ownership_mismatch"},
+                "relay result: project-not-found or ownership-mismatch (turn 6 leg)",
+                request_id="enr-AC-13702-v1",
+            )
+
     def test_e3_rejects_email_transport_before_ticket_creation(self) -> None:
         engine = ScriptedEngine()  # default transport: email
         with self.assertRaises(AutomationTestScenarioError):
