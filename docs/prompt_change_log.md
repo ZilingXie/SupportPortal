@@ -1,4 +1,10 @@
 # Prompt Change Log
+## 2026-10-11 - Knowledge review Slack message rebuilt (p2-195 stage 4)
+
+- 变更：知识 Review 通知消息由 knowledge_slack_review._build_review_message 重建：标题/判断/完整候选正文（1500 字符截断+API 全文指引）/target+base_version/Rationale/来源三元组/Promotion ID/回复指引（含 @bot mention 示例与定向操作说明）。source-only 根消息与工单线程回复共用同一模板；knowledge_review_required 成为合法根消息类型。无 Hermes prompt 文本变更（仅 Slack 展示层）。
+- 原因：阶段 4 出站合同（计划 r2-stage4 第 4 步）。
+- 验证：阶段 4 专项测试断言消息要素与根消息类型；23 项+全套 481/0。
+
 ## 2026-10-11 - Enablement ownership mismatch customer closure intent（r1）
 
 - 范围：`automation-persona-v32` 新增 `enablement_appid_ownership_mismatch` reply intent，并加入已知/结案 intent 白名单；Persona 合同要求说明 App ID 属于其他账号、无法继续 Media Relay activation、当前 case 关闭、登录正确账号后重新提交新的 support request。

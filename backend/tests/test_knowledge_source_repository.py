@@ -265,7 +265,7 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
         blocked = client.post(
             f"/automation/production/v1/knowledge/promotions/{parked_id}/decision",
             json={
-                "decision": "approve", "operator": "ops",
+                "decision": "approve",
                 "resolution": {"action": "new", "content": "stale body", "title": "T"},
             },
             headers={"Authorization": "Bearer secret"},
@@ -345,7 +345,7 @@ def test_decision_generation_guard_blocks_superseded_case_candidates(monkeypatch
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
         superseded = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops", "resolution": resolution},
+            json={"decision": "approve", "resolution": resolution},
             headers=headers,
         )
     assert superseded.status_code == 409
@@ -484,7 +484,7 @@ def test_reopened_ticket_blocks_parked_candidate_decision(monkeypatch) -> None:
     def _decide(promotion_id_value):
         return client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id_value}/decision",
-            json={"decision": "approve", "operator": "ops",
+            json={"decision": "approve",
                   "resolution": {"action": "new", "content": "body", "title": "T"}},
             headers=headers,
         )
@@ -701,34 +701,38 @@ def test_human_review_decision_endpoint_closes_the_loop(monkeypatch) -> None:
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
         invalid = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "maybe", "operator": "ops"}, headers=headers,
+            json={"decision": "maybe"}, headers=headers,
         )
-        no_operator = client.post(
+        # Stage 4 (p2-195): a client-supplied operator is refused — the
+        # operator is a server-side principal, never a claim.
+        supplied_operator = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": " "}, headers=headers,
+            json={"decision": "approve", "operator": "ops", "resolution": resolution},
+            headers=headers,
         )
         approve_without_resolution = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops"}, headers=headers,
+            json={"decision": "approve"}, headers=headers,
         )
         stale_hash = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops", "resolution": resolution,
+            json={"decision": "approve", "resolution": resolution,
                   "expected_content_hash": "not-the-queued-candidate"},
             headers=headers,
         )
         approved = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops:ziling", "note": "verified",
+            json={"decision": "approve", "note": "verified",
                   "resolution": resolution, "expected_content_hash": "0f0e0d"},
             headers=headers,
         )
         redecide = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "reject", "operator": "ops:ziling"}, headers=headers,
+            json={"decision": "reject"}, headers=headers,
         )
     assert invalid.status_code == 422
-    assert no_operator.status_code == 422
+    assert supplied_operator.status_code == 422
+    assert "operator must not be supplied" in supplied_operator.json()["detail"]
     assert approve_without_resolution.status_code == 422
     assert stale_hash.status_code == 409
     assert approved.status_code == 200
@@ -744,7 +748,7 @@ def test_human_review_decision_endpoint_closes_the_loop(monkeypatch) -> None:
     assert row["candidate_payload"]["content"] == "Human-approved complete body."
     assert row["candidate_payload"]["base_version"] == "5"
     assert row["human_decision"] == "approved"
-    assert row["human_decision_detail"] == "ops:ziling: verified"
+    assert row["human_decision_detail"] == "automation-api: verified"
 
 
 def test_decision_endpoint_fails_closed_when_governance_disabled(monkeypatch) -> None:
@@ -805,12 +809,12 @@ def test_decision_endpoint_fails_closed_when_governance_disabled(monkeypatch) ->
     with patch("backend.automation_ecs_api._TICKET_REPOSITORY", repository):
         refused_approve = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "approve", "operator": "ops", "resolution": resolution},
+            json={"decision": "approve", "resolution": resolution},
             headers=headers,
         )
         refused_reject = client.post(
             f"/automation/production/v1/knowledge/promotions/{promotion_id}/decision",
-            json={"decision": "reject", "operator": "ops"},
+            json={"decision": "reject"},
             headers=headers,
         )
     assert refused_approve.status_code == 409
