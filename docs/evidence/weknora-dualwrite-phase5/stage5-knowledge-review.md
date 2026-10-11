@@ -66,3 +66,14 @@
 | B6 非空但结构错误的 report 标 available | 共享结构校验 `_review_report_structural_error`：decisions 存在但非 list→decisions_not_a_list；检索面存在但非对象→surface_not_an_object；完全空→empty——review 投影与 duplicate_evidence 双 malformed | decisions="bad"+weknora={} 注入→双 malformed(decisions_not_a_list)；agent_memory="garbage" 注入→双 malformed(surface_not_an_object) |
 
 验证：专项 **15 passed**（12+3）；PG parity 1；全套 19 套件 **531 passed / 0 failed**；全部校验命令通过。
+
+
+## 修复轮 3（2026-10-12，三轮验收 B7 后）
+
+阻断：页面异常分支只读 `summary.reason`——后端 `failure_reason`/`malformed_reason` 未投影到 DOM（failed+boom 只显示 failed）；`knowledgeQualityTone` 无 failed 分支（失败渲染为 unknown 样式）。
+
+修复：`summaryAnomalyReason()` 消费 failure_reason→malformed_reason→reason→error 链；failed 态附加 `<p class="knowledge-failure">` 显示记录的 error；tone 增加 failed→danger。
+
+**真实渲染断言**（新测试文件 test_stage5_ui_rendering.py）：Node 内执行**真实 app.js 渲染函数**（从源文件提取，非复刻），输入=真实 API 端点在注入异常后的真实响应——断言 `boom` 与 `summary_packet_missing_or_not_object` 实际出现在渲染 HTML、failed 使用 danger tone、健康详情仍渲染 packet/report。
+
+验证：UI 渲染 3 passed；专项 15 passed；PG parity 1；全套 20 套件 **534 passed / 0 failed**；全部校验命令通过。

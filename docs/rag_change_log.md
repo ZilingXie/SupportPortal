@@ -1,4 +1,12 @@
 # RAG Change Log
+## 2026-10-12 - Stage-5 review fix 3: summary anomaly reasons reach the page (p2-196)
+
+- Summary: the Knowledge Review detail page now consumes the backend's dedicated anomaly fields — summaryAnomalyReason() falls through failure_reason → malformed_reason → reason → error, a failed Summary additionally renders its recorded error in a dedicated failure element, and knowledgeQualityTone maps failed to the danger tone (previously unknown). Real rendering assertions were added: a Node harness executes the REAL app.js render functions extracted from the source file against REAL API payloads from the injected anomaly states, asserting the failure reason ("boom") and the malformed reason actually appear in the rendered HTML with the correct tone.
+- Reason: stage-5 third-round review blocker (C6 failure reasons invisible on the page).
+- Affected files/config: ui/automation-ecs-production/app.js, backend/tests/test_stage5_ui_rendering.py (new).
+- Data impact: none (no runtime deployment).
+- Verification: UI rendering suite 3 passed (real render functions × real API payloads); stage-5 suite 15 passed; full 20-suite regression 534 passed / 0 failed; all verification commands pass.
+
 ## 2026-10-12 - Stage-5 review fix 2: failed summaries and structurally invalid reports grade explicitly (p2-196)
 
 - Summary: two second-round blockers close the anomaly-state boundary. A Summary row with status=failed now projects as an explicit ``state="failed"`` carrying the recorded error as failure_reason — never "available" with a dropped packet. Review reports are structurally validated by a shared grader: decisions present but not a list (``review_report_decisions_not_a_list``), a retrieval surface present but not an object (``review_report_surface_not_an_object``), or a completely empty report (``review_report_empty``) all grade malformed for BOTH the review projection and the duplicate evidence — structurally invalid retrieval evidence can no longer enter the available path.

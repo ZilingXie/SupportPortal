@@ -922,8 +922,15 @@ function knowledgeQualityTone(state) {
   const normalized = String(state || "").toLowerCase();
   if (normalized === "available") return "ok";
   if (normalized === "not_recorded") return "info";
-  if (normalized === "malformed") return "danger";
+  if (normalized === "malformed" || normalized === "failed") return "danger";
   return "unknown";
+}
+
+function summaryAnomalyReason(summary) {
+  if (!summary) return null;
+  // B7: the backend carries the failure/malformation cause in dedicated
+  // fields — surface whichever is present, never a bare state label.
+  return summary.failure_reason || summary.malformed_reason || summary.reason || summary.error || null;
 }
 
 function deliverySummaryBadges(summary) {
@@ -1071,7 +1078,7 @@ function renderKnowledgeDetail() {
     summary?.state === "available"
       ? `${knowledgeStateRow("Summary task", summary.status || "unknown", summary.error)}<dl class="knowledge-fields"><div><dt>Session</dt><dd>${renderMaybeCode(summary.session_id)}</dd></div><div><dt>Run</dt><dd>${renderMaybeCode(summary.run_id)}</dd></div></dl>
         ${summary.packet ? `<details class="knowledge-body"><summary>Summary packet</summary><pre>${escapeHtml(JSON.stringify(summary.packet, null, 2))}</pre></details>` : ""}`
-      : `${knowledgeStateRow("Summary", summary?.state || "unavailable", summary?.reason)}`
+      : `${knowledgeStateRow("Summary", summary?.state || "unavailable", summaryAnomalyReason(summary))}${summary?.state === "failed" && summary.error ? `<p class="knowledge-failure"><strong>${escapeHtml(summary.error)}</strong></p>` : ""}`
   ));
   const review = detail.review;
   sections.push(knowledgeDetailSection(
