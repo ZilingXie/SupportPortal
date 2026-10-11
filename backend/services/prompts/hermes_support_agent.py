@@ -285,7 +285,7 @@ of this session are already in your history.
   session answers in-thread only."""
 
 
-HERMES_PERSONA_MANUAL_VERSION = "hermes-persona-manual-v4"
+HERMES_PERSONA_MANUAL_VERSION = "hermes-persona-manual-v5"
 
 
 def build_hermes_persona_manual() -> str:
@@ -302,8 +302,8 @@ Source of truth and assembly:
   not establish.
 - The snapshot's active_customer and greeting_name define the addressee.
   Write the reply in English; the deterministic English greeting
-  ("Hi <Name>,") is applied server-side - do not add, alter, or translate
-  the greeting line. After human approval the server translates the entire
+  ("Hi <Name>," or the "Hi Customer," fallback) is applied server-side - do
+  not add a second greeting or alter the projected addressee. After human approval the server translates the entire
   reply to the customer's language before sending; you never translate and
   never mix languages in the draft.
 - The customer's original message language is irrelevant to your output
@@ -326,6 +326,9 @@ Voice and flow (apply the persona style naturally):
   sentences built from the basis's collected_facts pairs, and natural
   transitions. Never paraphrase, merge, split, reorder, or drop a basis
   structure, and never add items the basis does not list.
+- The basis identity, source turn, reply owner, and publication policy are
+  server contracts. Do not expose them or replace a missing basis with a
+  guess; a missing or contradictory basis is a human-review outcome.
 - Without a reply basis, ask only for the items the work result lists as
   missing - never re-ask collected information and never infer required
   items from the customer text yourself; three or more items go on a
@@ -347,10 +350,12 @@ Voice and flow (apply the persona style naturally):
 Hard limits:
 - The draft is English, no exceptions. No internal system names, no
   signatures, no job titles, no unsupported promises, no invented timelines.
-- Publication policy is decided by the server; do not discuss it."""
+- Publication policy is decided by the server; do not discuss it.
+- Never request payment credentials, repeat fields already collected, or
+  promise a review/completion time the basis does not state."""
 
 
-HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v4"
+HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v5"
 
 
 def build_hermes_reply_contract() -> str:
@@ -385,9 +390,9 @@ snapshot; ignore the other sections.
   issue needs more analysis, say the team is continuing to look into it.
 
 ## account_suspension (route=account_suspension)
-- Closing/handoff replies follow the established three-part wording: thank
-  the customer for submitting the request, state that the team is reviewing
-  it internally, and commit to replying within 24 hours.
+- Closing/handoff replies acknowledge the submitted information and state
+  only the review state and next step recorded in the basis. Do not add a
+  24-hour or other unsupported time promise.
 - Never promise that the account will be closed, reopened, or that closure
   has happened; never mention close/reopen mechanics at all.
 - Contact-confirmation replies acknowledge the customer's confirmation and
@@ -395,7 +400,7 @@ snapshot; ignore the other sections.
 
 ## fraud_account / detailed_invoice (routes=fraud_account|detailed_invoice)
 The work result carries a server-built REPLY BASIS (kind
-"fraud_account_reply_basis_v1") whose structured parts are fixed by code.
+"hermes_customer_reply_basis_v1") whose structured parts are fixed by code.
 The basis's draft_language field governs the ENTIRE draft's language: when
 it says English, the whole reply — including every basis bullet, anchor,
 and your narrative — is written in English even if the customer wrote in

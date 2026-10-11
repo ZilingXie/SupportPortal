@@ -237,6 +237,10 @@ def create_account_reply_job(
             }
         ),
         "visibility": "account_only",
+        # Compatibility jobs are retained for non-Hermes intake/recovery
+        # paths. Hermes turns record ``reply_owner=hermes_persona`` in their
+        # Work result and never rely on this renderer for the new contract.
+        "reply_owner": "account_reply_job_legacy",
     }
     rag_fallback_without_provided_answer = (
         canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER

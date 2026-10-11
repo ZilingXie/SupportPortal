@@ -414,6 +414,7 @@ async def _execute_hermes_internal_email(
     ticket: dict[str, Any] | None,
     executed_actions: list[str],
     reply_intent: str,
+    create_customer_reply_job: bool = True,
 ) -> dict[str, Any]:
     """Unified prepare→claim→send→propagate→reply-job helper for Hermes
     Account Suspension/Fraud internal email execution.
@@ -609,7 +610,10 @@ async def _execute_hermes_internal_email(
     reusable = bool(chain_job) and str(chain_job.get("status") or "") not in {
         "cancelled", "failed", "manual_attention",
     }
-    if reusable:
+    if not create_customer_reply_job:
+        reply_job_id = ""
+        executed_actions.append("hermes_persona_reply_owned")
+    elif reusable:
         reply_job_id = str(chain_job.get("job_id") or "")
         executed_actions.append("reply_job_reused")
     else:
@@ -644,6 +648,7 @@ async def _execute_hermes_internal_email(
         "status": email_status, "reason": email_reason,
         "account_case": account_case, "reply_job_id": reply_job_id,
         "skip_persona": bool(reply_job_id),
+        "reply_owner": "hermes_persona" if not create_customer_reply_job else "account_reply_job_legacy",
     }
 
 
@@ -1051,6 +1056,7 @@ async def tool_execute_automation_action(
                 ticket=ticket,
                 executed_actions=executed_actions,
                 reply_intent="account_suspension_handoff_and_close",
+                create_customer_reply_job=False,
             )
             if suspension_outcome.get("_return"):
                 return suspension_outcome["_return"]
@@ -1102,12 +1108,19 @@ async def tool_execute_automation_action(
                     "route": normalized_route,
                     "outcome": workflow_outcome,
                     "skip_persona": True,
+                    "reply_owner": "account_reply_job_legacy",
                     "missing_fields": list(account_case.get("missing_fields") or []),
                     "collected_fields": dict(account_case.get("collected_fields") or {}),
                     "executed_actions": list(executed_actions),
                     "internal_email_send_status": internal_email_status,
                     "internal_email_send_reason": internal_email_reason,
                 }
+                from backend.services.hermes_customer_reply_basis import basis_from_work_result
+                skip_persona_result["reply_basis"] = basis_from_work_result(
+                    turn=turn,
+                    work_result=skip_persona_result,
+                    stage="enablement_workflow",
+                )
                 try:
                     store.record_hermes_turn_work(turn_id, work_result=skip_persona_result)
                 except Exception:
@@ -1144,6 +1157,7 @@ async def tool_execute_automation_action(
                         if normalized_route == "detailed_invoice"
                         else None
                     ),
+                    create_customer_reply_job=False,
                 )
                 if fraud_outcome.get("_return"):
                     return fraud_outcome["_return"]
@@ -1202,45 +1216,11 @@ async def tool_execute_automation_action(
             trigger_message_created_at
             or datetime.now(timezone.utc).isoformat()
         )
-        # Idempotency: the covering unique index (ticket, trigger, no
-        # rerun) holds exactly one ask job for this customer turn — reuse
-        # it on retry instead of cancel-and-recreate.
-        existing_ask = repository.find_account_reply_job_by_chain(
-            ticket_id,
-            trigger_message_created_at=ask_trigger,
-            automation_delivery_key="",
-        )
-        reusable_ask = bool(existing_ask) and str(
-            existing_ask.get("status") or ""
-        ) not in {"cancelled", "failed", "manual_attention"}
-        if reusable_ask:
-            executed_actions.append("ask_reply_job_reused")
-        else:
-            ask_facts = _reply_facts(
-                handler=automation_handler or "billing",
-                action=normalized_route,
-                missing_fields=list(missing_fields),
-                collected_fields=dict(collected_fields or {}),
-                submitted=False,
-                customer_name=str((collected_fields or {}).get("name") or "")
-                or None,
-            )
-            create_account_reply_job(
-                repository,
-                ticket_id=ticket_id,
-                trigger_message_created_at=ask_trigger,
-                created_at=datetime.now(timezone.utc).isoformat(),
-                delay_seconds=account_reply_delay_seconds_for_profile(
-                    environment or "production"
-                ),
-                draft_content="",
-                reply_facts=ask_facts,
-                asked_field_keys=list(missing_fields),
-                persona_assignment=None,
-                close_after_publish=False,
-            )
-            executed_actions.append("ask_reply_job_created")
-        skip_persona = True
+        # The Hermes work result itself is now the sole source for this
+        # customer reply.  Legacy account-reply jobs remain available to the
+        # non-Hermes intake entrypoint, but are not created from this turn.
+        executed_actions.append("hermes_persona_reply_owned")
+        skip_persona = False
         # Legacy attempt-builder semantics: a case with missing fields is
         # "not_ready" (fields missing, email not ready) — not the mirror's
         # initial "not_applicable" (no email configured for the route).
@@ -1281,6 +1261,19 @@ async def tool_execute_automation_action(
         # SOLE customer reply; persona must not draft a second one (F4).
         "skip_persona": bool(skip_persona),
     }
+    # Every successful automation result now carries the same server-owned
+    # reply contract as investigation/follow-up turns.  ``skip_persona`` is
+    # retained only for persisted legacy jobs; new ownership is explicit.
+    from backend.services.hermes_customer_reply_basis import (
+        HERMES_REPLY_OWNER,
+        basis_from_work_result,
+    )
+    result["reply_owner"] = HERMES_REPLY_OWNER
+    result["reply_basis"] = basis_from_work_result(
+        turn=turn,
+        work_result=result,
+        stage="automation_result",
+    )
     if normalized_route == "fraud_account":
         # Option B (fraud reply style alignment): the structured parts of
         # the ask/confirmation are server-built and deterministic; the
@@ -1291,6 +1284,19 @@ async def tool_execute_automation_action(
             missing_fields=missing_fields,
             collected_fields=collected_fields,
         )
+        # Preserve the legacy fraud keys while adding the unified identity
+        # and binding fields used by Hermes Persona.
+        result["reply_basis"] = {
+            **basis_from_work_result(turn=turn, work_result=result, stage="request_missing_information"),
+            **dict(result["reply_basis"]),
+            "kind": "hermes_customer_reply_basis_v1",
+            "basis_version": "hermes_customer_reply_basis_v1",
+            "reply_owner": HERMES_REPLY_OWNER,
+            "source_turn_id": str(turn.get("turn_id") or ""),
+            "source_direction": str(turn.get("direction") or "automation"),
+            "source_route": normalized_route,
+            "route": normalized_route,
+        }
     store.record_hermes_turn_work(turn_id, work_result=result)
     return result
 
@@ -1613,14 +1619,10 @@ def derive_publish_policy(turn: dict[str, Any]) -> str:
 
 
 def apply_greeting_projection(content: str, greeting_name: str) -> str:
-    """Ensure English drafts open with the deterministic Hi <Name>, greeting."""
-    normalized = str(content or "").strip()
-    if not normalized:
-        return normalized
-    expected = f"Hi {greeting_name},"
-    if normalized.lower().startswith("hi ") and normalized.split(",", 1)[0].rstrip().lower() == expected.lower():
-        return normalized
-    return f"{expected}\n\n{normalized}"
+    """Ensure English drafts open with one deterministic salutation."""
+    from backend.services.hermes_customer_reply_basis import project_greeting
+
+    return project_greeting(content, greeting_name)
 
 
 def tool_save_reply_draft(
@@ -1647,7 +1649,43 @@ def tool_save_reply_draft(
     if isinstance(snapshot, dict) and snapshot.get("greeting_name"):
         greeting_name = str(snapshot["greeting_name"])
     normalized_content = apply_greeting_projection(normalized_content, greeting_name)
+    from backend.services.hermes_customer_reply_basis import (
+        HERMES_CUSTOMER_REPLY_BASIS_KIND,
+        HermesReplyBasisError,
+        basis_from_work_result,
+        validate_customer_reply_draft,
+    )
+
+    # The Work phase is the server-owned source of facts.  A model-supplied
+    # basis is accepted only when it carries the same versioned identity and
+    # current turn; otherwise it is replaced by the persisted Work basis.
+    work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else {}
     investigation = binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
+    candidate_basis = dict(basis or {})
+    persisted_basis = work_result.get("reply_basis") if isinstance(work_result, dict) else None
+    if isinstance(persisted_basis, dict) and persisted_basis.get("kind") == HERMES_CUSTOMER_REPLY_BASIS_KIND:
+        candidate_basis = {**dict(persisted_basis), **candidate_basis}
+    if candidate_basis.get("kind") != HERMES_CUSTOMER_REPLY_BASIS_KIND:
+        candidate_basis = basis_from_work_result(turn=turn, work_result=work_result)
+    if str(turn.get("direction") or "") == "investigation":
+        investigation_facts = {
+            key: investigation.get(key)
+            for key in ("summary", "evidence", "known_facts", "unknowns", "next_steps")
+            if investigation.get(key) not in (None, "", [], {})
+        }
+        if investigation_facts:
+            candidate_basis["trusted_conclusion"] = {
+                **dict(candidate_basis.get("trusted_conclusion") or {}),
+                **investigation_facts,
+            }
+    if str(candidate_basis.get("source_turn_id") or "") != str(turn.get("turn_id") or ""):
+        raise HermesToolError("basis_turn_mismatch", "reply basis is not bound to the current turn")
+    try:
+        validation = validate_customer_reply_draft(normalized_content, candidate_basis)
+    except HermesReplyBasisError as exc:
+        raise HermesToolError(exc.code, exc.detail) from exc
+    candidate_basis["reply_owner"] = "hermes_persona"
+    candidate_basis["validation"] = validation
     work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else None
     from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
     from backend.services.account_reply_rag_fallback import format_rag_fallback_references
@@ -1698,7 +1736,7 @@ def tool_save_reply_draft(
     draft = store.save_hermes_case_draft(
         turn_id,
         content=normalized_content,
-        basis=dict(basis or {}),
+        basis=candidate_basis,
         guardrail=guardrail,
         publish_policy=normalized_policy,
     )
@@ -1709,6 +1747,8 @@ def tool_save_reply_draft(
         "greeting_name": greeting_name,
         "guardrail_decision": str((guardrail or {}).get("decision") or ""),
         "guardrail_blockers": list((guardrail or {}).get("blockers") or []),
+        "reply_owner": "hermes_persona",
+        "basis_version": str(candidate_basis.get("basis_version") or ""),
     }
 
 
@@ -1736,6 +1776,24 @@ def publication_decision_for_turn(
             break
     if draft is None:
         return {"status": "no_draft", "queued": False}
+    draft_basis = draft.get("basis") if isinstance(draft.get("basis"), dict) else {}
+    if (
+        draft_basis.get("kind") != "hermes_customer_reply_basis_v1"
+        or str(draft_basis.get("source_turn_id") or "") != str(turn_id)
+        or str(draft_basis.get("reply_owner") or "") != "hermes_persona"
+    ):
+        store.fail_hermes_agent_turn(
+            turn_id,
+            status="failed",
+            error_code="reply_basis_invalid",
+            error_message="draft basis is missing Hermes ownership or current-turn binding",
+        )
+        return {
+            "status": "human_review",
+            "queued": False,
+            "reason": "reply_basis_invalid",
+            "draft_id": draft.get("draft_id"),
+        }
     guardrail = draft.get("guardrail") if isinstance(draft.get("guardrail"), dict) else {}
     if str(guardrail.get("decision")) == "blocked":
         store.fail_hermes_agent_turn(

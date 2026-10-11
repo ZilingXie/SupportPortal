@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T11:10:48Z",
-  "source_base_commit": "0d3ee95f152500824eb5a38718b281dd6931b3ad",
-  "registry_digest": "ce4c2bb1a9ea5276256ac3629ddd1a27c63b3370cfd27a249be2258deb88f40a",
+  "generated_at": "2026-10-11T13:05:33Z",
+  "source_base_commit": "c6addcc0ccf74f0b75007ed8186d109f63e5a317",
+  "registry_digest": "9cb842c777080b3cc976a34562b94559bbf8aafd0f6f39c9d6bd41ec431e23c0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1556,6 +1556,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Hermes basis/validator and draft delivery regression",
+          "command": "uv run pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py -q",
+          "result": "64 passed"
+        },
+        {
+          "type": "test",
+          "label": "Project registry and diff checks",
+          "command": "python3 scripts/generate_project_overview.py --write --check; git diff --check",
+          "result": "Project Overview validation passed; git diff --check passed"
+        },
+        {
+          "type": "document",
+          "label": "Current implementation boundary",
+          "details": "Fraud, suspension, billing, verification and detailed-invoice Hermes Work results carry hermes_customer_reply_basis_v1 and reply_owner=hermes_persona. Enablement remains legacy-gated pending decision."
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1661,7 +1678,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 45,
+      "task_count": 46,
       "done_count": 23,
       "blocked_count": 0
     },
@@ -17893,6 +17910,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第四轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD 054b8fb1；summaryAnomalyReason 展示失败/malformed 原因+tone-danger、页面只读边界+Session/no-store 维持、真实渲染测试用真实 API 响应与当前 app.js；UI 3+专项 15+PG parity 1）；允许 finalize"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-197",
+      "title": "Hermes Unified Customer Reply（v3）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-11",
+      "updated_at": "2026-10-11",
+      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。",
+      "next_action": "完成代表性 automation 路径、Persona draft validator 和定向回归；Enablement legacy relay 绑定待范围决策；保留 Draft PR 等待独立验收与 Preproduction 证据。",
+      "acceptance_criteria": [
+        "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
+        "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
+        "有姓名使用 Hi \u003cName>,，无姓名使用唯一 Hi Customer,；Persona 不重复生成称呼。",
+        "支付凭据、内部实现、handoff 后重复索取资料、basis/turn 不匹配和重复称呼均被服务端 validator 拒绝。",
+        "automation auto 与 investigation manual 的发布策略继续由服务端决定。"
+      ],
+      "blockers": [
+        "Enablement relay release still requires legacy account_reply_job_id; a material scope decision is pending before changing that protocol."
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes basis/validator and draft delivery regression",
+          "command": "uv run pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py -q",
+          "result": "64 passed"
+        },
+        {
+          "type": "test",
+          "label": "Project registry and diff checks",
+          "command": "python3 scripts/generate_project_overview.py --write --check; git diff --check",
+          "result": "Project Overview validation passed; git diff --check passed"
+        },
+        {
+          "type": "document",
+          "label": "Current implementation boundary",
+          "details": "Fraud, suspension, billing, verification and detailed-invoice Hermes Work results carry hermes_customer_reply_basis_v1 and reply_owner=hermes_persona. Enablement remains legacy-gated pending decision."
         }
       ]
     },
