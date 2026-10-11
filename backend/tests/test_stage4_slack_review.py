@@ -160,7 +160,10 @@ def test_retry_after_delivery_never_posts_a_second_message() -> None:
     assert len(poster.posts) == 1, "C3: the same event id must never double-post"
 
 
-def test_retry_after_outcome_unknown_reuses_the_same_event_id() -> None:
+def test_outcome_unknown_is_never_auto_resent() -> None:
+    """F5 round 3 (condition 2): a possibly-sent notification (POST timeout)
+    keeps the explicit unknown state — automatic retry is refused because it
+    could double-post; recovery is the manual/API entry."""
     host = _Host()
     promotion_id = _parked(host)
     poster = _FakeSlackPoster(outcome="timeout")
@@ -173,10 +176,10 @@ def test_retry_after_outcome_unknown_reuses_the_same_event_id() -> None:
 
     poster.outcome = "ok"
     second = deliver_knowledge_review_notification(host, row, slack_client=poster, now_value=NOW)
-    assert second["status"] == "delivered"
-    assert {p["event"]["event_id"] for p in poster.posts} == {
-        knowledge_review_event_id(promotion_id)
-    }, "C3: retry reuses the deterministic event id"
+    assert second["status"] == "in_flight", second
+    assert len(poster.posts) == 1, "the timed-out POST must never be auto-repeated"
+    assert poster.posts[0]["event"]["event_id"] == knowledge_review_event_id(promotion_id)
+    assert _row(host, promotion_id)["slack_review_status"] == "outcome_unknown"
 
 
 def test_explicit_slack_failure_records_failed_and_keeps_review() -> None:
@@ -783,3 +786,130 @@ def test_drain_recovers_expired_notification_claims(monkeypatch) -> None:
     )
     assert posted == [knowledge_review_event_id(promotion_id)]
     assert not claim_lease_expired(row, now_value="2026-10-11T08:00:00+00:00")
+
+
+# ------------- stage-4 review F5 round 3: full send lifecycle ---------------
+
+
+def build_event_pair_helper(promotion_id: str):
+    from backend.services.engineer_slack import build_knowledge_review_root_event
+
+    return build_knowledge_review_root_event(
+        event_id=knowledge_review_event_id(promotion_id),
+        promotion_id=promotion_id,
+        message_text="review body",
+    )
+
+
+
+def test_reclaimed_away_owner_cannot_post() -> None:
+    """Reviewer repro (a): the OLD worker claims, pauses; the NEW worker
+    reclaims the expired claim and sends; the old worker resumes — its send
+    phase must abort at the ownership gate with ZERO additional posts."""
+    from backend.services.knowledge_slack_review import (
+        _send_claimed_notification,
+    )
+
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _FakeSlackPoster()
+
+    # old worker: claim at 08:00, then "dies" before the send phase
+    host.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value="2026-10-11T08:00:00+00:00", owner_token="old-worker",
+    )
+    # new worker: past the lease, deliver reclaims and sends (1 post)
+    late = "2026-10-11T08:10:00+00:00"
+    result = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=late
+    )
+    assert result["status"] == "delivered"
+    assert len(poster.posts) == 1
+
+    # old worker resumes: the REAL send phase with its stale owner token
+    resumed = _send_claimed_notification(
+        host,
+        promotion_id=promotion_id,
+        event=build_event_pair_helper(promotion_id),
+        thread_ts=None,
+        owner_token="old-worker",
+        poster=poster,
+        now_value=late,
+    )
+    assert resumed["status"] == "lost_claim", resumed
+    assert len(poster.posts) == 1, "the old owner must not add a second post"
+    assert _row(host, promotion_id)["slack_review_status"] == "delivered"
+
+
+def test_post_succeeded_but_complete_lost_never_resends() -> None:
+    """Reviewer repro (b): Slack succeeds, completion is interrupted — the
+    row stays 'sending'; the recovery scan parks it at outcome_unknown and
+    NO further POST ever fires."""
+    class _CompleteBlockingRepo:
+        """Delegates everything to the real repo but refuses ONE completion
+        (the crash between POST and persistence)."""
+
+        def __init__(self, inner):
+            self._inner = inner
+            self.blocked = False
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def complete_knowledge_slack_review(self, *args, **kwargs):
+            self.blocked = True
+            return None  # the interrupted completion never landed
+
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _FakeSlackPoster()
+    blocking = _CompleteBlockingRepo(host)
+
+    result = deliver_knowledge_review_notification(
+        blocking, _row(host, promotion_id), slack_client=poster, now_value=NOW
+    )
+    assert result["status"] == "lost_claim", result
+    assert result["reason"] == "completion_refused_after_post"
+    assert len(poster.posts) == 1
+    # the real row is still 'sending' (the completion never landed)
+    assert _row(host, promotion_id)["slack_review_status"] == "sending"
+
+    # past the lease the recovery scan parks sending at outcome_unknown and
+    # does NOT resend
+    late = "2026-10-11T08:10:00+00:00"
+    from backend.services.knowledge_slack_review import claim_lease_expired
+
+    row = _row(host, promotion_id)
+    assert claim_lease_expired(row, now_value=late)
+    expired = host.expire_stale_knowledge_slack_review(promotion_id, now_value=late)
+    assert expired is not None
+    assert _row(host, promotion_id)["slack_review_status"] == "outcome_unknown"
+    # and even a direct deliver retry refuses (outcome_unknown is not auto-claimable)
+    retry = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=late
+    )
+    assert retry["status"] == "in_flight"
+    assert len(poster.posts) == 1, "exactly one HTTP POST across the whole lifecycle"
+
+
+def test_failed_delivery_is_still_auto_retriable() -> None:
+    """A definitive (non-timeout) failure never posted — auto retry stays
+    allowed and keeps the deterministic event id."""
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _FakeSlackPoster(outcome="channel_not_found")
+
+    first = deliver_knowledge_review_notification(host, _row(host, promotion_id), slack_client=poster, now_value=NOW)
+    assert first["status"] == "failed"
+    assert _row(host, promotion_id)["slack_review_status"] == "failed"
+
+    poster.outcome = "ok"
+    second = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=NOW
+    )
+    assert second["status"] == "delivered"
+    assert [p["event"]["event_id"] for p in poster.posts] == [
+        knowledge_review_event_id(promotion_id)
+    ] * 2, "a definitive failure may retry with the same deterministic id"
+    assert _row(host, promotion_id)["slack_review_status"] == "delivered"

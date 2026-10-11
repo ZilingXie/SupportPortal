@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-10T18:27:30Z",
-  "source_base_commit": "bc9619917e794af2a35a50747c539eb68caf08aa",
-  "registry_digest": "5d3f23a9c3619a0bca0e10e926e6796b08699821ac295fda9f16b4eaea838d07",
+  "generated_at": "2026-10-11T03:26:48Z",
+  "source_base_commit": "5d9fa35dbca6e5874c142387fa30ad80ce0340de",
+  "registry_digest": "35892891e2309ad147830d2d57a8bfe8f7d57426623205faf060417d66b7b898",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5603,6 +5603,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 4 修复轮 2 回归（F5 可恢复 claim）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
           "result": "专项 32 passed（+3）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态；同步 origin/main 6600e4b8 合并后复测）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 4 修复轮 3 回归（F5 发送生命周期）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py backend/tests/test_knowledge_delivery_postgres.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed"
         }
       ],
       "source_refs": [
@@ -17637,8 +17643,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-11",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage4。前置=阶段 0-3（main bcbda671）。范围=Slack Review 代码/持久化/Draft 交互链/自动化测试；不开治理开关、不发布 n8n、不发真实业务消息、不部署。交付（分支 codex/weknora-dualwrite-phase4）：v23 schema（六字段：human_decided_by_email/human_decided_slack_user_id/slack_review_event_id/slack_review_status/slack_review_message_ts/slack_review_failure_code，InMemory+PG+静态镜像+版本守卫同步）；resolve_slack_operator（bot token users.info→邮箱，五类失败拒绝：user_not_found/api_failed/empty_email/id_mismatch/bot_message，客户端字段不可覆盖）；可靠通知状态机（knowledge_slack_review.py：确定性 event id=f\"knowledge-review:{promotion_id}\"，queued→delivered/failed/outcome_unknown，source-only 根消息/工单线程回复/频道不匹配拒绝/重试不重复）；knowledge_review_required 入根消息类型；出站消息含来源/判断/证据/正文/target/base_version/promotion/source/candidate；入站 source-only 路径（C5 mention 证据=raw_text 含 \u003c@bot>，C6 channel/thread 绑定，C7 单候选消歧，C4 身份解析失败零状态变更，C8 既有 generation/hash/delivery 状态机，C9 定向操作必带 target+base_version）；decision API 收紧（客户端 operator 一律 422 拒绝；服务端主体=dashboard session 或 automation-api）；n8n Forward Thread Draft（r1HIW8UNuCabiOPn：hermes messages 转发载荷加 raw_text+bot_user_id=U08RVQSJQF2，draft 4ed2c0c3 未发布、active b02f3ed5 未变；改前刷新 active 快照+manifest）。验证：阶段 4 专项 23 项（C1-C10 全矩阵）+ 存量适配（知识 Slack 决策测试加身份桩、API 测试改服务端主体）+PG v23 集成 7 项；全套 17 套件 482 passed/0 failed（同步 main ceed7b81 后复测）（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）。【修复轮 2026-10-11（首轮验收四阻断后）】F1 通知 claim 原子化（NULL/failed/outcome_unknown→queued 单胜，并发/陈旧重试零发送，InMemory+PG 双侧并发回归）；F2 mention 前缀校验（去前导空白后以 \u003c@bot> 开始，仅剥一个）；F3 绑定路径同执行 mention 证据（裸命令 422 零变更，正反两测）；F4 命令检测先行（非知识消息任何证据形态回落 ignored_unbound）。专项 29 passed（+6），全套 489 passed 含 PG（v23 集成 8 含并发 claim）。【修复轮 2 2026-10-11（二轮验收 F5 后）】可恢复 claim 语义：v23 追加 slack_review_owner_token+slack_review_claimed_at；claim 支持过期回收（默认 300s 租约，PG 行锁判胜）；complete 加 owner 互斥（陈旧 owner 被拒、完成释放 token）；drain 新增 Phase 0 恢复扫描（过期 queued claim 重投）。回归 +3（崩溃窗口/owner 互斥/drain 恢复）+PG 侧全链；专项 32、全套 493 passed 含 PG。",
-      "next_action": "阶段 4 修复轮 2 完成，待第三轮独立验收（Draft PR #1469，HEAD 见 PR）；通过后进入阶段 5（页面/API 展示增强）。",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage4。前置=阶段 0-3（main bcbda671）。范围=Slack Review 代码/持久化/Draft 交互链/自动化测试；不开治理开关、不发布 n8n、不发真实业务消息、不部署。交付（分支 codex/weknora-dualwrite-phase4）：v23 schema（六字段：human_decided_by_email/human_decided_slack_user_id/slack_review_event_id/slack_review_status/slack_review_message_ts/slack_review_failure_code，InMemory+PG+静态镜像+版本守卫同步）；resolve_slack_operator（bot token users.info→邮箱，五类失败拒绝：user_not_found/api_failed/empty_email/id_mismatch/bot_message，客户端字段不可覆盖）；可靠通知状态机（knowledge_slack_review.py：确定性 event id=f\"knowledge-review:{promotion_id}\"，queued→delivered/failed/outcome_unknown，source-only 根消息/工单线程回复/频道不匹配拒绝/重试不重复）；knowledge_review_required 入根消息类型；出站消息含来源/判断/证据/正文/target/base_version/promotion/source/candidate；入站 source-only 路径（C5 mention 证据=raw_text 含 \u003c@bot>，C6 channel/thread 绑定，C7 单候选消歧，C4 身份解析失败零状态变更，C8 既有 generation/hash/delivery 状态机，C9 定向操作必带 target+base_version）；decision API 收紧（客户端 operator 一律 422 拒绝；服务端主体=dashboard session 或 automation-api）；n8n Forward Thread Draft（r1HIW8UNuCabiOPn：hermes messages 转发载荷加 raw_text+bot_user_id=U08RVQSJQF2，draft 4ed2c0c3 未发布、active b02f3ed5 未变；改前刷新 active 快照+manifest）。验证：阶段 4 专项 23 项（C1-C10 全矩阵）+ 存量适配（知识 Slack 决策测试加身份桩、API 测试改服务端主体）+PG v23 集成 7 项；全套 17 套件 482 passed/0 failed（同步 main ceed7b81 后复测）（RUN_POSTGRES_INTEGRATION=1 含隔离 PG）。【修复轮 2026-10-11（首轮验收四阻断后）】F1 通知 claim 原子化（NULL/failed/outcome_unknown→queued 单胜，并发/陈旧重试零发送，InMemory+PG 双侧并发回归）；F2 mention 前缀校验（去前导空白后以 \u003c@bot> 开始，仅剥一个）；F3 绑定路径同执行 mention 证据（裸命令 422 零变更，正反两测）；F4 命令检测先行（非知识消息任何证据形态回落 ignored_unbound）。专项 29 passed（+6），全套 489 passed 含 PG（v23 集成 8 含并发 claim）。【修复轮 2 2026-10-11（二轮验收 F5 后）】可恢复 claim 语义：v23 追加 slack_review_owner_token+slack_review_claimed_at；claim 支持过期回收（默认 300s 租约，PG 行锁判胜）；complete 加 owner 互斥（陈旧 owner 被拒、完成释放 token）；drain 新增 Phase 0 恢复扫描（过期 queued claim 重投）。回归 +3（崩溃窗口/owner 互斥/drain 恢复）+PG 侧全链；专项 32、全套 493 passed 含 PG。【修复轮 3 2026-10-11（三轮验收 F5 生命周期后）】发送生命周期补全：sending 状态+发送门（POST 前最后一刻 owner 互斥原子重证）；过期 sending 驻 outcome_unknown 永不自动重投（outcome_unknown 移出可 claim 集）；complete 被拒返回 lost_claim 不报 delivered；仅过期 queued（零外呼证明）与 failed 可自动重投。验收双复现（旧 owner 恢复/complete 中断）InMemory+PG 真实服务入口回归，全程恰 1 次 POST。专项 35、全套 499 passed 含 PG 12。",
+      "next_action": "阶段 4 修复轮 3 完成，待第四轮独立验收（Draft PR #1469，HEAD 见 PR）；通过后进入阶段 5（页面/API 展示增强）。",
       "acceptance_criteria": [
         "C1 source-only 根线程创建并持久化绑定；失败保留 human_review",
         "C2 既有 case binding 只回复原线程；不匹配拒绝发送",
@@ -17684,6 +17690,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "阶段 4 修复轮 2 回归（F5 可恢复 claim）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
           "result": "专项 32 passed（+3）；全套 493 passed / 0 failed（PG 9 项含死 claim 回收+owner 互斥+delivered 终态；同步 origin/main 6600e4b8 合并后复测）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 4 修复轮 3 回归（F5 发送生命周期）",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py backend/tests/test_knowledge_delivery_postgres.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed"
         }
       ]
     },

@@ -488,9 +488,12 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             if row is None:
                 return None
             status = str(row.get("slack_review_status") or "")
-            if status not in {None, "", "failed", "outcome_unknown"}:
+            # outcome_unknown is NOT auto-claimable (review F5 round 3): a
+            # possibly-sent notification must never be auto-resent — it keeps
+            # the explicit unknown state for manual recovery.
+            if status not in {None, "", "failed"}:
                 if status != "queued":
-                    return None  # delivered (terminal)
+                    return None  # sending (live) / delivered / outcome_unknown
                 claimed_at = str(row.get("slack_review_claimed_at") or "")
                 if not lease_expires_at or not claimed_at or claimed_at > lease_expires_at:
                     return None  # live claim, not yet reclaimable
@@ -520,7 +523,9 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
             raise ValueError("invalid knowledge slack review completion status")
         with self._assignment_lock:
             row = self._weknora_promotion_state().get(str(promotion_id))
-            if row is None or str(row.get("slack_review_status") or "") != "queued":
+            if row is None or str(row.get("slack_review_status") or "") not in {
+                "queued", "sending",
+            }:
                 return None
             # F5: only the claim owner completes — a stale claimant (whose
             # expired claim was reclaimed) cannot overwrite the new owner.
@@ -538,6 +543,46 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                     slack_thread_ts=str(slack_thread_ts or "").strip() or row.get("slack_thread_ts"),
                     slack_review_message_ts=str(slack_review_message_ts or "").strip() or None,
                 )
+            return copy.deepcopy(row)
+
+    def mark_knowledge_slack_review_sending(
+        self, promotion_id: str, *, owner_token: str, now_value: str
+    ) -> dict[str, Any] | None:
+        """F5 round 3: the pre-post ownership gate.
+
+        The sender proves it still owns the claim IMMEDIATELY before the
+        HTTP POST; a reclaimed-away owner fails here and must not post. The
+        claimed_at clock restarts so an expired 'sending' row means "the POST
+        may have gone out" — the recovery scan parks it at outcome_unknown
+        instead of resending."""
+        with self._assignment_lock:
+            row = self._weknora_promotion_state().get(str(promotion_id))
+            if row is None or str(row.get("slack_review_status") or "") != "queued":
+                return None
+            if str(row.get("slack_review_owner_token") or "") != str(owner_token or "").strip():
+                return None
+            row.update(
+                slack_review_status="sending",
+                slack_review_claimed_at=now_value,
+                updated_at=now_value,
+            )
+            return copy.deepcopy(row)
+
+    def expire_stale_knowledge_slack_review(
+        self, promotion_id: str, *, now_value: str, failure_code: str = "claim_expired_possibly_sent"
+    ) -> dict[str, Any] | None:
+        """F5 round 3: an expired 'sending' row MAY have posted — park it at
+        outcome_unknown (manual recovery entry), never auto-resend."""
+        with self._assignment_lock:
+            row = self._weknora_promotion_state().get(str(promotion_id))
+            if row is None or str(row.get("slack_review_status") or "") != "sending":
+                return None
+            row.update(
+                slack_review_status="outcome_unknown",
+                slack_review_failure_code=str(failure_code).strip() or None,
+                slack_review_owner_token=None,
+                updated_at=now_value,
+            )
             return copy.deepcopy(row)
 
     def _cascade_requeue_deliveries(self, promotion_id: str, *, requeued_at: str, reason: str) -> int:
@@ -1129,7 +1174,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         slack_review_claimed_at=%s, updated_at=%s
                         WHERE promotion_id=%s
                         AND (
-                            slack_review_status IS NULL OR slack_review_status IN ('failed','outcome_unknown')
+                            slack_review_status IS NULL OR slack_review_status = 'failed'
                             OR (
                                 slack_review_status = 'queued'
                                 AND %s <> ''
@@ -1183,7 +1228,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                         slack_review_message_ts=COALESCE(%s, slack_review_message_ts),
                         slack_review_owner_token=NULL,
                         updated_at=%s
-                        WHERE promotion_id=%s AND slack_review_status='queued'
+                        WHERE promotion_id=%s AND slack_review_status IN ('queued','sending')
                         AND slack_review_owner_token IS NOT DISTINCT FROM %s
                         RETURNING promotion_id, slack_review_status
                         """
@@ -1206,6 +1251,59 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                 }
 
         return self._run_with_connection_retry("complete_knowledge_slack_review", operation)
+
+    def mark_knowledge_slack_review_sending(
+        self, promotion_id: str, *, owner_token: str, now_value: str
+    ) -> dict[str, Any] | None:
+        """PG twin of the pre-post ownership gate (F5 round 3)."""
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} SET slack_review_status='sending',
+                        slack_review_claimed_at=%s, updated_at=%s
+                        WHERE promotion_id=%s AND slack_review_status='queued'
+                        AND slack_review_owner_token IS NOT DISTINCT FROM %s
+                        RETURNING promotion_id, slack_review_status
+                        """
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (now_value, now_value, str(promotion_id), str(owner_token or "").strip() or None),
+                )
+                record = cur.fetchone()
+                return None if record is None else {
+                    "promotion_id": str(record[0]),
+                    "slack_review_status": str(record[1]),
+                }
+
+        return self._run_with_connection_retry("mark_knowledge_slack_review_sending", operation)
+
+    def expire_stale_knowledge_slack_review(
+        self, promotion_id: str, *, now_value: str, failure_code: str = "claim_expired_possibly_sent"
+    ) -> dict[str, Any] | None:
+        """PG twin of the expired-sending park (F5 round 3): possibly sent ->
+        outcome_unknown, never auto-resend."""
+        def operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
+            with conn.transaction(), conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL(
+                        """
+                        UPDATE {} SET slack_review_status='outcome_unknown',
+                        slack_review_failure_code=%s, slack_review_owner_token=NULL,
+                        updated_at=%s
+                        WHERE promotion_id=%s AND slack_review_status='sending'
+                        RETURNING promotion_id, slack_review_status
+                        """
+                    ).format(self._table(_WEKNORA_PROMOTION_TABLE)),
+                    (str(failure_code).strip() or None, now_value, str(promotion_id)),
+                )
+                record = cur.fetchone()
+                return None if record is None else {
+                    "promotion_id": str(record[0]),
+                    "slack_review_status": str(record[1]),
+                }
+
+        return self._run_with_connection_retry("expire_stale_knowledge_slack_review", operation)
 
 
 def _json_value(value: Any) -> Any:

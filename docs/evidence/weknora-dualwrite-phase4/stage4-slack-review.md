@@ -81,3 +81,17 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 回归 4 项（复现验收场景）：崩溃 claim 在租约内重试 in_flight 零发送、过期后回收并发送（post==1）；陈旧 owner 完成被拒、新 owner 完成；drain 恢复扫描把过期 queued claim 重投为 delivered；PG 侧同链（死 claim→租约内拒→过期回收→owner 互斥→delivered 终态）。
 
 验证：专项 **32 passed**（29+3 新回归）；全套 17 套件 **493 passed / 0 failed**（PG 9 项含崩溃回收）；compileall / git diff --check / Overview --check 通过。
+
+
+## 修复轮 3（2026-10-11，三轮验收 F5 生命周期阻断后）
+
+阻断：租约回收只保护落库不保护外呼——旧 owner 回收后恢复仍 POST（复现 a：2 次 POST）；POST 成功 complete 中断后恢复流程再 POST（复现 b：2 次 POST）；complete 被拒仍报 delivered。
+
+修复（完整发送生命周期，四条件逐条关闭）：
+
+1. **`sending` 状态 + 发送门**：claim(queued) → `mark_knowledge_slack_review_sending`（owner 互斥原子迁移，POST 前最后一刻重证所有权，时钟重启）→ POST → complete（从 queued/sending，owner 互斥）。旧 owner 恢复后发送门得 None → `lost_claim` 零 POST（条件 1）；
+2. **可能已发送=不可自动重发**：过期 `sending`（POST 可能已出）由恢复扫描驻留 `outcome_unknown`（failure_code=claim_expired_possibly_sent），永不自动重投；`outcome_unknown`（含 POST 超时）从可 claim 集合移除——重试一律拒绝，恢复入口=人工/API（条件 2）；仅过期 `queued`（未进发送相，可证明零外呼）与 `failed`（明确失败零外呼）可自动重投；
+3. **complete 被拒不报 delivered**：complete 返回 None → 服务返回 `lost_claim`（reason 区分 completion_refused_after_post/after_fail）（条件 3）；
+4. **真实服务入口双复现回归**：复现 a（旧 worker claim→暂停→新 worker 回收发送→旧 worker 经真实 `_send_claimed_notification` 恢复→lost_claim，全程 1 次 POST）；复现 b（POST 成功+complete 中断→行留 sending→过期驻 unknown→重试拒绝，全程 1 次 POST）；InMemory+隔离 PG 双侧（条件 4）。
+
+验证：专项 **35 passed**（32+3：outcome_unknown 禁自动重试/复现 a/复现 b+failed 仍可重试）；全套 17 套件 **499 passed / 0 failed**（PG 12 项含两复现+守卫三态）；compileall / diff-check 通过。

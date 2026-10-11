@@ -371,3 +371,190 @@ def test_pg_crashed_claim_reclaim_and_owner_guard(repository) -> None:
         now_value="2026-10-10T09:00:00+00:00", owner_token="x",
         lease_expires_at="2026-10-10T08:00:00+00:00",
     ) is None
+
+
+def _pg_parked(repository) -> str:
+    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    promotion_id = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
+    return promotion_id
+
+
+def _pg_row(repository, promotion_id) -> dict:
+    return next(
+        row for row in repository.list_weknora_promotions()
+        if row["promotion_id"] == promotion_id
+    )
+
+
+class _PgFakePoster:
+    def __init__(self, *, outcome="ok"):
+        self.posts = []
+        self.outcome = outcome
+
+    def post_engineer_slack_event(self, event, thread_ts=None):
+        self.posts.append({"event": dict(event), "thread_ts": thread_ts})
+        if self.outcome == "ok":
+            return {
+                "event_id": event.get("event_id"), "status": "delivered",
+                "failure_code": None, "slack_channel_id": "C-REVIEW",
+                "slack_message_ts": "1700.001",
+                "slack_thread_ts": str(thread_ts or "") or "1700.001",
+            }
+        from backend.services.engineer_slack import EngineerSlackDeliveryError
+
+        if self.outcome == "timeout":
+            raise EngineerSlackDeliveryError("engineer_slack_request_failed", outcome_unknown=True)
+        raise EngineerSlackDeliveryError("channel_not_found", outcome_unknown=False)
+
+
+def test_pg_reclaimed_away_owner_cannot_post(repository) -> None:
+    """Reviewer repro (a) on PostgreSQL with the REAL service entry: old
+    worker claim -> new worker reclaim+send -> old worker's send gate
+    refuses; exactly ONE HTTP post."""
+    import os
+    import unittest.mock as mock
+
+    from backend.services.knowledge_slack_review import (
+        _send_claimed_notification,
+        deliver_knowledge_review_notification,
+        knowledge_review_event_id,
+    )
+    from backend.services.engineer_slack import build_knowledge_review_root_event
+
+    promotion_id = _pg_parked(repository)
+    repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=knowledge_review_event_id(promotion_id),
+        now_value="2026-10-10T08:00:00+00:00", owner_token="old-worker",
+    )
+    poster = _PgFakePoster()
+    env = {
+        "ENGINEER_SLACK_CHANNEL_ID": "C-REVIEW",
+        "ENGINEER_SLACK_TEAM_ID": "T-1",
+        "ENGINEER_SLACK_ACCESS_TOKEN": "xoxb-test",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "1",
+    }
+    late = "2026-10-10T08:10:00+00:00"
+    with mock.patch.dict(os.environ, env):
+        result = deliver_knowledge_review_notification(
+            repository, _pg_row(repository, promotion_id),
+            slack_client=poster, now_value=late,
+        )
+    assert result["status"] == "delivered", result
+    assert len(poster.posts) == 1
+
+    event = build_knowledge_review_root_event(
+        event_id=knowledge_review_event_id(promotion_id),
+        promotion_id=promotion_id, message_text="body",
+    )
+    resumed = _send_claimed_notification(
+        repository, promotion_id=promotion_id, event=event,
+        thread_ts=None, owner_token="old-worker", poster=poster, now_value=late,
+    )
+    assert resumed["status"] == "lost_claim"
+    assert len(poster.posts) == 1
+    assert _pg_row(repository, promotion_id)["slack_review_status"] == "delivered"
+
+
+def test_pg_post_succeeded_complete_lost_never_resends(repository) -> None:
+    """Reviewer repro (b) on PostgreSQL: POST ok, completion interrupted ->
+    row stays 'sending' -> expiry parks outcome_unknown and NOTHING resends."""
+    import os
+    import unittest.mock as mock
+
+    from backend.services.knowledge_slack_review import (
+        claim_lease_expired,
+        deliver_knowledge_review_notification,
+    )
+
+    promotion_id = _pg_parked(repository)
+
+    class _Blocking:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __getattr__(self, name):
+            return getattr(self._inner, name)
+
+        def complete_knowledge_slack_review(self, *args, **kwargs):
+            return None  # the interrupted completion never lands
+
+    poster = _PgFakePoster()
+    env = {
+        "ENGINEER_SLACK_CHANNEL_ID": "C-REVIEW",
+        "ENGINEER_SLACK_TEAM_ID": "T-1",
+        "ENGINEER_SLACK_ACCESS_TOKEN": "xoxb-test",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "1",
+    }
+    with mock.patch.dict(os.environ, env):
+        result = deliver_knowledge_review_notification(
+            _Blocking(repository), _pg_row(repository, promotion_id),
+            slack_client=poster, now_value=NOW,
+        )
+    assert result["status"] == "lost_claim"
+    assert result["reason"] == "completion_refused_after_post"
+    assert len(poster.posts) == 1
+    assert _pg_row(repository, promotion_id)["slack_review_status"] == "sending"
+
+    late = "2026-10-10T09:00:00+00:00"
+    assert claim_lease_expired(_pg_row(repository, promotion_id), now_value=late)
+    expired = repository.expire_stale_knowledge_slack_review(promotion_id, now_value=late)
+    assert expired is not None
+    assert _pg_row(repository, promotion_id)["slack_review_status"] == "outcome_unknown"
+    # outcome_unknown is not auto-claimable: a retry never posts again
+    with mock.patch.dict(os.environ, env):
+        retry = deliver_knowledge_review_notification(
+            repository, _pg_row(repository, promotion_id),
+            slack_client=poster, now_value=late,
+        )
+    assert retry["status"] == "in_flight"
+    assert len(poster.posts) == 1
+
+
+def test_pg_outcome_unknown_and_sending_guards(repository) -> None:
+    """Guards: begin-send is owner-exclusive; outcome_unknown is not
+    auto-claimable; complete-from-sending requires the owner."""
+    promotion_id = _pg_parked(repository)
+    claimed = repository.mark_knowledge_slack_review_queued(
+        promotion_id, event_id=f"knowledge-review:{promotion_id}",
+        now_value=NOW, owner_token="owner-a",
+    )
+    assert claimed is not None
+    # a different owner cannot begin the send phase
+    assert repository.mark_knowledge_slack_review_sending(
+        promotion_id, owner_token="owner-b", now_value=NOW,
+    ) is None
+    began = repository.mark_knowledge_slack_review_sending(
+        promotion_id, owner_token="owner-a", now_value=NOW,
+    )
+    assert began is not None
+    # a different owner cannot complete from sending
+    assert repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered", owner_token="owner-b", now_value=NOW,
+    ) is None
+    assert repository.complete_knowledge_slack_review(
+        promotion_id, status="delivered",
+        slack_channel_id="C-REVIEW", slack_thread_ts="1700.001",
+        slack_review_message_ts="1700.001",
+        owner_token="owner-a", now_value=NOW,
+    )["slack_review_status"] == "delivered"
+    # simulate a timeout outcome on a second promotion: not auto-claimable
+    second_task = dict(PROMOTION_TASK)
+    second_task["source_id"] = PROMOTION_TASK["source_id"].replace("kb-1", "kb-timeout")
+    inserted = repository.enqueue_weknora_promotions([second_task], now_value=NOW)
+    second = str(inserted[0]["promotion_id"])
+    repository.park_knowledge_candidate(second, reasons=["gate"], now_value=NOW)
+    repository.mark_knowledge_slack_review_queued(
+        second, event_id=f"knowledge-review:{second}", now_value=NOW, owner_token="t",
+    )
+    repository.mark_knowledge_slack_review_sending(second, owner_token="t", now_value=NOW)
+    repository.complete_knowledge_slack_review(
+        second, status="outcome_unknown", failure_code="engineer_slack_request_failed",
+        owner_token="t", now_value=NOW,
+    )
+    assert repository.mark_knowledge_slack_review_queued(
+        second, event_id=f"knowledge-review:{second}", now_value=LATER,
+        owner_token="retry", lease_expires_at="2026-10-10T00:00:00+00:00",
+    ) is None, "outcome_unknown must never be auto-claimed"

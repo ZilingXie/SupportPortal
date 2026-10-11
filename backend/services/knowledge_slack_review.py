@@ -49,12 +49,13 @@ def _claim_lease_seconds() -> float:
 def claim_lease_expired(
     promotion: dict[str, Any], *, now_value: str, lease_seconds: float | None = None
 ) -> bool:
-    """F5: is a 'queued' notification claim stale enough to reclaim?
+    """F5: is a notification claim ('queued' or 'sending') stale?
 
-    A claim whose owner crashed between claim and post must become
-    reclaimable, or the notification is stuck forever. Claims without a
-    timestamp (legacy rows) are always reclaimable."""
-    if str(promotion.get("slack_review_status") or "") != "queued":
+    Stale 'queued' = the owner died before the send phase -> safe to reclaim
+    and resend. Stale 'sending' = the owner may have posted -> the recovery
+    scan parks it at outcome_unknown instead. Claims without a timestamp
+    (legacy rows) are always stale."""
+    if str(promotion.get("slack_review_status") or "") not in {"queued", "sending"}:
         return False
     claimed_at = str(promotion.get("slack_review_claimed_at") or "").strip()
     if not claimed_at:
@@ -189,7 +190,7 @@ def deliver_knowledge_review_notification(
                 promotion_id, event_id=event_id, now_value=now,
                 owner_token=owner_token, lease_expires_at=lease_cutoff,
             )
-            repository.complete_knowledge_slack_review(
+            completed = repository.complete_knowledge_slack_review(
                 promotion_id,
                 status="failed",
                 failure_code="thread_channel_mismatch",
@@ -198,7 +199,7 @@ def deliver_knowledge_review_notification(
             )
             return {
                 "promotion_id": promotion_id,
-                "status": "failed",
+                "status": "failed" if completed is not None else "lost_claim",
                 "failure_code": "thread_channel_mismatch",
             }
         event = _thread_event(event_id, promotion, message_text)
@@ -231,22 +232,69 @@ def deliver_knowledge_review_notification(
             "status": "in_flight",
             "reason": "concurrent_delivery_in_progress",
         }
+    return _send_claimed_notification(
+        repository,
+        promotion_id=promotion_id,
+        event=event,
+        thread_ts=thread_ts,
+        owner_token=owner_token,
+        poster=poster,
+        now_value=now,
+    )
+
+
+def _send_claimed_notification(
+    repository: Any,
+    *,
+    promotion_id: str,
+    event: dict[str, Any],
+    thread_ts: str | None,
+    owner_token: str,
+    poster: Any,
+    now_value: str,
+) -> dict[str, Any]:
+    """Send phase of a claimed notification (F5 round 3 lifecycle).
+
+    1. begin-send gate: the owner re-proves ownership IMMEDIATELY before the
+       POST — an owner whose claim was reclaimed away fails here and must
+       not post.
+    2. POST.
+    3. complete (owner-guarded). A REFUSED completion is never reported as
+       delivered — the row belongs to someone else now.
+    """
+    from backend.services.engineer_slack import EngineerSlackDeliveryError
+
+    began = repository.mark_knowledge_slack_review_sending(
+        promotion_id, owner_token=owner_token, now_value=now_value
+    )
+    if began is None:
+        return {
+            "promotion_id": promotion_id,
+            "status": "lost_claim",
+            "reason": "claim_reclaimed_before_send",
+        }
 
     try:
         result = poster.post_engineer_slack_event(event, thread_ts=thread_ts)
     except EngineerSlackDeliveryError as exc:
         status = "outcome_unknown" if exc.outcome_unknown else "failed"
-        repository.complete_knowledge_slack_review(
+        completed = repository.complete_knowledge_slack_review(
             promotion_id, status=status, failure_code=exc.code,
-            owner_token=owner_token, now_value=now,
+            owner_token=owner_token, now_value=now_value,
         )
+        if completed is None:
+            return {
+                "promotion_id": promotion_id,
+                "status": "lost_claim",
+                "reason": f"completion_refused_after_{status}",
+            }
         LOGGER.warning(
             "knowledge_review_slack_delivery_failed promotion_id=%s status=%s failure_code=%s",
             promotion_id, status, exc.code,
         )
         return {"promotion_id": promotion_id, "status": status, "failure_code": exc.code}
 
-    repository.complete_knowledge_slack_review(
+    completed = repository.complete_knowledge_slack_review(
         promotion_id,
         status="delivered",
         slack_channel_id=str(result.get("slack_channel_id") or ""),
@@ -254,8 +302,16 @@ def deliver_knowledge_review_notification(
         slack_thread_ts=str(result.get("slack_thread_ts") or ""),
         slack_review_message_ts=str(result.get("slack_message_ts") or ""),
         owner_token=owner_token,
-        now_value=now,
+        now_value=now_value,
     )
+    if completed is None:
+        # Condition 3 (review F5): the row no longer belongs to this sender
+        # — NEVER report delivered on a refused completion.
+        return {
+            "promotion_id": promotion_id,
+            "status": "lost_claim",
+            "reason": "completion_refused_after_post",
+        }
     LOGGER.info(
         "knowledge_review_slack_delivered promotion_id=%s channel=%s thread=%s",
         promotion_id, result.get("slack_channel_id"), result.get("slack_thread_ts"),
@@ -286,6 +342,7 @@ def _thread_event(event_id: str, promotion: dict[str, Any], message_text: str) -
 
 
 __all__ = [
+    "_send_claimed_notification",
     "claim_lease_expired",
     "deliver_knowledge_review_notification",
     "knowledge_review_event_id",

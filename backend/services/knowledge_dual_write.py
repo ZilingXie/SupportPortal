@@ -542,9 +542,10 @@ def drain_knowledge_dual_write(
         if isinstance(row, dict)
     }
 
-    # Phase 0 — notification crash recovery (stage-4 review F5): a claim
-    # whose owner died between claim and post would strand the notification
-    # in 'queued' forever; reclaim-and-resend expired claims here.
+    # Phase 0 — notification crash recovery (stage-4 review F5, round 3):
+    # an expired 'queued' claim provably never entered the send phase —
+    # reclaim and resend it; an expired 'sending' claim MAY have posted —
+    # park it at outcome_unknown (manual recovery entry), never auto-resend.
     try:
         from backend.services.knowledge_slack_review import (
             claim_lease_expired,
@@ -552,7 +553,13 @@ def drain_knowledge_dual_write(
         )
 
         for promotion in promotions.values():
-            if claim_lease_expired(promotion, now_value=now_iso):
+            if not claim_lease_expired(promotion, now_value=now_iso):
+                continue
+            if str(promotion.get("slack_review_status") or "") == "sending":
+                repository.expire_stale_knowledge_slack_review(
+                    str(promotion.get("promotion_id") or ""), now_value=now_iso
+                )
+            else:
                 deliver_knowledge_review_notification(
                     repository, promotion, now_value=now_iso
                 )
