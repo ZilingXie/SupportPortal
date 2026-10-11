@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T13:00:44Z",
-  "source_base_commit": "a0bb128136723756d60b574fc2962b1b6609e6f6",
-  "registry_digest": "22b379740089e0e0168d0096a6aed7a4ca46f6a90283ea673bcd871ba8460487",
+  "generated_at": "2026-10-11T13:56:15Z",
+  "source_base_commit": "48c9d81bcbd78683dbed1b32d410fd0de43ca00e",
+  "registry_digest": "4b050c97f73834c2171551c1c483b36f7d46b0371bc73ce9da1418f539e73fd5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1540,12 +1540,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "url": "backend/tests/test_investigation_attachment_followup_repair.py",
-          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：89 passed"
         },
         {
           "type": "test",
           "url": "scripts/testing/verify_investigation_followup_repair.py",
           "label": "R1 三项反向验证均以断言失败检出旧行为"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1451",
+          "label": "独立代码复审通过 38c1a3fd63af40a4837855b4fe95313040ca3ae4；合并 f1efe32acbde73a0408bdebd589d32941cb80dac"
+        },
+        {
+          "type": "test",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_attachment_repair_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_attachment_repair_test .venv/bin/python -m pytest -q backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_notifications.py backend/tests/test_investigation_route_status_fix.py",
+          "result": "合并后 root main：127 passed / 1 skipped；唯一 skip 为 memory fixture 不适用的 SQL 回滚用例，PG 同项通过。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-followup-pp-probe.json",
+          "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
         },
         {
           "type": "document",
@@ -17552,10 +17567,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
       "status": "active",
-      "next_action": "提交 R1 修复分支复审；通过后使用合并后的 root main 发布 Preproduction。Ticket 14002 两份合成附件仍待单独业务写入授权。",
+      "next_action": "独立代码复审已通过、PR #1451 已合并。完成正式 ECS Preproduction 门禁与干净 CloudWatch 观察窗口；业务验收 waiting-for-evidence，Ticket 14002 两份合成附件和测试续轮仍需明确实际写入授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-10",
+      "updated_at": "2026-10-11",
       "acceptance_criteria": [
         "C1-C7 见 docs/plans/investigation-attachments-v1.md"
       ],
@@ -17579,12 +17594,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "url": "backend/tests/test_investigation_attachment_followup_repair.py",
-          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：89 passed"
         },
         {
           "type": "test",
           "url": "scripts/testing/verify_investigation_followup_repair.py",
           "label": "R1 三项反向验证均以断言失败检出旧行为"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1451",
+          "label": "独立代码复审通过 38c1a3fd63af40a4837855b4fe95313040ca3ae4；合并 f1efe32acbde73a0408bdebd589d32941cb80dac"
+        },
+        {
+          "type": "test",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_attachment_repair_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_attachment_repair_test .venv/bin/python -m pytest -q backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_notifications.py backend/tests/test_investigation_route_status_fix.py",
+          "result": "合并后 root main：127 passed / 1 skipped；唯一 skip 为 memory fixture 不适用的 SQL 回滚用例，PG 同项通过。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-followup-pp-probe.json",
+          "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
         }
       ]
     },

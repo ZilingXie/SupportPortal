@@ -655,7 +655,12 @@ Prompt identity与检查结论。失败时这些中间文件以私有权限保�
 Route 与 Worker 会先完成 update，然后并行等待 service 指针和唯一 PRIMARY deployment
 都收敛到已注册 revision、`rolloutState=COMPLETED` 及 `1/1/0`；两者 digest 和 heartbeat
 通过后才更新 API，API 使用相同 revision 门禁。公网 health/provenance、CloudWatch错误窗口
-和 EC2 backup health作为只读检查并行执行。Target Health每5秒读取一次汇总，最多等待
+和 EC2 backup health作为只读检查并行执行。
+技术验证时序提示（2026-10-11）：CloudWatch 门禁扫描从 deployment start 起的三个角色
+log stream prefix。使用同一 worker task definition 的隔离 probe，也会落在相同窗口；
+若 probe 预期异常会输出 traceback，应安排在正式 pipeline complete 后执行，或使用
+不会产生模拟错误日志的检查。不要删除模拟日志、改写失败 evidence 或跳过错误门禁。
+Target Health每5秒读取一次汇总，最多等待
 15分钟，直到至少一个target healthy且没有draining/unhealthy target；超时保留最后汇总并
 fail closed，不记录target IP。目标 Prompt sync 后还会从目标数据库执行
 一次只读 validate，确认 activation 前置内容可读且 CLI 没有执行 schema initialization。

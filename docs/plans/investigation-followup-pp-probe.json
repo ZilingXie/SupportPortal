@@ -1,0 +1,21 @@
+{
+  "observed_at": "2026-10-11T13:54:53.940946+00:00",
+  "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/49d8beaebd3746c8889026fac7d94c60",
+  "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:136",
+  "exit_code": 0,
+  "image_digest": "sha256:ef09c0cfd1cd3f8a27b78d97f01d7a9ef6282d9c15c0e6938f37c6c9e7beb04a",
+  "marker": {
+    "status": "passed",
+    "checks": [
+      "authenticated_comment_cdn_ua_auth_strip",
+      "http_error_and_historical_retry_classification",
+      "fixed_pending_investigation_and_human_fence",
+      "english_notification_fallback_plaintext_original_receipt"
+    ],
+    "business_writes": 0,
+    "build_ref": "f1efe32acbde73a0408bdebd589d32941cb80dac"
+  },
+  "limits": "In-memory repository and external mocks; no real translation, CDN, Slack or Zendesk business acceptance.",
+  "probe_source": "docs/plans/investigation-followup-image-probe.py",
+  "observation": "First probe emitted one intentional fallback traceback in the release CloudWatch window; original pipeline evidence retained, fresh full pipeline required."
+}
