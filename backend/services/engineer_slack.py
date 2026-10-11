@@ -674,17 +674,20 @@ def notify_hermes_review_pending(
     return {"root": root, "thread": thread}
 
 
-def _to_english_display(text: str) -> str:
-    """Best-effort English display conversion for the Slack root message.
+def _to_english_display(
+    text: str, *, failure_text: str | None = None, preserve_layout: bool = False
+) -> str:
+    """English display conversion for Slack; callers may select a safe fallback.
 
     Always calls the LLM (isascii() cannot detect French/German/etc.).
     Reads the structured result's translated_text — the translation function
     returns {reference_language, translated_text}. The language classification
     is NOT used here: this is display conversion, not customer delivery, so
     a non-English reference always gets translated regardless of its
-    classification. On failure, returns a visible "[Non-English]" prefix.
+    classification. By default, failure returns a visible "[Non-English]"
+    prefix; customer continuations supply an English-only fallback instead.
     """
-    normalized = _clean_text(text)
+    normalized = str(text or "").strip() if preserve_layout else _clean_text(text)
     if not normalized:
         return normalized
     try:
@@ -703,10 +706,12 @@ def _to_english_display(text: str) -> str:
         )
         # Display conversion: always use translated_text regardless of
         # reference_language — this is NOT the customer delivery path.
+        if not str(result.translated_text or "").strip():
+            raise ValueError("slack_english_display_empty")
         return result.translated_text
     except Exception:  # noqa: BLE001 - display-only, never block the root post
         LOGGER.warning("slack_english_display_conversion_failed", exc_info=True)
-        return f"[Non-English] {normalized}"
+        return failure_text if failure_text is not None else f"[Non-English] {normalized}"
 
 
 def notify_hermes_case_opened(

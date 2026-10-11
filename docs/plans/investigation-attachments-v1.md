@@ -6,7 +6,16 @@
 
 C1 元数据入 ECS；C2 客户附件到正确 Slack thread；C3 工程师附件绑定 turn/draft；C4 新回合/新客户版本失效；C5 正文与附件同评论；C6 并发/重试/未知结果不重复；C7 来源与结果可追溯。
 
-当前状态：代码已合入并完成 ECS Preproduction 发布；n8n Preproduction 工作流已发布回读。R1 验收发现附件入口缺少绑定类型保护，已补为独立 Preproduction Hermes binding gate：只有 `status=bound` 且存在 `zendesk_ticket_id` 才发送到 Hermes，Production-bound 与未绑定附件显式忽略，不进入 adhoc。外部文件仅在内存流转；下载/上传失败拒绝公开正文，未知结果保留并回读。真实 Slack/Zendesk 业务样本仍未发送。
+当前状态：R1 修复已在任务分支完成，待独立复审后再按正式 ECS Preproduction 流程发布。现有 n8n binding gate 证据保持有效；外部文件仅在内存流转，下载/上传失败拒绝公开正文，未知结果保留并回读。真实 Slack/Zendesk 业务样本仍未发送。
+
+## R1 修复合同（Investigation 附件传输与续轮英文展示修复）
+
+- C8 下载请求统一带 `User-Agent: SupportPortal-AttachmentSync/1.0`；Zendesk 原始请求携带鉴权，跨到 `zdusercontent.com` 后只保留 UA。
+- C9 先读取 HTTP 状态再判断 `OSError`：401/403/404 停止自动重试，429/5xx/连接中断沿用恢复周期；持久化旧的 403 retry 标记也按永久失败归一化。
+- C10 恢复入口先检查人工接管、终态、thread 绑定，再解析固定 `case_task.direction`；`pending + investigation` 可恢复，冲突/缺失只记录跳过原因，不打印异常堆栈。
+- L1 客户续轮原文完整写入账本和 ticket mirror，Slack 使用英文译文、`plain_text`、comment/turn/来源时间/Zendesk 链接；翻译失败发送英文提示，不改变调查输入、route 或客户回复流程；已完成通知不重复翻译或发送。
+
+代码证据：新增 `backend/tests/test_investigation_attachment_followup_repair.py` 和 `scripts/testing/verify_investigation_followup_repair.py`，通过 processor、notification delivery、background drain 和隔离 PostgreSQL schema 验证；反向验证将 UA、恢复方向和原文展示分别还原，每项均以断言失败检出旧行为。
 
 ## 实施合同与验证（2026-10-09）
 

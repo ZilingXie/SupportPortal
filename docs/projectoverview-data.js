@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T12:43:11Z",
-  "source_base_commit": "e562271bfc4d892cd8ca0a4dc19d32be6881de5d",
-  "registry_digest": "d103b62bef8ad54203954e64089ba02e835d1ea45adb53a5076eb62631f5436a",
+  "generated_at": "2026-10-11T13:00:44Z",
+  "source_base_commit": "a0bb128136723756d60b574fc2962b1b6609e6f6",
+  "registry_digest": "22b379740089e0e0168d0096a6aed7a4ca46f6a90283ea673bcd871ba8460487",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1536,6 +1536,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction active workflow readback",
           "details": "[slack]Forward Thread|Prod+Preprod active version b02f3ed5-667b-4633-be2c-ede582fcdf23；附件入口经 Preproduction Hermes resolver 与 bound gate，false 分支进入 Ignore Non-Investigation Attachment。"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_investigation_attachment_followup_repair.py",
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+        },
+        {
+          "type": "test",
+          "url": "scripts/testing/verify_investigation_followup_repair.py",
+          "label": "R1 三项反向验证均以断言失败检出旧行为"
         },
         {
           "type": "document",
@@ -17542,7 +17552,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
       "status": "active",
-      "next_action": "修复后的 n8n binding gate 已发布并完成契约负向/正向验证；待独立验收通过后，另行授权受控 Preproduction Slack/Zendesk 样本，完成 C2/C3/C5/C7 端到端对账。",
+      "next_action": "提交 R1 修复分支复审；通过后使用合并后的 root main 发布 Preproduction。Ticket 14002 两份合成附件仍待单独业务写入授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-10",
@@ -17565,6 +17575,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "Preproduction active workflow readback",
           "details": "[slack]Forward Thread|Prod+Preprod active version b02f3ed5-667b-4633-be2c-ede582fcdf23；附件入口经 Preproduction Hermes resolver 与 bound gate，false 分支进入 Ignore Non-Investigation Attachment。"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_investigation_attachment_followup_repair.py",
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+        },
+        {
+          "type": "test",
+          "url": "scripts/testing/verify_investigation_followup_repair.py",
+          "label": "R1 三项反向验证均以断言失败检出旧行为"
         }
       ]
     },
