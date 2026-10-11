@@ -10,7 +10,7 @@
   "owner": "codex",
   "created_at": "2026-10-11",
   "updated_at": "2026-10-11",
-  "next_action": "完成 migration、usage 快照、查价端点、Admin reader/UI 和定向合同测试；本轮不部署 Production。",
+  "next_action": "代码验收已通过；等待独立 review/finalize 决定，本轮不部署 Production 或写入真实环境。",
   "acceptance_criteria": [
     "C1-C7 见 docs/plans/admin-pricing-discovery-v1.md",
     "RAG usage 保持 excluded_by_admin_policy，历史 usage 不回填",
@@ -19,7 +19,10 @@
   ],
   "blockers": [],
   "evidence": [
-    {"type": "document", "url": "docs/plans/admin-pricing-discovery-v1.md", "label": "v1 implementation contract"}
+    {"type": "document", "url": "docs/plans/admin-pricing-discovery-v1.md", "label": "v1 implementation contract"},
+    {"type": "test", "command": "targeted pricing/admin suite", "result": "233 passed"},
+    {"type": "test", "command": "isolated PostgreSQL admin pricing suite", "result": "4 passed; temporary database removed"},
+    {"type": "pr", "number": 1473, "url": "https://github.com/ZilingXie/SupportPortal/pull/1473", "label": "Draft PR #1473 at 2a2d2856565f9f6d83d7edd0e39840f00eb02973"}
   ],
   "source_refs": [
     "backend/services/llm_pricing.py",

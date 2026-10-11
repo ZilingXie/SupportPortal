@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T07:53:19Z",
-  "source_base_commit": "e5b7b2ad2727ac1d7a683688c3f6c28268060f90",
-  "registry_digest": "c17d62f8cca789ab22ef124633a8e9fd4f579b0aa1f24abc69fc6f5ac79e0528",
+  "generated_at": "2026-10-11T08:30:05Z",
+  "source_base_commit": "2a2d2856565f9f6d83d7edd0e39840f00eb02973",
+  "registry_digest": "b1eac5b7c7c07b4a6be5dcf07ce364fa6b797a86f5fdad616f357e39ecae1d10",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2585,6 +2585,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/admin-pricing-discovery-v1.md",
           "label": "v1 implementation contract"
+        },
+        {
+          "type": "test",
+          "command": "targeted pricing/admin suite",
+          "result": "233 passed"
+        },
+        {
+          "type": "test",
+          "command": "isolated PostgreSQL admin pricing suite",
+          "result": "4 passed; temporary database removed"
+        },
+        {
+          "type": "pr",
+          "number": 1473,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1473",
+          "label": "Draft PR #1473 at 2a2d2856565f9f6d83d7edd0e39840f00eb02973"
         }
       ],
       "source_refs": [
@@ -17657,7 +17673,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "owner": "codex",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-11",
-      "next_action": "完成 migration、usage 快照、查价端点、Admin reader/UI 和定向合同测试；本轮不部署 Production。",
+      "next_action": "代码验收已通过；等待独立 review/finalize 决定，本轮不部署 Production 或写入真实环境。",
       "acceptance_criteria": [
         "C1-C7 见 docs/plans/admin-pricing-discovery-v1.md",
         "RAG usage 保持 excluded_by_admin_policy，历史 usage 不回填",
@@ -17670,6 +17686,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/admin-pricing-discovery-v1.md",
           "label": "v1 implementation contract"
+        },
+        {
+          "type": "test",
+          "command": "targeted pricing/admin suite",
+          "result": "233 passed"
+        },
+        {
+          "type": "test",
+          "command": "isolated PostgreSQL admin pricing suite",
+          "result": "4 passed; temporary database removed"
+        },
+        {
+          "type": "pr",
+          "number": 1473,
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1473",
+          "label": "Draft PR #1473 at 2a2d2856565f9f6d83d7edd0e39840f00eb02973"
         }
       ],
       "source_refs": [
