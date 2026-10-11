@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T03:26:48Z",
-  "source_base_commit": "5d9fa35dbca6e5874c142387fa30ad80ce0340de",
-  "registry_digest": "35892891e2309ad147830d2d57a8bfe8f7d57426623205faf060417d66b7b898",
+  "generated_at": "2026-10-11T03:27:24Z",
+  "source_base_commit": "c43db5c2d449ebee00f8354cae746a542a5584cd",
+  "registry_digest": "88bd829beb2f54d17bd3d7f58f25bd6174402e788f5d5156c7b63865e3e69501",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1399,6 +1399,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 三条真实验证（评审 A 方案，新测试工单 13751/13753）",
           "command": "ScenarioEngine 驱动（zendesk_api 客户回合，驱动脚本为本轮临时件未入库）",
           "result": "A1 知识问句→conversation_followup/knowledge_question→一次公开 RAGFlow 答案（含 docs.agora.io 引用，comment 54037381461396，未新建 relay 申请）；A2 催促→progress_inquiry→绑定申请实际状态答复（enr-AC-13751-v1 保持 dispatched/v1，无加速承诺）；B 优先级请求→conversation_priority_request→真实人工交接（note 54037553482260、回 queue、owner email ok、无公开回复）"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 本地受影响回归",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         },
         {
           "type": "test",
@@ -4452,6 +4464,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Console fixes live retest (deploy 24122e6)",
           "command": "POST /production/api/automation-test/tickets；POST /production/api/automation-test/tickets/4/refresh",
           "result": "建单返回 sent 无 send_error（PR#961 前该路径 InsufficientPrivilege 500）；refresh 200、link_status=linked、zendesk_ticket_id=13026（PR#962 前必 TypeError 500）。"
+        },
+        {
+          "type": "test",
+          "label": "回复上下文修复实弹验证（r20261011-ctxparity，工单 13988）：PP-A4 9/9 零回归+回复质量双改善",
+          "command": "PP-A4 --yes（工单 13988）；job facts conversation_context=True 回读；两轮回复文本对照 13982",
+          "result": "实弹：13988 ask job facts 携带 conversation_context（回读 True）；PP-A4 九步全绿 complete=true（合同零回归）。质量对照（同场景 13982 修复前 vs 13988 修复后）：轮 1 修复前 'To help me coordinate the review, please share:'（直接跳清单）→修复后 'I understand your account is blocked and you'd like it reviewed for suspected fraudulent activity. To move forward...'（先回应处境）；轮 2 修复前 'I've sent this to the relevant team'（泛化）→修复后 'Thanks for sharing the details you have. I've sent your blocked-account review request...'（复述已收+指明具体请求）。测试工单 13988 已关闭。剩余改善空间（披露）：Preprod persona=gpt-6-sol@medium vs Production=gpt-6-astra（档位差异），以及中文客户语言路径（reply job pipeline 的语言连续性由 legacy persona 合同承载）可后续观察。"
         },
         {
           "type": "test",
@@ -15788,8 +15806,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "AppID 追问修复：Hermes 会话知识问句 RAG 答复、进度答复与真实人工交接",
       "status": "review",
       "owner": "codex",
-      "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。",
-      "next_action": "实跑缺陷修复中：not-found 回复 job 缺 internal_resolution 被客户时效门禁取消（13751 实跑发现）；修复部署后一次性重排该回复并验证。",
+      "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。 本轮 r1 修复 ownership_mismatch：跨账号 App ID 作为正常终止结果进入专用幂等 customer reply/solved 链路，不进入 failure 或 human_review；新增 E3_OWNERSHIP 场景并保留 project_not_found 独立合同。",
+      "next_action": "代码验收完成后创建 Draft PR；等待独立验收通过，再按授权发布 Preproduction 并执行 E3_OWNERSHIP 与 E3 运行验收；Production 保持禁止。",
       "acceptance_criteria": [
         "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
         "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
@@ -15847,6 +15865,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 三条真实验证（评审 A 方案，新测试工单 13751/13753）",
           "command": "ScenarioEngine 驱动（zendesk_api 客户回合，驱动脚本为本轮临时件未入库）",
           "result": "A1 知识问句→conversation_followup/knowledge_question→一次公开 RAGFlow 答案（含 docs.agora.io 引用，comment 54037381461396，未新建 relay 申请）；A2 催促→progress_inquiry→绑定申请实际状态答复（enr-AC-13751-v1 保持 dispatched/v1，无加速承诺）；B 优先级请求→conversation_priority_request→真实人工交接（note 54037553482260、回 queue、owner email ok、无公开回复）"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 本地受影响回归",
+          "command": ".venv/bin/pytest -q backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_automation_persona.py backend/tests/test_automation_test_scenarios.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_account_reply_version_fence.py",
+          "result": "189 passed, 11 skipped, 94 subtests passed；PostgreSQL 集成项因本机未配置 DSN 跳过。另有 apply-before/after 异常边界回归：job 保存后 result 保持 pending/result_received，重试复用同一 job/delivery key 并补标 applied。hermes_followup_reply_contract 另跑时 5 个既有 skipped_not_production/human takeover 边界断言失败，未归因本 diff。"
+        },
+        {
+          "type": "test",
+          "label": "ownership mismatch r1 isolated PostgreSQL regression",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
+          "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
         }
       ],
       "source_refs": [
@@ -15859,7 +15889,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/testing/production_ticket_regression_runbook.md"
       ],
       "created_at": "2026-09-28T00:00:00Z",
-      "updated_at": "2026-09-29T16:10:00Z",
+      "updated_at": "2026-10-11T00:00:00Z",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
@@ -15885,6 +15915,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "at": "2026-09-29T16:10:00Z",
           "note": "13751 真实全链实跑（经 p2-179 本地闭环回传 project_not_found 结果）暴露缺陷：not-found 回复 job 到期领取时被 _account_reply_trigger_is_latest 客户消息时效门禁取消——完成链有 internal_resolution=True 绕过该门禁，not-found 分支遗漏。修复补齐标志并加回归断言。"
+        },
+        {
+          "at": "2026-10-11T00:00:00Z",
+          "note": "r1 修复 ownership_mismatch：新增专用 reply intent/Persona 合同、幂等 solved worker 分支、E3_OWNERSHIP 场景与回归夹具；本地受影响套件 188 passed，等待独立验收。"
+        },
+        {
+          "at": "2026-10-11T00:00:00Z",
+          "note": "独立验收 F-OWN-001：修复 ownership_mismatch 先 applied 后落 job 的结果丢失窗口；改为先持久化确定性 reply job，再标记 result applied；异常边界回归证明 pending/result_received 可重试且不重复回复。"
         }
       ]
     },
@@ -16854,7 +16892,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-06",
       "updated_at": "2026-10-06",
       "summary": "计划名：Automation与调查Agent功能验收计划（实施计划）。目标：在 Preproduction 验收当前激活的 automation（Media Relay 开通、Fraud Account、Account Suspension）与问题调查 agent 的完整功能闭环。知识缺失为允许降级（不阻断验收，但至少一个证据充分的调查场景必须实际读取证据完成调查）；知识迁移/写入/WeKnora promotion 不在范围。停止点=Preproduction 功能验收完成并提交独立验收，不自动晋升 Production。任务号说明：初用 p2-186，R1 独立验收发现 origin/main 的 p2-186 已被 AgentMemory 恢复线占用（撞号），R2 起改号 p2-187，两任务并存互不覆盖。基线 main@332d24df；工作区 .worktrees/auto-agent-acceptance（codex/auto-agent-acceptance）。R1（环境对齐+工具首版）：配置对齐发布 r20261006-332d24d（route:103 engine=hermes、worker:104 archer+real+gpt-6-sol，schema bootstrap 幂等 skipped，全阶段 passed，公网 health 翻转确认）；PP CLI 全通道 preflight 绿；接入 PP-A1 场景并实跑工单 13872。**R1 独立验收结论=未通过，四项发现**：(1)[P1] PP-A1 turn2/5 用发现型等待器把\"产生了 turn/job 行\"误记为客户已收到回答（queued/failed/superseded/failed job 均 PASS，工单 13872 第 2 回合实为 superseded 且无投递记录——该 PASS 已撤回）；(2)[P1] --stop-after progress 未标记 complete=false、可 exit 0，approval_method 写 real_human 但未核验审批记录；(3) hermes_runtime_not_configured 告警归因错误——它来自旧 Engineer Case /v1/turns 链路（worker._drain_real_hermes_turns 读 HERMES_INVESTIGATION_RUNTIME_URL/TOKEN，无部署工件设置），而本计划原生调查链路=HermesAgentTurnProcessor→HermesAgentClient→/v1/runs，读的正是已挂载的 HERMES_AGENT_BASE_URL/API_TOKEN（hermes_agent_runtime.py:37），故该告警不能证明 I1-I6 不可运行，需 I1 实测判定；Archer 工作日 10:00 窗口只影响 A1/A2 完成腿、不影响 I 系列；(4) 任务号撞号（已改号解决）。R2（本轮修复）：a) 引擎 case_row 补 internal_email_send_reason 列（R1 实跑死因：该列从未被 SELECT，标记等待永不满足）；b) 新增严格等待器 wait_customer_reply_delivered——按 deliveries 表 join draft_id/messages.id 关联实际投递，水位排除上一回合 comment，content_check 必须通过，queued/running/superseded/未发布继续等待，turn failed 或 job failed/manual_attention 终态快速失败并在步骤 detail 记录原因（wait_for 会吞 probe 异常，终态经暂存后由超时路径转译）；c) PP-A1 turn2/5 改用严格等待器（turn2 内容检查=真实回答 App ID 问题、允许显式知识不可用表述；turn5=_progress_answer_content_check）；d) progress 模式返回 complete=false+incomplete_reason、不写 approval_method；full 模式仅在 relay result 记录核验后 complete=true+approval_method=real_human；CLI 对 complete=false 强制 exit 2；e) 专属测试 test_pp_a1.py 14 项（4 项特征化测试钉住旧发现型等待器对 queued/failed/superseded/failed-job 记 PASS 的缺陷语义=修复前误判证据；stash 法先红因 runner 未提交结构性不可用，改由特征化测试承担证明）+ 严格反例/正常投递/报告语义 10 项，组合回归 89 passed（含存量 75 零回归）。",
-      "next_action": "回复上下文修复已实现：待合入→直发→PP-A4 复跑（合同回归）+新工单回复质量对比（应能复述客户叙述）。",
+      "next_action": "回复生硬问题已收口：上下文根因修复（PR#1470）实弹验证 9/9 零回归+质量双改善。enablement 其他问题在 p2-193 线。",
       "acceptance_criteria": [
         "Automation：正确路由、补齐信息、执行或转人工、通知与客户回复、最终工单状态均符合当前合同（A1-A6 逐场景）。",
         "调查 agent：能读取指定证据、保存调查进展、接收工程师反馈、生成草稿，经人工批准后正确投递（I1-I6 逐场景）。",
@@ -16867,6 +16905,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "回复上下文修复实弹验证（r20261011-ctxparity，工单 13988）：PP-A4 9/9 零回归+回复质量双改善",
+          "command": "PP-A4 --yes（工单 13988）；job facts conversation_context=True 回读；两轮回复文本对照 13982",
+          "result": "实弹：13988 ask job facts 携带 conversation_context（回读 True）；PP-A4 九步全绿 complete=true（合同零回归）。质量对照（同场景 13982 修复前 vs 13988 修复后）：轮 1 修复前 'To help me coordinate the review, please share:'（直接跳清单）→修复后 'I understand your account is blocked and you'd like it reviewed for suspected fraudulent activity. To move forward...'（先回应处境）；轮 2 修复前 'I've sent this to the relevant team'（泛化）→修复后 'Thanks for sharing the details you have. I've sent your blocked-account review request...'（复述已收+指明具体请求）。测试工单 13988 已关闭。剩余改善空间（披露）：Preprod persona=gpt-6-sol@medium vs Production=gpt-6-astra（档位差异），以及中文客户语言路径（reply job pipeline 的语言连续性由 legacy persona 合同承载）可后续观察。"
+        },
         {
           "type": "test",
           "label": "回复生硬根因修复：hermes 工具路径持久化 reply_conversation_context（legacy intake 对等）",

@@ -73,6 +73,7 @@ from backend.services.account_reply_jobs import (
     create_account_reply_job,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
@@ -4843,6 +4844,98 @@ def _apply_enablement_relay_project_not_found(
     return True
 
 
+def _apply_enablement_relay_ownership_mismatch(
+    request: dict[str, Any], result: dict[str, Any]
+) -> str:
+    """Queue the customer closure for an App ID owned by another account.
+
+    This is a normal business outcome. It must close the current Zendesk
+    ticket through the regular reply pipeline without entering the technical
+    failure/human-review chain or exposing the submitted identifier.
+    """
+    request_id = str(request.get("request_id") or "").strip()
+    ticket_id = str(request.get("ticket_id") or "").strip()
+    account_case_id = str(request.get("account_case_id") or "").strip()
+    if not request_id or not ticket_id or not account_case_id:
+        return "deferred"
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if not isinstance(account_case, dict):
+        return "deferred"
+    if str(account_case.get("automation_status") or "") == "human_review_required":
+        # A prior human takeover remains authoritative; preserve the result as
+        # evidence without reclaiming the ticket.
+        return "human_takeover"
+    job_id = f"enablement-relay-ownership-mismatch-{request_id}"
+    existing_job = ticket_repository.get_account_reply_job(job_id)
+    if existing_job is not None:
+        return "queued"
+
+    timestamp = str(result.get("created_at") or now_iso())
+    canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
+    reply_facts = build_automation_reply_facts(
+        behavior="enablement",
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+        known_information={
+            "requested_feature": "media_relay",
+            # Keep these values only in the forbidden-value guard; the
+            # customer-visible projection removes them from Persona facts.
+            "app_id": request.get("app_id"),
+            "customer_email": request.get("customer_email"),
+        },
+        resolution_status="completed",
+        customer_name=_account_greeting_customer_name(
+            account_case, ticket_id, canonical_ticket=canonical_ticket
+        ),
+    )
+    normalized_facts, _intent, _close = normalize_account_reply_contract(
+        reply_facts,
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+        close_after_publish=True,
+    )
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    ownership_job = {
+        "job_id": job_id,
+        "ticket_id": ticket_id,
+        "trigger_message_created_at": timestamp,
+        "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        "scheduled_for": (
+            datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+            + timedelta(seconds=delay_seconds)
+        ).isoformat(),
+        "payload": {
+            "draft_content": "",
+            "reply_facts": normalized_facts,
+            "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+            "asked_field_keys": [],
+            "visibility": "account_only",
+            "internal_resolution": True,
+            "close_after_publish": True,
+            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+            "automation_delivery_key": f"enablement-relay-ownership-mismatch:{request_id}",
+        },
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
+    ticket_repository.save_account_reply_job(ownership_job)
+    ticket_repository.record_event(
+        ticket_id or None,
+        "enablement_relay_ownership_mismatch_reply_queued",
+        {
+            "request_id": request_id,
+            "reply_job_id": job_id,
+            "outcome": "ownership_mismatch",
+            "attempted_at": now_iso(),
+        },
+    )
+    return "queued"
+
+
 def _record_enablement_relay_failure(
     request: dict[str, Any],
     *,
@@ -5586,6 +5679,75 @@ def _apply_enablement_relay_result(
                     "completion was sent automatically."
                 ),
             )
+    elif outcome == "ownership_mismatch":
+        # A cross-account App ID is a normal customer-facing terminal result,
+        # not a technical failure. Keep the evidence, queue one close reply,
+        # and never call _record_enablement_relay_failure.
+        apply_state = _apply_enablement_relay_ownership_mismatch(request, result)
+        if apply_state == "queued":
+            # The reply job is the durable customer-side effect. Mark the
+            # relay result only after that effect exists, so a crash leaves a
+            # pending result that the deferred scan can replay idempotently.
+            marked = ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="applied", now=now_iso()
+            )
+            if not marked:
+                # A concurrent/replayed consumer already marked it; the
+                # deterministic job is still the source of truth for reply
+                # deduplication, so continue with terminal bookkeeping.
+                LOGGER.info(
+                    "ownership mismatch result already marked request=%s",
+                    request_id,
+                )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="completed",
+                now=now_iso(),
+                reason="ownership_mismatch",
+            )
+            _mirror_enablement_auto_workflow_state(
+                str(request.get("account_case_id") or ""),
+                state="ownership_mismatch_archived",
+                now=now_iso(),
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+        if apply_state == "human_takeover":
+            # Human ownership remains authoritative. Close the relay task and
+            # mark the result as evidence-only without changing case state.
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="superseded", now=now_iso()
+            )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="completed",
+                now=now_iso(),
+                reason="ownership_mismatch",
+            )
+            ticket_repository.record_event(
+                str(request.get("ticket_id") or "") or None,
+                "enablement_relay_ownership_mismatch_human_owned",
+                {
+                    "request_id": request_id,
+                    "outcome": "ownership_mismatch",
+                    "attempted_at": now_iso(),
+                },
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+        # Missing request/case context is retryable evidence. Keep the result
+        # pending and the relay task open so a later deferred pass can recover
+        # without silently losing the customer closure.
+        ticket_repository.record_event(
+            str(request.get("ticket_id") or "") or None,
+            "enablement_relay_ownership_mismatch_apply_deferred",
+            {
+                "request_id": request_id,
+                "outcome": "ownership_mismatch",
+                "attempted_at": now_iso(),
+            },
+        )
+        return
     else:
         ticket_repository.mark_enablement_relay_result_applied(
             request_id=request_id, applied_status="applied", now=now_iso()

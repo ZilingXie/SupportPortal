@@ -1248,7 +1248,7 @@ class ProductionTicketScenarioCliTests(unittest.TestCase):
             self.cli.print_approval_banner(payload)
         self.assertIn("[Enablement Request] Media Relay", buffer.getvalue())
 
-    def test_e3_with_email_channel_aborts_before_ticket_creation(self) -> None:
+    def test_e3_ownership_with_email_channel_aborts_before_ticket_creation(self) -> None:
         import tempfile
 
         engine = SimpleNamespace(
@@ -1266,14 +1266,14 @@ class ProductionTicketScenarioCliTests(unittest.TestCase):
                 patch(
                     "backend.services.automation_test_scenarios.ScenarioEngine"
                 ) as engine_cls,
-                patch("sys.argv", ["scenarios", "--scenario", "E3", "--yes"]),
+                    patch("sys.argv", ["scenarios", "--scenario", "E3_OWNERSHIP", "--yes"]),
             ):
                 engine_cls.from_env.return_value = engine
                 self.assertEqual(self.cli.main(), 1)
             # The guard fires before the confirmation prompt / any send.
             engine_cls.from_env.assert_called_once()
 
-    def test_e3_with_zendesk_api_channel_passes_the_guard(self) -> None:
+    def test_e3_ownership_with_zendesk_api_channel_passes_the_guard(self) -> None:
         import tempfile
 
         engine = SimpleNamespace(
@@ -1295,7 +1295,7 @@ class ProductionTicketScenarioCliTests(unittest.TestCase):
                 patch(
                     "backend.services.automation_test_scenarios.ScenarioEngine"
                 ) as engine_cls,
-                patch("sys.argv", ["scenarios", "--scenario", "E3", "--yes"]),
+                patch("sys.argv", ["scenarios", "--scenario", "E3_OWNERSHIP", "--yes"]),
             ):
                 engine_cls.from_env.return_value = engine
 
@@ -1377,7 +1377,7 @@ class AutomationTestScenarioApiTests(unittest.TestCase):
         payload = response.json()
         self.assertEqual(
             {item["id"] for item in payload["scenarios"]},
-            {"E1", "E2", "F1", "S1", "D1", "E1P", "E3"},
+            {"E1", "E2", "F1", "S1", "D1", "E1P", "E3", "E3_OWNERSHIP"},
         )
         self.assertEqual(payload["runs"], [])
 
