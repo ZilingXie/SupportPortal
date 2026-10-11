@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T14:16:36Z",
-  "source_base_commit": "a7e218b79961c4c27efcec09108e704e05772020",
-  "registry_digest": "61ad45b8b3ff5adfb5b487ed416c31228b5bde88667c0a967d564789155d6269",
+  "generated_at": "2026-10-11T14:22:39Z",
+  "source_base_commit": "f5493332feeeffd91b376061eb3a1d1d27ed7ad6",
+  "registry_digest": "2fb58cf03c0d03a69ecc90b0ab17587e559b26f6e1731248d5e20b453a2e0f77",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1540,12 +1540,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "url": "backend/tests/test_investigation_attachment_followup_repair.py",
-          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：89 passed"
         },
         {
           "type": "test",
           "url": "scripts/testing/verify_investigation_followup_repair.py",
           "label": "R1 三项反向验证均以断言失败检出旧行为"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1451",
+          "label": "独立代码复审通过 38c1a3fd63af40a4837855b4fe95313040ca3ae4；合并 f1efe32acbde73a0408bdebd589d32941cb80dac"
+        },
+        {
+          "type": "test",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_attachment_repair_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_attachment_repair_test .venv/bin/python -m pytest -q backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_notifications.py backend/tests/test_investigation_route_status_fix.py",
+          "result": "合并后 root main：127 passed / 1 skipped；唯一 skip 为 memory fixture 不适用的 SQL 回滚用例，PG 同项通过。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-followup-pp-probe.json",
+          "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-followup-pp-release-evidence.json",
+          "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
         },
         {
           "type": "document",
@@ -1683,7 +1703,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 45,
       "done_count": 23,
-      "blocked_count": 0
+      "blocked_count": 1
     },
     {
       "schema_version": 2,
@@ -17575,15 +17595,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
-      "status": "active",
-      "next_action": "提交 R1 修复分支复审；通过后使用合并后的 root main 发布 Preproduction。Ticket 14002 两份合成附件仍待单独业务写入授权。",
+      "status": "blocked",
+      "next_action": "等待用户确认是否授权窄发布门禁修复；原代码独立复审通过保留。完成当前自动回滚并归档失败证据，保留任务工作区。Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-10",
+      "updated_at": "2026-10-11",
       "acceptance_criteria": [
         "C1-C7 见 docs/plans/investigation-attachments-v1.md"
       ],
-      "blockers": [],
+      "blockers": [
+        "F-R1-DEPLOY-01：正式 CloudWatch 门禁包含旧 worker 272 条错误和隔离 probe 1 条模拟 traceback；改为仅统计本轮全部服务 task 涉及发布验收范围，待用户授权及独立复审。"
+      ],
       "evidence": [
         {
           "type": "document",
@@ -17603,12 +17625,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "url": "backend/tests/test_investigation_attachment_followup_repair.py",
-          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：85 passed"
+          "label": "R1 processor/notification/drain 与隔离 PostgreSQL：89 passed"
         },
         {
           "type": "test",
           "url": "scripts/testing/verify_investigation_followup_repair.py",
           "label": "R1 三项反向验证均以断言失败检出旧行为"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1451",
+          "label": "独立代码复审通过 38c1a3fd63af40a4837855b4fe95313040ca3ae4；合并 f1efe32acbde73a0408bdebd589d32941cb80dac"
+        },
+        {
+          "type": "test",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_attachment_repair_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_attachment_repair_test .venv/bin/python -m pytest -q backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_notifications.py backend/tests/test_investigation_route_status_fix.py",
+          "result": "合并后 root main：127 passed / 1 skipped；唯一 skip 为 memory fixture 不适用的 SQL 回滚用例，PG 同项通过。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-followup-pp-probe.json",
+          "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-followup-pp-release-evidence.json",
+          "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
         }
       ]
     },
