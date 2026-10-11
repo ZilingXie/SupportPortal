@@ -378,6 +378,18 @@ def create_app(    *,
         if not auth.verify_session(token):
             raise HTTPException(status_code=401, detail="dashboard authentication required")
 
+    def _request_operator_principal(request: Request) -> str:
+        """Server-side principal for an audit record (stage 4, p2-195).
+
+        A valid dashboard session cookie identifies the admin principal; any
+        other authenticated caller is the automation service itself. The
+        client never gets to name the operator.
+        """
+        token = str(request.cookies.get(DASHBOARD_COOKIE_NAME) or "")
+        if token and auth.verify_session(token):
+            return f"dashboard:{admin_account['account_id']}"
+        return "automation-api"
+
     def heartbeat_payload() -> tuple[dict[str, Any], list[str]]:
         now = datetime.now(timezone.utc)
         heartbeats = jsonable_encoder(coordination_store.list_heartbeats())
@@ -894,7 +906,9 @@ def create_app(    *,
         )
 
     @app.post(f"{base}/v1/knowledge/promotions/{{promotion_id}}/decision", status_code=200)
-    async def knowledge_promotion_decision(promotion_id: str, decision: dict[str, Any]) -> JSONResponse:
+    async def knowledge_promotion_decision(
+        promotion_id: str, decision: dict[str, Any], request: Request
+    ) -> JSONResponse:
         """Close the human-review loop (governance plan WP3, review round 2).
 
         ``approve`` requires the human-determined write action
@@ -906,14 +920,22 @@ def create_app(    *,
         Only rows actually in ``human_review`` are decidable.
         """
         resolved = str(decision.get("decision") or "").strip()
-        operator = str(decision.get("operator") or "").strip()
         note = str(decision.get("note") or "").strip()
         resolution = decision.get("resolution")
         expected_hash = str(decision.get("expected_content_hash") or "").strip()
         if resolved not in {"approve", "reject"}:
             raise HTTPException(status_code=422, detail="decision must be approve or reject")
-        if not operator:
-            raise HTTPException(status_code=422, detail="operator is required")
+        # Stage 4 (p2-195): the operator is a SERVER-side fact, never a
+        # client claim — a supplied operator string is refused outright.
+        if str(decision.get("operator") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "operator must not be supplied; decisions record the "
+                    "server-verified principal (dashboard session or automation service)"
+                ),
+            )
+        request_scope_operator = _request_operator_principal(request)
         if resolved == "approve" and not isinstance(resolution, dict):
             raise HTTPException(
                 status_code=422,
@@ -975,7 +997,7 @@ def create_app(    *,
                 repository.decide_weknora_promotion,
                 str(promotion_id),
                 decision=resolved,
-                decided_by=operator,
+                decided_by=request_scope_operator,
                 note=note,
                 decided_at=datetime.now(timezone.utc).isoformat(),
                 resolution=resolution if resolved == "approve" else None,

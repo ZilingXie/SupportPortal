@@ -2024,7 +2024,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
         # on every bump; the assertion had gone stale at v18, failing on
         # main since v19).
         self.assertEqual(
-            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v22-knowledge-dualwrite"
+            _TICKET_SCHEMA_VERSION, "2026-single-ai-managed-v23-knowledge-slack-review"
         )
         for previous in (
             "2026-single-ai-managed-v11-delivery-cancelled",
@@ -2037,6 +2037,7 @@ class RepositoryConfigurationTests(unittest.TestCase):
             "2026-single-ai-managed-v19-governance-pipeline",
             "2026-single-ai-managed-v20-standalone-retry",
             "2026-single-ai-managed-v21-investigation-attachments",
+            "2026-single-ai-managed-v22-knowledge-dualwrite",
         ):
             self.assertIn(previous, _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS)
         migration = Path("backend/sql/migrations/2026_09_30_case_llm_usage_source.sql").read_text(
