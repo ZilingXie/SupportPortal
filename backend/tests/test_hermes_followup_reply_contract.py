@@ -756,6 +756,67 @@ def _handoff_patches():
 
 
 class TestRestrictedReplyPath:
+    def test_fixed_message_action_answer_carries_trusted_references(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from backend.services.automation_hermes_followup_reply import (
+            run_message_action_reply_work,
+        )
+        from backend.services.automation_hermes_tools import tool_save_reply_draft
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "600")
+        _seed_ticket_mirror(repository, "600")
+        comments = [
+            _customer_comment("90", "I want to enable media relay.", "2026-09-24T10:00:00Z"),
+            _assistant_comment("91", "Please share your App ID.", "2026-09-24T10:01:00Z"),
+            _customer_comment("92", "What is the App ID?", "2026-09-24T10:05:00Z"),
+        ]
+        event = _comment_event("zendesk:ticket:600:comment:92", "600", comments, "92")
+        handoff, _job = _open_turn(store, event)
+        _attach_snapshot(store, repository, event, handoff["turn_id"])
+        store._hermes_turns[handoff["turn_id"]].update(
+            turn_kind="message_action", phase="work", direction="automation", route="enablement"
+        )
+        store.record_hermes_turn_work(
+            handoff["turn_id"],
+            work_result={
+                "message_action": {
+                    "action": "answer_related_question",
+                    "reason_code": "related_question",
+                    "confidence": 0.98,
+                    "message_role": "related_question",
+                    "independent_request": False,
+                }
+            },
+        )
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        result = run_message_action_reply_work(
+            store,
+            repository,
+            turn=turn,
+            action="answer_related_question",
+            rag_client=FakeRagClient(payload=_RAG_ANSWER_PAYLOAD),
+        )
+        assert result["reply_kind"] == "knowledge_question"
+        assert any("docs.agora.io/en/help/general-use/app-id" in ref for ref in result["references"])
+        store.record_hermes_turn_work(handoff["turn_id"], work_result=result)
+        store._hermes_turns[handoff["turn_id"]]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            return_value={"decision": "approved", "blockers": []},
+        ):
+            draft = tool_save_reply_draft(
+                store,
+                None,
+                turn_id=handoff["turn_id"],
+                content="The App ID is shown on the Project Management page.",
+                basis={},
+            )
+        saved_draft = store.get_hermes_draft(draft["draft_id"])
+        assert "References:" in saved_draft["content"]
+        assert "docs.agora.io" in saved_draft["content"]
+
     def test_knowledge_question_answered_once_via_persona(self) -> None:
         from backend.repositories.ticket_repository import InMemoryTicketRepository
 

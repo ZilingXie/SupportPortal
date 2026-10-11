@@ -19,6 +19,25 @@ The PR body or a linked versioned document contains:
 - Stable open/closed finding IDs; missing evidence and explicitly pending human decisions.
 - Which phase is being accepted and the allowed next action.
 
+For a nontrivial task, use this compact body order so another thread can review the PR without reading the chat history:
+
+```text
+计划名称 / 修订：
+目标与排除项：
+基线、分支、worktree、完整 HEAD：
+合同 C1...Cn：
+代表性真实路径：
+测试载具自检与故障注入：
+代码验收证据：
+部署验收证据：
+业务验收证据：
+外部等待证据：
+开放/关闭/等待/需人工决策的问题：
+允许的下一步：
+```
+
+The PR is incomplete when a script, fixture, mock, generated input, or verification command required to reproduce the claim is only in an untracked local directory. Commit it or explicitly mark the claim unreviewable. Counts alone do not close a contract.
+
 Keep data sanitized. The user can forward only the PR link, full HEAD and evidence
 link; the reviewer retrieves the complete record. An uncommitted diff is not part
 of that PR snapshot. If unavoidable, disclose and review it separately, then

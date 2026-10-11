@@ -378,6 +378,18 @@ def create_app(    *,
         if not auth.verify_session(token):
             raise HTTPException(status_code=401, detail="dashboard authentication required")
 
+    def _request_operator_principal(request: Request) -> str:
+        """Server-side principal for an audit record (stage 4, p2-195).
+
+        A valid dashboard session cookie identifies the admin principal; any
+        other authenticated caller is the automation service itself. The
+        client never gets to name the operator.
+        """
+        token = str(request.cookies.get(DASHBOARD_COOKIE_NAME) or "")
+        if token and auth.verify_session(token):
+            return f"dashboard:{admin_account['account_id']}"
+        return "automation-api"
+
     def heartbeat_payload() -> tuple[dict[str, Any], list[str]]:
         now = datetime.now(timezone.utc)
         heartbeats = jsonable_encoder(coordination_store.list_heartbeats())
@@ -509,7 +521,25 @@ def create_app(    *,
         WeKnora promotion remain asynchronous worker stages.
         """
         from backend.repositories.knowledge_source_repository import normalize_source_timestamp
-        from backend.services.hermes_knowledge_workflow import queue_hermes_summary_for_case
+        from backend.services.hermes_knowledge_workflow import (
+            knowledge_governance_enabled,
+            queue_hermes_summary_for_case,
+        )
+        from backend.services.knowledge_dual_write import knowledge_source_intake_enabled
+
+        # Independent rollback switch (dual-write phase 2), layered UNDER the
+        # governance master switch (review B5): either one being off refuses
+        # new snapshots fail-closed; already-accepted sources and their queue
+        # state remain readable through the GET endpoint.
+        if not knowledge_source_intake_enabled() or not knowledge_governance_enabled():
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    "knowledge source intake is disabled "
+                    "(KNOWLEDGE_SOURCE_INTAKE_ENABLED / HERMES_KNOWLEDGE_WORKFLOW_ENABLED); "
+                    "no snapshot was accepted"
+                ),
+            )
 
         try:
             canonical_timestamp, _ = normalize_source_timestamp(snapshot.source_updated_at)
@@ -876,7 +906,9 @@ def create_app(    *,
         )
 
     @app.post(f"{base}/v1/knowledge/promotions/{{promotion_id}}/decision", status_code=200)
-    async def knowledge_promotion_decision(promotion_id: str, decision: dict[str, Any]) -> JSONResponse:
+    async def knowledge_promotion_decision(
+        promotion_id: str, decision: dict[str, Any], request: Request
+    ) -> JSONResponse:
         """Close the human-review loop (governance plan WP3, review round 2).
 
         ``approve`` requires the human-determined write action
@@ -888,14 +920,22 @@ def create_app(    *,
         Only rows actually in ``human_review`` are decidable.
         """
         resolved = str(decision.get("decision") or "").strip()
-        operator = str(decision.get("operator") or "").strip()
         note = str(decision.get("note") or "").strip()
         resolution = decision.get("resolution")
         expected_hash = str(decision.get("expected_content_hash") or "").strip()
         if resolved not in {"approve", "reject"}:
             raise HTTPException(status_code=422, detail="decision must be approve or reject")
-        if not operator:
-            raise HTTPException(status_code=422, detail="operator is required")
+        # Stage 4 (p2-195): the operator is a SERVER-side fact, never a
+        # client claim — a supplied operator string is refused outright.
+        if str(decision.get("operator") or "").strip():
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "operator must not be supplied; decisions record the "
+                    "server-verified principal (dashboard session or automation service)"
+                ),
+            )
+        request_scope_operator = _request_operator_principal(request)
         if resolved == "approve" and not isinstance(resolution, dict):
             raise HTTPException(
                 status_code=422,
@@ -957,7 +997,7 @@ def create_app(    *,
                 repository.decide_weknora_promotion,
                 str(promotion_id),
                 decision=resolved,
-                decided_by=operator,
+                decided_by=request_scope_operator,
                 note=note,
                 decided_at=datetime.now(timezone.utc).isoformat(),
                 resolution=resolution if resolved == "approve" else None,
@@ -975,6 +1015,35 @@ def create_app(    *,
                 "decision": resolved,
                 "status": resolved_row.get("status"),
                 "candidate_decision": resolved_row.get("decision"),
+            },
+            headers={"Cache-Control": "no-store"},
+        )
+
+    @app.get(f"{base}/v1/knowledge/promotions/{{promotion_id}}/deliveries")
+    async def knowledge_promotion_deliveries(promotion_id: str) -> JSONResponse:
+        """Per-target delivery state for one candidate (dual-write phase 2).
+
+        The two targets never share a success state: each row carries its own
+        status, external identity, receipt, readback and failure
+        classification, so a partial failure and its repair are observable
+        per target.
+        """
+        repository = _engineer_ticket_repository()
+        promotions = await asyncio.to_thread(repository.list_weknora_promotions)
+        known = any(
+            isinstance(row, dict) and str(row.get("promotion_id") or "") == str(promotion_id)
+            for row in promotions or []
+        )
+        if not known:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        rows = await asyncio.to_thread(
+            repository.list_knowledge_deliveries, str(promotion_id)
+        )
+        return JSONResponse(
+            content={
+                "promotion_id": promotion_id,
+                "count": len(rows or []),
+                "items": jsonable_encoder(rows or []),
             },
             headers={"Cache-Control": "no-store"},
         )
@@ -1209,6 +1278,68 @@ def create_app(    *,
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get(
+        f"{base}/dashboard/api/knowledge/promotions",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_knowledge_promotions(
+        status: str | None = None,
+        decision: str | None = None,
+        source_type: str | None = None,
+        delivery_status: str | None = None,
+        slack_review_status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> JSONResponse:
+        """Stage 5 (p2-196): read-only Knowledge Review queue for the dashboard.
+
+        Session-protected, no-store, paginated projection assembled by the
+        knowledge review projection service. The page NEVER writes —
+        decisions happen in the Slack thread (C12)."""
+        from backend.services.knowledge_review_projection import (
+            list_knowledge_review_promotions,
+        )
+
+        if status is not None and status.strip() and status.strip() not in {
+            "queued", "active", "accepted", "failed", "outcome_unknown",
+            "human_review", "invalidated", "rejected",
+        }:
+            raise HTTPException(status_code=422, detail=f"unknown promotion status {status!r}")
+        result = await asyncio.to_thread(
+            list_knowledge_review_promotions,
+            _engineer_ticket_repository(),
+            status=status.strip() if status else None,
+            decision=decision.strip() if decision else None,
+            source_type=source_type.strip() if source_type else None,
+            delivery_status=delivery_status.strip() if delivery_status else None,
+            slack_review_status=slack_review_status.strip() if slack_review_status else None,
+            page=page,
+            page_size=page_size,
+        )
+        return JSONResponse(
+            content=jsonable_encoder(result), headers={"Cache-Control": "no-store"}
+        )
+
+    @app.get(
+        f"{base}/dashboard/api/knowledge/promotions/{{promotion_id}}",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_knowledge_promotion_detail(promotion_id: str) -> JSONResponse:
+        """Stage 5 (p2-196): the full review evidence for one candidate."""
+        from backend.services.knowledge_review_projection import (
+            knowledge_review_detail,
+        )
+
+        detail = await asyncio.to_thread(
+            knowledge_review_detail,
+            _engineer_ticket_repository(),
+            str(promotion_id),
+        )
+        if detail is None:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        return JSONResponse(
+            content=jsonable_encoder(detail), headers={"Cache-Control": "no-store"}
+        )
 
     @app.get(
         f"{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve",

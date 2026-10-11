@@ -354,6 +354,134 @@ def run_followup_reply_work(
     )
 
 
+def run_message_action_reply_work(
+    store: AutomationEcsStore,
+    repository: Any,
+    *,
+    turn: dict[str, Any],
+    action: str,
+    rag_client: Any = None,
+) -> dict[str, Any]:
+    """Assemble a trusted reply basis for a fixed-task message action.
+
+    Message actions keep the immutable business route (for example
+    ``enablement``), so they cannot reuse the legacy ``conversation_followup``
+    route marker. Their reply-only work is still server-controlled: knowledge
+    answers come from trusted RAG with references, and progress answers come
+    from the bound relay request state.
+    """
+    action = str(action or "").strip()
+    if action not in {"answer_related_question", "report_progress"}:
+        raise ValueError(f"unsupported message-action reply: {action or 'missing'}")
+
+    existing = turn.get("work_result")
+    if isinstance(existing, dict) and str(existing.get("status") or "") in {
+        "executed", "human_review_required"
+    } and str(existing.get("reply_kind") or "") in {
+        "knowledge_question", "progress_inquiry"
+    }:
+        return existing
+
+    ticket_id = str(turn.get("zendesk_ticket_id") or "")
+    account_case = (
+        repository.get_account_case_by_ticket_id(ticket_id)
+        if repository is not None and ticket_id
+        else None
+    )
+    if not isinstance(account_case, dict):
+        return {
+            "status": "human_review_required",
+            "reason": "message_action_case_unavailable",
+            "route": str(turn.get("route") or "enablement"),
+        }
+
+    subcategory = "progress_inquiry" if action == "report_progress" else "knowledge_question"
+    gate = followup_reply_state_gate(
+        store, repository, turn, subcategory=subcategory
+    )
+    if not gate["ok"]:
+        return _escalate_followup(
+            store,
+            repository,
+            turn,
+            account_case,
+            reason=gate["reason"],
+            detail=(
+                "The fixed-task message-action reply could not verify the current "
+                f"business state ({gate['reason']}); the case was transferred "
+                "to the human team."
+            ),
+            notification="takeover",
+        )
+
+    route = str(turn.get("route") or "enablement")
+    if action == "answer_related_question":
+        from backend.services.account_reply_rag_fallback import ANSWER, try_rag_fallback_answer
+
+        question = _trigger_comment_body(turn)
+        if not question:
+            return _escalate_followup(
+                store,
+                repository,
+                turn,
+                account_case,
+                reason="message_action_question_unavailable",
+                detail="The current customer comment could not be resolved for the trusted RAG lookup.",
+                notification="takeover",
+            )
+        outcome = try_rag_fallback_answer(
+            question=question,
+            request_id=f"hermes-message-action:{str(turn.get('turn_id') or '')}",
+            ticket_id=ticket_id or None,
+            ticket_context=None,
+            client=rag_client,
+        )
+        if outcome.kind == ANSWER:
+            return {
+                "status": "executed",
+                "route": route,
+                "reply_kind": "knowledge_question",
+                "answer": outcome.answer,
+                "references": list(outcome.references),
+                "message_action_reply": {"action": action},
+            }
+        technical = str(outcome.reason or "").startswith("ragflow_skill_")
+        return _escalate_followup(
+            store,
+            repository,
+            turn,
+            account_case,
+            reason=f"message_action_rag_unanswerable:{outcome.reason}",
+            detail=(
+                "The trusted docs search produced no citable answer for the "
+                f"fixed-task customer question ({outcome.reason}); the case was "
+                "transferred to the human team instead of guessing."
+            ),
+            notification="failure" if technical else "takeover",
+        )
+
+    context = account_case.get("automation_context")
+    context = context if isinstance(context, dict) else {}
+    workflow = context.get("enablement_auto_workflow")
+    workflow = workflow if isinstance(workflow, dict) else {}
+    request_id = str(workflow.get("request_id") or "")
+    request = repository.get_enablement_relay_request(request_id)
+    request = request if isinstance(request, dict) else {}
+    return {
+        "status": "executed",
+        "route": route,
+        "reply_kind": "progress_inquiry",
+        "progress": {
+            "feature_label": "Media Relay",
+            "review_state": _relay_status_label(str(request.get("status") or "")),
+            "request_id": request_id,
+            "request_version": int(request.get("request_version") or 1),
+            "submitted_at": str(request.get("created_at") or ""),
+            "raw_status": str(request.get("status") or ""),
+        },
+        "message_action_reply": {"action": action},
+    }
+
 def reply_basis_for_run(turn: dict[str, Any]) -> str:
     """Render the persisted reply basis for the persona run input."""
     import json
@@ -361,9 +489,11 @@ def reply_basis_for_run(turn: dict[str, Any]) -> str:
     work_result = turn.get("work_result")
     if not isinstance(work_result, dict):
         return ""
-    if str(work_result.get("route") or "") != CONVERSATION_FOLLOWUP_ROUTE:
+    is_followup = str(work_result.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE
+    is_message_action = str(turn.get("turn_kind") or "") == "message_action"
+    if not is_followup and not is_message_action:
         return ""
-    kind = str(work_result.get("followup_kind") or "")
+    kind = str(work_result.get("followup_kind") or work_result.get("reply_kind") or "")
     if kind == "knowledge_question":
         basis = {
             "kind": kind,

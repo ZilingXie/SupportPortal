@@ -196,15 +196,17 @@
 
 ### E3：Enablement 全生命周期（preproduction）
 
-> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**
-> （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 改为专门客户回复）。
+> 2026-09-24 新增，同日经探针工单 13733（r20260924-4639320）实测；**2026-09-28 p2-178 重写回合 2/5/6 合同**；**2026-10-11 r1 增加 ownership mismatch 终止剧本**；**r2 接受真实 fixture 的 ownership mismatch 终态**
+> （AppID追问RAG修复计划：会话知识问句/进度催促改为受限自动答复，project_not_found 与 ownership_mismatch 均使用各自专门客户回复）。
 > 客户旅程：缺 AppID 追问（草稿管线）→ **会话知识问句经可信 RAG 一次公开作答** → 31 位格式错拒绝 →
 > 32 位有效格式提交进 review → **催促按绑定的 relay 申请实际状态作答（不承诺加速）** →
-> relay 查无项目（**专门 not-found 回复，case 保持自动化持有**）→ 客户更正 AppID（**新版本申请 v2**）→
-> 真实 archer 开通 + solved。
+> relay 终态：查无项目时使用**专门 not-found 回复，case 保持自动化持有**并进入更正 AppID（**新版本申请 v2**）；
+> 跨账号时使用**专门 ownership-mismatch 回复并 solved**。前者继续真实 archer 开通，后者在关闭链结束。
 >
 > p2-178 之后的合同变化：
-> - 回合 2/5 不再停人工：direction=automation + route=`conversation_followup`，一次草稿管线公开答复；
+> - 固定 `case_task=enablement` 的 customer comment 进入 Hermes `message_action`，不重新路由；
+>   回合 2 必须为 `answer_related_question`，回合 5 必须为 `report_progress`，两者均为
+>   direction=automation + route=`enablement`，一次草稿管线公开答复；
 >   RAG 无依据/状态不可信/明确要求人工优先级时才真实人工交接（私有 note + 回原队列 + 负责人通知）。
 > - 已完成人工交接的 case，后续客户补 AppID **不会**自动夺回工单；恢复自动化须走人工 reroute/rerun 入口。
 > - 各等待绑定水位线（turn_id / reply job id / 新 comment id / relay request_version），
@@ -213,20 +215,53 @@
 >   `--check` 按所选通道检查（zendesk_api 时校验 Zendesk 凭据，不再探测 163 SMTP/IMAP）。
 > - CLI relay 审批横幅按 `kind=enablement_relay` 打印 Mac 审批指引（修复旧监听器 KeyError）。
 
+- **ownership mismatch 分支（E3_OWNERSHIP）**：`fcd0dab13017495bbe25a63bfdb236fd` 是
+  专用跨账号夹具。relay 返回 `ownership_mismatch` 时，客户收到一条专用公开回复，说明
+  App ID 属于其他账号、当前无法继续 Media Relay activation、当前 case 正在关闭，并要求
+  登录正确账号后提交新的 support request。该结果是正常业务终态：不会进入 failure
+  private note、`human_review_required` 或人工跟进链，也不会声称已开通。与
+  `project_not_found` 分开验证：后者仍保持 automation ownership、请求客户更正 App ID，
+  不关闭当前 case。
+- **E3_OWNERSHIP 终态断言**：reply intent=`enablement_appid_ownership_mismatch`；只生成一条
+  专用 reply job（重复 relay result 使用相同 job/delivery key，不重复回复）；relay request
+  `status=completed`、`suppression_reason=ownership_mismatch`；workflow state=
+  `ownership_mismatch_archived`；Zendesk delivery `target_status='solved'` 且主单回读为
+  `solved`；无 failure event、无 `human_review_required`。
+
 - **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
   两次 `approve_execution`（relay 任务在确认回复送达后派发）。
 - **AppID 夹具**（模块常量）：`8cb7...0247`（31 位，格式错）/ `8cb7...2475`（32 位，
-  archer 查无项目）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，
+  预期 project_not_found，但以真实预检结果为准）/ `fcd0...36fd`（跨账号，
+  预期 ownership_mismatch）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，
   **终段会真实写入 archer**，load=10 等目标参数）。
 - **时长**：回复各含设计延迟，回合 1-5 约 30-50 分钟；relay 等待上限默认 240 分钟
   （`AUTOMATION_TEST_RELAY_TIMEOUT_MIN` 或 CLI `--relay-timeout-min` 覆盖）。
 - **运行**：与 E1P 同环境变量，另需 `AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
-  与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`。
+  与 `AUTOMATION_TEST_ZENDESK_AUTH`（SSM zendesk-basic-auth），`--scenario E3 --yes`；
+  ownership mismatch 终止链使用同一前置条件运行 `--scenario E3_OWNERSHIP --yes`。
   CLI 会在 relay 段打印 `approval_required` 提示（工单链接 + Mac 审批指引）。
-- **终态断言**：`enablement_archer_enabled` 完成回复（内容含 media relay + enabled +
-  关闭措辞）+ delivery `target_status='solved'` + case `zendesk_ticket_status=solved`。
-- **待实跑确认**：回合 6（not-found 专门回复）与回合 7 终段的实跑合同来自 p2-178 实现
-  与本地钉死测试，首次授权 E3 实跑后如与实况不符，先修断言再定稿。
+- **终态断言**：E3 的 relay turn 6 接受 `project_not_found` 或 `ownership_mismatch`。
+  前者必须进入更正 AppID 的新版本申请并继续到 `enablement_archer_enabled`；后者必须使用
+  `enablement_appid_ownership_mismatch` 专用回复、delivery `target_status='solved'`、
+  case `zendesk_ticket_status=solved`，且无 failure/human takeover。E3_OWNERSHIP 仍单独验证
+  ownership mismatch 的完整终止合同。
+- **待实跑确认**：E3 的实际结果决定采用哪条终态分支；不得把真实 `ownership_mismatch`
+  伪造为 `project_not_found`，也不能重放旧工单 13985。
+
+### F1/S1 对 Preproduction 运行（2026-10-11 实跑定稿）
+
+F1（fraud 追问）/S1（suspension 一段式）可在 Preproduction 上运行，但必须：
+
+- **环境变量同 E1P**（preprod DSN/schema/profile）**外加 `AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
+  与 `AUTOMATION_TEST_ZENDESK_AUTH`**——客户续接回合（fraud 补齐信息等）不能走邮件通道：
+  IMAP 通知超时后落到 plus-address fallback，而 plus-address 是死链（评论不进工单，p2-178 已实证）。
+- **路由断言为等待式**（`wait_case_field`）：preprod 的 route 在 case 创建后异步落定，
+  建单后立即读行会拿到 `execution_action=None`（2026-10-11 实跑修复）。
+- 同 title 连续建单时 `find_case` 的 5 分钟窗口可能误绑上一轮 case——重跑前确认
+  上一张同主题工单已出窗（或换主题词）。
+- 2026-10-11 实跑基线：F1=工单 14000（追问→补齐→handoff+24h 承诺句→assign→不关单→
+  追问恰一次，8/8 PASS）；S1=工单 14001（sent→handoff_and_close 回复→assign→不关单→
+  workflow closed，7/7 PASS）。
 
 ## 9. Preproduction PP 剧本（独立 CLI，不进 legacy 控制台）
 

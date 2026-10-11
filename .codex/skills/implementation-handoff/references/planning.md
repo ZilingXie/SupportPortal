@@ -2,6 +2,8 @@
 
 The planner resolves the important decisions before handing off. Start with the user's goal and latest agreed choices; do not turn a requested outline into an implementation manual.
 
+For a nontrivial task, write the handoff using [implementation-plan-template.md](implementation-plan-template.md). The executor must be able to start from that record alone. A plan that leaves the executor to infer a state, identity, failure, or evidence contract is not ready for implementation.
+
 ## Establish feasibility
 
 Read the current task's source, configuration, and relevant runtime evidence. Identify the baseline, real entry points, caller/callee signatures, persisted fields and legal states, reusable primitives, and affected consumers. Verify decisive facts rather than inferring contracts from names or neighboring implementations. Cite files/symbols and the baseline; avoid line-by-line patches.
@@ -22,9 +24,27 @@ Only cover boundaries involved in this change. Do not add migrations, queues, fa
 
 Include the stable plan name/revision, goal and exclusions, baseline/facts, settled design with files/symbols, critical contract table, ordered implementation steps, dependencies, and exact verification/stopping points. Distinguish existing tests from tests to add and pre-merge from post-deployment checks. Explicitly carry the authorization and independent-review mode.
 
+For high-risk or externally visible work, also record these execution gates before handoff:
+
+- **Representative path:** one real entry from input through the persisted or external result. Sibling paths wait until this path proves the mechanism.
+- **Test-carrier proof:** how the harness proves the command, session, fixture, and log it reads belong to this run; include one deliberate fault or rejection that must be detected.
+- **State matrix:** legal states, unknown/error states, transition owner, and the fail-closed result for every missing or conflicting observation.
+- **Evidence map:** each acceptance claim mapped to a command, environment, commit, artifact, and layer (`code`, `deployment`, `business`, or `external waiting`).
+- **Stop points:** exact conditions that require the executor to ask the human, with dependent actions paused.
+
+Use stable contract IDs (`C1`, `C2`, ...) and keep them unchanged during repairs. A compact matrix should look like this:
+
+| Contract | Real entry / state | Identity or transaction proof | Positive result | Failure / recovery result | Verification and evidence |
+| --- | --- | --- | --- | --- | --- |
+| C1 | concrete command or handler | persisted relationship or commit boundary | exact state/output | exact fail-closed or retry behavior | command, environment, artifact |
+
+Do not mark a contract complete from a test count, a health check, or an accepted request alone. Those prove only the layer they actually exercise.
+
 For broad work, first implement one representative path across the module boundaries, then extend sibling inputs/scenarios. Assign shared-file integration and shared-environment publication ownership before parallel execution. A representative-path check is an executor checkpoint, not an extra human approval round.
 
 Before handoff, review the proposed plan against actual code for omitted callers, invalid reuse prerequisites, recovery paths and false-positive tests. Replace phrases such as "ensure idempotency" or "reviewer will check concurrency" with the selected mechanism, its failure behavior, and observable acceptance. Keep equivalent local coding choices with the executor.
+
+The handoff is ready only when the executor can answer, without asking the planner to reconstruct context: what to edit, what not to edit, which real path to exercise first, what failure must be rejected, what evidence is sufficient, and where to stop for a human decision.
 
 ## Compact example
 

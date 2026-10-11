@@ -43,7 +43,7 @@ def test_bootstrap_check_includes_ticket_repository_schema(monkeypatch) -> None:
     monkeypatch.setattr(automation_ecs_bootstrap, "create_ticket_repository", lambda: repository)
     monkeypatch.setattr(automation_ecs_bootstrap, "create_automation_ecs_store", lambda settings: type("Store", (), {"check_schema": lambda self: None})())
     monkeypatch.setattr(automation_ecs_bootstrap, "check_account_runtime_schema", lambda: {"schema": "automation-account-v1"})
-    monkeypatch.setattr(automation_ecs_bootstrap.AutomationEcsSettings, "from_env", lambda role: type("Settings", (), {"environment": "preproduction", "db_schema": "supportportal_preproduction", "provenance": lambda self: type("P", (), {"schema_revision": "automation-ecs-014"})()})())
+    monkeypatch.setattr(automation_ecs_bootstrap.AutomationEcsSettings, "from_env", lambda role: type("Settings", (), {"environment": "preproduction", "db_schema": "supportportal_preproduction", "provenance": lambda self: type("P", (), {"schema_revision": "automation-ecs-015"})()})())
     result = automation_ecs_bootstrap.check()
     assert result["ticket_schema"] == "current"
     assert repository.initialized is True

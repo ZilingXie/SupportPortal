@@ -18,7 +18,11 @@ from backend.services.automation_ecs_heartbeat import JobLeaseHeartbeat, WorkerH
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_schema import check_account_runtime_schema
 from backend.services.automation_ecs_store import AutomationEcsStore, create_automation_ecs_store
-from backend.services.prompt_runtime import initialize_prompt_runtime, prompt_runtime_info
+from backend.services.hermes_case_task import build_case_task
+from backend.services.prompt_runtime import (
+    current_prompt_runtime_snapshot,
+    initialize_prompt_runtime,
+)
 
 LOGGER = logging.getLogger("supportportal.automation_ecs_route_worker")
 
@@ -114,6 +118,8 @@ class RouteWorker:
     default_case_engine: str = "legacy"
 
     def resolve_case_engine(self, ticket_id: str) -> str:
+        if self.store.is_classification_only_case(ticket_id):
+            return "classification_only"
         binding = self.store.get_hermes_case_binding(ticket_id)
         if binding is not None:
             return str(binding.get("engine") or "legacy")
@@ -150,14 +156,79 @@ class RouteWorker:
                     provenance=self.settings.provenance(),
                 )
                 return True
-            if self.resolve_case_engine(event.ticket.id) == "hermes":
-                # The case is bound to a Hermes native session: hand off before
-                # the legacy route LLM runs and never enter the old harness.
+            case_engine = self.resolve_case_engine(event.ticket.id)
+            if case_engine == "classification_only":
+                # A classification-only case is a durable terminal routing
+                # decision.  Later comments are recorded independently, but
+                # must not invoke Account Router or create a Hermes turn.
                 lease.stop()
-                self.store.hand_off_to_hermes_agent(
+                self.store.complete_classification_only(
                     job,
-                    prompt_release_id=str(prompt_runtime_info().get("release_id") or "") or None,
+                    route={
+                        "engine": "hermes",
+                        "classification_only": True,
+                        "reason": "case_locked_classification_only",
+                        "event_type": event.event_type.value,
+                    },
+                    prompt_snapshots={},
+                    provenance=self.settings.provenance(),
                 )
+                return True
+            if case_engine == "hermes":
+                # Hermes new cases use Production Account Router exactly once.
+                # Existing customer comments reuse the immutable case_task and
+                # never call the Account Router again.
+                lease.stop()
+                if event.event_type == IntakeEventType.TICKET_CREATED:
+                    prompt_snapshot = current_prompt_runtime_snapshot()
+                    prompt_release_id = str(prompt_snapshot.release_id or "") or None
+                    context = _ticket_context(payload)
+                    case = self.case_loader(event.ticket.id) if self.case_loader else None
+                    context = understanding_messages(build_automation_context({
+                        "ticket_id": event.ticket.id,
+                        "status": event.ticket.status,
+                        "messages": context,
+                    }, case if isinstance(case, dict) else {}))
+                    result = self.route_decider(
+                        event.routing_text(),
+                        ticket_subject=event.ticket.subject,
+                        ticket_context=context,
+                        current_ticket_status=event.ticket.status,
+                        require_latest=True,
+                    )
+                    route = _route_payload(result)
+                    case_task = build_case_task(
+                        result,
+                        source_event_id=event.event_id,
+                        prompt_release_id=prompt_release_id,
+                    ).model_dump(mode="json")
+                    # Pin the complete managed catalog used by Hermes for this
+                    # case.  The route-stage snapshots remain in route audit
+                    # output; this case snapshot is the immutable source for
+                    # every later Hermes phase.
+                    case_task["prompt_snapshot"] = dict(prompt_snapshot.prompts)
+                    route["case_task"] = case_task
+                    if not case_task["hermes_eligible"]:
+                        self.store.complete_classification_only(
+                            job,
+                            route=route,
+                            prompt_snapshots=dict(result.prompt_snapshots),
+                            provenance=self.settings.provenance(),
+                        )
+                        return True
+                    self.store.hand_off_to_hermes_agent(
+                        job,
+                        prompt_release_id=prompt_release_id,
+                        case_task=case_task,
+                    )
+                else:
+                    # Comments inherit the case-level Prompt Release pinned
+                    # on the immutable task; they must not adopt the worker's
+                    # current global release.
+                    self.store.hand_off_to_hermes_agent(
+                        job,
+                        prompt_release_id=None,
+                    )
                 return True
             context = _ticket_context(payload)
             case = self.case_loader(event.ticket.id) if self.case_loader else None

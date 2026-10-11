@@ -1,4 +1,24 @@
 # Prompt Change Log
+## 2026-10-11 - Knowledge review Slack message rebuilt (p2-195 stage 4)
+
+- 变更：知识 Review 通知消息由 knowledge_slack_review._build_review_message 重建：标题/判断/完整候选正文（1500 字符截断+API 全文指引）/target+base_version/Rationale/来源三元组/Promotion ID/回复指引（含 @bot mention 示例与定向操作说明）。source-only 根消息与工单线程回复共用同一模板；knowledge_review_required 成为合法根消息类型。无 Hermes prompt 文本变更（仅 Slack 展示层）。
+- 原因：阶段 4 出站合同（计划 r2-stage4 第 4 步）。
+- 验证：阶段 4 专项测试断言消息要素与根消息类型；23 项+全套 481/0。
+
+## 2026-10-11 - Enablement ownership mismatch customer closure intent（r1）
+
+- 范围：`automation-persona-v32` 新增 `enablement_appid_ownership_mismatch` reply intent，并加入已知/结案 intent 白名单；Persona 合同要求说明 App ID 属于其他账号、无法继续 Media Relay activation、当前 case 关闭、登录正确账号后重新提交新的 support request。
+- 行为：ownership mismatch 走单条幂等 customer reply job（`internal_resolution=true`、`close_after_publish=true`）并按现有 Zendesk solved 链路结案；不发送 failure email、不添加 failure private note、不设置 `human_review_required`。`project_not_found` 与其他 relay outcome 合同保持独立。
+- 安全：回复事实只保留可见的 Media Relay 名称，App ID/邮箱进入 forbidden-value guard；validator 拒绝 enablement、人工跟进、SLA 或内部配置泄露。
+- 验证：`test_automation_persona.py` ownership intent 合同/Prompt 脱敏用例；`test_enablement_auto_failure.py` ownership mismatch 双 `write_attempted` 分支、幂等、状态和无失败链断言；E3 新增 `E3_OWNERSHIP` 终止场景，原 E3 继续验证 `project_not_found`。Preproduction 发布与真实业务验证待代码验收后执行。
+- r1 修复轮：reply job 持久化成功后才标记 relay result `applied`；标记前进程中断时保留 `pending/result_received`，deferred/replay 复用同一 job/delivery key；缺失上下文保持可重试，人类接管只保存 evidence 不夺回 ownership。
+
+## 2026-10-10 - Review bundle gains the AgentMemory retrieval surface (p2-194 stage 3)
+
+- 变更：Hermes 知识 Review 的输入 bundle（case 绑定 `hermes-knowledge-review-bundle-v1` 与 standalone `knowledge-review-bundle-v1`）新增 `agent_memory` 面：`{available, results, wiki_count, searched}`——AgentMemory wiki 检索证据（verified API：wiki/list+wiki/search 扇出，仅 ready wiki、上限 100、top_k 5）。可写决策（new/supplement/replace/merge）现要求 WeKnora 各面 AND AgentMemory 同时应答，任一不可用降级 human_review（理由区分单侧/双侧）。无 prompt 文本变更；仅 Review 模型可见的输入结构扩展（向后兼容的加字段）。
+- 原因：阶段 3 双侧检索合同（计划 r1 §四）。
+- 验证：test_stage3_dual_retrieval 7 项 + 采集器/降级/存量适配，全套 444 passed（含隔离 PG）。
+
 
 ## 2026-10-09 - hermes-persona-manual v4 + hermes-reply-contract v4：fraud 回复风格对齐（p2-187，未发布）
 
@@ -5108,3 +5128,11 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 客户可见 Investigation draft 的完整内容（含 greeting）限制为 1,200 字符；首次超限使用现有第二次生成机会要求重写，第二次仍超限则由服务端阻断保存。
 - Slack 调查展示层保留完整持久化记录，但限制单次消息为 2,000 字符，并限制 summary、evidence、blockers、next_steps 的条数和单项长度。
 - 普通 Automation 与 Engineer-guided reply 不改变既有长度行为；审批消息仍展示合法 draft 的完整内容。
+## 2026-10-10 - Hermes 固定 Case Task 与 Comment Message Action（r4，未发布）
+
+- 范围：Hermes 新 case 首轮复用 Production Account Router 一次并持久化锁定 `case_task`；customer comment 读取固定 task，Investigation 进入 `investigation_feedback`，其他任务进入严格 `message_action`。
+- Prompt：`hermes-support-agent-system` v3 增加 case task 锁定/不重路由不变量；新增 managed prompt `hermes-message-action-manual-v1`。本次只改源码 catalog，未创建或激活 Prompt Release。
+- Fail-closed：允许 `continue_task`、`answer_related_question`、`report_progress`、`acknowledge`、`request_clarification`、`handoff_human`；多意图、未知、非法 JSON 或无法判断统一人工接管。
+- 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。
+- r4-repair-1：移除 customer comment 的本地 message-action 分类，改由 Hermes 专用无工具 phase 输出并由服务端严格校验；固定 case 的完整 managed prompt catalog 在每个 Hermes phase 使用，comment 继承 case-level Prompt Release；澄清 `request_clarification` 与 contract 缺字段的边界。源码 catalog 仍未创建或激活 Prompt Release。
+- r4-repair-2：classification-only 结果现在作为 case 级路由锁持久化查询；后续 comment 继续只记录分类结果，不进入 Hermes，也不重新调用 Account Router。此修复未创建或激活 Prompt Release。

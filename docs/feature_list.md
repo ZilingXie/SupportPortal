@@ -137,6 +137,7 @@
 - Workspace Admin（`/workspace/admin/`）是唯一的 Admin 控制台；ECS 环境侧不提供 Admin 页面（`/automation/<environment>/admin/` 不存在），ticket dashboard 照常独立提供。
 - Workspace Admin（`/workspace/admin/`）是 ECS Production 的只读控制台：业务读端点经专用只读角色直读 ECS production schema（缺失配置 fail-closed），全部业务写端点 405，Prompt 与 Persona 仅经发布通道变更；工程师工作台的 case 可见性契约不变。
 - Workspace Admin 提供 Release Notes 栏（仅该页显示）：`Versions` 人读视图按 semver（基线 1.0.0=当前 Production）从 `docs/release_notes.json` 渲染并由发布 agent 按版本规则维护；`Deployment records` 机器视图实时读取 production 库 `support_release_notes`（deploy 管线 activation 后自动写入：release/commit/digests/PR 变更列表/时间，幂等 upsert）。
+- ECS Ticket Dashboard 新增 Knowledge Review Tab（Session 保护、只读）：按 promotion status/decision/source_type/Slack review 状态过滤分页浏览知识治理候选，详情分区展示来源快照（payload+references）、AI Summary packet、AI Review 报告、四态分级的重复检索证据、完整候选正文（target/base_version/content_hash）、AgentMemory 与 WeKnora 双目标 delivery 明细（外部 ID/版本/回执/回读/错误）与人工审计（principal/Slack ID/邮箱/时间）；Slack thread 链接仅由持久化 channel/thread 与 workspace 配置生成，缺失显式显示原因；页面无任何写操作，审批只在 Slack 线程完成。
 
 ### 未完成
 - 待补充。

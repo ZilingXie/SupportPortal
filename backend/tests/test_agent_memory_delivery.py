@@ -1,0 +1,808 @@
+from __future__ import annotations
+
+import os
+
+os.environ.setdefault("TICKET_DB_DSN", "postgresql://example.invalid/test")
+
+from backend.services.agent_memory_delivery import (  # noqa: E402
+    AgentMemoryDeliveryAdapter,
+    AgentMemoryWikiClient,
+    AgentMemoryWikiError,
+    agent_memory_filename,
+    agent_memory_state_fingerprint,
+)
+from backend.services.hermes_case_workflow import _weknora_candidate_hash  # noqa: E402
+
+PROMOTION = {
+    "promotion_id": "weknora:csd_issue:ISS-1:v2:knowledge:abc",
+    "candidate_type": "knowledge",
+    "decision": "new",
+    "content_hash": "c" * 64,
+    "candidate_payload": {
+        "schema_version": "v1",
+        "candidate_type": "knowledge",
+        "decision": "new",
+        "title": "Audio routing failure",
+        "content": "# Body",
+        "note": "clear cause and fix",
+    },
+}
+
+
+class FakeWikiClient:
+    def __init__(
+        self,
+        *,
+        create_error: AgentMemoryWikiError | None = None,
+        raw_write_error: AgentMemoryWikiError | None = None,
+        ingest_error: AgentMemoryWikiError | None = None,
+        get_error: AgentMemoryWikiError | None = None,
+        files_on_get: list[str] | None = None,
+        exists: set[str] | None = None,
+    ) -> None:
+        self.create_calls: list[str] = []
+        self.raw_write_calls: list[tuple[str, str]] = []
+        self.ingest_calls: list[str] = []
+        self.get_calls: list[str] = []
+        self.create_error = create_error
+        self.raw_write_error = raw_write_error
+        self.ingest_error = ingest_error
+        self.get_error = get_error
+        self.files_on_get = files_on_get
+        self.exists = exists if exists is not None else set()
+        self._seq = 0
+
+    def configured(self) -> bool:
+        return True
+
+    def health(self) -> dict:
+        return {"status": "ok"}
+
+    def wiki_create(self, *, name: str) -> dict:
+        self.create_calls.append(name)
+        if self.create_error is not None:
+            raise self.create_error
+        self._seq += 1
+        wiki_id = f"wiki-{self._seq}"
+        self.exists.add(wiki_id)
+        return {"data": {"wiki_id": wiki_id}}
+
+    def wiki_raw_write(self, *, wiki_id: str, filename: str, content: str) -> dict:
+        self.raw_write_calls.append((wiki_id, filename))
+        if self.raw_write_error is not None:
+            raise self.raw_write_error
+
+        def record(wid: str) -> dict:
+            if self.files_on_get is None:
+                return {"data": {"wiki_id": wid}}
+            return {"data": {"wiki_id": wid, "files": [{"filename": f} for f in self.files_on_get]}}
+
+        self._get_impl = record
+        return {"success": True}
+
+    def wiki_ingest(self, *, wiki_id: str) -> dict:
+        self.ingest_calls.append(wiki_id)
+        if self.ingest_error is not None:
+            raise self.ingest_error
+        return {"success": True}
+
+    _get_impl = None
+
+    def wiki_get(self, *, wiki_id: str) -> dict:
+        self.get_calls.append(wiki_id)
+        if self.get_error is not None:
+            raise self.get_error
+        if wiki_id not in self.exists:
+            raise AgentMemoryWikiError(
+                f"wiki {wiki_id} not found", failure_kind="not_found", status_code=404
+            )
+        if self._get_impl is not None:
+            return self._get_impl(wiki_id)
+        if self.files_on_get is None:
+            return {"data": {"wiki_id": wiki_id}}
+        return {"data": {"wiki_id": wiki_id, "files": [{"filename": f} for f in self.files_on_get]}}
+
+
+def _delivery(**overrides) -> dict:
+    row = {
+        "delivery_id": "weknora:csd_issue:ISS-1:v2:knowledge:abc:agent_memory",
+        "promotion_id": PROMOTION["promotion_id"],
+        "target": "agent_memory",
+        "status": "active",
+        "external_object_id": None,
+        "operation_receipt": {},
+        "attempt_count": 1,
+    }
+    row.update(overrides)
+    return row
+
+
+def test_new_candidate_full_write_with_durable_object_capture() -> None:
+    client = FakeWikiClient(files_on_get=[agent_memory_filename(PROMOTION["content_hash"])])
+    captured: list[str] = []
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=PROMOTION, delivery=_delivery(), on_object_id=captured.append
+    )
+    assert outcome.status == "accepted"
+    assert outcome.external_object_id == "wiki-1"
+    assert captured == ["wiki-1"]
+    assert client.create_calls and client.raw_write_calls == [("wiki-1", "sp-" + "c" * 64 + ".md")]
+    assert client.ingest_calls == ["wiki-1"]
+    assert outcome.receipt["wiki_create_attempted"] is True
+    assert outcome.external_version and outcome.external_version.startswith("file:")
+
+
+def test_create_timeout_is_outcome_unknown_without_object_id() -> None:
+    client = FakeWikiClient(
+        create_error=AgentMemoryWikiError("timeout", failure_kind="timeout")
+    )
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=PROMOTION, delivery=_delivery()
+    )
+    assert outcome.status == "outcome_unknown"
+    assert outcome.failure_code == "agent_memory_wiki_create_timeout"
+    assert outcome.external_object_id is None
+    assert outcome.receipt["wiki_create_attempted"] is True
+
+
+def test_create_retry_without_wiki_id_never_re_creates() -> None:
+    client = FakeWikiClient()
+    delivery = _delivery(
+        operation_receipt={"wiki_create_attempted": True},
+        attempt_count=2,
+    )
+    outcome = AgentMemoryDeliveryAdapter(client).execute(promotion=PROMOTION, delivery=delivery)
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "wiki_create_outcome_unknown"
+    # The core guarantee: ZERO create calls — no blind duplicate-wiki risk.
+    assert client.create_calls == []
+
+
+def test_raw_write_timeout_keeps_captured_object_and_retry_reconciles() -> None:
+    client = FakeWikiClient(
+        raw_write_error=AgentMemoryWikiError("timeout", failure_kind="timeout")
+    )
+    adapter = AgentMemoryDeliveryAdapter(client)
+    outcome = adapter.execute(promotion=PROMOTION, delivery=_delivery())
+    assert outcome.status == "outcome_unknown"
+    assert outcome.external_object_id == "wiki-1"
+
+    # Retry with the durably captured wiki_id: the file never landed, so the
+    # reconcile rewrites the SAME content-addressed filename and ingests.
+    client.raw_write_error = None
+    client.files_on_get = [agent_memory_filename(PROMOTION["content_hash"])]
+    retry = _delivery(external_object_id="wiki-1", attempt_count=2)
+    outcome2 = adapter.execute(promotion=PROMOTION, delivery=retry)
+    assert outcome2.status == "accepted"
+    assert outcome2.external_object_id == "wiki-1"
+    # Exactly one create ever happened — the reconcile never re-created.
+    assert client.create_calls and len(client.create_calls) == 1
+
+
+def test_retry_with_landed_file_is_idempotent_replay() -> None:
+    filename = agent_memory_filename(PROMOTION["content_hash"])
+    client = FakeWikiClient(files_on_get=[filename])
+    client.exists.add("wiki-9")
+    client._get_impl = lambda wid: {
+        "data": {"wiki_id": wid, "files": [{"filename": filename}]}
+    }
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=PROMOTION, delivery=_delivery(external_object_id="wiki-9")
+    )
+    assert outcome.status == "accepted"
+    assert client.raw_write_calls == [] and client.ingest_calls == []
+
+
+def test_auth_failure_is_terminal_failed() -> None:
+    client = FakeWikiClient(
+        create_error=AgentMemoryWikiError("401", failure_kind="auth", status_code=401)
+    )
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=PROMOTION, delivery=_delivery()
+    )
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "agent_memory_auth_rejected"
+
+
+def test_oversized_body_fails_closed_before_any_write() -> None:
+    big = {**PROMOTION, "candidate_payload": {**PROMOTION["candidate_payload"], "content": "x" * (513 * 1024)}}
+    client = FakeWikiClient()
+    outcome = AgentMemoryDeliveryAdapter(client).execute(promotion=big, delivery=_delivery())
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "agent_memory_wiki_raw_write_payload_too_large"
+    assert client.create_calls == []
+
+
+def test_readback_without_file_proof_is_outcome_unknown() -> None:
+    client = FakeWikiClient(files_on_get=["other.md"])
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=PROMOTION, delivery=_delivery()
+    )
+    assert outcome.status == "outcome_unknown"
+    assert outcome.failure_code == "agent_memory_readback_unproven"
+    assert outcome.external_object_id == "wiki-1"
+
+
+def test_targeted_delivery_writes_into_target_wiki() -> None:
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "supplement",
+            "content": "# supplemented",
+            "target_object_id": "wiki-7",
+            "base_version": "v3",
+        },
+    }
+    filename = agent_memory_filename(targeted["content_hash"])
+    client = FakeWikiClient(files_on_get=[filename])
+    client.exists.add("wiki-7")
+    target_state = {"data": {"wiki_id": "wiki-7", "files": [{"filename": filename}]}}
+    client._get_impl = lambda wid: target_state
+    confirmed = agent_memory_state_fingerprint(target_state["data"])
+    targeted["candidate_payload"]["agent_memory_base_version"] = confirmed
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "accepted"
+    assert outcome.external_object_id == "wiki-7"
+    assert client.create_calls == []
+    assert client.raw_write_calls == [("wiki-7", filename)]
+    assert outcome.receipt["confirmed_base"] == confirmed
+
+
+def test_targeted_delivery_without_target_fails() -> None:
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {**PROMOTION["candidate_payload"], "decision": "replace", "content": "x"},
+    }
+    outcome = AgentMemoryDeliveryAdapter(FakeWikiClient()).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "targeted_delivery_without_target"
+
+
+def test_missing_target_wiki_routes_to_human_review() -> None:
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "merge",
+            "merged_content": "# merged",
+            "target_object_id": "wiki-gone",
+            "agent_memory_base_version": "amfp:confirmed-by-human",
+        },
+    }
+    client = FakeWikiClient()
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "target_wiki_missing"
+
+
+def test_client_is_unconfigured_without_env(monkeypatch) -> None:
+    for name in (
+        "AGENT_MEMORY_WIKI_BASE_URL",
+        "AGENT_MEMORY_WIKI_USER_KEY",
+        "AGENT_MEMORY_WIKI_TEAM_ID",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    assert AgentMemoryWikiClient().configured() is False
+
+
+def test_candidate_hash_helper_matches_promotion_identity() -> None:
+    # The dual-write gate recomputes the payload hash with the SAME helper
+    # the promotion bridge used at enqueue time.
+    assert _weknora_candidate_hash(PROMOTION["candidate_payload"]) != ""
+
+
+def test_targeted_without_amfp_base_refuses_and_surfaces_fingerprint() -> None:
+    """Review B3: no version anchor -> NO write; the current fingerprint is
+    surfaced for the human to confirm."""
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "replace",
+            "content": "# replaced",
+            "target_object_id": "wiki-7",
+            "base_version": "v3",
+        },
+    }
+    target_state = {"data": {"wiki_id": "wiki-7", "status": "ready"}}
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    client._get_impl = lambda wid: target_state
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "agent_memory_target_base_unconfirmed"
+    expected = agent_memory_state_fingerprint(target_state["data"])
+    assert expected in (outcome.failure_detail or "")
+    assert outcome.receipt["current_base_fingerprint"] == expected
+    assert client.raw_write_calls == [] and client.ingest_calls == []
+
+
+def test_targeted_with_stale_amfp_base_refuses_overwrite() -> None:
+    """Review B3: the target changed after the human confirmed -> conflict,
+    never an overwrite of the newer state."""
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "supplement",
+            "content": "# supplemented",
+            "target_object_id": "wiki-7",
+            "base_version": "v3",
+            "agent_memory_base_version": "amfp:stale-fingerprint",
+        },
+    }
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    client._get_impl = lambda wid: {"data": {"wiki_id": "wiki-7", "files": [{"filename": "other.md"}]}}
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "human_review"
+    assert outcome.failure_code == "agent_memory_target_version_conflict"
+    assert "amfp:stale-fingerprint" in (outcome.failure_detail or "")
+    assert client.raw_write_calls == [] and client.ingest_calls == []
+
+
+def test_targeted_without_base_version_fails_closed() -> None:
+    targeted = {
+        **PROMOTION,
+        "candidate_payload": {
+            **PROMOTION["candidate_payload"],
+            "decision": "replace",
+            "content": "# replaced",
+            "target_object_id": "wiki-7",
+        },
+    }
+    client = FakeWikiClient()
+    client.exists.add("wiki-7")
+    outcome = AgentMemoryDeliveryAdapter(client).execute(
+        promotion=targeted, delivery=_delivery()
+    )
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "targeted_delivery_without_base_version"
+    assert client.get_calls == []
+
+
+# ------------------------------- stage 3 read surface (dual retrieval) ----
+
+
+class _ScriptedTransport:
+    """Stands in for AgentMemoryWikiClient._request with canned payloads."""
+
+    def __init__(self, responses):
+        self.responses = list(responses)
+        self.calls: list[tuple[str, dict]] = []
+
+    def __call__(self, method, path, *, json_body=None):
+        self.calls.append((path, json_body or {}))
+        if not self.responses:
+            raise AssertionError("unexpected extra request")
+        item = self.responses.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+def _client_with(transport) -> AgentMemoryWikiClient:
+    client = AgentMemoryWikiClient(
+        base_url="https://am.test", user_key="k", service_id="default", team_id="team-1"
+    )
+    import unittest.mock as mock
+
+    patcher = mock.patch.object(client, "_request", side_effect=transport)
+    patcher.start()
+    import pytest
+
+    pytest.addcleanup(patcher.stop)  # noqa: PLW0212 - test wiring
+    return client
+
+
+def test_wiki_list_normalizes_items_and_total(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}},
+    ])
+    client = AgentMemoryWikiClient(
+        base_url="https://am.test", user_key="k", team_id="team-1"
+    )
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        page = client.wiki_list(limit=100, offset=0)
+    assert page == {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}
+    assert transport.calls[0][0] == "/api/v1/knowledge/wiki/list"
+    assert transport.calls[0][1]["team_id"] == "team-1"
+
+
+def test_wiki_list_missing_total_is_invalid_response(monkeypatch) -> None:
+    transport = _ScriptedTransport([{"data": {"items": []}}])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_list()
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+    assert raised
+
+
+def test_wiki_search_normalizes_results(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"count": 1, "results": [{"title": "T", "snippet": "S", "score": 0.9, "path": "p"}]}},
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        results = client.wiki_search(wiki_id="w1", query="q", top_k=5)
+    assert results[0]["title"] == "T"
+    assert transport.calls[0][1] == {"wiki_id": "w1", "query": "q", "top_k": 5}
+
+
+def test_search_knowledge_fans_out_over_ready_wikis_only(monkeypatch) -> None:
+    wikis = [
+        {"wiki_id": "w-ready", "name": "A", "status": "ready", "version": "3"},
+        {"wiki_id": "w-building", "name": "B", "status": "processing", "version": "1"},
+        {"wiki_id": "w-ready2", "name": "C", "status": "ready", "version": "2"},
+    ]
+    transport = _ScriptedTransport([
+        {"data": {"items": wikis, "total": 3}},
+        {"data": {"count": 1, "results": [{"title": "hit", "snippet": "s", "score": 1, "path": "x"}]}},
+        {"data": {"count": 0, "results": []}},
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        sweep = client.search_knowledge("query text")
+    assert sweep["wiki_count"] == 3 and sweep["searched"] == 2
+    assert len(sweep["hits"]) == 1 and sweep["hits"][0]["wiki_id"] == "w-ready"
+    assert sweep["hits"][0]["wiki_version"] == "3"
+    searched_paths = [c[0] for c in transport.calls]
+    assert searched_paths.count("/api/v1/knowledge/wiki/search") == 2
+
+
+def test_search_knowledge_any_wiki_failure_propagates(monkeypatch) -> None:
+    transport = _ScriptedTransport([
+        {"data": {"items": [{"wiki_id": "w1", "status": "ready"}], "total": 1}},
+        AgentMemoryWikiError("timeout", failure_kind="timeout"),
+    ])
+    client = AgentMemoryWikiClient(base_url="https://am.test", user_key="k", team_id="team-1")
+    import unittest.mock as mock
+
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.search_knowledge("q")
+            raised = False
+        except AgentMemoryWikiError:
+            raised = True
+    assert raised, "a partial sweep must fail closed, not return partial hits"
+
+
+# ------------------------- stage-3 review fixes (fail-closed strictness) ----
+
+
+def _am_client(base_url="https://am.test"):
+    return AgentMemoryWikiClient(base_url=base_url, user_key="k", team_id="team-1")
+
+
+def test_wiki_search_missing_count_is_invalid_response(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"results": []}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "count" in str(exc)
+    assert raised
+
+
+def test_wiki_search_non_numeric_count_is_invalid_response(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"count": "13", "results": []}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+    assert raised
+
+
+def test_wiki_search_null_result_element_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: results=[null] must NOT count as an empty success."""
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([{"data": {"count": 1, "results": [None]}}])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.wiki_search(wiki_id="w1", query="q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "not an object" in str(exc)
+    assert raised
+
+
+def test_search_knowledge_empty_page_before_total_raises_not_loops(monkeypatch) -> None:
+    """Reviewer repro: items=[] with total>0 must raise, not loop forever."""
+    import unittest.mock as mock
+
+    transport = _ScriptedTransport([
+        {"data": {"items": [], "total": 5}},
+        {"data": {"items": [], "total": 5}},  # would loop forever without the guard
+        {"data": {"items": [], "total": 5}},
+    ])
+    client = _am_client()
+    with mock.patch.object(client, "_request", side_effect=transport):
+        try:
+            client.search_knowledge("q")
+            raised = False
+        except AgentMemoryWikiError as exc:
+            raised = True
+            assert exc.failure_kind == "invalid_response"
+            assert "empty page" in str(exc)
+    assert raised
+    assert len(transport.calls) == 1, "the guard must fail on the first empty page"
+
+
+def test_malformed_search_response_fails_the_whole_evidence_surface() -> None:
+    """End-to-end reviewer repro: results=[null] on ONE wiki makes the AM
+    surface unavailable, so the collector reports available=False and a
+    writable decision downgrades to human_review instead of bypassing the
+    duplicate check."""
+    from backend.services.hermes_knowledge_workflow import (
+        _collect_agent_memory_evidence,
+        _downgrade_decisions_without_evidence,
+    )
+
+    class _MalformedWikiClient:
+        def configured(self) -> bool:
+            return True
+
+        def wiki_list(self, *, limit=100, offset=0):
+            return {
+                "items": [{"wiki_id": "w1", "name": "A", "status": "ready", "version": "1"}],
+                "total": 1,
+            }
+
+        def search_knowledge(self, query: str) -> dict:
+            results = self.wiki_search(wiki_id="w1", query=query)
+            return {"wiki_count": 1, "searched": 1, "hits": results}
+
+        def wiki_search(self, *, wiki_id, query, top_k=None):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search result #0 is not an object",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_MalformedWikiClient(), packet)
+    assert available is False
+    assert results == {"k1": []}
+    assert "agent_memory_search_failed" in meta["reason"]
+
+    adjusted, downgraded = _downgrade_decisions_without_evidence(
+        [{"candidate_id": "k1", "candidate_type": "knowledge", "decision": "new",
+          "rationale": "r", "proposed_content": "b"}],
+        knowledge_available=True,
+        memory_available=True,
+        agent_memory_available=available,
+    )
+    assert downgraded == ["k1"]
+    assert adjusted[0]["decision"] == "human_review"
+    assert "AgentMemory evidence unavailable" in adjusted[0]["rationale"]
+
+
+# --------------------- stage-3 review fix 2: JSON booleans are not counts ---
+
+
+def test_wiki_search_boolean_count_is_invalid_response(monkeypatch) -> None:
+    """JSON true/false parse to Python bool, which is an int subclass — both
+    must be rejected (reviewer repro: count=true returns an empty success)."""
+    import unittest.mock as mock
+
+    for bad in (True, False):
+        transport = _ScriptedTransport([{"data": {"count": bad, "results": []}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_search(wiki_id="w1", query="q")
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"count={bad!r} must be rejected"
+
+
+def test_wiki_list_boolean_total_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: total=false must not yield an available empty sweep."""
+    import unittest.mock as mock
+
+    for bad in (True, False):
+        transport = _ScriptedTransport([{"data": {"items": [], "total": bad}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"total={bad!r} must be rejected"
+
+
+# --------------------- stage-3 review fix 3: negative totals / item shapes --
+
+
+def test_wiki_list_negative_total_is_invalid_response(monkeypatch) -> None:
+    """Reviewer repro: total=-1/-100 must not yield an available empty sweep."""
+    import unittest.mock as mock
+
+    for bad in (-1, -100):
+        transport = _ScriptedTransport([{"data": {"items": [], "total": bad}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"total={bad!r} must be rejected"
+
+
+def test_wiki_list_non_object_items_are_invalid_response(monkeypatch) -> None:
+    """Same-family hardening: a malformed inventory entry is rejected at the
+    client boundary instead of surfacing as an AttributeError later."""
+    import unittest.mock as mock
+
+    for bad_items in ([None], ["wiki-1"], [42]):
+        transport = _ScriptedTransport([{"data": {"items": bad_items, "total": len(bad_items)}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"items={bad_items!r} must be rejected"
+
+
+def test_search_knowledge_negative_total_fails_closed_end_to_end(monkeypatch) -> None:
+    """End-to-end: the reviewer's repro path (negative total -> empty sweep
+    -> surface available -> new bypasses duplicate check) is closed."""
+    import unittest.mock as mock
+
+    from backend.services.hermes_knowledge_workflow import _collect_agent_memory_evidence
+
+    class _NegativeTotalClient:
+        def configured(self) -> bool:
+            return True
+
+        def search_knowledge(self, query: str) -> dict:
+            return self.wiki_list() and {}
+
+        def wiki_list(self, *, limit=100, offset=0):
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki list response is missing items/total",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_NegativeTotalClient(), packet)
+    assert available is False
+    assert "agent_memory_search_failed" in meta["reason"]
+
+
+# ----------------- stage-3 review fix 4: required fields, not just objects --
+
+
+def test_wiki_list_entries_must_carry_identity_and_status(monkeypatch) -> None:
+    """Reviewer repro: items=[{}]/[{"status":"ready"}]/[{"wiki_id":"w1"}] all
+    previously produced an available-but-unsearched sweep."""
+    import unittest.mock as mock
+
+    for bad_items in ([{}], [{"status": "ready"}], [{"wiki_id": "w1"}]):
+        transport = _ScriptedTransport([{"data": {"items": bad_items, "total": len(bad_items)}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+                assert "missing wiki_id" in str(exc) or "missing status" in str(exc)
+        assert raised, f"items={bad_items!r} must be rejected"
+
+
+def test_wiki_list_non_string_identity_fields_are_rejected(monkeypatch) -> None:
+    import unittest.mock as mock
+
+    for bad in ({"wiki_id": 42, "status": "ready"}, {"wiki_id": "w1", "status": True},
+                {"wiki_id": "", "status": "ready"}, {"wiki_id": "w1", "status": "  "}):
+        transport = _ScriptedTransport([{"data": {"items": [bad], "total": 1}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_list()
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+        assert raised, f"entry={bad!r} must be rejected"
+
+
+def test_wiki_search_result_without_content_fields_is_invalid(monkeypatch) -> None:
+    """Reviewer repro: results=[{}] previously normalized to an empty hit and
+    kept the surface available with fake evidence."""
+    import unittest.mock as mock
+
+    for bad in ({}, {"title": "T"}, {"path": "p"}, {"title": 42, "path": "p"}):
+        transport = _ScriptedTransport([{"data": {"count": 1, "results": [bad]}}])
+        client = _am_client()
+        with mock.patch.object(client, "_request", side_effect=transport):
+            try:
+                client.wiki_search(wiki_id="w1", query="q")
+                raised = False
+            except AgentMemoryWikiError as exc:
+                raised = True
+                assert exc.failure_kind == "invalid_response"
+                assert "missing title" in str(exc) or "missing path" in str(exc)
+        assert raised, f"result={bad!r} must be rejected"
+
+
+def test_contentless_result_fails_the_evidence_surface_end_to_end() -> None:
+    """End-to-end: results=[{}] on one wiki -> surface unavailable -> the
+    writable decision downgrades to human_review (duplicate check preserved)."""
+    from backend.services.hermes_knowledge_workflow import (
+        _collect_agent_memory_evidence,
+        _downgrade_decisions_without_evidence,
+    )
+
+    class _ContentlessResultClient:
+        def configured(self) -> bool:
+            return True
+
+        def search_knowledge(self, query: str) -> dict:
+            raise AgentMemoryWikiError(
+                "AgentMemory wiki search result #0 is missing title",
+                failure_kind="invalid_response",
+            )
+
+    packet = {"candidates": [{"candidate_id": "k1", "statement": "s", "context": "", "evidence_references": []}]}
+    results, available, meta = _collect_agent_memory_evidence(_ContentlessResultClient(), packet)
+    assert available is False
+    assert "agent_memory_search_failed" in meta["reason"]
+
+    adjusted, downgraded = _downgrade_decisions_without_evidence(
+        [{"candidate_id": "k1", "candidate_type": "knowledge", "decision": "new",
+          "rationale": "r", "proposed_content": "b"}],
+        knowledge_available=True, memory_available=True,
+        agent_memory_available=available,
+    )
+    assert downgraded == ["k1"]
+    assert adjusted[0]["decision"] == "human_review"

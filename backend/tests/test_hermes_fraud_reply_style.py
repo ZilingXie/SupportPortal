@@ -446,3 +446,533 @@ class JudgeScenarioTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FraudAskChannelTests(unittest.TestCase):
+    """Channel A (user decision 2026-10-09): the fraud missing-information
+    ask is delivered automatically through the reply-job pipeline — the
+    Production behavior — and the job is the sole reply (skip persona)."""
+
+    def _run_fraud_turn(self, *, missing):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        if missing:
+            attempt["missing_fields"] = list(ALL_FIELDS)
+            attempt["internal_email_to_send"] = None
+            attempt["internal_email_payload"] = None
+
+        async def delivered(**kwargs):
+            delivered_case = email_harness._account_case(
+                route="fraud_account",
+                status="sent",
+                payload={
+                    "delivery_key": email_harness._expected_key("fraud_account"),
+                    "action": "fraud_account",
+                },
+            )
+            repository.save_account_case(delivered_case)
+            from types import SimpleNamespace as NS
+
+            return NS(status="sent", reason=""), delivered_case
+
+        from unittest.mock import AsyncMock
+
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ), patch(
+            "backend.services.automation_account_intake._run_internal_email_delivery",
+            new=delivered,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        return store, repository, handoff, result
+
+    def test_missing_fields_creates_automatic_ask_reply_job_and_skips_persona(self):
+        store, repository, handoff, result = self._run_fraud_turn(missing=True)
+
+        self.assertEqual(result["status"], "missing_fields")
+        # The ask reply job is created with the Production intent and the
+        # trigger binding; real create_account_reply_job on the InMemory twin.
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+        job = jobs[0]
+        self.assertEqual(
+            (job.get("payload") or {}).get("reply_intent"),
+            "request_missing_information",
+        )
+        self.assertEqual(
+            sorted((job.get("payload") or {}).get("asked_field_keys") or []),
+            sorted(ALL_FIELDS),
+        )
+        # The job is the SOLE reply: the tool result skips persona.
+        self.assertTrue(result["skip_persona"])
+        self.assertIn("ask_reply_job_created", result["executed_actions"])
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        self.assertTrue((turn.get("work_result") or {}).get("skip_persona"))
+        # Legacy semantics: missing fields -> not_ready (not the mirror's
+        # initial not_applicable).
+        persisted = repository.get_account_case("AC-123")
+        self.assertEqual(
+            persisted.get("internal_email_send_status"), "not_ready"
+        )
+        self.assertEqual(
+            persisted.get("internal_email_send_reason"), "missing_required_fields"
+        )
+
+    def test_retry_reuses_ask_job_without_recreate(self):
+        store, repository, handoff, first = self._run_fraud_turn(missing=True)
+        with store._lock:
+            store._hermes_turns[handoff["turn_id"]]["work_result"] = None
+        # Direct second invocation (crash-retry simulation).
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            second = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        self.assertIn("ask_reply_job_reused", second["executed_actions"])
+        self.assertNotIn("ask_reply_job_created", second["executed_actions"])
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+
+    def test_complete_fields_no_ask_job(self):
+        store, repository, handoff, result = self._run_fraud_turn(missing=False)
+        self.assertEqual(result["status"], "executed")
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        # The email-confirmation job (intent fraud_handoff_confirmation).
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(
+            (jobs[0].get("payload") or {}).get("reply_intent"),
+            "fraud_handoff_confirmation",
+        )
+
+
+class MessageActionWorkTests(unittest.TestCase):
+    """#1449 fifth gap: the message-action classification stub must not be
+    replayed as a terminal business result — the Work tool must execute."""
+
+    def test_tool_executes_past_message_action_stub(self):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        # The message-action phase pre-fills this classification stub; the
+        # replay gate must NOT treat it as a terminal business result.
+        store.record_hermes_turn_work(
+            handoff["turn_id"],
+            work_result={
+                "status": "message_action_classified",
+                "message_action": {
+                    "action": "continue_task",
+                    "confidence": 0.99,
+                    "reason_code": "provided_information",
+                },
+            },
+        )
+        with store._lock:
+            store._hermes_turns[handoff["turn_id"]]["turn_kind"] = "message_action"
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        # The tool EXECUTED (not replayed the stub): business result with
+        # ask job + skip_persona, and the classification is preserved.
+        self.assertEqual(result["status"], "missing_fields")
+        self.assertNotEqual(result["status"], "message_action_classified")
+        self.assertTrue(result["skip_persona"])
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        recorded = turn.get("work_result") or {}
+        self.assertEqual(recorded.get("status"), "missing_fields")
+        self.assertEqual(
+            (recorded.get("message_action") or {}).get("action"), "continue_task"
+        )
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+
+    def test_second_turn_carries_existing_fields_and_proceeds(self):
+        """Legacy parity: after the first ask, the next verification turn
+        carries the case's collected fields and follow_up_count=1 so the
+        builder proceeds toward the internal email instead of re-asking."""
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        # Case carries 3 previously collected fields (turn-1 ask answered
+        # partially) and an outstanding ask job with asked_field_keys.
+        case = email_harness._account_case(route="fraud_account", status="not_ready")
+        case["collected_fields"] = {
+            "account_type": "Enterprise",
+            "name": "Zac Tester",
+            "contact_email": "zac.tester@example.com",
+        }
+        repository = email_harness._repository(case)
+        from backend.services.account_reply_jobs import create_account_reply_job
+        from backend.services.automation_account_intake import _reply_facts
+
+        create_account_reply_job(
+            repository,
+            ticket_id="123",
+            trigger_message_created_at="2026-09-08T10:00:00Z",
+            created_at="2026-09-08T10:00:05Z",
+            delay_seconds=30,
+            draft_content="",
+            reply_facts=_reply_facts(
+                handler="billing",
+                action="fraud_account",
+                missing_fields=list(ALL_FIELDS),
+                collected_fields={},
+                submitted=False,
+                customer_name=None,
+            ),
+            asked_field_keys=list(ALL_FIELDS),
+            persona_assignment=None,
+            close_after_publish=False,
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        captured = {}
+
+        def verification_attempt(**kwargs):
+            captured.update(kwargs)
+            attempt = email_harness._attempt("fraud_account")
+            # Simulate the builder proceeding with the carried fields:
+            attempt["missing_fields"] = [
+                f
+                for f in ALL_FIELDS
+                if f
+                not in {
+                    "account_type",
+                    "name",
+                    "contact_email",
+                }
+            ]
+            attempt["internal_email_to_send"] = {"action": "fraud_account"}
+            attempt["internal_email_payload"] = {"action": "fraud_account"}
+            attempt["collected_fields"] = {
+                "account_type": "Enterprise",
+                "name": "Zac Tester",
+                "contact_email": "zac.tester@example.com",
+            }
+            return attempt
+
+        async def delivered(**kwargs):
+            delivered_case = email_harness._account_case(
+                route="fraud_account",
+                status="sent",
+                payload={
+                    "delivery_key": email_harness._expected_key("fraud_account"),
+                    "action": "fraud_account",
+                },
+            )
+            repository.save_account_case(delivered_case)
+            from types import SimpleNamespace as NS
+
+            return NS(status="sent", reason=""), delivered_case
+
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            side_effect=verification_attempt,
+        ), patch(
+            "backend.services.automation_account_intake._run_internal_email_delivery",
+            new=delivered,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        # The attempt received the case's collected fields and a non-zero
+        # follow-up count — legacy parity for the second turn.
+        self.assertEqual(
+            captured.get("existing_fields"),
+            {"account_type": "Enterprise", "name": "Zac Tester", "contact_email": "zac.tester@example.com"},
+        )
+        self.assertEqual(captured.get("follow_up_count"), 1)
+        # The email executed and the confirmation job replaced the ask.
+        self.assertEqual(result["status"], "executed")
+        self.assertEqual(result["internal_email_send_status"], "sent")
+        self.assertTrue(result["skip_persona"])
+
+
+class ReplyConversationContextTests(unittest.TestCase):
+    """Stiff-reply root cause fix: the hermes tool path must persist
+    reply_conversation_context (legacy intake parity) so the reply-job
+    persona sees the customer's conversation."""
+
+    def _run_fraud_turn(self, *, missing=True):
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        repository = email_harness._repository(
+            email_harness._account_case(route="fraud_account", status="not_applicable")
+        )
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        if missing:
+            attempt["missing_fields"] = list(ALL_FIELDS)
+            attempt["internal_email_to_send"] = None
+            attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            result = asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        return repository, result
+
+    def test_case_persists_reply_conversation_context(self):
+        repository, result = self._run_fraud_turn()
+        self.assertEqual(result["status"], "missing_fields")
+        persisted = repository.get_account_case("AC-123")
+        context = (persisted.get("automation_context") or {}).get(
+            "reply_conversation_context"
+        )
+        self.assertIsInstance(context, dict)
+        self.assertEqual(context.get("version"), "automation-context-v1")
+        conversation = context.get("conversation") or []
+        self.assertTrue(
+            any(
+                "suspended" in str(m.get("content") or "")
+                or "media relay" in str(m.get("content") or "").lower()
+                for m in conversation
+            ),
+            "conversation must include the customer's public messages",
+        )
+
+    def test_ask_job_facts_carry_conversation_context(self):
+        repository, result = self._run_fraud_turn()
+        jobs = [
+            job
+            for job in repository._account_reply_jobs.values()
+            if job.get("ticket_id") == "123"
+        ]
+        self.assertEqual(len(jobs), 1)
+        facts = jobs[0].get("payload") or {}
+        carried = facts.get("reply_facts", {}).get("conversation_context")
+        self.assertIsInstance(carried, dict)
+        self.assertEqual(carried.get("version"), "automation-context-v1")
+        self.assertTrue(carried.get("conversation"))
+
+    def test_context_is_sanitized_for_persona(self):
+        repository, result = self._run_fraud_turn()
+        persisted = repository.get_account_case("AC-123")
+        context = (persisted.get("automation_context") or {}).get(
+            "reply_conversation_context"
+        )
+        contents = "\n".join(
+            str(m.get("content") or "") for m in context.get("conversation") or []
+        )
+        # 32-hex App IDs and emails must be redacted before the persona
+        # ever sees the conversation.
+        import re
+
+        self.assertIsNone(re.search(r"[0-9a-fA-F]{32,}", contents))
+        self.assertIsNone(re.search(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", contents))
+
+    def test_prior_case_context_keys_survive_the_merge(self):
+        # A case carrying a prior-turn key must NOT lose it to the
+        # attempt-context merge (the old code overwrote wholesale).
+        import asyncio
+        from unittest.mock import patch
+
+        from backend.services.automation_hermes_tools import tool_execute_automation_action
+        from backend.services.account_automation_ownership import (
+            OWNERSHIP_STATE_ASSIGNED,
+            OwnershipGateResult,
+        )
+        import backend.tests.test_hermes_email_execution as email_harness
+
+        store = email_harness._store()
+        handoff = email_harness._seed_turn(store, route="fraud_account")
+        seeded = email_harness._account_case(route="fraud_account", status="not_applicable")
+        seeded["automation_context"] = {"prior_turn_marker": "keep-me"}
+        repository = email_harness._repository(seeded)
+        gate = OwnershipGateResult(
+            eligible=True,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            assignee_id="48557297720084",
+            group_id="29388501432596",
+        )
+        attempt = email_harness._attempt("fraud_account")
+        attempt["missing_fields"] = list(ALL_FIELDS)
+        attempt["internal_email_to_send"] = None
+        attempt["internal_email_payload"] = None
+        with patch(
+            "backend.services.account_automation_ownership.ensure_production_automation_ownership",
+            return_value=gate,
+        ), patch(
+            "backend.services.automation_account_intake._build_verification_attempt",
+            return_value=attempt,
+        ):
+            asyncio.run(
+                tool_execute_automation_action(
+                    store,
+                    repository,
+                    turn_id=handoff["turn_id"],
+                    route="fraud_account",
+                    environment="preproduction",
+                    zendesk_side_effects_enabled=True,
+                )
+            )
+        persisted = repository.get_account_case("AC-123")
+        context = persisted.get("automation_context") or {}
+        self.assertEqual(context.get("prior_turn_marker"), "keep-me")
+        self.assertIn("reply_conversation_context", context)

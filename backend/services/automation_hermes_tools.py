@@ -696,7 +696,13 @@ async def tool_execute_automation_action(
     if (
         isinstance(prior_work, dict)
         and str(prior_work.get("status") or "").strip()
-        and str(prior_work.get("status") or "").strip() != "running"
+        # "message_action_classified" is the message-action phase's
+        # classification stub, not a business conclusion: replaying it would
+        # skip execution entirely and the publication gate would park the
+        # turn (live evidence: ticket 13976 turn-2
+        # work_result_not_publishable:message_action_classified).
+        and str(prior_work.get("status") or "").strip()
+        not in {"running", "message_action_classified"}
     ):
         return dict(prior_work)
     binding = context["binding"]
@@ -851,6 +857,29 @@ async def tool_execute_automation_action(
     attempt: dict[str, Any] | None = None
     try:
         if handler_implementation == "account_verification" or normalized_route == "fraud_account":
+            # Legacy parity (main.py build_automation_attempt): carry the
+            # case's previously collected fields and the follow-up count so
+            # the second turn (after the ask) proceeds with the fields the
+            # customer supplied instead of re-asking from scratch —
+            # without these the extractor restarts empty every turn and
+            # the internal email never sends (live evidence: ticket 13978
+            # asked twice for the same fields).
+            prior_context = dict(account_case.get("automation_context") or {})
+            prior_follow_up_count = int(prior_context.get("follow_up_count") or 0)
+            if prior_follow_up_count == 0:
+                # Legacy parity: an outstanding ask reply job means the
+                # fields were already requested once (main.py derives this
+                # from already_requested_fields on the pending job).
+                latest_job = repository.get_latest_account_reply_job(ticket_id) or {}
+                latest_payload = (
+                    latest_job.get("payload")
+                    if isinstance(latest_job.get("payload"), dict)
+                    else {}
+                )
+                if str(latest_job.get("status") or "") not in {"cancelled"} and (
+                    list(latest_payload.get("asked_field_keys") or [])
+                ):
+                    prior_follow_up_count = 1
             attempt = _build_verification_attempt(
                 ticket_subject=subject,
                 customer_messages=messages,
@@ -859,6 +888,8 @@ async def tool_execute_automation_action(
                 account_case_id=account_case_id,
                 customer_email=str(ticket.get("customer_id") or ""),
                 zendesk_ticket_url=zendesk_ticket_url,
+                existing_fields=dict(account_case.get("collected_fields") or {}),
+                follow_up_count=prior_follow_up_count,
             )
         elif handler_implementation == "billing" or normalized_route in {"fraud_account", "detailed_invoice"}:
             attempt = _build_billing_attempt(
@@ -930,9 +961,36 @@ async def tool_execute_automation_action(
         account_case["route_family"] = "automated"
         account_case["collected_fields"] = collected_fields
         account_case["missing_fields"] = missing_fields
-        account_case["automation_context"] = dict(
-            attempt.get("automation_context") or account_case.get("automation_context") or {}
+        # Merge the attempt's context OVER the persisted case context: the
+        # naive overwrite dropped reply_conversation_context (and any other
+        # turn-persisted keys) every execution, so the reply pipeline's
+        # persona rendered from bare field lists with no sight of the
+        # customer's conversation — the "stiff reply" regression vs
+        # Production (live evidence: tickets 13938/13982/13984 facts
+        # carried no conversation_context while Production ask jobs do).
+        merged_context = dict(account_case.get("automation_context") or {})
+        merged_context.update(dict(attempt.get("automation_context") or {}))
+        account_case["automation_context"] = merged_context
+        # Legacy parity (automation_account_intake.py reply_conversation_context):
+        # the reply-job persona reads this to see the (sanitized) public
+        # conversation — acknowledgement, context awareness, and language
+        # choice all depend on it.
+        from backend.services.automation_context import persona_context
+
+        account_case["automation_context"]["reply_conversation_context"] = (
+            persona_context(
+                conversation_context,
+                [
+                    str(value)
+                    for key, value in dict(collected_fields or {}).items()
+                    if key in {"app_id", "customer_email"}
+                ],
+            )
         )
+        # Persist immediately: every reply job created later in this tool
+        # run (ask, email confirmation) reads the context from the
+        # repository, not from this in-memory dict.
+        repository.save_account_case(account_case)
 
         # Acceptance gap #3 (13601): re-check turn freshness at the business-write
         # boundary — field extraction and the waits above may have raced a
@@ -1121,6 +1179,78 @@ async def tool_execute_automation_action(
             detail=f"The automation execution raised: {exc}",
         )
 
+    # Channel decision (user, 2026-10-09): the fraud missing-information
+    # ask is delivered AUTOMATICALLY through the reply-job pipeline — the
+    # same Production behavior as enablement asks — instead of waiting in
+    # the engineer-gated hermes draft channel. The job is the SOLE customer
+    # reply for this turn: persona must not draft a second one.
+    if (
+        normalized_route == "fraud_account"
+        and missing_fields
+        and zendesk_side_effects_enabled
+        and internal_email_status != "sent"
+    ):
+        from datetime import datetime, timezone
+
+        from backend.services.account_reply_jobs import (
+            account_reply_delay_seconds_for_profile,
+            create_account_reply_job,
+        )
+        from backend.services.automation_account_intake import _reply_facts
+
+        ask_trigger = str(
+            trigger_message_created_at
+            or datetime.now(timezone.utc).isoformat()
+        )
+        # Idempotency: the covering unique index (ticket, trigger, no
+        # rerun) holds exactly one ask job for this customer turn — reuse
+        # it on retry instead of cancel-and-recreate.
+        existing_ask = repository.find_account_reply_job_by_chain(
+            ticket_id,
+            trigger_message_created_at=ask_trigger,
+            automation_delivery_key="",
+        )
+        reusable_ask = bool(existing_ask) and str(
+            existing_ask.get("status") or ""
+        ) not in {"cancelled", "failed", "manual_attention"}
+        if reusable_ask:
+            executed_actions.append("ask_reply_job_reused")
+        else:
+            ask_facts = _reply_facts(
+                handler=automation_handler or "billing",
+                action=normalized_route,
+                missing_fields=list(missing_fields),
+                collected_fields=dict(collected_fields or {}),
+                submitted=False,
+                customer_name=str((collected_fields or {}).get("name") or "")
+                or None,
+            )
+            create_account_reply_job(
+                repository,
+                ticket_id=ticket_id,
+                trigger_message_created_at=ask_trigger,
+                created_at=datetime.now(timezone.utc).isoformat(),
+                delay_seconds=account_reply_delay_seconds_for_profile(
+                    environment or "production"
+                ),
+                draft_content="",
+                reply_facts=ask_facts,
+                asked_field_keys=list(missing_fields),
+                persona_assignment=None,
+                close_after_publish=False,
+            )
+            executed_actions.append("ask_reply_job_created")
+        skip_persona = True
+        # Legacy attempt-builder semantics: a case with missing fields is
+        # "not_ready" (fields missing, email not ready) — not the mirror's
+        # initial "not_applicable" (no email configured for the route).
+        if str(account_case.get("internal_email_send_status") or "") in {
+            "", "not_applicable"
+        }:
+            account_case["internal_email_send_status"] = "not_ready"
+            account_case["internal_email_send_reason"] = "missing_required_fields"
+            repository.save_account_case(account_case)
+
     # Refresh fields from the post-execution case: downstream validation
     # (e.g. the enablement app-id format check) mutates them, and the tool
     # result must reflect the persisted business state, not the
@@ -1132,8 +1262,15 @@ async def tool_execute_automation_action(
     if missing_fields and str(account_case.get("automation_status") or "") != "human_review_required":
         account_case["execution_reason_code"] = None
     repository.save_account_case(account_case)
+    # A sent internal email IS the business execution — the proceed-with-
+    # missing-fields contract sends with whatever was collected (legacy
+    # parity), so the status is "executed" even with fields still missing.
     result = {
-        "status": "missing_fields" if missing_fields else "executed",
+        "status": (
+            "executed"
+            if internal_email_status == "sent"
+            else ("missing_fields" if missing_fields else "executed")
+        ),
         "route": normalized_route,
         "missing_fields": missing_fields,
         "collected_fields": collected_fields,
@@ -1515,11 +1652,19 @@ def tool_save_reply_draft(
     from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
     from backend.services.account_reply_rag_fallback import format_rag_fallback_references
 
-    if (
+    followup_knowledge_reply = (
         str(turn.get("route") or "") == CONVERSATION_FOLLOWUP_ROUTE
         and isinstance(work_result, dict)
         and str(work_result.get("followup_kind") or "") == "knowledge_question"
-    ):
+    )
+    message_action_knowledge_reply = (
+        str(turn.get("turn_kind") or "") == "message_action"
+        and isinstance(work_result, dict)
+        and str(work_result.get("reply_kind") or "") == "knowledge_question"
+        and str((work_result.get("message_action_reply") or {}).get("action") or "")
+        == "answer_related_question"
+    )
+    if followup_knowledge_reply or message_action_knowledge_reply:
         # The trusted reference list is appended deterministically (the same
         # contract as the legacy RAG fallback reply) — the persona renders
         # core content only, so the guardrail below validates the final text.

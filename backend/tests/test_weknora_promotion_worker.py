@@ -352,3 +352,21 @@ def test_threadless_source_does_not_notify(monkeypatch) -> None:
     ):
         assert worker._drain_weknora_promotions(limit=20) == 1
     assert len(notify_calls) == 0, "no notification surface — queue API is the review path"
+
+
+def test_legacy_drain_refuses_when_dualwrite_worker_enabled() -> None:
+    """Review B1: bidirectional exclusive ownership — with the dual-write
+    worker switch on, the legacy single-target drain must not run at all
+    (a fresh candidate has no delivery rows yet, so a row-level skip alone
+    could never close that window)."""
+    repository = _repository()
+    env = {
+        **ENABLED_ENV,
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "1",
+    }
+    with patch.dict(os.environ, env, clear=False), patch.object(
+        worker, "ticket_repository", repository
+    ):
+        processed = worker._drain_weknora_promotions(limit=20)
+    assert processed == 0
+    repository.claim_weknora_promotion.assert_not_called()

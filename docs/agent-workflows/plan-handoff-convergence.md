@@ -2,6 +2,18 @@
 
 修订：v1，2026-10-08。范围为开发工具与协作规则；不改变应用行为、模型配置、业务审批或部署权限。规划、执行、验收可以由 Codex、ZCode 或其他客户端承担，独立性由是否参与实现决定。
 
+## 当前修订 v2：交接证据闭环
+
+本修订把知识库第一阶段暴露的剩余问题落到共享 `implementation-handoff` Skill 和 PR 交接格式中，保持 Codex、ZCode 和其他客户端的角色中立。新增内容位于：
+
+- `.codex/skills/implementation-handoff/references/implementation-plan-template.md`：可独立转交的计划模板；
+- `.codex/skills/implementation-handoff/references/planning.md`：代表性真实路径、状态矩阵、测试载具证明、证据分层和停止点；
+- `.codex/skills/implementation-handoff/references/execution.md`：执行前基线恢复、载具自检、故障注入、真实入口和等待证据规则；
+- `.codex/skills/implementation-handoff/references/repair.md`：合同缺口、实现问题、载具问题、证据缺口、外部等待和人工决策的分类；
+- `docs/agent-workflows/pr-handoff.md`：PR body 的固定交接顺序和未跟踪验证资产门禁。
+
+本修订的验收边界是流程文件和共享 Skill 的一致性检查，不改变应用行为，不部署，不要求所有任务新增独立验收。后续三个适用任务按当前模板记录首次验收发现、实质返修次数和等待证据轮次，再决定是否需要增加自动检查工具。
+
 ## 规则放置与迁移
 
 | 原有内容 / 问题 | 当前维护位置 | 保留或调整 |

@@ -73,6 +73,7 @@ from backend.services.account_reply_jobs import (
     create_account_reply_job,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_ARCHER_ENABLED,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_NOT_FOUND,
+    ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
     ACCOUNT_REPLY_INTENT_ENABLEMENT_COMPLETED_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_REQUEST_MISSING_INFORMATION,
@@ -3057,6 +3058,31 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
     from backend.services.hermes_knowledge_workflow import (
         weknora_promotion_generation_current,
     )
+    from backend.services.knowledge_dual_write import knowledge_dualwrite_worker_enabled
+
+    # Exclusive ownership, bidirectional (review B1): when the dual-write
+    # worker switch is on, the legacy single-target path must not run AT ALL —
+    # a fresh candidate has no delivery rows yet, so a row-level skip could
+    # never close that window while this poller step runs first.  Both
+    # switches on means NEITHER worker runs (fail-closed misconfiguration).
+    if knowledge_dualwrite_worker_enabled():
+        LOGGER.error(
+            "legacy weknora promotion drain disabled: KNOWLEDGE_DUALWRITE_WORKER_ENABLED "
+            "is on (the two workers own the same candidates exclusively)"
+        )
+        return 0
+
+    # Defense in depth: a candidate that already has delivery rows is owned
+    # by the dual-target worker — the legacy single-target path must never
+    # claim it, or the WeKnora side would be written twice.
+    try:
+        dual_owned = {
+            str(row.get("promotion_id") or "")
+            for row in ticket_repository.list_knowledge_deliveries()
+            if isinstance(row, dict)
+        }
+    except Exception:  # noqa: BLE001 - no delivery surface -> no dual ownership
+        dual_owned = set()
 
     adapter = WeKnoraPromotionAdapter(WeKnoraClient())
     native_state_store: Any = None
@@ -3065,6 +3091,8 @@ def _drain_weknora_promotions(*, limit: int = 20) -> int:
         now = datetime.now(timezone.utc)
         status = str(promotion.get("status") or "")
         if processed >= limit or status not in {"queued", "active"}:
+            continue
+        if str(promotion.get("promotion_id") or "") in dual_owned:
             continue
         if status == "active" and str(promotion.get("lease_expires_at") or "") > now.isoformat():
             continue
@@ -3193,6 +3221,8 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
     if not knowledge_workflow_active():
         return 0
     try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
         return drain_hermes_knowledge_tasks(
             ticket_repository,
             client=HERMES_KNOWLEDGE_AGENT_CLIENT,
@@ -3201,6 +3231,10 @@ def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
             # contract simply marks memory evidence unavailable, which fails
             # review decisions closed to human_review instead of guessing.
             memory_client=WeKnoraClient(),
+            # Stage 3 (p2-194): the second retrieval side — AgentMemory wiki
+            # evidence for the Review bundle; unconfigured fails closed the
+            # same way.
+            agent_memory_client=AgentMemoryWikiClient(),
             limit=limit,
         )
     except Exception:  # noqa: BLE001 - the poller must survive a knowledge drain failure
@@ -3222,11 +3256,14 @@ def _drain_standalone_knowledge_tasks(*, limit: int = 5) -> int:
     if not standalone_workflow_active():
         return 0
     try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
         outcome = drain_standalone_knowledge_tasks(
             ticket_repository,
             client=HERMES_KNOWLEDGE_AGENT_CLIENT,
             weknora_client=HermesWeKnoraClient(),
             memory_client=WeKnoraClient(),
+            agent_memory_client=AgentMemoryWikiClient(),
             limit=limit,
         )
         return int(outcome.get("executed") or 0)
@@ -3852,6 +3889,22 @@ def process_account_automation_once() -> None:
     _drain_hermes_knowledge_tasks(limit=5)
     _drain_standalone_knowledge_tasks(limit=5)
     _drain_weknora_promotions(limit=20)
+    _drain_knowledge_dual_write(limit=20)
+
+
+def _drain_knowledge_dual_write(*, limit: int = 20) -> int:
+    """Dual-write phase 2: per-target delivery worker (all switches off by
+    default; the drain is a no-op until KNOWLEDGE_DUALWRITE_WORKER_ENABLED
+    and the master governance switch are both on)."""
+    from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+    from backend.services.knowledge_dual_write import drain_knowledge_dual_write
+
+    return drain_knowledge_dual_write(
+        ticket_repository,
+        limit=limit,
+        agent_memory_client=AgentMemoryWikiClient(),
+        weknora_client=WeKnoraClient(),
+    )
 
 
 def _run_account_reply_poller(interval_seconds: float) -> None:
@@ -4791,6 +4844,98 @@ def _apply_enablement_relay_project_not_found(
     return True
 
 
+def _apply_enablement_relay_ownership_mismatch(
+    request: dict[str, Any], result: dict[str, Any]
+) -> str:
+    """Queue the customer closure for an App ID owned by another account.
+
+    This is a normal business outcome. It must close the current Zendesk
+    ticket through the regular reply pipeline without entering the technical
+    failure/human-review chain or exposing the submitted identifier.
+    """
+    request_id = str(request.get("request_id") or "").strip()
+    ticket_id = str(request.get("ticket_id") or "").strip()
+    account_case_id = str(request.get("account_case_id") or "").strip()
+    if not request_id or not ticket_id or not account_case_id:
+        return "deferred"
+    account_case = ticket_repository.get_account_case(account_case_id)
+    if not isinstance(account_case, dict):
+        return "deferred"
+    if str(account_case.get("automation_status") or "") == "human_review_required":
+        # A prior human takeover remains authoritative; preserve the result as
+        # evidence without reclaiming the ticket.
+        return "human_takeover"
+    job_id = f"enablement-relay-ownership-mismatch-{request_id}"
+    existing_job = ticket_repository.get_account_reply_job(job_id)
+    if existing_job is not None:
+        return "queued"
+
+    timestamp = str(result.get("created_at") or now_iso())
+    canonical_ticket = ticket_repository.get_ticket(ticket_id) or {}
+    reply_facts = build_automation_reply_facts(
+        behavior="enablement",
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+        known_information={
+            "requested_feature": "media_relay",
+            # Keep these values only in the forbidden-value guard; the
+            # customer-visible projection removes them from Persona facts.
+            "app_id": request.get("app_id"),
+            "customer_email": request.get("customer_email"),
+        },
+        resolution_status="completed",
+        customer_name=_account_greeting_customer_name(
+            account_case, ticket_id, canonical_ticket=canonical_ticket
+        ),
+    )
+    normalized_facts, _intent, _close = normalize_account_reply_contract(
+        reply_facts,
+        reply_intent=ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+        close_after_publish=True,
+    )
+    delay_seconds = account_reply_delay_seconds_for_profile(
+        str(account_case.get("processing_profile") or "staging")
+    )
+    ownership_job = {
+        "job_id": job_id,
+        "ticket_id": ticket_id,
+        "trigger_message_created_at": timestamp,
+        "status": ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        "scheduled_for": (
+            datetime.fromisoformat(timestamp).astimezone(timezone.utc)
+            + timedelta(seconds=delay_seconds)
+        ).isoformat(),
+        "payload": {
+            "draft_content": "",
+            "reply_facts": normalized_facts,
+            "reply_pipeline": ACCOUNT_REPLY_PERSONA_PIPELINE,
+            "asked_field_keys": [],
+            "visibility": "account_only",
+            "internal_resolution": True,
+            "close_after_publish": True,
+            "reply_intent": ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH,
+            "automation_delivery_key": f"enablement-relay-ownership-mismatch:{request_id}",
+        },
+        "attempt_count": 0,
+        "claimed_at": None,
+        "published_at": None,
+        "created_at": timestamp,
+        "updated_at": timestamp,
+    }
+    ticket_repository.cancel_pending_account_reply_jobs(ticket_id, updated_at=timestamp)
+    ticket_repository.save_account_reply_job(ownership_job)
+    ticket_repository.record_event(
+        ticket_id or None,
+        "enablement_relay_ownership_mismatch_reply_queued",
+        {
+            "request_id": request_id,
+            "reply_job_id": job_id,
+            "outcome": "ownership_mismatch",
+            "attempted_at": now_iso(),
+        },
+    )
+    return "queued"
+
+
 def _record_enablement_relay_failure(
     request: dict[str, Any],
     *,
@@ -5534,6 +5679,75 @@ def _apply_enablement_relay_result(
                     "completion was sent automatically."
                 ),
             )
+    elif outcome == "ownership_mismatch":
+        # A cross-account App ID is a normal customer-facing terminal result,
+        # not a technical failure. Keep the evidence, queue one close reply,
+        # and never call _record_enablement_relay_failure.
+        apply_state = _apply_enablement_relay_ownership_mismatch(request, result)
+        if apply_state == "queued":
+            # The reply job is the durable customer-side effect. Mark the
+            # relay result only after that effect exists, so a crash leaves a
+            # pending result that the deferred scan can replay idempotently.
+            marked = ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="applied", now=now_iso()
+            )
+            if not marked:
+                # A concurrent/replayed consumer already marked it; the
+                # deterministic job is still the source of truth for reply
+                # deduplication, so continue with terminal bookkeeping.
+                LOGGER.info(
+                    "ownership mismatch result already marked request=%s",
+                    request_id,
+                )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="completed",
+                now=now_iso(),
+                reason="ownership_mismatch",
+            )
+            _mirror_enablement_auto_workflow_state(
+                str(request.get("account_case_id") or ""),
+                state="ownership_mismatch_archived",
+                now=now_iso(),
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+        if apply_state == "human_takeover":
+            # Human ownership remains authoritative. Close the relay task and
+            # mark the result as evidence-only without changing case state.
+            ticket_repository.mark_enablement_relay_result_applied(
+                request_id=request_id, applied_status="superseded", now=now_iso()
+            )
+            ticket_repository.finish_enablement_relay_request(
+                request_id=request_id,
+                status="completed",
+                now=now_iso(),
+                reason="ownership_mismatch",
+            )
+            ticket_repository.record_event(
+                str(request.get("ticket_id") or "") or None,
+                "enablement_relay_ownership_mismatch_human_owned",
+                {
+                    "request_id": request_id,
+                    "outcome": "ownership_mismatch",
+                    "attempted_at": now_iso(),
+                },
+            )
+            _close_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+            return
+        # Missing request/case context is retryable evidence. Keep the result
+        # pending and the relay task open so a later deferred pass can recover
+        # without silently losing the customer closure.
+        ticket_repository.record_event(
+            str(request.get("ticket_id") or "") or None,
+            "enablement_relay_ownership_mismatch_apply_deferred",
+            {
+                "request_id": request_id,
+                "outcome": "ownership_mismatch",
+                "attempted_at": now_iso(),
+            },
+        )
+        return
     else:
         ticket_repository.mark_enablement_relay_result_applied(
             request_id=request_id, applied_status="applied", now=now_iso()

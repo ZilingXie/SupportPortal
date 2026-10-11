@@ -1,0 +1,33 @@
+{
+  "schema_version": 2,
+  "function_id": "weknora-dualwrite-governance",
+  "phase_id": "phase-2",
+  "module_id": "rag-knowledge",
+  "title": "WeKnora 并行双写与人工治理链（阶段二）",
+  "goal": "Preproduction 上由 SupportPortal 作为唯一双写编排者：n8n 只投来源快照，SupportPortal 完成 Summary、AI Review、自动双写或 Slack 人工 Review，并分别向 AgentMemory 与 WeKnora 两个目标做独立 delivery（幂等、版本保护、回读对账）；Hermes 全程继续读取 AgentMemory。",
+  "acceptance_criteria": [
+    "两条 n8n 链只投递 source snapshot，不再直写任一知识库",
+    "候选级唯一键（source_type+source_id+source_version+candidate_type+content_hash）下重复投递只复用原候选",
+    "agent_memory 与 weknora 两个 delivery 目标状态独立，单侧失败只补失败目标",
+    "自动双写仅限 new+质量证据完整+无重复+双侧读取成功+版本有效+哈希校验通过",
+    "merge/replace/supplement 与证据不足/检索失败/版本变化/超时未知等一律进入人工 Review，不得降级自动写入",
+    "source-only 候选在知识审核频道自动创建 Slack 根线程并可在线程内完成决策",
+    "Slack 命令多候选歧义拒绝、操作人来自已验证 Slack 身份、通知失败不丢候选",
+    "页面/API 可处理 Slack 失败、outcome_unknown 与双写部分失败",
+    "六类独立开关（来源接收/Summary-Review/双写 worker/AgentMemory delivery/WeKnora delivery/Slack 通知）默认关闭部署",
+    "Hermes AgentMemory 读取无回归，WeKnora Web 与检索链持续正常"
+  ],
+  "evidence": [],
+  "source_refs": [
+    "backend/automation_ecs_api.py",
+    "backend/services/hermes_knowledge_workflow.py",
+    "backend/services/knowledge_standalone_workflow.py",
+    "backend/services/weknora_client.py",
+    "backend/services/weknora_promotion_adapter.py",
+    "backend/services/engineer_slack.py",
+    "backend/services/automation_hermes_slack_actions.py",
+    "docs/plans/weknora-dualwrite-phase2.md",
+    "docs/evidence/weknora-dualwrite-phase2/stage0-baseline.md"
+  ],
+  "legacy_ids": []
+}

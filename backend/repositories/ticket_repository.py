@@ -64,6 +64,10 @@ from backend.repositories.weknora_promotion_repository import (
     InMemoryWeKnoraPromotionRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
 )
+from backend.repositories.knowledge_delivery_repository import (
+    InMemoryKnowledgeDeliveryRepositoryMixin,
+    PostgresKnowledgeDeliveryRepositoryMixin,
+)
 from backend.repositories.knowledge_source_repository import (
     InMemoryKnowledgeSourceRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
@@ -1314,8 +1318,19 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v21-investigation-attachments"
+# v22 adds the dual-write phase-2 delivery table: per-target
+# (agent_memory | weknora) knowledge delivery rows keyed by promotion with an
+# independent lease/status machine, external object capture, receipts and
+# readback evidence.
+# v23 (stage 4, p2-195) adds the Slack review columns on the promotion table:
+# verified operator identity (email + slack user id) and the deterministic,
+# recoverable review-notification claim (event id / status / message ts /
+# failure / owner token / claimed at — expired claims are reclaimable so a
+# crashed sender can never strand the notification).
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v23-knowledge-slack-review"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v22-knowledge-dualwrite",
+    "2026-single-ai-managed-v21-investigation-attachments",
     "2026-single-ai-managed-v20-standalone-retry",
     "2026-single-ai-managed-v19-governance-pipeline",
     "2026-single-ai-managed-v18-n8n-summary-trigger",
@@ -3185,6 +3200,7 @@ class InMemoryTicketRepository(
     InMemoryHermesCaseRepositoryMixin,
     InMemoryEnablementRelayRepositoryMixin,
     InMemoryWeKnoraPromotionRepositoryMixin,
+    InMemoryKnowledgeDeliveryRepositoryMixin,
     InMemoryKnowledgeSourceRepositoryMixin,
     InMemoryStandaloneKnowledgeRepositoryMixin,
 ):
@@ -5242,9 +5258,10 @@ class InMemoryTicketRepository(
         empty rerun_job_id) plus the automation delivery key, across ALL
         statuses — the caller decides whether the found job is reusable.
         """
+        # An empty key matches ask-style jobs with no delivery key.
         normalized_trigger = _normalize_account_reply_trigger(trigger_message_created_at)
         normalized_key = str(automation_delivery_key or "").strip()
-        if not normalized_trigger or not normalized_key:
+        if not normalized_trigger:
             return None
         matches: list[dict[str, Any]] = []
         with self._assignment_lock:
@@ -8483,6 +8500,7 @@ class PostgresTicketRepository(
     PostgresHermesCaseRepositoryMixin,
     PostgresEnablementRelayRepositoryMixin,
     PostgresWeKnoraPromotionRepositoryMixin,
+    PostgresKnowledgeDeliveryRepositoryMixin,
     PostgresKnowledgeSourceRepositoryMixin,
     PostgresStandaloneKnowledgeRepositoryMixin,
 ):
@@ -12937,6 +12955,7 @@ class PostgresTicketRepository(
                 self._initialize_hermes_schema(cur)
                 self._initialize_enablement_relay_schema(cur)
                 self._initialize_weknora_schema(cur)
+                self._initialize_knowledge_delivery_schema(cur)
                 self._initialize_knowledge_source_schema(cur)
                 self._initialize_standalone_knowledge_schema(cur)
                 self._backfill_engineer_cases_from_legacy_storage(cur)
@@ -19394,9 +19413,11 @@ class PostgresTicketRepository(
         so a retry reuses the persisted job instead of colliding with
         idx_support_account_reply_jobs_ticket_trigger_rerun.
         """
+        # An empty key matches ask-style jobs that carry no delivery key
+        # (COALESCE semantics, same as the covering unique index).
         normalized_key = str(automation_delivery_key or "").strip()
         parsed_trigger = _parse_account_reply_trigger(trigger_message_created_at)
-        if parsed_trigger is None or not normalized_key:
+        if parsed_trigger is None:
             return None
 
         def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any] | None:
@@ -19407,7 +19428,7 @@ class PostgresTicketRepository(
                         "payload,attempt_count,claimed_at,published_at,created_at,updated_at "
                         "FROM {} WHERE ticket_id=%s AND trigger_message_created_at=%s "
                         "AND COALESCE(payload->>'rerun_job_id', '') = '' "
-                        "AND payload->>'automation_delivery_key' = %s "
+                        "AND COALESCE(payload->>'automation_delivery_key', '') = %s "
                         "ORDER BY created_at DESC LIMIT 1"
                     ).format(self._table("support_account_reply_jobs")),
                     (str(ticket_id), parsed_trigger, normalized_key),
