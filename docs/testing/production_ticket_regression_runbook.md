@@ -248,6 +248,21 @@
 - **待实跑确认**：E3 的实际结果决定采用哪条终态分支；不得把真实 `ownership_mismatch`
   伪造为 `project_not_found`，也不能重放旧工单 13985。
 
+### F1/S1 对 Preproduction 运行（2026-10-11 实跑定稿）
+
+F1（fraud 追问）/S1（suspension 一段式）可在 Preproduction 上运行，但必须：
+
+- **环境变量同 E1P**（preprod DSN/schema/profile）**外加 `AUTOMATION_TEST_CUSTOMER_TURN_TRANSPORT=zendesk_api`
+  与 `AUTOMATION_TEST_ZENDESK_AUTH`**——客户续接回合（fraud 补齐信息等）不能走邮件通道：
+  IMAP 通知超时后落到 plus-address fallback，而 plus-address 是死链（评论不进工单，p2-178 已实证）。
+- **路由断言为等待式**（`wait_case_field`）：preprod 的 route 在 case 创建后异步落定，
+  建单后立即读行会拿到 `execution_action=None`（2026-10-11 实跑修复）。
+- 同 title 连续建单时 `find_case` 的 5 分钟窗口可能误绑上一轮 case——重跑前确认
+  上一张同主题工单已出窗（或换主题词）。
+- 2026-10-11 实跑基线：F1=工单 14000（追问→补齐→handoff+24h 承诺句→assign→不关单→
+  追问恰一次，8/8 PASS）；S1=工单 14001（sent→handoff_and_close 回复→assign→不关单→
+  workflow closed，7/7 PASS）。
+
 ## 9. Preproduction PP 剧本（独立 CLI，不进 legacy 控制台）
 
 > 2026-09-28 新增（Preproduction新链回归计划）。PP-* 剧本故意**不注册**进共享
