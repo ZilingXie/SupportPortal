@@ -1,0 +1,228 @@
+{
+  "observed_at": "2026-10-11T14:13:57.613033+00:00",
+  "plan_name": "Investigation 附件传输与续轮英文展示修复",
+  "revision": "R1",
+  "task": "p2-192",
+  "code_acceptance": {
+    "result": "passed",
+    "pr": "https://github.com/ZilingXie/SupportPortal/pull/1451",
+    "reviewed_head": "38c1a3fd63af40a4837855b4fe95313040ca3ae4",
+    "merged_source": "f1efe32acbde73a0408bdebd589d32941cb80dac"
+  },
+  "formal_pipeline": {
+    "release_id": "r20261011-f1efe32",
+    "status": "failed_before_activation",
+    "exit_code": 1,
+    "checks": {
+      "cloudwatch": "failed",
+      "ec2_backup": "passed",
+      "ecr": "passed",
+      "heartbeats": "passed",
+      "prompt_activation": "active",
+      "prompt_sync": "active",
+      "provider_probe": "passed",
+      "public_health": "failed",
+      "rollback": "succeeded",
+      "schema_bootstrap": "passed",
+      "source_prompt": "passed",
+      "suspension_recipients": "passed",
+      "terraform_post_deploy_zero_drift": "passed",
+      "terraform_zero_drift": "passed"
+    },
+    "cloudwatch": {
+      "error_count": 273,
+      "roles": [
+        {
+          "error_count": 0,
+          "role": "api"
+        },
+        {
+          "error_count": 0,
+          "role": "route"
+        },
+        {
+          "error_count": 273,
+          "role": "worker"
+        }
+      ]
+    },
+    "phase_timings": [
+      {
+        "duration_seconds": 115.537,
+        "finished_ms": 1791726035399,
+        "phase": "preflight",
+        "started_ms": 1791725919862,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 211.05,
+        "finished_ms": 1791726246483,
+        "phase": "prompt_schema",
+        "started_ms": 1791726035433,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 277.222,
+        "finished_ms": 1791726911003,
+        "phase": "route_worker_rollout",
+        "started_ms": 1791726633781,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 3.385,
+        "finished_ms": 1791726915938,
+        "phase": "heartbeat",
+        "started_ms": 1791726912553,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 197.92,
+        "finished_ms": 1791727113894,
+        "phase": "api_rollout",
+        "started_ms": 1791726915974,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 78.248,
+        "finished_ms": 1791727192178,
+        "phase": "collector",
+        "started_ms": 1791727113930,
+        "status": "failed"
+      }
+    ],
+    "target_health": {
+      "blocking": 0,
+      "draining": 1,
+      "healthy": 1,
+      "target_state": "healthy",
+      "total": 2
+    },
+    "provider_probe": {
+      "graph_me_ok": true,
+      "rag_health_ok": true,
+      "zendesk_identity_ok": true
+    },
+    "original_evidence": ".deployments/ecs-pipeline-r20261011-f1efe32/preproduction-deploy/evidence.json",
+    "codebuild_id": "supportportal-automation-release:8d531333-cfc7-4831-ba95-4954e5132a65"
+  },
+  "cloudwatch_attribution": {
+    "old_service_task": "dc4aaa796ddf44f291672610ddf068b8",
+    "old_revision": 135,
+    "old_error_count": 272,
+    "old_failure": "attachment_binding_changed",
+    "isolated_probe_task": "49d8beaebd3746c8889026fac7d94c60",
+    "isolated_probe_traceback_count": 1,
+    "new_service_matching_error_count": 0,
+    "does_not_release_formal_gate": true
+  },
+  "rollback_readback": {
+    "services": [
+      {
+        "name": "supportportal-preproduction-api",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:135",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "deployments": [
+          {
+            "status": "PRIMARY",
+            "rollout": "COMPLETED",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:135",
+            "running": 1,
+            "pending": 0
+          }
+        ]
+      },
+      {
+        "name": "supportportal-preproduction-route",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:134",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "deployments": [
+          {
+            "status": "PRIMARY",
+            "rollout": "COMPLETED",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:134",
+            "running": 1,
+            "pending": 0
+          }
+        ]
+      },
+      {
+        "name": "supportportal-preproduction-worker",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:135",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "deployments": [
+          {
+            "status": "PRIMARY",
+            "rollout": "COMPLETED",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:135",
+            "running": 1,
+            "pending": 0
+          }
+        ]
+      }
+    ],
+    "health": {
+      "status": "ok",
+      "provenance": {
+        "environment": "preproduction",
+        "service_role": "api",
+        "release_id": "r20261011-434ee35-p2",
+        "git_commit": "434ee3565e49544d562a8afaa3aa48f589419702",
+        "image_digest": "sha256:0496bbaa2dd5197bb1102e47990d63d77992b4a83d1189c2355a2a0346aeee8c",
+        "build_time": "2026-10-11T03:51:17Z",
+        "schema_revision": "automation-ecs-015",
+        "prompt_release_id": "pr-68ed5b0cbda8",
+        "db_resource_id": "supportportal-preproduction",
+        "db_schema": "supportportal_preproduction",
+        "job_namespace": "supportportal-preproduction",
+        "contracts": {
+          "intake": "automation-intake-v1",
+          "route": "automation-route-v1",
+          "processing": "automation-processing-v1",
+          "execution": "automation-execution-v1",
+          "heartbeat": "automation-heartbeat-v1"
+        }
+      }
+    },
+    "attachment_inventory": {
+      "observed_at": "2026-10-11T14:13:57.572541+00:00",
+      "pending_attachments": [
+        {
+          "scope": "native-hermes-notification:supportportal-preproduction",
+          "idempotency_key": "attachment:14002:54476788187924:54476375557908",
+          "state": "failed",
+          "updated_at": "2026-10-11 10:39:07.139809+00:00",
+          "failure_code": "403",
+          "retryable": "true",
+          "slack_file_id": null
+        },
+        {
+          "scope": "native-hermes-notification:supportportal-preproduction",
+          "idempotency_key": "attachment:14002:54476788187924:54476400645012",
+          "state": "failed",
+          "updated_at": "2026-10-11 10:39:07.898103+00:00",
+          "failure_code": "403",
+          "retryable": "true",
+          "slack_file_id": null
+        }
+      ],
+      "active_prompt": [
+        {
+          "release_id": "pr-68ed5b0cbda8"
+        }
+      ]
+    }
+  },
+  "unperformed": [
+    "release gate code repair (requires human authorization and independent acceptance)",
+    "second pipeline run",
+    "actual Slack/Zendesk test writes",
+    "Production promotion"
+  ],
+  "pending_decision": "Authorize narrow new-revision service-task CloudWatch gate repair, including failed/stopped tasks, while retaining old/probe errors separately; or pause release."
+}

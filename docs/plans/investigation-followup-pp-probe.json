@@ -17,5 +17,5 @@
   },
   "limits": "In-memory repository and external mocks; no real translation, CDN, Slack or Zendesk business acceptance.",
   "probe_source": "docs/plans/investigation-followup-image-probe.py",
-  "observation": "First probe emitted one intentional fallback traceback in the release CloudWatch window; original pipeline evidence retained, fresh full pipeline required."
+  "observation": "Probe emitted one intentional fallback traceback. Formal CloudWatch count was 273: 272 from old worker :135 attachment_binding_changed, 1 from this probe; released service revision had no matched errors in that window. Existing role-prefix/start-time gate makes a fresh retry from the old worker baseline include old errors again. Original failed evidence retained; release gate repair requires human authorization and independent review."
 }

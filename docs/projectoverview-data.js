@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T13:56:15Z",
-  "source_base_commit": "48c9d81bcbd78683dbed1b32d410fd0de43ca00e",
-  "registry_digest": "4b050c97f73834c2171551c1c483b36f7d46b0371bc73ce9da1418f539e73fd5",
+  "generated_at": "2026-10-11T14:14:11Z",
+  "source_base_commit": "65845fed40f5abda64156a86676a07a0e5b114e9",
+  "registry_digest": "aab70b683f0cf6358ac1bdc185e16686f3a7c1b9084bf5fec138dc8b4359326b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1563,6 +1563,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
         },
         {
+          "type": "deployment",
+          "url": "docs/plans/investigation-followup-pp-release-evidence.json",
+          "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
+        },
+        {
           "type": "document",
           "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
           "label": "r4 contract/evidence record"
@@ -1698,7 +1703,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 45,
       "done_count": 23,
-      "blocked_count": 0
+      "blocked_count": 1
     },
     {
       "schema_version": 2,
@@ -17566,15 +17571,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
-      "status": "active",
-      "next_action": "独立代码复审已通过、PR #1451 已合并。完成正式 ECS Preproduction 门禁与干净 CloudWatch 观察窗口；业务验收 waiting-for-evidence，Ticket 14002 两份合成附件和测试续轮仍需明确实际写入授权。",
+      "status": "blocked",
+      "next_action": "等待用户确认是否授权窄发布门禁修复；原代码独立复审通过保留。完成当前自动回滚并归档失败证据，保留任务工作区。Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-11",
       "acceptance_criteria": [
         "C1-C7 见 docs/plans/investigation-attachments-v1.md"
       ],
-      "blockers": [],
+      "blockers": [
+        "F-R1-DEPLOY-01：正式 CloudWatch 门禁包含旧 worker 272 条错误和隔离 probe 1 条模拟 traceback；改为仅统计本轮全部服务 task 涉及发布验收范围，待用户授权及独立复审。"
+      ],
       "evidence": [
         {
           "type": "document",
@@ -17615,6 +17622,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-followup-pp-probe.json",
           "label": "发布镜像隔离 probe 四项入口合同通过，exit 0，业务写入为 0；不能替代实际业务样本。"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-followup-pp-release-evidence.json",
+          "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
         }
       ]
     },
