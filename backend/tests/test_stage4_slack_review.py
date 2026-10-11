@@ -188,7 +188,8 @@ def test_explicit_slack_failure_records_failed_and_keeps_review() -> None:
     poster = _FakeSlackPoster(outcome="channel_not_found")
 
     result = deliver_knowledge_review_notification(host, _row(host, promotion_id), slack_client=poster, now_value=NOW)
-    assert result["status"] == "failed" and result["failure_code"] == "channel_not_found"
+    assert result["status"] == "failed", result
+    assert result["failure_code"] == "channel_not_found"
     row = _row(host, promotion_id)
     assert row["slack_review_status"] == "failed"
     assert row["slack_review_failure_code"] == "channel_not_found"
@@ -913,3 +914,167 @@ def test_failed_delivery_is_still_auto_retriable() -> None:
         knowledge_review_event_id(promotion_id)
     ] * 2, "a definitive failure may retry with the same deterministic id"
     assert _row(host, promotion_id)["slack_review_status"] == "delivered"
+
+
+# ------------- stage-4 review F5 round 4: real adapter HTTP boundary --------
+# These drive the REAL post_engineer_slack_event with only
+# urllib.request.urlopen mocked — no adapter substitution.
+
+
+import io
+import json as _json
+import urllib.error
+
+
+def _http_response(body, status=200):
+    class _Resp(io.BytesIO):
+        pass
+
+    resp = _Resp(_json.dumps(body).encode() if not isinstance(body, (bytes, str)) else
+                 (body.encode() if isinstance(body, str) else body))
+    resp.status = status
+    return resp
+
+
+def _deliver_with_http(monkeypatch, host, promotion_id, responses, *, now_value=NOW):
+    """Run the REAL service + REAL adapter with scripted HTTP bodies.
+
+    Returns (result, http_call_count, final_row)."""
+    import unittest.mock as mock
+
+    calls = []
+
+    def fake_urlopen(request, timeout=None):
+        calls.append(request)
+        item = responses.pop(0) if responses else {"ok": True, "channel": CHANNEL, "ts": "1700.001"}
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        result = deliver_knowledge_review_notification(
+            host, _row(host, promotion_id), now_value=now_value
+        )
+    return result, len(calls), _row(host, promotion_id)
+
+
+def test_http200_empty_object_is_outcome_unknown_and_never_retried(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id, [_http_response({})]
+    )
+    assert result["status"] == "outcome_unknown", result
+    assert row["slack_review_status"] == "outcome_unknown"
+    assert calls == 1
+
+    retry, calls2, row2 = _deliver_with_http(
+        monkeypatch, host, promotion_id, [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})]
+    )
+    assert retry["status"] == "in_flight", retry
+    assert calls2 == 0, "outcome_unknown must never auto-retry (no second POST)"
+    assert row2["slack_review_status"] == "outcome_unknown"
+
+
+def test_http200_non_dict_body_is_outcome_unknown(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id, [_http_response([])]
+    )
+    assert result["status"] == "outcome_unknown", result
+    assert calls == 1
+    assert row["slack_review_status"] == "outcome_unknown"
+
+
+def test_http200_string_false_ok_is_not_delivered(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": "false", "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert result["status"] == "outcome_unknown", result
+    assert calls == 1
+    assert row["slack_review_status"] == "outcome_unknown"
+    assert row["status"] == "human_review"
+
+
+def test_genuine_ok_false_refusal_stays_retriable(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": False, "error": "channel_not_found"})],
+    )
+    assert result["status"] == "failed", result
+    assert result["failure_code"] == "engineer_slack_api_channel_not_found"
+    assert row["slack_review_status"] == "failed"
+    assert calls == 1
+
+    ok, calls2, row2 = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert ok["status"] == "delivered", ok
+    assert calls2 == 1, "a definitive refusal did not create the message — retry posts once"
+    assert row2["slack_review_status"] == "delivered"
+    assert calls + calls2 == 2  # refusal + successful retry — exactly two HTTP posts
+
+
+def test_clean_success_receipt_delivers(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert result["status"] == "delivered", result
+    assert calls == 1
+    assert row["slack_review_status"] == "delivered"
+    assert row["slack_thread_ts"] == "1700.001"
+
+
+def test_http_timeout_is_outcome_unknown_not_retried(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id, [TimeoutError("slown")]
+    )
+    assert result["status"] == "outcome_unknown"
+    assert calls == 1
+    retry, calls2, _ = _deliver_with_http(
+        monkeypatch, host, promotion_id, [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})]
+    )
+    assert retry["status"] == "in_flight"
+    assert calls2 == 0
+
+
+def test_http_5xx_is_outcome_unknown_not_retried(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+
+    def _err_500(request, timeout=None):
+        raise urllib.error.HTTPError(
+            "https://slack.com/api/chat.postMessage", 500,
+            "Server Error", {}, io.BytesIO(b"{}"),
+        )
+
+    import unittest.mock as mock
+
+    calls = []
+    with mock.patch("urllib.request.urlopen", side_effect=lambda r, timeout=None: (
+        calls.append(r), _err_500(r, timeout)
+    )[-1]):
+        result = deliver_knowledge_review_notification(
+            host, _row(host, promotion_id), now_value=NOW
+        )
+    assert result["status"] == "outcome_unknown", result
+    assert len(calls) == 1
+    assert _row(host, promotion_id)["slack_review_status"] == "outcome_unknown"

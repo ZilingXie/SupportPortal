@@ -373,8 +373,14 @@ def test_pg_crashed_claim_reclaim_and_owner_guard(repository) -> None:
     ) is None
 
 
+_pg_park_seq = [0]
+
+
 def _pg_parked(repository) -> str:
-    inserted = repository.enqueue_weknora_promotions([dict(PROMOTION_TASK)], now_value=NOW)
+    _pg_park_seq[0] += 1
+    task = dict(PROMOTION_TASK)
+    task["source_id"] = PROMOTION_TASK["source_id"] + f":r{_pg_park_seq[0]}"
+    inserted = repository.enqueue_weknora_promotions([task], now_value=NOW)
     promotion_id = str(inserted[0]["promotion_id"])
     repository.park_knowledge_candidate(promotion_id, reasons=["gate"], now_value=NOW)
     return promotion_id
@@ -558,3 +564,88 @@ def test_pg_outcome_unknown_and_sending_guards(repository) -> None:
         second, event_id=f"knowledge-review:{second}", now_value=LATER,
         owner_token="retry", lease_expires_at="2026-10-10T00:00:00+00:00",
     ) is None, "outcome_unknown must never be auto-claimed"
+
+
+def test_pg_receipt_classification_never_double_posts(repository) -> None:
+    """Stage-4 review F5 round 4 on PostgreSQL: the REAL adapter with only
+    urllib mocked. Malformed 200 receipts ({}, [], ok='false') land in
+    outcome_unknown and are never auto-retried; a genuine ok=false refusal
+    stays retriable (exactly one retry post)."""
+    import io
+    import json as _json
+    import os
+    import unittest.mock as mock
+
+    from backend.services.knowledge_slack_review import (
+        deliver_knowledge_review_notification,
+    )
+
+    env = {
+        "ENGINEER_SLACK_CHANNEL_ID": "C-REVIEW",
+        "ENGINEER_SLACK_TEAM_ID": "T-1",
+        "ENGINEER_SLACK_ACCESS_TOKEN": "xoxb-test",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "1",
+    }
+
+    def _resp(body):
+        class _R(io.BytesIO):
+            pass
+
+        r = _R(_json.dumps(body).encode())
+        r.status = 200
+        return r
+
+    ok_receipt = {"ok": True, "channel": "C-REVIEW", "ts": "1700.001"}
+
+    for malformed in ({}, [], {"ok": "false", "channel": "C-REVIEW", "ts": "1700.001"}):
+        promotion_id = _pg_parked(repository)
+        calls = []
+
+        def fake_urlopen(request, timeout=None, _m=malformed, _c=calls):
+            _c.append(request)
+            return _resp(_m)
+
+        with mock.patch.dict(os.environ, env), mock.patch(
+            "urllib.request.urlopen", side_effect=fake_urlopen
+        ):
+            result = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=NOW
+            )
+        assert result["status"] == "outcome_unknown", (malformed, result)
+        assert len(calls) == 1
+        assert _pg_row(repository, promotion_id)["slack_review_status"] == "outcome_unknown"
+        # retry: refused with zero additional HTTP calls
+        with mock.patch.dict(os.environ, env), mock.patch(
+            "urllib.request.urlopen", side_effect=fake_urlopen
+        ):
+            retry = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=LATER
+            )
+        assert retry["status"] == "in_flight", (malformed, retry)
+        assert len(calls) == 1, f"no second POST for {malformed!r}"
+
+    # genuine refusal: exactly one retry post, then delivered
+    promotion_id = _pg_parked(repository)
+    calls = []
+    receipts = [
+        {"ok": False, "error": "channel_not_found"},
+        ok_receipt,
+    ]
+
+    def fake_seq(request, timeout=None):
+        calls.append(request)
+        return _resp(receipts.pop(0))
+
+    with mock.patch.dict(os.environ, env), mock.patch(
+        "urllib.request.urlopen", side_effect=fake_seq
+    ):
+        first = deliver_knowledge_review_notification(
+            repository, _pg_row(repository, promotion_id), now_value=NOW
+        )
+        assert first["status"] == "failed"
+        second = deliver_knowledge_review_notification(
+            repository, _pg_row(repository, promotion_id), now_value=LATER
+        )
+        assert second["status"] == "delivered", second
+    assert len(calls) == 2, "refusal + one successful retry, exactly two posts"

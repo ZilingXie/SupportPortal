@@ -95,3 +95,20 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 4. **真实服务入口双复现回归**：复现 a（旧 worker claim→暂停→新 worker 回收发送→旧 worker 经真实 `_send_claimed_notification` 恢复→lost_claim，全程 1 次 POST）；复现 b（POST 成功+complete 中断→行留 sending→过期驻 unknown→重试拒绝，全程 1 次 POST）；InMemory+隔离 PG 双侧（条件 4）。
 
 验证：专项 **35 passed**（32+3：outcome_unknown 禁自动重试/复现 a/复现 b+failed 仍可重试）；全套 17 套件 **499 passed / 0 failed**（PG 12 项含两复现+守卫三态）；compileall / diff-check 通过。
+
+
+## 修复轮 4（2026-10-11，四轮验收 F5 回执分类阻断后）
+
+**证据更正**：修复轮 3 的"双复现回归"使用 `_FakeSlackPoster`/`_PgFakePoster` 替换了整个发送适配器——它们证明的是状态迁移与 owner 门，**并非**"仅模拟 HTTP 边界"（此前登记措辞有误，本条更正）。本轮新增回归全部走真实 `post_engineer_slack_event`，仅 mock `urllib.request.urlopen`。
+
+阻断：适配器 `ok` 真值判断——HTTP 200 `{}`/`[]` 落 failed（可重试→第二次 POST）；`ok="false"`（字符串真值）被误判成功报 delivered。
+
+修复（严格回执分类，engineer_slack.post_engineer_slack_event）：
+
+- `ok is True` → 成功（channel/ts 校验保持）；
+- `ok is False` → Slack 明确拒绝（消息确定未创建）→ **failed 可重试**；
+- 其余一切（非 dict、缺 ok、ok 非布尔如字符串 "false"/"true"）→ 既不证明成功也不证明未创建 → **outcome_unknown 永不自动重试**（重投入口=人工/API）。
+
+真实适配器 HTTP 边界回归 7 形态（InMemory）：`{}`→unknown+重试零 POST；`[]`→unknown；`ok="false"` 带 channel/ts→**unknown 不再误报 delivered**；真 `ok=false error=channel_not_found`→failed+恰一次重试成功（共 2 POST）；干净成功→delivered；超时→unknown 零重试；HTTP 5xx→unknown 零重试。PG 侧同链（真实适配器+真实仓库，malformed 三形态 unknown 零重投+真拒绝恰一次重试）。
+
+验证：专项 **42 passed**（35+7）；全套 17 套件 **507 passed / 0 failed**（PG 13 项）；compileall / diff-check 通过。

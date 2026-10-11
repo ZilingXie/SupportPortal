@@ -527,13 +527,19 @@ def post_engineer_slack_event(
             "engineer_slack_response_invalid", outcome_unknown=True
         ) from exc
 
-    if not isinstance(response_payload, dict) or not response_payload.get("ok"):
-        raise EngineerSlackDeliveryError(
-            _failure_code(
-                response_payload.get("error")
-                if isinstance(response_payload, dict)
-                else "invalid_response"
+    # Stage-4 review F5 round 4: strict receipt classification. Only
+    # ``ok is True`` proves success; a genuine ``ok is False`` refusal (Slack
+    # answered, the message was definitively NOT created) stays a retriable
+    # failure; EVERYTHING else on HTTP 200 — a non-dict body, a missing ok,
+    # or a non-boolean ok like the string "false" — proves neither outcome,
+    # so it lands in outcome_unknown and is never auto-retried.
+    if not isinstance(response_payload, dict) or response_payload.get("ok") is not True:
+        if isinstance(response_payload, dict) and response_payload.get("ok") is False:
+            raise EngineerSlackDeliveryError(
+                _failure_code(response_payload.get("error"))
             )
+        raise EngineerSlackDeliveryError(
+            "engineer_slack_response_invalid", outcome_unknown=True
         )
     expected_channel = str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip()
     channel_id = str(response_payload.get("channel") or "").strip()
