@@ -1035,6 +1035,7 @@ class _AccountRows:
 def _automation_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
     stage_totals: dict[str, dict[str, int]] = {}
     model_totals: dict[tuple[str, str], dict[str, Any]] = {}
+    pricing_meta: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         prompt_tokens = max(0, int(row.get("prompt_tokens") or 0))
         completion_tokens = max(0, int(row.get("completion_tokens") or 0))
@@ -1061,18 +1062,34 @@ def _automation_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "cached_input_tokens": 0,
                 "output_tokens": 0,
                 "embedding_tokens": 0,
-                "pricing_source": str(row.get("pricing_source") or "legacy_unpriced"),
-                "pricing_source_url": row.get("pricing_source_url"),
                 "cost_usd": 0.0,
                 "cost_usd_available": True,
             },
         )
+        model_key = (provider, model)
+        metadata = pricing_meta.setdefault(
+            model_key,
+            {"sources": set(), "source_urls": []},
+        )
+        source = str(row.get("pricing_source") or "legacy_unpriced").strip()
+        if source:
+            metadata["sources"].add(source)
+        source_url = row.get("pricing_source_url")
+        if source_url is not None and source_url not in metadata["source_urls"]:
+            metadata["source_urls"].append(source_url)
         model_bucket["input_tokens"] += prompt_tokens
         model_bucket["cached_input_tokens"] += cached_tokens
         model_bucket["output_tokens"] += completion_tokens
         model_bucket["cost_usd"] += float(row.get("cost_usd") or 0)
         if row.get("cost_usd") is None:
             model_bucket["cost_usd_available"] = False
+    for model_key, model_bucket in model_totals.items():
+        metadata = pricing_meta.get(model_key, {})
+        sources = sorted(metadata.get("sources") or {"legacy_unpriced"})
+        model_bucket["pricing_sources"] = sources
+        model_bucket["pricing_source"] = sources[0] if len(sources) == 1 else "mixed"
+        urls = metadata.get("source_urls") or []
+        model_bucket["pricing_source_url"] = urls[0] if len(urls) == 1 else None
     return {
         "available": True,
         "call_count": len(rows),

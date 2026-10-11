@@ -114,6 +114,37 @@ def test_pricing_writer_does_not_use_the_read_only_admin_dsn() -> None:
     assert "WHERE pricing.last_checked_at" in query
 
 
+def test_usage_rollup_marks_mixed_pricing_snapshots() -> None:
+    usage = _automation_usage(
+        [
+            {
+                "provider": "openai",
+                "model": "gpt-test",
+                "stage": "route",
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "pricing_source": "assistant_found",
+                "pricing_source_url": "https://example.com/assistant",
+                "cost_usd": 0.01,
+            },
+            {
+                "provider": "openai",
+                "model": "gpt-test",
+                "stage": "work",
+                "prompt_tokens": 5,
+                "completion_tokens": 1,
+                "pricing_source": "user_confirmed",
+                "pricing_source_url": "https://example.com/confirmed",
+                "cost_usd": 0.005,
+            },
+        ]
+    )
+    model = usage["token_by_model"][0]
+    assert model["pricing_source"] == "mixed"
+    assert model["pricing_sources"] == ["assistant_found", "user_confirmed"]
+    assert model["pricing_source_url"] is None
+
+
 def test_account_projection_never_returns_password_hash() -> None:
     cursor = MagicMock()
     cursor.fetchall.return_value = [
