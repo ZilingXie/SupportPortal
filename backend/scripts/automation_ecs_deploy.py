@@ -178,6 +178,22 @@ WEKNORA_SECRET_SUFFIXES = {
 # Formal upgrades strip the secret from observed definitions and the
 # register-time contract fails closed on it.
 RETIRED_WORKER_SECRET_NAMES = {"ARCHER_OAUTH_COOKIE"}
+KNOWLEDGE_GOVERNANCE_SWITCHES = (
+    "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
+    "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+    "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+    "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
+    "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
+    "KNOWLEDGE_SLACK_NOTIFY_ENABLED",
+)
+KNOWLEDGE_PREPRODUCTION_SECRET_SUFFIXES = {
+    "AGENT_MEMORY_WIKI_BASE_URL": "agent-memory-wiki-base-url",
+    "AGENT_MEMORY_WIKI_USER_KEY": "hermes-wiki-core-user-key",
+    "AGENT_MEMORY_WIKI_SERVICE_ID": "agent-memory-wiki-service-id",
+    "AGENT_MEMORY_WIKI_TEAM_ID": "agent-memory-wiki-team-id",
+    "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN": "knowledge-slack-workspace-domain",
+}
+KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS = "300"
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -425,6 +441,41 @@ def _registrable_task_definition(task_definition: dict[str, Any]) -> dict[str, A
     }
 
 
+def _apply_preproduction_knowledge_configuration(
+    container: dict[str, Any],
+    *,
+    environment: str,
+    parameter_prefix_arn: str,
+    knowledge_source_allowlist: str | None = None,
+) -> None:
+    """Render the stage-6 knowledge configuration on API and Worker only.
+
+    All governance switches stay explicitly off in the first Preproduction
+    release. The AgentMemory and Slack values are SSM references so no secret
+    or environment-specific value is copied into the task-definition JSON.
+    """
+    if environment != "preproduction":
+        return
+    allowlist = (
+        knowledge_source_allowlist
+        if knowledge_source_allowlist is not None
+        else os.getenv("KNOWLEDGE_SOURCE_ALLOWLIST", "")
+    )
+    _set_environment_value(container, "KNOWLEDGE_SOURCE_ALLOWLIST", str(allowlist or ""))
+    for name in KNOWLEDGE_GOVERNANCE_SWITCHES:
+        _set_environment_value(container, name, "0")
+    _set_environment_value(
+        container,
+        "KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS",
+        KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS,
+    )
+    names = set(KNOWLEDGE_PREPRODUCTION_SECRET_SUFFIXES)
+    _remove_environment_values(container, names)
+    _remove_secret_references(container, names)
+    for name, suffix in sorted(KNOWLEDGE_PREPRODUCTION_SECRET_SUFFIXES.items()):
+        _set_secret_reference(container, name, _parameter_arn(parameter_prefix_arn, suffix))
+
+
 def _parameter_arn(prefix_arn: str, name: str) -> str:
     return f"{prefix_arn.rstrip('/')}/{name}"
 
@@ -593,6 +644,7 @@ def render_initial_task_definition(
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
     agent_model: str | None = None,
+    knowledge_source_allowlist: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -782,6 +834,13 @@ def render_initial_task_definition(
             file_system_id=str(graph_efs_file_system_id),
             access_point_id=str(graph_efs_access_point_id),
         )
+    if role in {"api", "worker"}:
+        _apply_preproduction_knowledge_configuration(
+            container,
+            environment=environment,
+            parameter_prefix_arn=parameter_prefix_arn,
+            knowledge_source_allowlist=knowledge_source_allowlist,
+        )
     if role == "worker":
         validate_worker_contract(rendered)
     return rendered
@@ -851,6 +910,7 @@ def render_task_definition(
     agent_model: str | None = None,
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
+    knowledge_source_allowlist: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -1072,6 +1132,16 @@ def render_task_definition(
         # OFF on every rendered Preproduction api/worker revision regardless
         # of what the observed definition carried.
         _set_environment_value(container, "HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "0")
+        # Stage 6 starts with all knowledge switches off. The SSM references
+        # are still rendered now so later allowlist/switch changes can be
+        # audited as task-definition revisions rather than hidden defaults.
+        prefix_arn = _parameter_prefix_arn(container, environment=environment)
+        _apply_preproduction_knowledge_configuration(
+            container,
+            environment=environment,
+            parameter_prefix_arn=prefix_arn,
+            knowledge_source_allowlist=knowledge_source_allowlist,
+        )
     if role in {"api", "worker"}:
         # Ensure the outbound Slack kill switch reflects the target environment
         # on every rendered revision (p2-150): off in Production, on in
@@ -1303,6 +1373,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--agent-model", default=None)
     render.add_argument("--graph-efs-file-system-id", default=None)
     render.add_argument("--graph-efs-access-point-id", default=None)
+    render.add_argument("--knowledge-source-allowlist", default=None)
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -1341,6 +1412,7 @@ def build_parser() -> argparse.ArgumentParser:
     initial.add_argument("--graph-efs-file-system-id")
     initial.add_argument("--graph-efs-access-point-id")
     initial.add_argument("--agent-model", default=None)
+    initial.add_argument("--knowledge-source-allowlist", default=None)
     initial.add_argument("--output", required=True)
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
@@ -1390,6 +1462,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             agent_model=args.agent_model,
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
+            knowledge_source_allowlist=args.knowledge_source_allowlist,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -1426,6 +1499,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
             agent_model=args.agent_model,
+            knowledge_source_allowlist=args.knowledge_source_allowlist,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",

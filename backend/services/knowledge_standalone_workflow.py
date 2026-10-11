@@ -98,6 +98,22 @@ def queue_standalone_summary_for_source(
     source_version = str(intake.get("source_updated_at") or "")
     if not source_type or not source_id or not source_version:
         return None
+    # Stage 6 plan A: the per-source allowlist gates TASK CREATION only —
+    # the snapshot itself was already accepted (and stays persisted/auditable
+    # via the source intake receipt); real CSD/Solved sources wait here
+    # until explicitly allowlisted in step 10.
+    from backend.services.knowledge_source_allowlist import (
+        allowlist_rejection_reason,
+        source_allowed,
+    )
+
+    if not source_allowed(source_type, source_id):
+        reason = allowlist_rejection_reason(source_type, source_id) or "source not allowlisted"
+        LOGGER.info(
+            "standalone_summary_held_by_allowlist source=%s:%s reason=%s",
+            source_type, source_id, reason,
+        )
+        return None
     task_id = standalone_summary_task_id_for(source_type, source_id, source_version)
     now = now_value or datetime.now(timezone.utc).isoformat()
     payload = {
