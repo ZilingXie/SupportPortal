@@ -61,7 +61,7 @@
       "type": "test",
       "label": "阶段 4 修复轮 3 回归（F5 发送生命周期）",
       "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py backend/tests/test_knowledge_delivery_postgres.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-      "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed"
+      "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed（同步 origin/main 434ee356 合并后复测）"
     }
   ]
 }

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T03:27:24Z",
-  "source_base_commit": "c43db5c2d449ebee00f8354cae746a542a5584cd",
-  "registry_digest": "88bd829beb2f54d17bd3d7f58f25bd6174402e788f5d5156c7b63865e3e69501",
+  "generated_at": "2026-10-11T03:28:52Z",
+  "source_base_commit": "0a963b208d9fd339a3ef2681fe5879584d2c4999",
+  "registry_digest": "efd9e2559ae91e371b9acdc43cd49f0cc3db5a2872d19ce29421d0d5963afcf5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5626,7 +5626,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "阶段 4 修复轮 3 回归（F5 发送生命周期）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py backend/tests/test_knowledge_delivery_postgres.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed"
+          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed（同步 origin/main 434ee356 合并后复测）"
         }
       ],
       "source_refs": [
@@ -17739,7 +17739,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "阶段 4 修复轮 3 回归（F5 发送生命周期）",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage4_slack_review.py backend/tests/test_knowledge_delivery_postgres.py -q && 全套 17 套件（RUN_POSTGRES_INTEGRATION=1）",
-          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed"
+          "result": "专项 35 passed（+3：outcome_unknown 禁自动重试+failed 可重试、复现 a 旧 owner lost_claim 零二次 POST、复现 b complete 中断驻 unknown 零重发）；PG 12 passed（两复现真实服务入口+begin/complete owner 守卫+outcome_unknown 不可 claim）；全套 499 passed / 0 failed（同步 origin/main 434ee356 合并后复测）"
         }
       ]
     },
