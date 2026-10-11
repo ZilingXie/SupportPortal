@@ -526,10 +526,11 @@ write_evidence() {
   shopt -s nullglob
   cloudwatch_files=("${STATE_DIR}"/*.cloudwatch-count.json)
   shopt -u nullglob
+  cloudwatch_summary="${STATE_DIR}/cloudwatch-summary.json"
   if (( ${#cloudwatch_files[@]} > 0 )); then
-    cloudwatch_summary="$(jq -s '{error_count:(map(.error_count) | add // 0),roles:.}' "${cloudwatch_files[@]}")"
+    jq -s '{error_count:(map(.error_count) | add // 0),roles:.}' "${cloudwatch_files[@]}" >"${cloudwatch_summary}"
   else
-    cloudwatch_summary='{"error_count":0,"roles":[]}'
+    printf '%s\n' '{"error_count":0,"roles":[]}' >"${cloudwatch_summary}"
   fi
   generated_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   jq -n -S \
@@ -571,9 +572,9 @@ write_evidence() {
     --argjson heartbeat_summary "${heartbeat_summary}" \
     --argjson target_health "${target_health}" \
     --argjson provider_probe "${provider_probe}" \
-    --argjson cloudwatch_summary "${cloudwatch_summary}" \
+    --slurpfile cloudwatch_reports "${cloudwatch_summary}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_summary,provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
   mkdir -p -- "${STATE_DIR}/evidence-attempts"

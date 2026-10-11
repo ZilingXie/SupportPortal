@@ -17,14 +17,27 @@
   "verification": [
     {
       "environment": "task worktree, project .venv, only external AWS CLI boundary simulated",
-      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_cloudwatch_gate.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py",
-      "result": "修复基线定向 133 passed / 0 skipped；集成 main 后另记最终结果。",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_cloudwatch_gate.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py",
+      "result": "集成 main 后 135 passed / 0 skipped；后续补充大批量 evidence 写入验证，见专项结果。",
       "behavior": "实际 bash verify_cloudwatch → Python CLI → AWS 边界；旧 272 + probe 1 对账、新 running/stopped 错误、无日志启动失败、未知退出/时间/身份、分页合并与 describe 分批、resume、过期窗口、缺失配置/解释器、脱敏 evidence 和 Provider 硬门禁。"
     },
     {
-      "command": ".venv/bin/python scripts/testing/verify_ecs_cloudwatch_gate.py",
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/testing/verify_ecs_cloudwatch_gate.py",
       "result": "两项旧行为在 returncode 契约断言处失败，验证脚本 exit 0；未修改工作区代码。",
       "behavior": "原 shell 将旧错误计入导致干净新服务误拒绝；原 shell 对无日志 TaskFailedToStart 错放行。"
+    },
+    {
+      "command": "bash -n deployment/deploy_automation_ecs_release.sh; project .venv compileall; git diff --check",
+      "result": "通过；命令分别执行。"
+    },
+    {
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_automation_ecs_deploy.py::test_failure_evidence_is_valid_without_collector_files backend/tests/test_automation_ecs_cloudwatch_gate.py",
+      "result": "19 passed / 0 skipped；覆盖修复后实际 gate 与 3,000 条事件完整 evidence 写入。",
+      "behavior": "3,000 条脱敏事件以文件输入写入完整最终 evidence，避免 argv 长度上限；门禁专项复跑。"
+    },
+    {
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/generate_project_overview.py --write，然后 --check",
+      "result": "通过；p2-192 修复状态与 main 的 p2-197 均保留。"
     }
   ],
   "original_failed_release": {
@@ -32,7 +45,10 @@
     "evidence": "docs/plans/investigation-followup-pp-release-evidence.json",
     "status": "failed_before_activation",
     "rollback": "succeeded",
-    "worker_matches": {"old_revision": 272, "isolated_probe": 1},
+    "worker_matches": {
+      "old_revision": 272,
+      "isolated_probe": 1
+    },
     "preservation": "不改写失败 evidence 或日志；本轮未启动第二次发布。"
   },
   "next_action": "完整 HEAD 的独立复审通过后，按正式 ECS Preproduction pipeline 重发；发布前重新只读核对当前配置、并行发布归属和附件账本。",
@@ -41,5 +57,7 @@
     "未 finalize/merge/deploy；执行者自测不能解除独立复审门禁。",
     "未授权 Ticket 14002 Slack 文件/消息投递、Zendesk 写入、13923 重放、Production 晋级或 n8n 变更。",
     "沿用已授权的 ECS Preproduction 技术验收，本地官方栈重启豁免。"
-  ]
+  ],
+  "integration_main": "1439a34839b00b7da63bd3914e55528b92eccf0b",
+  "integration_assessment": "main 增加知识治理 allowlist/SSM 配置及 ECS 渲染测试；未修改 CloudWatch shell/采集器，合入同任务分支后定向回归。后续发布仍需实时核对目标配置与归属，不能把代码集成当作发布验证。"
 }

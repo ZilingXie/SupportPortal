@@ -1907,7 +1907,9 @@ def test_failure_evidence_is_valid_without_collector_files(tmp_path: Path, with_
     cloudwatch_report = {
         "role": "worker", "status": "passed", "error_count": 0,
         "excluded_counts": {"old_revision": 272, "non_service": 1},
-        "events": [{"event_id": "event-1", "category": "non_service"}],
+        # Exceeds an argv-sized JSON argument; evidence must read the report file.
+        "events": [{"event_id": "event-" + "x" * 100 + str(i), "category": "non_service"}
+                   for i in range(3000)],
         "tasks": [{"task_id": "probe-1", "category": "non_service"}],
     }
     if with_cloudwatch:
