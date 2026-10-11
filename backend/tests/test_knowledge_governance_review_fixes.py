@@ -121,6 +121,13 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    # Stage 6 plan A: this legacy governance suite exercises the pipeline
+    # itself; source admission is covered separately by the allowlist suite.
+    monkeypatch.setenv(
+        "KNOWLEDGE_SOURCE_ALLOWLIST",
+        "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
+    )
     monkeypatch.delenv("AGENT_MODEL_ID", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_BASE_URL", raising=False)
     monkeypatch.delenv("HERMES_WEKNORA_API_TOKEN", raising=False)
@@ -177,6 +184,9 @@ class FakeMemoryWeKnora:
     def is_configured(self) -> bool:
         return self.ok
 
+    def configured(self) -> bool:
+        return self.ok
+
     def has_memory_identity(self) -> bool:
         return self.ok
 
@@ -185,6 +195,23 @@ class FakeMemoryWeKnora:
         if not self.ok:
             raise RuntimeError("memory surface down")
         return [{"object_id": "mem-1", "version": "1", "content": "existing memory"}]
+
+    def search_knowledge(self, query: str, **kwargs) -> dict:
+        self.list_calls += 1
+        if not self.ok:
+            raise RuntimeError("memory surface down")
+        return {
+            "wiki_count": 1,
+            "searched": 1,
+            "hits": [{
+                "wiki_id": "w1",
+                "wiki_name": "Existing",
+                "wiki_version": "1",
+                "title": "Join failures",
+                "snippet": "Existing entry.",
+                "path": "join.md",
+            }],
+        }
 
 
 def _summary_output(candidate_id: str = "cand-1") -> str:
@@ -530,13 +557,13 @@ class TestReviewDowngradeEndToEnd:
         )
         drain_hermes_knowledge_tasks(
             repository, client=client, weknora_client=FakeKnowledgeWeKnora(),
-            memory_client=memory, limit=5, sleeper=lambda _: None,
+            agent_memory_client=memory, limit=5, sleeper=lambda _: None,
         )
         assert memory.list_calls, "memory surface was never queried"
         review_input = client.started[1]["input_text"]
         assert "memory_results" in review_input
+        assert '"agent_memory"' in review_input
         report = repository.list_hermes_review_tasks()[0]["report"]
-        assert report["memory_available"] is True
         assert report["decisions"][0]["decision"] == "supplement"
 
 

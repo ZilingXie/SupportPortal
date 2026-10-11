@@ -363,8 +363,9 @@ def _as_preproduction(current: Path) -> None:
 
 @pytest.mark.parametrize("role", ["api", "worker"])
 def test_render_task_definition_preproduction_injects_knowledge_config(
-    tmp_path: Path, role: str
+    tmp_path: Path, role: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("KNOWLEDGE_SOURCE_ALLOWLIST", raising=False)
     current = _task_definition(tmp_path, role)
     _as_preproduction(current)
 
