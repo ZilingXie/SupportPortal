@@ -12,6 +12,7 @@ from backend.services.engineer_slack import EngineerSlackDeliveryError
 from backend.services.zendesk_comments import _basic_auth_header, ZENDESK_TICKET_API_BASE
 
 MAX_FILE_BYTES = 50 * 1024 * 1024
+ATTACHMENT_USER_AGENT = "SupportPortal-AttachmentSync/1.0"
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -47,7 +48,9 @@ def _download(url: str, authorization: str, *, provider: str) -> bytes:
         if parsed.scheme != "https" or not (authenticated_host or cdn_host) or parsed.username or parsed.password or parsed.port not in (None, 443):
             raise ValueError("attachment_download_host_invalid")
         # CDN signed URLs do not need our credentials. Never forward them across hosts.
-        headers = {"Authorization": authorization} if authenticated_host and host == original_host else {}
+        headers = {"User-Agent": ATTACHMENT_USER_AGENT}
+        if authenticated_host and host == original_host:
+            headers["Authorization"] = authorization
         request = urllib.request.Request(url, headers=headers)
         try:
             with opener.open(request, timeout=60) as response:
@@ -112,7 +115,7 @@ def download_slack_attachment(ref: dict[str, Any]) -> bytes:
 def download_zendesk_attachment(*, ticket_id: str, comment_id: str, attachment_id: str) -> bytes:
     # Resolve private URL from the authenticated ticket comment, never accept a caller URL.
     request = urllib.request.Request(f"{ZENDESK_TICKET_API_BASE}/{urllib.parse.quote(ticket_id, safe='')}/comments.json",
-        headers={"Authorization": _basic_auth_header()})
+        headers={"Authorization": _basic_auth_header(), "User-Agent": ATTACHMENT_USER_AGENT})
     seen_urls = set()
     while request:
         if request.full_url in seen_urls:
@@ -131,7 +134,7 @@ def download_zendesk_attachment(*, ticket_id: str, comment_id: str, attachment_i
             break
         if not str(next_url).startswith(ZENDESK_TICKET_API_BASE + "/"):
             raise ValueError("attachment_zendesk_pagination_invalid")
-        request = urllib.request.Request(next_url, headers={"Authorization": _basic_auth_header()})
+        request = urllib.request.Request(next_url, headers={"Authorization": _basic_auth_header(), "User-Agent": ATTACHMENT_USER_AGENT})
     raise ValueError("attachment_zendesk_comment_missing")
 
 
