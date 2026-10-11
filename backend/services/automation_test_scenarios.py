@@ -2266,11 +2266,11 @@ class ScenarioEngine:
             "Please help us get it reviewed.",
         )
         self.find_case(ctx)
-        row = self.case_row(ctx)
-        self.record(
-            ctx, "routed to fraud_account",
-            row.get("execution_action") == "fraud_account",
-            f"execution_action={row.get('execution_action')!r}",
+        # The route lands asynchronously after case creation (preprod intake),
+        # so the routing assertion must WAIT for the field instead of reading
+        # the freshly-created row once.
+        self.wait_case_field(
+            ctx, "execution_action", "fraud_account", "routed to fraud_account"
         )
         self.wait_reply_intent(ctx, {"request_missing_information"}, "asks for review information")
         self.next_customer_turn(ctx, FRAUD_PARTIAL_INFO_BODY)
@@ -2319,11 +2319,9 @@ class ScenarioEngine:
             "Please help restore the account.",
         )
         self.find_case(ctx)
-        row = self.case_row(ctx)
-        self.record(
-            ctx, "routed to account_suspension",
-            row.get("execution_action") == "account_suspension",
-            f"execution_action={row.get('execution_action')!r}",
+        # Same asynchronous-route consideration as F1: wait, don't read once.
+        self.wait_case_field(
+            ctx, "execution_action", "account_suspension", "routed to account_suspension"
         )
         self.wait_case_field(ctx, "internal_email_send_status", "sent", "internal handoff email sent")
         self.wait_reply_intent(
