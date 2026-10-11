@@ -101,6 +101,61 @@ def test_capture_records_cached_and_reasoning_details() -> None:
     assert model_row["reasoning_tokens"] == 25
 
 
+def test_repository_usage_summary_excludes_ragflow_from_admin_totals() -> None:
+    repository = InMemoryTicketRepository()
+    repository.record_account_case_llm_usage_entries(
+        billing_ticket_id="AC-RAG-EXCLUDED",
+        entries=[
+            {
+                "provider": "openai",
+                "model": "gpt-test",
+                "stage": "account_route",
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+            },
+            {
+                "provider": "openai",
+                "model": "gpt-test",
+                "stage": "ragflow_docs_answer",
+                "prompt_tokens": 900,
+                "completion_tokens": 400,
+            },
+        ],
+    )
+    summary = repository.account_case_llm_usage_summaries(["AC-RAG-EXCLUDED"])["AC-RAG-EXCLUDED"]
+    assert summary["total_input_tokens"] == 10
+    assert summary["total_output_tokens"] == 2
+    assert summary["call_count"] == 1
+
+
+def test_flush_freezes_confirmed_price_and_source_metadata() -> None:
+    repository = InMemoryTicketRepository()
+    repository.upsert_llm_pricing(
+        {
+            "provider": "openai",
+            "model": "gpt-test",
+            "input_usd_per_1m": 1.0,
+            "cached_input_usd_per_1m": 0.1,
+            "output_usd_per_1m": 2.0,
+            "pricing_source": "user_confirmed",
+            "source_url": "https://example.com/pricing",
+            "observed_at": "2026-10-11T00:00:00+00:00",
+        }
+    )
+    with case_usage_capture(billing_ticket_id="AC-PRICE") as capture:
+        record_llm_invocation(
+            _result_with_details(prompt_tokens=1_000_000, completion_tokens=100, cached_input_tokens=200_000),
+            stage="account_route",
+        )
+        result = flush_case_usage_capture(repository, capture)
+    assert result["status"] == "complete"
+    row = repository.account_case_llm_usage_summaries(["AC-PRICE"])["AC-PRICE"]["token_by_model"][0]
+    assert row["pricing_source"] == "user_confirmed"
+    assert row["pricing_source_url"] == "https://example.com/pricing"
+    assert row["pricing_observed_at"] == "2026-10-11T00:00:00+00:00"
+    assert row["cost_usd"] == 0.8202
+
+
 def test_bind_case_overrides_identity() -> None:
     capture, token = begin_case_usage_capture(client_ticket_id="TK-1")
     capture.bind_case(billing_ticket_id="AC-1")

@@ -101,6 +101,56 @@ def end_case_usage_capture(
     _CURRENT_CAPTURE.reset(token)
 
 
+def apply_pricing_snapshot(repository: Any, entry: dict[str, Any]) -> dict[str, Any]:
+    """Freeze the current model pricing onto one usage entry before insert.
+
+    The Account and Hermes paths both write to the same usage ledger. Keeping
+    the lookup, source aliases, and cost calculation here prevents one caller
+    from silently bypassing the immutable pricing snapshot contract.
+    """
+    provider = str(entry.get("provider") or "").strip().lower()
+    model = str(entry.get("model") or "").strip()
+    pricing = None
+    getter = getattr(repository, "get_llm_pricing", None)
+    if callable(getter):
+        pricing = getter(provider, model)
+    if pricing is None:
+        static = LLM_PRICING_USD_PER_1M.get(f"{provider}:{model}")
+        if static:
+            pricing = {
+                "provider": provider,
+                "model": model,
+                "input_usd_per_1m": static.get("input"),
+                "cached_input_usd_per_1m": static.get("cached_input"),
+                "output_usd_per_1m": static.get("output"),
+                "embedding_usd_per_1m": static.get("embedding"),
+                "pricing_source": "user_confirmed" if any(v is not None for v in static.values()) else "unpriced",
+            }
+    if pricing:
+        for field in (
+            "input_usd_per_1m",
+            "cached_input_usd_per_1m",
+            "output_usd_per_1m",
+            "embedding_usd_per_1m",
+        ):
+            entry[field] = pricing.get(field)
+        entry["pricing_source"] = str(pricing.get("pricing_source") or "unpriced")
+        entry["pricing_source_url"] = pricing.get("pricing_source_url") or pricing.get("source_url")
+        entry["pricing_observed_at"] = pricing.get("pricing_observed_at") or pricing.get("observed_at")
+        entry["cost_usd"] = cost_from_snapshot(
+            pricing,
+            {
+                "input_tokens": entry.get("prompt_tokens", entry.get("input_tokens")),
+                "output_tokens": entry.get("completion_tokens", entry.get("output_tokens")),
+                "cached_input_tokens": entry.get("cached_input_tokens"),
+            },
+        )
+    else:
+        entry["pricing_source"] = "legacy_unpriced"
+        entry["cost_usd"] = None
+    return entry
+
+
 def flush_case_usage_capture(repository: Any, capture: CaseUsageCapture) -> dict[str, Any]:
     """Structured persistence result; never raises.
 
@@ -130,32 +180,7 @@ def flush_case_usage_capture(repository: Any, capture: CaseUsageCapture) -> dict
         }
     try:
         for entry in capture.entries:
-            provider = str(entry.get("provider") or "").strip().lower()
-            model = str(entry.get("model") or "").strip()
-            pricing = None
-            getter = getattr(repository, "get_llm_pricing", None)
-            if callable(getter):
-                pricing = getter(provider, model)
-            if pricing is None:
-                static = LLM_PRICING_USD_PER_1M.get(f"{provider}:{model}")
-                if static:
-                    pricing = {
-                        "provider": provider,
-                        "model": model,
-                        "input_usd_per_1m": static.get("input"),
-                        "cached_input_usd_per_1m": static.get("cached_input"),
-                        "output_usd_per_1m": static.get("output"),
-                        "embedding_usd_per_1m": static.get("embedding"),
-                        "pricing_source": "user_confirmed" if any(v is not None for v in static.values()) else "unpriced",
-                    }
-            if pricing:
-                for field in ("input_usd_per_1m", "cached_input_usd_per_1m", "output_usd_per_1m", "embedding_usd_per_1m", "pricing_source_url", "pricing_observed_at"):
-                    entry[field] = pricing.get(field)
-                entry["pricing_source"] = str(pricing.get("pricing_source") or "unpriced")
-                entry["cost_usd"] = cost_from_snapshot(pricing, {"input_tokens": entry.get("prompt_tokens"), "output_tokens": entry.get("completion_tokens"), "cached_input_tokens": entry.get("cached_input_tokens")})
-            else:
-                entry["pricing_source"] = "legacy_unpriced"
-                entry["cost_usd"] = None
+            apply_pricing_snapshot(repository, entry)
         inserted = repository.record_account_case_llm_usage_entries(
             billing_ticket_id=billing_ticket_id,
             client_ticket_id=capture.client_ticket_id,

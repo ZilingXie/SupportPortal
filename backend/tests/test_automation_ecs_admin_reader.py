@@ -35,8 +35,8 @@ def _preproduction_settings() -> object:
     )
 
 
-def _reader() -> AutomationEcsAdminReader:
-    return AutomationEcsAdminReader(_production_settings())
+def _reader(*, pricing_write_dsn: str | None = None) -> AutomationEcsAdminReader:
+    return AutomationEcsAdminReader(_production_settings(), pricing_write_dsn=pricing_write_dsn)
 
 
 @pytest.mark.parametrize(
@@ -80,6 +80,38 @@ def test_every_reader_connection_starts_repeatable_read_read_only_transaction() 
     cursor.execute.assert_called_once_with(
         "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
     )
+
+
+def test_pricing_writer_requires_a_distinct_configured_dsn() -> None:
+    assert _reader().pricing_write_configured is False
+    assert _reader(pricing_write_dsn="postgresql://reader.invalid/supportportal").pricing_write_configured is False
+    assert _reader(pricing_write_dsn="postgresql://writer.invalid/supportportal").pricing_write_configured is True
+
+
+def test_pricing_writer_does_not_use_the_read_only_admin_dsn() -> None:
+    reader = _reader(pricing_write_dsn="postgresql://writer.invalid/supportportal")
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+    connection.transaction.return_value.__enter__.return_value = None
+    cursor = MagicMock()
+    cursor.__enter__.return_value = cursor
+    cursor.fetchone.return_value = {"provider": "openai"}
+    connection.cursor.return_value = cursor
+
+    with patch(
+        "backend.services.automation_ecs_admin_reader.psycopg.connect",
+        return_value=connection,
+    ) as connect:
+        assert reader.claim_pricing_check("openai", "gpt-test") is True
+
+    connect.assert_called_once_with(
+        "postgresql://writer.invalid/supportportal",
+        row_factory=pytest.importorskip("psycopg.rows").dict_row,
+    )
+    query = cursor.execute.call_args.args[0].as_string()
+    assert "discovery_queued" in query
+    assert "INSERT INTO \"supportportal_production\".\"support_llm_pricing\" AS pricing" in query
+    assert "WHERE pricing.last_checked_at" in query
 
 
 def test_account_projection_never_returns_password_hash() -> None:

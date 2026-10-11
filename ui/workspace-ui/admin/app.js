@@ -931,7 +931,7 @@ function renderTokenModelRows(models, costByModel) {
       ? `<span class="admin-token-cost-unknown" title="model pricing not configured">—</span>`
       : formatTokenCostUsd(cost);
     const source = String(model.pricing_source || "legacy_unpriced");
-    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
+    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "mixed" ? "多种来源" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
     const sourceCell = model.pricing_source_url ? `<a href="${escapeHtml(model.pricing_source_url)}" target="_blank" rel="noreferrer">${sourceLabel}</a>` : sourceLabel;
     return `<tr><td>${escapeHtml(modelKey)}</td><td>${formatTokenCount(model.input_tokens)}</td><td>${formatTokenCount(model.cached_input_tokens)}</td><td>${formatTokenCount(model.output_tokens)}</td><td>${formatTokenCount(model.embedding_tokens)}</td><td>${costCell}${source === "assistant_found" ? " <small>估算</small>" : ""}</td><td>${sourceCell}</td></tr>`;
   }).join("");
@@ -993,7 +993,7 @@ function renderModelPricingStrip() {
       entry.embedding_usd_per_1m != null ? `emb ${formatModelRateUsd(entry.embedding_usd_per_1m)}` : "",
     ].filter(Boolean);
     const source = String(entry.pricing_source || "unpriced");
-    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
+    const sourceLabel = source === "assistant_found" ? "助手查找" : source === "user_confirmed" ? "用户确认" : source === "mixed" ? "多种来源" : source === "legacy_unpriced" ? "历史未定价" : "未找到价格";
     const date = entry.observed_at ? ` · ${escapeHtml(String(entry.observed_at).slice(0, 10))}` : "";
     const link = entry.source_url ? ` · <a href="${escapeHtml(entry.source_url)}" target="_blank" rel="noreferrer">查看来源</a>` : "";
     if (!entry.priced || !dimensions.length) {
@@ -1794,10 +1794,15 @@ async function loadAdminData() {
     auditEvents = Array.isArray(auditPayload.events) ? auditPayload.events : [];
     scheduleData = schedulePayload || { timezone: "Asia/Shanghai", engineers: [] };
     automationData = automationPayload || { metrics: {}, cases: [] };
-    const discoverable = [];
+    const discoverableByModel = new Map();
     (automationData.cases || []).forEach((item) => ((item.token_usage || {}).token_by_model || []).forEach((model) => {
-      if (model.pricing_source === "legacy_unpriced" || model.pricing_source === "unpriced") discoverable.push({ provider: model.provider, model: model.model });
+      if (model.pricing_source === "legacy_unpriced" || model.pricing_source === "unpriced") {
+        const provider = String(model.provider || "").trim();
+        const modelName = String(model.model || "").trim();
+        if (provider && modelName) discoverableByModel.set(`${provider}\u0000${modelName}`, { provider, model: modelName });
+      }
     }));
+    const discoverable = Array.from(discoverableByModel.values());
     if (discoverable.length) {
       fetchJson("/api/workspace/admin/pricing/discover", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ models: discoverable }) }).catch(() => {});
     }

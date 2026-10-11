@@ -12,10 +12,16 @@ class _RecordingRepository:
         *,
         account_case: dict[str, Any] | None = None,
         raise_on_write: bool = False,
+        pricing: dict[str, Any] | None = None,
     ) -> None:
         self.account_case = account_case
         self.raise_on_write = raise_on_write
+        self.pricing = pricing
         self.writes: list[dict[str, Any]] = []
+
+    def get_llm_pricing(self, provider: str, model: str) -> dict[str, Any] | None:
+        del provider, model
+        return self.pricing
 
     def get_account_case_by_zendesk_ticket_id(
         self, zendesk_ticket_id: str, *, processing_profile: str
@@ -96,6 +102,43 @@ def test_openai_style_detail_subobjects_are_parsed() -> None:
     entry = repository.writes[0]["entries"][0]
     assert entry["cached_input_tokens"] == 300
     assert entry["reasoning_tokens"] == 80
+
+
+def test_completed_run_freezes_registry_price_before_direct_hermes_write() -> None:
+    repository = _RecordingRepository(
+        account_case={"billing_ticket_id": "AC-1"},
+        pricing={
+            "provider": "hermes",
+            "model": "hermes-agent",
+            "input_usd_per_1m": 1.0,
+            "cached_input_usd_per_1m": 0.1,
+            "output_usd_per_1m": 2.0,
+            "pricing_source": "assistant_found",
+            "source_url": "https://example.com/pricing",
+            "observed_at": "2026-10-11T00:00:00+00:00",
+        },
+    )
+    processor = _processor(repository)
+
+    assert processor._record_hermes_run_usage(
+        {"zendesk_ticket_id": "13500"},
+        "run-priced",
+        {
+            "status": "completed",
+            "model": "hermes-agent",
+            "usage": {
+                "input_tokens": 1_000_000,
+                "output_tokens": 100,
+                "input_tokens_details": {"cached_tokens": 200_000},
+            },
+        },
+    ) is True
+
+    entry = repository.writes[0]["entries"][0]
+    assert entry["pricing_source"] == "assistant_found"
+    assert entry["pricing_source_url"] == "https://example.com/pricing"
+    assert entry["pricing_observed_at"] == "2026-10-11T00:00:00+00:00"
+    assert entry["cost_usd"] == 0.8202
 
 
 def test_missing_usage_reports_false_without_fake_zero() -> None:

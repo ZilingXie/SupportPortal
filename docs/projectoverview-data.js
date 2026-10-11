@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T06:03:40Z",
-  "source_base_commit": "434ee3565e49544d562a8afaa3aa48f589419702",
-  "registry_digest": "37ed4cb69985441c854e74ecec4f37bd964495f8bbb10d05f7489ca9659ff2a9",
+  "generated_at": "2026-10-11T07:53:19Z",
+  "source_base_commit": "e5b7b2ad2727ac1d7a683688c3f6c28268060f90",
+  "registry_digest": "c17d62f8cca789ab22ef124633a8e9fd4f579b0aa1f24abc69fc6f5ac79e0528",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -17659,9 +17659,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "updated_at": "2026-10-11",
       "next_action": "完成 migration、usage 快照、查价端点、Admin reader/UI 和定向合同测试；本轮不部署 Production。",
       "acceptance_criteria": [
-        "C1-C6 见 docs/plans/admin-pricing-discovery-v1.md",
+        "C1-C7 见 docs/plans/admin-pricing-discovery-v1.md",
         "RAG usage 保持 excluded_by_admin_policy，历史 usage 不回填",
-        "未知模型查价失败不影响 Admin 页面，缺配置保持 unpriced",
+        "未知模型查价失败不影响 Admin 页面，缺配置保持 unpriced；缺少独立价格写连接时查价端点 fail closed",
         "定向 Python、PostgreSQL migration、UI contract、node --check 和 diff check 通过"
       ],
       "blockers": [],

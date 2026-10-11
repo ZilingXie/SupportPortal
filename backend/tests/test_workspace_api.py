@@ -39,6 +39,10 @@ class _FakeAdminReader:
         }
         self.agent_config_payload: dict = {}
         self.release_notes_payload = {"releases": []}
+        self.pricing_write_configured = False
+        self.pricing_rows: dict[tuple[str, str], dict] = {}
+        self.pricing_claims: list[tuple[str, str]] = []
+        self.pricing_discoveries: list[dict] = []
 
     def _record(self, name: str, **kwargs: dict) -> None:
         self.calls.append((name, kwargs))
@@ -74,6 +78,28 @@ class _FakeAdminReader:
     def release_notes(self) -> dict:
         self._record("release_notes")
         return self.release_notes_payload
+
+    def get_pricing(self, provider: str, model: str) -> dict | None:
+        return self.pricing_rows.get((provider, model))
+
+    def claim_pricing_check(self, provider: str, model: str) -> bool:
+        key = (provider, model)
+        if key in self.pricing_claims:
+            return False
+        self.pricing_claims.append(key)
+        return True
+
+    def discover_pricing(self, pricing: dict) -> dict:
+        self.pricing_discoveries.append(pricing)
+        return pricing
+
+    def mark_pricing_check_error(self, provider: str, model: str, error: str) -> None:
+        self.pricing_rows[(provider, model)] = {
+            "provider": provider,
+            "model": model,
+            "pricing_source": "unpriced",
+            "last_error": error,
+        }
 
 
 class WorkspaceApiTests(unittest.TestCase):
@@ -403,6 +429,44 @@ class WorkspaceApiTests(unittest.TestCase):
         self.assertEqual(personas.status_code, 200, personas.text)
         persona_map = {item["persona_key"]: item for item in personas.json()["personas"]}
         self.assertEqual(set(persona_map), {"default-support", "sid-bright", "sid-precise"})
+
+    def test_admin_pricing_discovery_requires_writer_and_deduplicates_models(self) -> None:
+        headers = self._admin_headers()
+        response = self.client.post(
+            "/api/workspace/admin/pricing/discover",
+            headers=headers,
+            json={"models": [{"provider": "openai", "model": "gpt-x"}]},
+        )
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertIn("ECS_PRODUCTION_PRICING_WRITE_DSN", response.json()["detail"])
+
+        self.admin_reader.pricing_write_configured = True
+        self.admin_reader.pricing_rows[("openai", "gpt-confirmed")] = {
+            "pricing_source": "user_confirmed"
+        }
+        with patch(
+            "backend.services.llm_pricing_discovery.discover_pricing",
+            return_value={
+                "provider": "openai",
+                "model": "gpt-x",
+                "pricing_source": "assistant_found",
+            },
+        ):
+            response = self.client.post(
+                "/api/workspace/admin/pricing/discover",
+                headers=headers,
+                json={
+                    "models": [
+                        {"provider": "OpenAI", "model": "gpt-x"},
+                        {"provider": "openai", "model": "gpt-x"},
+                        {"provider": "openai", "model": "gpt-confirmed"},
+                        {"provider": "", "model": "ignored"},
+                    ]
+                },
+            )
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual(response.json()["queued"], [{"provider": "openai", "model": "gpt-x"}])
+        self.assertEqual(self.admin_reader.pricing_claims, [("openai", "gpt-x")])
 
     def test_admin_reads_fail_closed_without_ecs_production_dsn(self) -> None:
         main._workspace_admin_reader = self.original_admin_reader_factory

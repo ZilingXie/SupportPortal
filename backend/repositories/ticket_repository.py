@@ -895,8 +895,14 @@ def _account_case_list_record(item: dict[str, Any]) -> dict[str, Any]:
 
 
 def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    rows = [
+        row
+        for row in rows
+        if str(row.get("stage") or "").strip() != "ragflow_docs_answer"
+    ]
     ledger: list[dict[str, Any]] = []
     stage_totals: dict[str, dict[str, int]] = {}
+    model_pricing: dict[tuple[str, str], dict[str, Any]] = {}
     for row in rows:
         prompt_tokens = _safe_non_negative_int(row.get("prompt_tokens"), 0)
         completion_tokens = _safe_non_negative_int(row.get("completion_tokens"), 0)
@@ -913,6 +919,33 @@ def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[s
                 reasoning_tokens=reasoning_tokens,
             )
         )
+        model_key = (
+            str(row.get("provider") or "").strip().lower(),
+            str(row.get("model") or "").strip(),
+        )
+        pricing = model_pricing.setdefault(
+            model_key,
+            {
+                "pricing_sources": set(),
+                "pricing_source_urls": [],
+                "pricing_observed_at": [],
+                "cost_usd": 0.0,
+                "cost_usd_available": True,
+            },
+        )
+        source = str(row.get("pricing_source") or "legacy_unpriced").strip()
+        if source:
+            pricing["pricing_sources"].add(source)
+        for field, key in (
+            ("pricing_source_url", "pricing_source_urls"),
+            ("pricing_observed_at", "pricing_observed_at"),
+        ):
+            value = row.get(field)
+            if value is not None and value not in pricing[key]:
+                pricing[key].append(value)
+        pricing["cost_usd"] += float(row.get("cost_usd") or 0)
+        if row.get("cost_usd") is None:
+            pricing["cost_usd_available"] = False
         stage_bucket = stage_totals.setdefault(
             str(row.get("stage") or ""),
             {"input_tokens": 0, "output_tokens": 0, "calls": 0},
@@ -922,6 +955,23 @@ def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[s
         stage_bucket["calls"] += 1
     summary = aggregate_usage_ledger(ledger)
     summary.pop("entries", None)
+    for model_usage in summary["token_by_model"]:
+        pricing = model_pricing.get(
+            (
+                str(model_usage.get("provider") or "").strip().lower(),
+                str(model_usage.get("model") or "").strip(),
+            ),
+            {},
+        )
+        sources = sorted(pricing.get("pricing_sources") or {"legacy_unpriced"})
+        model_usage["pricing_sources"] = sources
+        model_usage["pricing_source"] = sources[0] if len(sources) == 1 else "mixed"
+        urls = pricing.get("pricing_source_urls") or []
+        observed = pricing.get("pricing_observed_at") or []
+        model_usage["pricing_source_url"] = urls[0] if len(urls) == 1 else None
+        model_usage["pricing_observed_at"] = observed[0] if len(observed) == 1 else None
+        model_usage["cost_usd"] = round(float(pricing.get("cost_usd") or 0), 8)
+        model_usage["cost_usd_available"] = bool(pricing.get("cost_usd_available"))
     summary["call_count"] = len(ledger)
     summary["stage_totals"] = stage_totals
     summary["pricing_sources"] = sorted({str(row.get("pricing_source") or "legacy_unpriced") for row in rows})
@@ -11929,7 +11979,50 @@ class PostgresTicketRepository(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0"
                     ).format(self._table("support_account_case_llm_usage"))
                 )
-                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (provider TEXT NOT NULL, model TEXT NOT NULL, input_usd_per_1m NUMERIC(20,8), cached_input_usd_per_1m NUMERIC(20,8), output_usd_per_1m NUMERIC(20,8), embedding_usd_per_1m NUMERIC(20,8), pricing_source TEXT NOT NULL DEFAULT 'unpriced', source_url TEXT, observed_at TIMESTAMPTZ, last_checked_at TIMESTAMPTZ, last_error TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (provider, model))").format(self._table("support_llm_pricing")))
+                pricing_table = self._table("support_llm_pricing")
+                cur.execute(
+                    sql.SQL(
+                        "CREATE TABLE IF NOT EXISTS {} ("
+                        "provider TEXT NOT NULL, model TEXT NOT NULL, "
+                        "input_usd_per_1m NUMERIC(20,8), "
+                        "cached_input_usd_per_1m NUMERIC(20,8), "
+                        "output_usd_per_1m NUMERIC(20,8), "
+                        "embedding_usd_per_1m NUMERIC(20,8), "
+                        "pricing_source TEXT NOT NULL DEFAULT 'unpriced', "
+                        "source_url TEXT, observed_at TIMESTAMPTZ, "
+                        "last_checked_at TIMESTAMPTZ, last_error TEXT, "
+                        "updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), "
+                        "PRIMARY KEY (provider, model))"
+                    ).format(pricing_table)
+                )
+                cur.execute(
+                    sql.SQL("ALTER TABLE {} DROP CONSTRAINT IF EXISTS {}").format(
+                        pricing_table,
+                        sql.Identifier("support_llm_pricing_source_check"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD CONSTRAINT {} CHECK "
+                        "(pricing_source IN ('assistant_found','user_confirmed','unpriced'))"
+                    ).format(
+                        pricing_table,
+                        sql.Identifier("support_llm_pricing_source_check"),
+                    )
+                )
+                cur.execute(
+                    sql.SQL(
+                        "INSERT INTO {} "
+                        "(provider, model, input_usd_per_1m, cached_input_usd_per_1m, "
+                        "output_usd_per_1m, pricing_source) VALUES "
+                        "(%s, %s, %s, %s, %s, %s), (%s, %s, %s, %s, %s, %s) "
+                        "ON CONFLICT (provider, model) DO NOTHING"
+                    ).format(pricing_table),
+                    (
+                        "openai", "gpt-5.6-luna", 0.2, 0.02, 1.2, "user_confirmed",
+                        "openai", "gpt-6-astra", 10.0, 1.0, 50.0, "user_confirmed",
+                    ),
+                )
                 for column, definition in (("input_usd_per_1m", "NUMERIC(20,8)"), ("cached_input_usd_per_1m", "NUMERIC(20,8)"), ("output_usd_per_1m", "NUMERIC(20,8)"), ("embedding_usd_per_1m", "NUMERIC(20,8)"), ("cost_usd", "NUMERIC(20,8)"), ("pricing_source", "TEXT NOT NULL DEFAULT 'legacy_unpriced'"), ("pricing_source_url", "TEXT"), ("pricing_observed_at", "TIMESTAMPTZ")):
                     cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(self._table("support_account_case_llm_usage"), sql.Identifier(column), sql.SQL(definition)))
                 cur.execute(

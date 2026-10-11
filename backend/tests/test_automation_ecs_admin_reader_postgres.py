@@ -300,3 +300,32 @@ def test_postgres_reader_is_read_only_and_excludes_schema_and_namespace_traps(
     assert metrics["billing"]["internal_email_failed"] == 1
     assert transaction_settings == {"read_only": "on", "isolation": "repeatable read"}
     assert after == before
+
+
+def test_postgres_pricing_claim_and_write_use_separate_connection(
+    admin_reader: AutomationEcsAdminReader,
+) -> None:
+    writer_dsn = f"{DSN}{'&' if '?' in DSN else '?'}application_name=admin_pricing_writer"
+    writer = AutomationEcsAdminReader(admin_reader.settings, pricing_write_dsn=writer_dsn)
+    assert writer.pricing_write_configured is True
+
+    assert writer.claim_pricing_check("openai", "gpt-acceptance") is True
+    assert writer.claim_pricing_check("openai", "gpt-acceptance") is False
+    assert writer.claim_pricing_check("openai", "gpt-acceptance", cooldown_seconds=0) is True
+
+    stored = writer.discover_pricing(
+        {
+            "provider": "openai",
+            "model": "gpt-acceptance",
+            "input_usd_per_1m": 1.0,
+            "cached_input_usd_per_1m": 0.1,
+            "output_usd_per_1m": 2.0,
+            "pricing_source": "assistant_found",
+            "source_url": "https://example.com/pricing",
+            "observed_at": "2026-10-11T00:00:00+00:00",
+            "last_checked_at": "2026-10-11T00:00:00+00:00",
+        }
+    )
+    assert stored["pricing_source"] == "assistant_found"
+    assert stored["source_url"] == "https://example.com/pricing"
+    assert writer.get_pricing("openai", "gpt-acceptance")["input_usd_per_1m"] == 1

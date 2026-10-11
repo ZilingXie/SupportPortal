@@ -138,7 +138,12 @@ class EmptyAutomationEcsAdminReader:
 class AutomationEcsAdminReader:
     """Read the environment-scoped Admin contract without importing the legacy application."""
 
-    def __init__(self, settings: AutomationEcsSettings) -> None:
+    def __init__(
+        self,
+        settings: AutomationEcsSettings,
+        *,
+        pricing_write_dsn: str | None = None,
+    ) -> None:
         if settings.environment not in ADMIN_SCHEMAS:
             raise RuntimeError("ECS Admin requires preproduction or production")
         if settings.db_schema != ADMIN_SCHEMAS[settings.environment]:
@@ -149,6 +154,7 @@ class AutomationEcsAdminReader:
             raise RuntimeError("ECS Admin requires AUTOMATION_DB_DSN")
         self.settings = settings
         self._schema = sql.Identifier(settings.db_schema)
+        self._pricing_write_dsn = str(pricing_write_dsn or "").strip()
 
     def _table(self, name: str) -> sql.Composed:
         return sql.SQL("{}.{}").format(self._schema, sql.Identifier(name))
@@ -160,11 +166,22 @@ class AutomationEcsAdminReader:
                 cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 yield cursor
 
+    @property
+    def pricing_write_configured(self) -> bool:
+        return bool(self._pricing_write_dsn and self._pricing_write_dsn != self.settings.db_dsn)
+
+    def _pricing_write_connection(self) -> psycopg.Connection[Any]:
+        if not self.pricing_write_configured:
+            raise RuntimeError(
+                "ECS_PRODUCTION_PRICING_WRITE_DSN must be a separate writable connection"
+            )
+        return psycopg.connect(self._pricing_write_dsn, row_factory=dict_row)
+
     def discover_pricing(self, pricing: dict[str, Any]) -> dict[str, Any]:
         """Persist one validated assistant-found pricing result."""
         fields = ("input_usd_per_1m", "cached_input_usd_per_1m", "output_usd_per_1m", "embedding_usd_per_1m", "pricing_source", "source_url", "observed_at", "last_checked_at", "last_error")
         values = [pricing.get(field) for field in fields]
-        with psycopg.connect(self.settings.db_dsn, row_factory=dict_row) as connection:
+        with self._pricing_write_connection() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 cursor.execute(sql.SQL("INSERT INTO {} (provider,model,input_usd_per_1m,cached_input_usd_per_1m,output_usd_per_1m,embedding_usd_per_1m,pricing_source,source_url,observed_at,last_checked_at,last_error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (provider,model) DO UPDATE SET input_usd_per_1m=EXCLUDED.input_usd_per_1m,cached_input_usd_per_1m=EXCLUDED.cached_input_usd_per_1m,output_usd_per_1m=EXCLUDED.output_usd_per_1m,embedding_usd_per_1m=EXCLUDED.embedding_usd_per_1m,pricing_source=EXCLUDED.pricing_source,source_url=EXCLUDED.source_url,observed_at=EXCLUDED.observed_at,last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,updated_at=NOW() RETURNING *").format(self._table("support_llm_pricing")), [pricing.get("provider"), pricing.get("model"), *values])
                 return dict(cursor.fetchone())
@@ -177,9 +194,35 @@ class AutomationEcsAdminReader:
 
     def mark_pricing_check_error(self, provider: str, model: str, error: str) -> None:
         now = datetime.now(timezone.utc)
-        with psycopg.connect(self.settings.db_dsn) as connection:
+        with self._pricing_write_connection() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 cursor.execute(sql.SQL("INSERT INTO {} (provider,model,pricing_source,last_checked_at,last_error) VALUES (%s,%s,'unpriced',%s,%s) ON CONFLICT (provider,model) DO UPDATE SET last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,updated_at=NOW()").format(self._table("support_llm_pricing")), (str(provider).strip().lower(), str(model).strip(), now, str(error)[:1000]))
+
+    def claim_pricing_check(self, provider: str, model: str, *, cooldown_seconds: int = 86400) -> bool:
+        """Atomically reserve one provider/model search during the cooldown."""
+        provider = str(provider or "").strip().lower()
+        model = str(model or "").strip()
+        if not provider or not model:
+            return False
+        with self._pricing_write_connection() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {} AS pricing (provider, model, pricing_source, last_checked_at, last_error)
+                        VALUES (%s, %s, 'unpriced', NOW(), 'discovery_queued')
+                        ON CONFLICT (provider, model) DO UPDATE SET
+                            last_checked_at = NOW(),
+                            last_error = 'discovery_queued',
+                            updated_at = NOW()
+                        WHERE pricing.last_checked_at IS NULL
+                           OR pricing.last_checked_at < NOW() - (%s * INTERVAL '1 second')
+                        RETURNING provider
+                        """
+                    ).format(self._table("support_llm_pricing")),
+                    (provider, model, cooldown_seconds),
+                )
+                return cursor.fetchone() is not None
 
     def _accounts(self, cursor: psycopg.Cursor[dict[str, Any]]) -> list[dict[str, Any]]:
         cursor.execute(

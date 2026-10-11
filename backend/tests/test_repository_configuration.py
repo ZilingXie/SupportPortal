@@ -2053,6 +2053,10 @@ class RepositoryConfigurationTests(unittest.TestCase):
         pricing_migration = Path("backend/sql/migrations/2026_10_11_admin_llm_pricing.sql").read_text(encoding="utf-8")
         self.assertIn("support_llm_pricing", pricing_migration)
         self.assertIn("pricing_source", pricing_migration)
+        ticket_storage = Path("backend/sql/ticket_storage.sql").read_text(encoding="utf-8")
+        self.assertIn("support_account_case_llm_usage", ticket_storage)
+        self.assertIn("support_llm_pricing_source_check", ticket_storage)
+        self.assertIn("gpt-6-astra", ticket_storage)
 
     def test_schema_already_current_gate_variants(self) -> None:
         import os as _os

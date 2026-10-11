@@ -16,6 +16,12 @@ CREATE TABLE IF NOT EXISTS supportportal.support_llm_pricing (
     CONSTRAINT support_llm_pricing_source_check CHECK (pricing_source IN ('assistant_found','user_confirmed','unpriced'))
 );
 
+ALTER TABLE supportportal.support_llm_pricing
+    DROP CONSTRAINT IF EXISTS support_llm_pricing_source_check;
+ALTER TABLE supportportal.support_llm_pricing
+    ADD CONSTRAINT support_llm_pricing_source_check
+    CHECK (pricing_source IN ('assistant_found','user_confirmed','unpriced'));
+
 ALTER TABLE supportportal.support_account_case_llm_usage
     ADD COLUMN IF NOT EXISTS input_usd_per_1m NUMERIC(20,8),
     ADD COLUMN IF NOT EXISTS cached_input_usd_per_1m NUMERIC(20,8),

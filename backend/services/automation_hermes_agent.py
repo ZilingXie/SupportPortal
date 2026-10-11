@@ -51,6 +51,7 @@ from backend.services.prompt_runtime import (
     use_prompt_runtime_snapshot,
 )
 from backend.services.token_usage import build_usage_ledger_entry
+from backend.services.llm_usage_capture import apply_pricing_snapshot
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_agent")
 
@@ -1972,6 +1973,7 @@ class HermesAgentTurnProcessor:
                     self.environment,
                 )
                 return False
+            apply_pricing_snapshot(repository, entry)
             repository.record_account_case_llm_usage_entries(
                 billing_ticket_id=billing_ticket_id,
                 client_ticket_id=ticket_id,

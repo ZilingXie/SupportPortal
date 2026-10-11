@@ -108,6 +108,7 @@ _ENV_EXACT_DESCRIPTIONS = {
     "OPENAI_API_KEY": "Credential used to authenticate requests to the OpenAI API.",
     "TICKET_DB_DSN": "PostgreSQL connection string used by the ticket and workspace repository.",
     "TICKET_DB_MIGRATION_DSN": "Privileged PostgreSQL connection string used only for ticket schema migrations.",
+    "ECS_PRODUCTION_PRICING_WRITE_DSN": "Separate restricted PostgreSQL connection used only to save Admin model pricing discoveries.",
     "PGVECTOR_DSN": "PostgreSQL connection string used by the pgvector knowledge store.",
     "WORKSPACE_AUTH_SECRET": "Secret used to sign and verify Workspace authentication tokens.",
     "WORKSPACE_PUBLIC_BASE_URL": "Public base URL used when SupportPortal creates Workspace links.",

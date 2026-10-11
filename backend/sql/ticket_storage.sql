@@ -112,6 +112,63 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_cases_profile_zendesk_tick
     ON support_account_cases (processing_profile, zendesk_ticket_id)
     WHERE zendesk_ticket_id IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS support_account_case_llm_usage (
+    id BIGSERIAL PRIMARY KEY,
+    billing_ticket_id TEXT NOT NULL,
+    client_ticket_id TEXT,
+    stage TEXT NOT NULL,
+    provider TEXT NOT NULL DEFAULT '',
+    model TEXT NOT NULL DEFAULT '',
+    prompt_tokens INTEGER NOT NULL DEFAULT 0,
+    completion_tokens INTEGER NOT NULL DEFAULT 0,
+    cached_input_tokens INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+    source TEXT NOT NULL DEFAULT 'supportportal',
+    source_run_id TEXT,
+    input_usd_per_1m NUMERIC(20,8),
+    cached_input_usd_per_1m NUMERIC(20,8),
+    output_usd_per_1m NUMERIC(20,8),
+    embedding_usd_per_1m NUMERIC(20,8),
+    cost_usd NUMERIC(20,8),
+    pricing_source TEXT NOT NULL DEFAULT 'legacy_unpriced',
+    pricing_source_url TEXT,
+    pricing_observed_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_support_account_case_llm_usage_billing
+    ON support_account_case_llm_usage (billing_ticket_id);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_support_account_case_llm_usage_source_run
+    ON support_account_case_llm_usage (source, source_run_id)
+    WHERE source_run_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS support_llm_pricing (
+    provider TEXT NOT NULL,
+    model TEXT NOT NULL,
+    input_usd_per_1m NUMERIC(20,8),
+    cached_input_usd_per_1m NUMERIC(20,8),
+    output_usd_per_1m NUMERIC(20,8),
+    embedding_usd_per_1m NUMERIC(20,8),
+    pricing_source TEXT NOT NULL DEFAULT 'unpriced',
+    source_url TEXT,
+    observed_at TIMESTAMPTZ,
+    last_checked_at TIMESTAMPTZ,
+    last_error TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (provider, model),
+    CONSTRAINT support_llm_pricing_source_check
+        CHECK (pricing_source IN ('assistant_found', 'user_confirmed', 'unpriced'))
+);
+
+INSERT INTO support_llm_pricing
+    (provider, model, input_usd_per_1m, cached_input_usd_per_1m,
+     output_usd_per_1m, pricing_source)
+VALUES
+    ('openai', 'gpt-5.6-luna', 0.2, 0.02, 1.2, 'user_confirmed'),
+    ('openai', 'gpt-6-astra', 10.0, 1.0, 50.0, 'user_confirmed')
+ON CONFLICT (provider, model) DO NOTHING;
+
 CREATE TABLE IF NOT EXISTS support_account_zendesk_comment_deliveries (
     account_case_id TEXT NOT NULL REFERENCES support_account_cases(account_case_id) ON DELETE CASCADE,
     message_id TEXT NOT NULL,

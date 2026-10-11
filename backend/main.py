@@ -12473,6 +12473,7 @@ def _workspace_admin_reader() -> AutomationEcsAdminReader:
                         "require the ECS production read-only database role."
                     ),
                 )
+            pricing_write_dsn = (os.getenv("ECS_PRODUCTION_PRICING_WRITE_DSN") or "").strip()
             _workspace_admin_reader_instance = AutomationEcsAdminReader(
                 AutomationEcsSettings(
                     environment="production",
@@ -12491,7 +12492,8 @@ def _workspace_admin_reader() -> AutomationEcsAdminReader:
                     build_time="",
                     prompt_release_id="unknown",
                     allow_memory=False,
-                )
+                ),
+                pricing_write_dsn=pricing_write_dsn,
             )
     return _workspace_admin_reader_instance
 
@@ -12724,7 +12726,16 @@ async def discover_workspace_admin_pricing(
     if not isinstance(models, list) or len(models) > 50:
         raise HTTPException(status_code=422, detail="models must be a list of at most 50 items")
     reader = _workspace_admin_reader()
+    if not reader.pricing_write_configured:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "ECS_PRODUCTION_PRICING_WRITE_DSN is not configured as a separate "
+                "writable pricing connection"
+            ),
+        )
     queued: list[dict[str, str]] = []
+    queued_keys: set[tuple[str, str]] = set()
     for item in models:
         if not isinstance(item, dict):
             continue
@@ -12732,7 +12743,13 @@ async def discover_workspace_admin_pricing(
         model = str(item.get("model") or "").strip()
         if not provider or not model or len(provider) > 64 or len(model) > 256:
             continue
+        key = (provider, model)
+        if key in queued_keys:
+            continue
         current = reader.get_pricing(provider, model)
+        current_source = str((current or {}).get("pricing_source") or "").strip()
+        if current_source in {"assistant_found", "user_confirmed"}:
+            continue
         checked = current.get("last_checked_at") if current else None
         if checked:
             try:
@@ -12740,7 +12757,10 @@ async def discover_workspace_admin_pricing(
                     continue
             except Exception:
                 pass
+        if not reader.claim_pricing_check(provider, model):
+            continue
         queued.append({"provider": provider, "model": model})
+        queued_keys.add(key)
 
     def _run(items: list[dict[str, str]]) -> None:
         from backend.services.llm_pricing_discovery import discover_pricing
