@@ -12713,6 +12713,51 @@ def get_workspace_admin_account_automation(
     )
 
 
+@app.post("/api/workspace/admin/pricing/discover", status_code=202)
+async def discover_workspace_admin_pricing(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _principal: WorkspacePrincipal = Depends(require_workspace_admin),
+) -> dict[str, Any]:
+    body = await request.json()
+    models = body.get("models") if isinstance(body, dict) else []
+    if not isinstance(models, list) or len(models) > 50:
+        raise HTTPException(status_code=422, detail="models must be a list of at most 50 items")
+    reader = _workspace_admin_reader()
+    queued: list[dict[str, str]] = []
+    for item in models:
+        if not isinstance(item, dict):
+            continue
+        provider = str(item.get("provider") or "").strip().lower()
+        model = str(item.get("model") or "").strip()
+        if not provider or not model or len(provider) > 64 or len(model) > 256:
+            continue
+        current = reader.get_pricing(provider, model)
+        checked = current.get("last_checked_at") if current else None
+        if checked:
+            try:
+                if (datetime.now(timezone.utc) - _parse_timestamp(checked)).total_seconds() < 86400:
+                    continue
+            except Exception:
+                pass
+        queued.append({"provider": provider, "model": model})
+
+    def _run(items: list[dict[str, str]]) -> None:
+        from backend.services.llm_pricing_discovery import discover_pricing
+        for item in items:
+            try:
+                reader.discover_pricing(discover_pricing(item["provider"], item["model"]))
+            except Exception as exc:
+                try:
+                    reader.mark_pricing_check_error(item["provider"], item["model"], str(exc))
+                except Exception:
+                    pass
+
+    if queued:
+        background_tasks.add_task(_run, queued)
+    return {"status": "queued", "queued": queued}
+
+
 @app.get("/api/workspace/admin/cases")
 def list_workspace_admin_cases(
     _principal: WorkspacePrincipal = Depends(require_workspace_admin),

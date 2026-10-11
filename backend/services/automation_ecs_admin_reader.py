@@ -160,6 +160,27 @@ class AutomationEcsAdminReader:
                 cursor.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
                 yield cursor
 
+    def discover_pricing(self, pricing: dict[str, Any]) -> dict[str, Any]:
+        """Persist one validated assistant-found pricing result."""
+        fields = ("input_usd_per_1m", "cached_input_usd_per_1m", "output_usd_per_1m", "embedding_usd_per_1m", "pricing_source", "source_url", "observed_at", "last_checked_at", "last_error")
+        values = [pricing.get(field) for field in fields]
+        with psycopg.connect(self.settings.db_dsn, row_factory=dict_row) as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("INSERT INTO {} (provider,model,input_usd_per_1m,cached_input_usd_per_1m,output_usd_per_1m,embedding_usd_per_1m,pricing_source,source_url,observed_at,last_checked_at,last_error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (provider,model) DO UPDATE SET input_usd_per_1m=EXCLUDED.input_usd_per_1m,cached_input_usd_per_1m=EXCLUDED.cached_input_usd_per_1m,output_usd_per_1m=EXCLUDED.output_usd_per_1m,embedding_usd_per_1m=EXCLUDED.embedding_usd_per_1m,pricing_source=EXCLUDED.pricing_source,source_url=EXCLUDED.source_url,observed_at=EXCLUDED.observed_at,last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,updated_at=NOW() RETURNING *").format(self._table("support_llm_pricing")), [pricing.get("provider"), pricing.get("model"), *values])
+                return dict(cursor.fetchone())
+
+    def get_pricing(self, provider: str, model: str) -> dict[str, Any] | None:
+        with self._read_cursor() as cursor:
+            cursor.execute(sql.SQL("SELECT * FROM {} WHERE provider=%s AND model=%s").format(self._table("support_llm_pricing")), (str(provider).strip().lower(), str(model).strip()))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def mark_pricing_check_error(self, provider: str, model: str, error: str) -> None:
+        now = datetime.now(timezone.utc)
+        with psycopg.connect(self.settings.db_dsn) as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("INSERT INTO {} (provider,model,pricing_source,last_checked_at,last_error) VALUES (%s,%s,'unpriced',%s,%s) ON CONFLICT (provider,model) DO UPDATE SET last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,updated_at=NOW()").format(self._table("support_llm_pricing")), (str(provider).strip().lower(), str(model).strip(), now, str(error)[:1000]))
+
     def _accounts(self, cursor: psycopg.Cursor[dict[str, Any]]) -> list[dict[str, Any]]:
         cursor.execute(
             sql.SQL(
@@ -182,6 +203,13 @@ class AutomationEcsAdminReader:
                 "created_at": _iso(row.get("created_at")),
                 "updated_at": _iso(row.get("updated_at")),
             }
+            for row in cursor.fetchall()
+        ]
+
+    def _pricing_rows(self, cursor: psycopg.Cursor[dict[str, Any]]) -> list[dict[str, Any]]:
+        cursor.execute(sql.SQL("SELECT provider,model,input_usd_per_1m,cached_input_usd_per_1m,output_usd_per_1m,embedding_usd_per_1m,pricing_source,source_url,observed_at,last_checked_at,last_error FROM {} ORDER BY provider,model").format(self._table("support_llm_pricing")))
+        return [
+            {**dict(row), "priced": any(row.get(field) is not None for field in ("input_usd_per_1m", "cached_input_usd_per_1m", "output_usd_per_1m", "embedding_usd_per_1m"))}
             for row in cursor.fetchall()
         ]
 
@@ -473,7 +501,9 @@ class AutomationEcsAdminReader:
             sql.SQL(
                 """
                 SELECT billing_ticket_id,stage,provider,model,prompt_tokens,
-                       completion_tokens,cached_input_tokens,reasoning_tokens,source
+                       completion_tokens,cached_input_tokens,reasoning_tokens,source,
+                       input_usd_per_1m,cached_input_usd_per_1m,output_usd_per_1m,
+                       embedding_usd_per_1m,cost_usd,pricing_source,pricing_source_url,pricing_observed_at
                 FROM {}
                 WHERE billing_ticket_id=ANY(%s) AND stage != 'ragflow_docs_answer'
                 ORDER BY created_at,id
@@ -551,7 +581,10 @@ class AutomationEcsAdminReader:
                        SUM(GREATEST(completion_tokens,0)) AS total_output_tokens,
                        SUM(LEAST(GREATEST(cached_input_tokens,0),GREATEST(prompt_tokens,0))) AS total_cached_input_tokens,
                        SUM(GREATEST(reasoning_tokens,0)) AS total_reasoning_tokens,
-                       COUNT(*) AS call_count
+                       COUNT(*) AS call_count,
+                       SUM(cost_usd) AS cost_usd,
+                       BOOL_AND(cost_usd IS NOT NULL) AS cost_usd_available,
+                       STRING_AGG(DISTINCT pricing_source, ',') AS pricing_sources
                 FROM {}
                 WHERE billing_ticket_id=ANY(%s) AND stage != 'ragflow_docs_answer'
                 GROUP BY source,provider,model
@@ -582,6 +615,9 @@ class AutomationEcsAdminReader:
                 "cached_input_tokens": int(row.get("total_cached_input_tokens") or 0),
                 "reasoning_tokens": int(row.get("total_reasoning_tokens") or 0),
                 "call_count": int(row.get("call_count") or 0),
+                "cost_usd": float(row.get("cost_usd") or 0),
+                "cost_usd_available": bool(row.get("cost_usd_available")),
+                "pricing_sources": [item for item in str(row.get("pricing_sources") or "").split(",") if item],
             }
             for bucket_key, usage_key in (
                 ("total_input_tokens", "input_tokens"),
@@ -688,7 +724,11 @@ class AutomationEcsAdminReader:
             "total_input_tokens": automation["total_input_tokens"] + hermes["total_input_tokens"],
             "total_cached_input_tokens": automation["total_cached_input_tokens"] + hermes["total_cached_input_tokens"],
             "total_output_tokens": automation["total_output_tokens"] + hermes["total_output_tokens"],
-            "cost_usd": estimate_token_usage_cost_usd({"token_by_model": token_by_model}),
+            "cost_usd": {
+                "available": all(item.get("cost_usd_available", False) for item in token_by_model) if token_by_model else True,
+                "total_usd": round(sum(float(item.get("cost_usd") or 0) for item in token_by_model), 8) if all(item.get("cost_usd_available", False) for item in token_by_model) else None,
+                "by_model": [{"provider": item["provider"], "model": item["model"], "usd": item.get("cost_usd") if item.get("cost_usd_available") else None, "pricing_source": (item.get("pricing_sources") or ["legacy_unpriced"])[0]} for item in token_by_model],
+            },
             "sources": {
                 "automation": automation,
                 "hermes": hermes,
@@ -729,6 +769,10 @@ class AutomationEcsAdminReader:
             billing_ids = [str(item.get("billing_ticket_id") or "") for item in page_cases]
             summaries = self._usage_summaries(cursor, [item for item in billing_ids if item])
             filtered_total = self._filtered_usage_total(cursor, filtered_rows)
+            try:
+                pricing_rows = self._pricing_rows(cursor)
+            except (StopIteration, psycopg.Error):
+                pricing_rows = []
 
         page_total = {
             "total_input_tokens": 0,
@@ -761,7 +805,13 @@ class AutomationEcsAdminReader:
                     "hermes": hermes,
                 },
             }
-            usage["cost_usd"] = estimate_token_usage_cost_usd(usage)
+            usage["cost_usd"] = {
+                "available": all(entry.get("cost_usd") is not None for entry in token_by_model) if token_by_model else True,
+                "total_usd": round(sum(float(entry.get("cost_usd") or 0) for entry in token_by_model), 8) if all(entry.get("cost_usd") is not None for entry in token_by_model) else None,
+                "by_model": [{"provider": entry.get("provider"), "model": entry.get("model"), "usd": entry.get("cost_usd") if entry.get("cost_usd_available", True) else None, "pricing_source": entry.get("pricing_source", "legacy_unpriced")} for entry in token_by_model],
+            }
+            sources = set(automation.get("pricing_sources", [])) | set(hermes.get("pricing_sources", []))
+            usage["pricing_quality"] = "partial" if "legacy_unpriced" in sources else ("provisional" if "assistant_found" in sources else "confirmed")
             item["token_usage"] = usage
             for key in ("total_input_tokens", "total_cached_input_tokens", "total_output_tokens"):
                 page_total[key] += int(usage[key])
@@ -771,7 +821,16 @@ class AutomationEcsAdminReader:
                 page_total["cost_usd_available"] = False
         payload["token_usage_page_total"] = page_total
         payload["token_usage_filtered_total"] = filtered_total
-        payload["model_pricing"] = model_pricing_payload()
+        pricing_payload = list(pricing_rows or model_pricing_payload())
+        known_pricing = {(str(item.get("provider") or ""), str(item.get("model") or "")) for item in pricing_payload}
+        for case in page_cases:
+            for usage in (case.get("token_usage") or {}).get("token_by_model") or []:
+                key = (str(usage.get("provider") or ""), str(usage.get("model") or ""))
+                if key in known_pricing or not key[0] or not key[1]:
+                    continue
+                pricing_payload.append({"provider": key[0], "model": key[1], "priced": False, "pricing_source": str(usage.get("pricing_source") or "unpriced"), "source_url": usage.get("pricing_source_url")})
+                known_pricing.add(key)
+        payload["model_pricing"] = pricing_payload
         return payload
 
     def _personas(self, cursor: psycopg.Cursor[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -959,11 +1018,18 @@ def _automation_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 "cached_input_tokens": 0,
                 "output_tokens": 0,
                 "embedding_tokens": 0,
+                "pricing_source": str(row.get("pricing_source") or "legacy_unpriced"),
+                "pricing_source_url": row.get("pricing_source_url"),
+                "cost_usd": 0.0,
+                "cost_usd_available": True,
             },
         )
         model_bucket["input_tokens"] += prompt_tokens
         model_bucket["cached_input_tokens"] += cached_tokens
         model_bucket["output_tokens"] += completion_tokens
+        model_bucket["cost_usd"] += float(row.get("cost_usd") or 0)
+        if row.get("cost_usd") is None:
+            model_bucket["cost_usd_available"] = False
     return {
         "available": True,
         "call_count": len(rows),
@@ -972,6 +1038,7 @@ def _automation_usage(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "total_output_tokens": sum(item["output_tokens"] for item in stage_totals.values()),
         "stage_totals": stage_totals,
         "token_by_model": list(model_totals.values()),
+        "pricing_sources": sorted({str(row.get("pricing_source") or "legacy_unpriced") for row in rows}),
     }
 
 

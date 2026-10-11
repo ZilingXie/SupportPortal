@@ -924,6 +924,9 @@ def _aggregate_account_case_llm_usage_rows(rows: list[dict[str, Any]]) -> dict[s
     summary.pop("entries", None)
     summary["call_count"] = len(ledger)
     summary["stage_totals"] = stage_totals
+    summary["pricing_sources"] = sorted({str(row.get("pricing_source") or "legacy_unpriced") for row in rows})
+    summary["cost_usd"] = round(sum(float(row.get("cost_usd") or 0) for row in rows if row.get("cost_usd") is not None), 8)
+    summary["cost_usd_available"] = bool(rows) and all(row.get("cost_usd") is not None for row in rows)
     return summary
 
 
@@ -1318,12 +1321,14 @@ def account_case_upsert_contract() -> dict[str, int | bool]:
 # v17 combines the two v15-level changes (neither separately deployed): the
 # per-candidate idempotency key from p2-182's review fixes and the skill
 # human-review routing from the p2-181 consumption bridge.
+# v23 adds the Admin LLM pricing registry and immutable usage price snapshots.
 # v22 adds the dual-write phase-2 delivery table: per-target
 # (agent_memory | weknora) knowledge delivery rows keyed by promotion with an
 # independent lease/status machine, external object capture, receipts and
 # readback evidence.
-_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v22-knowledge-dualwrite"
+_TICKET_SCHEMA_VERSION = "2026-single-ai-managed-v23-admin-llm-pricing"
 _COMPATIBLE_INCREMENTAL_SCHEMA_VERSIONS = {
+    "2026-single-ai-managed-v22-knowledge-dualwrite",
     "2026-single-ai-managed-v21-investigation-attachments",
     "2026-single-ai-managed-v20-standalone-retry",
     "2026-single-ai-managed-v19-governance-pipeline",
@@ -3096,6 +3101,12 @@ class TicketRepository(Protocol):
     ) -> dict[str, dict[str, Any]]:
         ...
 
+    def get_llm_pricing(self, provider: str, model: str) -> dict[str, Any] | None:
+        ...
+
+    def upsert_llm_pricing(self, pricing: dict[str, Any]) -> dict[str, Any]:
+        ...
+
     def get_billing_ticket(self, billing_ticket_id: str) -> dict[str, Any] | None:
         ...
 
@@ -3843,12 +3854,38 @@ class InMemoryTicketRepository(
                         "completion_tokens": _safe_non_negative_int(entry.get("completion_tokens"), 0),
                         "cached_input_tokens": _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
                         "reasoning_tokens": _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
+                        "input_usd_per_1m": entry.get("input_usd_per_1m"),
+                        "cached_input_usd_per_1m": entry.get("cached_input_usd_per_1m"),
+                        "output_usd_per_1m": entry.get("output_usd_per_1m"),
+                        "embedding_usd_per_1m": entry.get("embedding_usd_per_1m"),
+                        "cost_usd": entry.get("cost_usd"),
+                        "pricing_source": str(entry.get("pricing_source") or "legacy_unpriced"),
+                        "pricing_source_url": entry.get("pricing_source_url"),
+                        "pricing_observed_at": entry.get("pricing_observed_at"),
                         "source": source,
                         "source_run_id": source_run_id,
                         "created_at": created_at,
                     }
                 )
         return len(self._account_case_llm_usage)
+
+    def get_llm_pricing(self, provider: str, model: str) -> dict[str, Any] | None:
+        key = (str(provider or "").strip().lower(), str(model or "").strip())
+        with self._assignment_lock:
+            row = self._llm_pricing.get(key)
+            return copy.deepcopy(row) if row else None
+
+    def upsert_llm_pricing(self, pricing: dict[str, Any]) -> dict[str, Any]:
+        provider = str(pricing.get("provider") or "").strip().lower()
+        model = str(pricing.get("model") or "").strip()
+        if not provider or not model:
+            raise ValueError("provider and model are required")
+        row = {"provider": provider, "model": model, **dict(pricing)}
+        row.setdefault("pricing_source", "unpriced")
+        row["updated_at"] = _utc_now()
+        with self._assignment_lock:
+            self._llm_pricing[(provider, model)] = copy.deepcopy(row)
+        return copy.deepcopy(row)
 
     def account_case_llm_usage_summaries(
         self,
@@ -4355,6 +4392,7 @@ class InMemoryTicketRepository(
         self._prompt_versions: dict[str, list[dict[str, Any]]] = {}
         self._prompt_releases: dict[str, dict[str, Any]] = {}
         self._account_case_llm_usage: list[dict[str, Any]] = []
+        self._llm_pricing: dict[tuple[str, str], dict[str, Any]] = {}
         self._initialize_hermes_state()
         self._initialize_enablement_relay_state()
         self._initialize_knowledge_source_state()
@@ -10278,8 +10316,8 @@ class PostgresTicketRepository(
                                 INSERT INTO {} (
                                     billing_ticket_id, client_ticket_id, stage, provider, model,
                                     prompt_tokens, completion_tokens, cached_input_tokens,
-                                    reasoning_tokens, source, source_run_id, created_at
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                                    reasoning_tokens, source, source_run_id, input_usd_per_1m, cached_input_usd_per_1m, output_usd_per_1m, embedding_usd_per_1m, cost_usd, pricing_source, pricing_source_url, pricing_observed_at, created_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
                                 ON CONFLICT (source, source_run_id) WHERE source_run_id IS NOT NULL
                                 DO NOTHING
                                 """
@@ -10296,6 +10334,7 @@ class PostgresTicketRepository(
                                 _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
                                 source,
                                 source_run_id,
+                                entry.get("input_usd_per_1m"), entry.get("cached_input_usd_per_1m"), entry.get("output_usd_per_1m"), entry.get("embedding_usd_per_1m"), entry.get("cost_usd"), str(entry.get("pricing_source") or "legacy_unpriced"), entry.get("pricing_source_url"), entry.get("pricing_observed_at"),
                                 str(entry.get("created_at") or "").strip() or None,
                             ),
                         )
@@ -10306,8 +10345,10 @@ class PostgresTicketRepository(
                                 INSERT INTO {} (
                                     billing_ticket_id, client_ticket_id, stage, provider, model,
                                     prompt_tokens, completion_tokens, cached_input_tokens,
-                                    reasoning_tokens, source, created_at
-                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
+                                    reasoning_tokens, source, input_usd_per_1m, cached_input_usd_per_1m,
+                                    output_usd_per_1m, embedding_usd_per_1m, cost_usd, pricing_source,
+                                    pricing_source_url, pricing_observed_at, created_at
+                                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s::timestamptz, NOW()))
                                 """
                             ).format(self._table("support_account_case_llm_usage")),
                             (
@@ -10321,6 +10362,7 @@ class PostgresTicketRepository(
                                 _safe_non_negative_int(entry.get("cached_input_tokens"), 0),
                                 _safe_non_negative_int(entry.get("reasoning_tokens"), 0),
                                 source,
+                                entry.get("input_usd_per_1m"), entry.get("cached_input_usd_per_1m"), entry.get("output_usd_per_1m"), entry.get("embedding_usd_per_1m"), entry.get("cost_usd"), str(entry.get("pricing_source") or "legacy_unpriced"), entry.get("pricing_source_url"), entry.get("pricing_observed_at"),
                                 str(entry.get("created_at") or "").strip() or None,
                             ),
                         )
@@ -10331,6 +10373,24 @@ class PostgresTicketRepository(
             "record_account_case_llm_usage_entries",
             _operation,
         )
+
+    def get_llm_pricing(self, provider: str, model: str) -> dict[str, Any] | None:
+        with self._read_cursor() as cur:
+            cur.execute(sql.SQL("SELECT * FROM {} WHERE provider=%s AND model=%s").format(self._table("support_llm_pricing")), (str(provider or "").strip().lower(), str(model or "").strip()))
+            row = cur.fetchone()
+            return dict(row) if row else None
+
+    def upsert_llm_pricing(self, pricing: dict[str, Any]) -> dict[str, Any]:
+        provider = str(pricing.get("provider") or "").strip().lower()
+        model = str(pricing.get("model") or "").strip()
+        if not provider or not model:
+            raise ValueError("provider and model are required")
+        values = [pricing.get(key) for key in ("input_usd_per_1m", "cached_input_usd_per_1m", "output_usd_per_1m", "embedding_usd_per_1m", "pricing_source", "source_url", "observed_at", "last_checked_at", "last_error")]
+        def _operation(conn: psycopg.Connection[Any]) -> dict[str, Any]:
+            with conn.cursor(row_factory=dict_row) as cur:
+                cur.execute(sql.SQL("INSERT INTO {} (provider,model,input_usd_per_1m,cached_input_usd_per_1m,output_usd_per_1m,embedding_usd_per_1m,pricing_source,source_url,observed_at,last_checked_at,last_error) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (provider,model) DO UPDATE SET input_usd_per_1m=EXCLUDED.input_usd_per_1m,cached_input_usd_per_1m=EXCLUDED.cached_input_usd_per_1m,output_usd_per_1m=EXCLUDED.output_usd_per_1m,embedding_usd_per_1m=EXCLUDED.embedding_usd_per_1m,pricing_source=EXCLUDED.pricing_source,source_url=EXCLUDED.source_url,observed_at=EXCLUDED.observed_at,last_checked_at=EXCLUDED.last_checked_at,last_error=EXCLUDED.last_error,updated_at=NOW() RETURNING *").format(self._table("support_llm_pricing")), [provider, model, *values])
+                return dict(cur.fetchone())
+        return self._run_with_connection_retry("upsert_llm_pricing", _operation)
 
     def account_case_llm_usage_summaries(
         self,
@@ -10349,7 +10409,9 @@ class PostgresTicketRepository(
                         """
                         SELECT billing_ticket_id, client_ticket_id, stage, provider, model,
                                prompt_tokens, completion_tokens, cached_input_tokens,
-                               reasoning_tokens, created_at
+                               reasoning_tokens, input_usd_per_1m, cached_input_usd_per_1m,
+                               output_usd_per_1m, embedding_usd_per_1m, cost_usd,
+                               pricing_source, pricing_source_url, pricing_observed_at, created_at
                         FROM {}
                         WHERE billing_ticket_id = ANY(%s)
                         ORDER BY created_at ASC, id ASC
@@ -10370,6 +10432,14 @@ class PostgresTicketRepository(
                                 "completion_tokens",
                                 "cached_input_tokens",
                                 "reasoning_tokens",
+                                "input_usd_per_1m",
+                                "cached_input_usd_per_1m",
+                                "output_usd_per_1m",
+                                "embedding_usd_per_1m",
+                                "cost_usd",
+                                "pricing_source",
+                                "pricing_source_url",
+                                "pricing_observed_at",
                                 "created_at",
                             ),
                             row,
@@ -11859,6 +11929,9 @@ class PostgresTicketRepository(
                         "ALTER TABLE {} ADD COLUMN IF NOT EXISTS reasoning_tokens INTEGER NOT NULL DEFAULT 0"
                     ).format(self._table("support_account_case_llm_usage"))
                 )
+                cur.execute(sql.SQL("CREATE TABLE IF NOT EXISTS {} (provider TEXT NOT NULL, model TEXT NOT NULL, input_usd_per_1m NUMERIC(20,8), cached_input_usd_per_1m NUMERIC(20,8), output_usd_per_1m NUMERIC(20,8), embedding_usd_per_1m NUMERIC(20,8), pricing_source TEXT NOT NULL DEFAULT 'unpriced', source_url TEXT, observed_at TIMESTAMPTZ, last_checked_at TIMESTAMPTZ, last_error TEXT, updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (provider, model))").format(self._table("support_llm_pricing")))
+                for column, definition in (("input_usd_per_1m", "NUMERIC(20,8)"), ("cached_input_usd_per_1m", "NUMERIC(20,8)"), ("output_usd_per_1m", "NUMERIC(20,8)"), ("embedding_usd_per_1m", "NUMERIC(20,8)"), ("cost_usd", "NUMERIC(20,8)"), ("pricing_source", "TEXT NOT NULL DEFAULT 'legacy_unpriced'"), ("pricing_source_url", "TEXT"), ("pricing_observed_at", "TIMESTAMPTZ")):
+                    cur.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS {} {}").format(self._table("support_account_case_llm_usage"), sql.Identifier(column), sql.SQL(definition)))
                 cur.execute(
                     sql.SQL(
                         """

@@ -175,3 +175,4 @@
 
 ### 未完成
 - RAG+KG 生产 shadow/灰度需要补齐真实 query 对照数据、telemetry 审计和一键回滚门禁。
+- Admin 模型价格自动发现与 usage 快照（p2-195，代码实施中）：Account LLM usage 在写入事务内冻结单价、来源和费用；Admin 对未定价模型异步复用 OpenAI Web Search 查找官方价格，页面显示助手查找/用户确认/历史未定价；RAG 保持费用统计排除。
