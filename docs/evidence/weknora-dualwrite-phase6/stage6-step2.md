@@ -3,7 +3,7 @@
 - 计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6
 - 环境：Preproduction；Production 未触碰
 - 记录日期：2026-10-11
-- 代码提交：`dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c`（allowlist + task-definition renderer/test）
+- 代码提交：`dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c`（allowlist + task-definition renderer/test）及 `a7e218b79961c4c27efcec09108e704e05772020`（阶段 6 开关/allowlist 测试适配与 AgentMemory 读面回归）
 
 ## SSM 变更
 
@@ -33,6 +33,7 @@
 
 ## 验证
 
-- `uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py`：114 passed / 0 failed。
+- renderer/allowlist/AgentMemory 定向套件：114 passed / 0 failed（首版 renderer 合同）。
+- 阶段 6 当前 21 套件，使用一次性本机 PostgreSQL 14.19（`RUN_POSTGRES_INTEGRATION=1`，仅本机 Unix socket，未写入外部业务系统）：540 passed / 0 failed，8 subtests；包含 `test_hermes_knowledge_workflow_postgres.py` 的 case-binding allowlist 适配。
 - `git diff --check`：通过。
 - SSM `describe-parameters`：四个新参数均存在、String、Version 1；既有用户密钥仅回读 SecureString 元数据。

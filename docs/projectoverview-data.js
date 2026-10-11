@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T13:46:14Z",
-  "source_base_commit": "4a3d874de823c088b17a1d962e62ecfb6a4d0dd6",
-  "registry_digest": "15cfe93fa6fcb3aca866af7a41f2b42face8bf5393a888a82e98b1aa5c5853d5",
+  "generated_at": "2026-10-11T14:16:36Z",
+  "source_base_commit": "a7e218b79961c4c27efcec09108e704e05772020",
+  "registry_digest": "61ad45b8b3ff5adfb5b487ed416c31228b5bde88667c0a967d564789155d6269",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5729,8 +5729,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "步 2 renderer 回归",
-          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py（commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c）",
-          "result": "114 passed / 0 failed；git diff --check 通过"
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
+          "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
         }
       ],
       "source_refs": [
@@ -17972,7 +17972,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-12",
       "updated_at": "2026-10-11",
       "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6。基线 main@c6addcc0。授权=用户方案 A（2026-10-12：七确认点按建议执行+先补 KNOWLEDGE_SOURCE_ALLOWLIST 代码再走十步）。已完成：步 1 只读基线冻结（docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md：api:135/worker:135/route:134/hermes:45、release r20261011-434ee35-p2、治理开关全关/未注入、SSM 无知识面参数、n8n 三链 active+draft 版本钉定）；方案 A 实现（knowledge_source_allowlist.py：默认空=零处理、type:id 与 type:* 通配、case_binding:\u003cid> 键；gate 点=standalone queue_standalone_summary_for_source 与 case-bound queue_hermes_summary_for_case 的任务创建，快照接收/审计不受影响）；专项 7 项（解析畸形/默认零处理/列内放行/未列持有+快照保留/列内建任务/case 未列持有+列内创建）。存量套件适配=真实 env 面 KNOWLEDGE_SOURCE_ALLOWLIST 通配（csd_issue/zendesk_ticket/article/case_binding），全套 21 套件 541 passed/0 failed 含隔离 PG。步 2 配置已完成：新建 3 个 AgentMemory Wiki/1 个 Slack workspace String SSM 参数（均 v1），复用既有 hermes-wiki-core-user-key SecureString；renderer commit dd7ca37f 注入 API/Worker 的五个 SSM 引用、六开关显式 0、空 allowlist、租约 300。待执行：步 2 代码 release/deploy 与步 3-10（SP 部署全关→关闭态验证→n8n Draft×2 发布→intake→Summary/Review→Slack→人工样本→双写小范围→全量）。",
-      "next_action": "步 2 配置已写入并回读：/supportportal/preproduction/agent-memory-wiki-base-url、agent-memory-wiki-service-id、agent-memory-wiki-team-id、knowledge-slack-workspace-domain 均 String v1；AGENT_MEMORY_WIKI_USER_KEY 复用既有 hermes-wiki-core-user-key SecureString v1。代码 commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c 已完成 renderer/test；下一门禁是将该代码纳入 origin/main 的正式 immutable release，再用 release pipeline 部署 API/Worker（全部知识开关 0、allowlist 为空），随后步 3 关闭态验证。",
+      "next_action": "步 2 配置已写入并回读：/supportportal/preproduction/agent-memory-wiki-base-url、agent-memory-wiki-service-id、agent-memory-wiki-team-id、knowledge-slack-workspace-domain 均 String v1；AGENT_MEMORY_WIKI_USER_KEY 复用既有 hermes-wiki-core-user-key SecureString v1。代码 commits dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c 与 a7e218b79961c4c27efcec09108e704e05772020 已完成 renderer、allowlist 与存量测试适配；步 2 当前 21 套件使用一次性本机 PostgreSQL 14.19 复测 540 passed / 0 failed。下一门禁仍是将该代码纳入 origin/main 的正式 immutable release，再用 release pipeline 部署 API/Worker（全部知识开关 0、allowlist 为空），随后步 3 关闭态验证。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18010,8 +18010,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "步 2 renderer 回归",
-          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py（commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c）",
-          "result": "114 passed / 0 failed；git diff --check 通过"
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
+          "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
         }
       ]
     },
