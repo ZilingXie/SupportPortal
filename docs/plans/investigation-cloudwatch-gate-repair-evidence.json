@@ -1,0 +1,45 @@
+{
+  "plan_name": "Investigation 附件传输与续轮英文展示修复",
+  "revision": "R1",
+  "task_id": "p2-192",
+  "finding_id": "F-R1-DEPLOY-01",
+  "finding_type": "implementation",
+  "authorization": "用户明确授权：门禁修复，独立复审后重发。",
+  "status": "implementation_complete_pending_independent_review",
+  "repair_baseline": "bd2ce145a16672ecb38f0892598ffa4681ad61d5",
+  "scope": "CloudWatch 发布错误归属与失败任务采集、真实入口回归、脱敏 evidence、Runbook；附件既有代码验收不重开。",
+  "contracts": {
+    "G1": "完整角色 prefix 窗口；精确新 task definition 与 service group；RUNNING/STOPPED 服务 task 均参与；旧 revision/probe 独立留证。",
+    "G2": "启动失败和非零退出无日志也阻断；未知归属、缺失服务 task、AWS/collector 失败 fail closed；三角色全部采集。",
+    "G3": "角色 report 完整写入正式 evidence；Provider 独立硬门禁与原 refreshable AWS provider 不变；不保存日志正文。",
+    "G4": "resume 保留原窗口、running task 不按 createdAt 过滤；55 分钟采集起始上限，采集结束跨过一小时失败。"
+  },
+  "verification": [
+    {
+      "environment": "task worktree, project .venv, only external AWS CLI boundary simulated",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_cloudwatch_gate.py backend/tests/test_automation_ecs_deploy.py backend/tests/test_automation_ecs_release_pipeline.py",
+      "result": "修复基线定向 133 passed / 0 skipped；集成 main 后另记最终结果。",
+      "behavior": "实际 bash verify_cloudwatch → Python CLI → AWS 边界；旧 272 + probe 1 对账、新 running/stopped 错误、无日志启动失败、未知退出/时间/身份、分页合并与 describe 分批、resume、过期窗口、缺失配置/解释器、脱敏 evidence 和 Provider 硬门禁。"
+    },
+    {
+      "command": ".venv/bin/python scripts/testing/verify_ecs_cloudwatch_gate.py",
+      "result": "两项旧行为在 returncode 契约断言处失败，验证脚本 exit 0；未修改工作区代码。",
+      "behavior": "原 shell 将旧错误计入导致干净新服务误拒绝；原 shell 对无日志 TaskFailedToStart 错放行。"
+    }
+  ],
+  "original_failed_release": {
+    "release_id": "r20261011-f1efe32",
+    "evidence": "docs/plans/investigation-followup-pp-release-evidence.json",
+    "status": "failed_before_activation",
+    "rollback": "succeeded",
+    "worker_matches": {"old_revision": 272, "isolated_probe": 1},
+    "preservation": "不改写失败 evidence 或日志；本轮未启动第二次发布。"
+  },
+  "next_action": "完整 HEAD 的独立复审通过后，按正式 ECS Preproduction pipeline 重发；发布前重新只读核对当前配置、并行发布归属和附件账本。",
+  "limits": [
+    "未进行实时 ECS/CloudWatch 采集，本轮回归证明代码边界，不证明正式门禁通过。",
+    "未 finalize/merge/deploy；执行者自测不能解除独立复审门禁。",
+    "未授权 Ticket 14002 Slack 文件/消息投递、Zendesk 写入、13923 重放、Production 晋级或 n8n 变更。",
+    "沿用已授权的 ECS Preproduction 技术验收，本地官方栈重启豁免。"
+  ]
+}

@@ -527,7 +527,7 @@ write_evidence() {
   cloudwatch_files=("${STATE_DIR}"/*.cloudwatch-count.json)
   shopt -u nullglob
   if (( ${#cloudwatch_files[@]} > 0 )); then
-    cloudwatch_summary="$(jq -s '{error_count:(map(.error_count) | add // 0),roles:map({role,error_count})}' "${cloudwatch_files[@]}")"
+    cloudwatch_summary="$(jq -s '{error_count:(map(.error_count) | add // 0),roles:.}' "${cloudwatch_files[@]}")"
   else
     cloudwatch_summary='{"error_count":0,"roles":[]}'
   fi
@@ -1131,20 +1131,36 @@ verify_role_and_record() {
 }
 
 verify_cloudwatch() {
-  local start_ms="$1" role group count
+  local start_ms="$1" role group new_arn failed=0 report
   for role in api route worker; do
-    group="$(jq -r --arg role "${role}" '.taskDefinition.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"
-    [[ -n "${group}" && "${group}" != "null" ]] || fail "${role} CloudWatch log group is missing"
-    # --query applies per page on paginated calls and can emit several lines
-    # ("0\n0"), which breaks --argjson below; count over the merged JSON.
-    count="$(aws logs filter-log-events --region "${REGION}" --log-group-name "${group}" \
-      --log-stream-name-prefix "${role}/${role}/" --start-time "${start_ms}" \
-      --filter-pattern '?ERROR ?Traceback ?Exception' \
-      --output json | jq '[.events[]?] | length')"
-    jq -n --arg role "${role}" --argjson error_count "${count}" \
-      '{role:$role,error_count:$error_count}' >"${TEMP_DIR}/${role}.cloudwatch-count.json"
-    [[ "${count}" = "0" ]] || fail "${role} CloudWatch errors detected after deployment"
+    if ! group="$(jq -r --arg role "${role}" '.taskDefinition.containerDefinitions[] | select(.name == $role) | .logConfiguration.options["awslogs-group"]' "${TEMP_DIR}/${role}.current.json")"; then
+      group=""
+    fi
+    [[ "${group}" != "null" ]] || group=""
+    new_arn="$(read_optional_file "${TEMP_DIR}/${role}.new-arn")"
+    report="${TEMP_DIR}/${role}.cloudwatch-count.json"
+    rm -f -- "${report}"
+    # Collect all roles even if one fails; stopped/failed service tasks are included.
+    # The helper retains excluded event identities without customer log bodies.
+    if ! AUTOMATION_AWS_SOURCE_PROFILE="${AWS_PROFILE_NAME}" \
+      AUTOMATION_AWS_SOURCE_CONFIG_FILE="${TERRAFORM_SOURCE_AWS_CONFIG_FILE}" \
+      AUTOMATION_AWS_SOURCE_SHARED_CREDENTIALS_FILE="${TERRAFORM_SOURCE_AWS_SHARED_CREDENTIALS_FILE}" \
+      "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
+      collect-cloudwatch-evidence --region "${REGION}" --cluster "${CLUSTER}" \
+      --service "$(service_name "${role}")" --role "${role}" \
+      --task-definition "${new_arn}" --log-group "${group}" \
+      --start-ms "${start_ms}" --output "${report}" >/dev/null; then
+      jq -n --arg role "${role}" \
+        '{role:$role,status:"failed",error_count:0,blocking_reasons:["collector_unavailable"]}' >"${report}"
+      failed=1
+      continue
+    fi
+    if [[ "$(jq -r '.status' "${report}")" != "passed" ]]; then
+      log "${role} CloudWatch gate failed: $(jq -c '.blocking_reasons' "${report}")"
+      failed=1
+    fi
   done
+  [[ "${failed}" = "0" ]] || fail "CloudWatch release service-task verification failed"
 }
 
 verify_target_health() {
