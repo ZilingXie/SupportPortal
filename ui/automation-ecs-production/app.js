@@ -89,6 +89,11 @@ const state = {
   audit: null,
   hermesReview: null,
   hermesReviewLoading: false,
+  activeView: "cases",
+  knowledge: { items: [], page: 1, pageSize: 20, total: 0, loading: false, error: null,
+    filters: { status: "human_review", slack_review_status: "", decision: "", source_type: "" } },
+  knowledgeDetail: null,
+  knowledgeDetailLoading: false,
   runtime: null,
   filterOpen: false,
   advancedOpen: false,
@@ -709,11 +714,11 @@ function renderDashboard() {
   return `
     <header class="app-header">
       <div class="app-identity"><div class="brand-mark" aria-hidden="true">S</div><div><strong>${environmentLabel} Automation</strong><small>Ticket operations</small></div></div>
-      <div class="header-actions"><button class="button button-secondary filter-toggle" id="open-filters" type="button" aria-expanded="${state.filterOpen}">Filters</button><button class="button button-secondary" id="refresh" type="button">Refresh</button><button class="button button-quiet header-signout" id="logout" type="button">Sign out</button></div>
+      <div class="header-actions"><nav class="view-tabs" aria-label="Dashboard views"><button class="view-tab ${state.activeView === "cases" ? "is-active" : ""}" id="tab-cases" type="button" aria-current="${state.activeView === "cases"}">Cases</button><button class="view-tab ${state.activeView === "knowledge" ? "is-active" : ""}" id="tab-knowledge" type="button" aria-current="${state.activeView === "knowledge"}">Knowledge Review</button></nav><button class="button button-secondary filter-toggle" id="open-filters" type="button" aria-expanded="${state.filterOpen}">Filters</button><button class="button button-secondary" id="refresh" type="button">Refresh</button><button class="button button-quiet header-signout" id="logout" type="button">Sign out</button></div>
     </header>
     ${renderRuntimeStrip()}
     ${state.error ? `<div class="global-error" role="alert"><span>${escapeHtml(state.error)}</span><button class="button button-quiet" id="dismiss-error" type="button">Dismiss</button></div>` : ""}
-    <main class="${workspaceClasses}">${renderFilterRail()}${renderCaseList()}${renderDetail()}</main>`;
+    ${state.activeView === "knowledge" ? renderKnowledgeReview() : `<main class="${workspaceClasses}">${renderFilterRail()}${renderCaseList()}${renderDetail()}</main>`}`;
 }
 
 function updateFiltersFromForm(form) {
@@ -740,7 +745,13 @@ function bindEvents() {
     return;
   }
   document.getElementById("logout")?.addEventListener("click", logout);
-  document.getElementById("refresh")?.addEventListener("click", refreshAll);
+  document.getElementById("refresh")?.addEventListener("click", async () => {
+    await refreshAll();
+    if (state.activeView === "knowledge") {
+      if (state.knowledgeDetail?.promotion_id) await loadKnowledgeDetail(state.knowledgeDetail.promotion_id, false);
+      await loadKnowledgePromotions({ selectFirst: false });
+    }
+  });
   document.getElementById("dismiss-error")?.addEventListener("click", () => { state.error = ""; render(); });
   document.getElementById("open-filters")?.addEventListener("click", () => { state.filterOpen = true; render(); });
   document.getElementById("close-filters")?.addEventListener("click", () => { state.filterOpen = false; render(); });
@@ -862,3 +873,285 @@ function render() {
 }
 
 initialize();
+
+// ------------------------------------------------ Knowledge Review (stage 5)
+
+function knowledgeStatusTone(status) {
+  const normalized = String(status || "").toLowerCase();
+  if (["accepted", "delivered", "ready", "available", "completed"].includes(normalized)) return "ok";
+  if (["queued", "pending", "running", "sending", "active", "processing"].includes(normalized)) return "info";
+  if (["failed", "malformed", "missing", "invalidated", "rejected"].includes(normalized)) return "danger";
+  if (["outcome_unknown", "unavailable", "lineage_conflict", "not_recorded"].includes(normalized)) return "unknown";
+  if (["human_review"].includes(normalized)) return "warning";
+  return "unknown";
+}
+
+function knowledgeQualityTone(state) {
+  const normalized = String(state || "").toLowerCase();
+  if (normalized === "available") return "ok";
+  if (normalized === "not_recorded") return "info";
+  if (normalized === "malformed") return "danger";
+  return "unknown";
+}
+
+function deliverySummaryBadges(summary) {
+  const entries = Object.entries(summary || {});
+  if (!entries.length) {
+    return `<span class="knowledge-muted">No delivery rows</span>`;
+  }
+  return entries.map(([target, status]) =>
+    `<span class="delivery-badge target-${escapeHtml(target)}"><span class="delivery-target">${escapeHtml(target.replace("_", " "))}</span>${statusMarkup(status, true)}</span>`
+  ).join("");
+}
+
+function knowledgeSlackLink(slack) {
+  if (!slack) return `<span class="knowledge-muted">Not available</span>`;
+  if (slack.thread_url) {
+    return `<a class="knowledge-thread-link" href="${escapeHtml(slack.thread_url)}" target="_blank" rel="noopener noreferrer">Open thread</a>`;
+  }
+  const reasons = {
+    no_slack_channel_recorded: "No Slack channel recorded",
+    no_slack_thread_recorded: "No Slack thread recorded",
+    slack_workspace_not_configured: "Slack workspace not configured",
+  };
+  return `<span class="knowledge-muted">${escapeHtml(reasons[slack.thread_url_reason] || slack.thread_url_reason || "Link unavailable")}</span>`;
+}
+
+function knowledgeAuditLine(audit) {
+  if (!audit || !audit.decision) return `<span class="knowledge-muted">No human decision</span>`;
+  const parts = [`${escapeHtml(audit.decision)}`];
+  if (audit.email) parts.push(`by ${escapeHtml(audit.email)}`);
+  if (audit.slack_user_id) parts.push(`(${escapeHtml(audit.slack_user_id)})`);
+  if (audit.decided_at) parts.push(`at ${escapeHtml(audit.decided_at)}`);
+  return parts.join(" ");
+}
+
+function knowledgeDetailSection(title, body, extraClass = "") {
+  return `<section class="knowledge-section ${extraClass}"><h3>${escapeHtml(title)}</h3>${body}</section>`;
+}
+
+function knowledgeStateRow(label, state, reason) {
+  const tone = knowledgeQualityTone(state);
+  return `<div class="knowledge-state-row"><span class="knowledge-state-label">${escapeHtml(label)}</span><span class="status-pill tone-${tone}"><span class="status-dot" aria-hidden="true"></span>${escapeHtml(String(state || "unknown"))}</span>${reason ? `<span class="knowledge-muted">${escapeHtml(String(reason))}</span>` : ""}</div>`;
+}
+
+function renderKnowledgeListItem(item) {
+  const selected = state.knowledgeDetail?.promotion_id === item.promotion_id;
+  return `
+    <li>
+      <button class="knowledge-item ${selected ? "is-selected" : ""}" type="button" data-knowledge-promotion="${escapeHtml(item.promotion_id)}">
+        <div class="knowledge-item-head">
+          ${statusMarkup(item.status, true)}
+          <span class="knowledge-item-decision">${escapeHtml(item.decision || "—")}</span>
+          <span class="knowledge-item-type">${escapeHtml(item.candidate_type || "")}</span>
+        </div>
+        <div class="knowledge-item-title">${escapeHtml(item.title || item.statement || item.promotion_id)}</div>
+        <div class="knowledge-item-meta">
+          <span class="knowledge-item-source">${escapeHtml(item.source?.type || "")}:${escapeHtml(item.source?.id || "")}</span>
+          <span class="knowledge-item-date">${escapeHtml(item.created_at || "")}</span>
+        </div>
+        <div class="knowledge-item-deliveries">${deliverySummaryBadges(item.delivery_summary)}</div>
+      </button>
+    </li>`;
+}
+
+function knowledgeFilterBar() {
+  const filters = state.knowledge.filters;
+  const statuses = ["", "human_review", "queued", "active", "accepted", "failed", "outcome_unknown", "invalidated", "rejected"];
+  const slackStatuses = ["", "none", "queued", "sending", "delivered", "failed", "outcome_unknown"];
+  return `
+    <form id="knowledge-filters" class="knowledge-filters">
+      <label class="filter-field"><span>Promotion status</span><select name="status">${statuses.map((value) => `<option value="${escapeHtml(value)}" ${filters.status === value ? "selected" : ""}>${escapeHtml(value === "" ? "All statuses" : value === "human_review" ? "human_review (default)" : value)}</option>`).join("")}</select></label>
+      <label class="filter-field"><span>Decision</span><input name="decision" value="${escapeHtml(filters.decision)}" placeholder="e.g. merge" /></label>
+      <label class="filter-field"><span>Source type</span><input name="source_type" value="${escapeHtml(filters.source_type)}" placeholder="e.g. knowledge_source_review" /></label>
+      <label class="filter-field"><span>Slack review</span><select name="slack_review_status">${slackStatuses.map((value) => `<option value="${escapeHtml(value)}" ${filters.slack_review_status === value ? "selected" : ""}>${escapeHtml(value === "" ? "All" : value)}</option>`).join("")}</select></label>
+      <div class="filter-actions"><button class="button button-primary" type="submit">Apply</button></div>
+    </form>`;
+}
+
+function renderKnowledgePagination() {
+  const { page, pageSize, total } = state.knowledge;
+  const pages = Math.max(1, Math.ceil(total / pageSize));
+  return `
+    <nav class="knowledge-pagination" aria-label="Knowledge review pages">
+      <button class="button button-secondary" type="button" data-knowledge-page="${Math.max(1, page - 1)}" ${page <= 1 ? "disabled" : ""}>Previous</button>
+      <span>Page ${escapeHtml(String(page))} of ${escapeHtml(String(pages))} · ${escapeHtml(String(total))} candidates</span>
+      <button class="button button-secondary" type="button" data-knowledge-page="${Math.min(pages, page + 1)}" ${page >= pages ? "disabled" : ""}>Next</button>
+    </nav>`;
+}
+
+function renderKnowledgeList() {
+  if (state.knowledge.loading) {
+    return `<div class="knowledge-empty"><span class="spinner" aria-hidden="true"></span><strong>Loading knowledge review queue</strong></div>`;
+  }
+  if (state.knowledge.error) {
+    return `<div class="knowledge-empty knowledge-error" role="alert"><strong>${escapeHtml(state.knowledge.error)}</strong></div>`;
+  }
+  if (!state.knowledge.items.length) {
+    return `<div class="knowledge-empty"><strong>No candidates match the filters</strong></div>`;
+  }
+  return `
+    <ul class="knowledge-list">
+      ${state.knowledge.items.map(renderKnowledgeListItem).join("")}
+    </ul>
+    ${renderKnowledgePagination()}`;
+}
+
+function renderKnowledgeDetail() {
+  if (state.knowledgeDetailLoading) {
+    return `<div class="knowledge-detail knowledge-empty"><span class="spinner" aria-hidden="true"></span><strong>Loading candidate evidence</strong></div>`;
+  }
+  const detail = state.knowledgeDetail;
+  if (!detail) {
+    return `<div class="knowledge-detail knowledge-empty"><strong>Select a candidate to review its evidence</strong><p class="knowledge-muted">Approve or reject in the Slack thread — this page is read-only.</p></div>`;
+  }
+  const sections = [];
+  sections.push(knowledgeDetailSection(
+    "Candidate",
+    `
+    <dl class="knowledge-fields">
+      <div><dt>Decision requested</dt><dd>${statusMarkup(detail.decision || "unknown", true)}</dd></div>
+      <div><dt>Target object</dt><dd>${renderMaybeCode(detail.target_object_id)}</dd></div>
+      <div><dt>Base version</dt><dd>${renderMaybeCode(detail.base_version)}</dd></div>
+      <div><dt>Content hash</dt><dd>${renderMaybeCode(detail.source?.content_hash)}</dd></div>
+    </dl>
+    ${detail.candidate_payload?.content ? `<details class="knowledge-body" open><summary>Complete candidate body</summary><pre>${escapeHtml(detail.candidate_payload.content)}</pre></details>` : ""}
+    ${detail.candidate_payload?.merged_content ? `<details class="knowledge-body"><summary>Merged body</summary><pre>${escapeHtml(detail.candidate_payload.merged_content)}</pre></details>` : ""}
+    ${detail.candidate_payload?.note ? `<p class="knowledge-rationale"><strong>Review rationale:</strong> ${escapeHtml(detail.candidate_payload.note)}</p>` : ""}`
+  ));
+  const snap = detail.source_snapshot;
+  sections.push(knowledgeDetailSection(
+    "Source snapshot",
+    snap?.state === "available"
+      ? `
+        <dl class="knowledge-fields">
+          <div><dt>Source</dt><dd>${escapeHtml(snap.source_type || "")}:${escapeHtml(snap.source_id || "")}</dd></div>
+          <div><dt>Version</dt><dd>${renderMaybeCode(snap.source_version)}</dd></div>
+          <div><dt>Updated at</dt><dd>${renderMaybeCode(snap.source_updated_at)}</dd></div>
+        </dl>
+        <details class="knowledge-body"><summary>Payload</summary><pre>${escapeHtml(JSON.stringify(snap.payload ?? {}, null, 2))}</pre></details>
+        ${snap.references ? `<details class="knowledge-body"><summary>References</summary><pre>${escapeHtml(JSON.stringify(snap.references, null, 2))}</pre></details>` : ""}`
+      : `${knowledgeStateRow("Snapshot", snap?.state || "unavailable", snap?.reason)}`
+  ));
+  const summary = detail.summary;
+  sections.push(knowledgeDetailSection(
+    "AI Summary",
+    summary?.state === "available"
+      ? `${knowledgeStateRow("Summary task", summary.status || "unknown", summary.error)}<dl class="knowledge-fields"><div><dt>Session</dt><dd>${renderMaybeCode(summary.session_id)}</dd></div><div><dt>Run</dt><dd>${renderMaybeCode(summary.run_id)}</dd></div></dl>
+        ${summary.packet ? `<details class="knowledge-body"><summary>Summary packet</summary><pre>${escapeHtml(JSON.stringify(summary.packet, null, 2))}</pre></details>` : ""}`
+      : `${knowledgeStateRow("Summary", summary?.state || "unavailable", summary?.reason)}`
+  ));
+  const review = detail.review;
+  sections.push(knowledgeDetailSection(
+    "AI Review",
+    review?.state === "available"
+      ? `${knowledgeStateRow("Review task", review.status || "unknown", review.error)}<dl class="knowledge-fields"><div><dt>Session</dt><dd>${renderMaybeCode(review.session_id)}</dd></div><div><dt>Run</dt><dd>${renderMaybeCode(review.run_id)}</dd></div></dl>
+        ${review.report ? `<details class="knowledge-body" open><summary>Review report</summary><pre>${escapeHtml(JSON.stringify(review.report, null, 2))}</pre></details>` : ""}`
+      : `${knowledgeStateRow("Review", review?.state || "unavailable", review?.reason || review?.malformed_reason)}`
+  ));
+  const dup = detail.duplicate_evidence;
+  sections.push(knowledgeDetailSection(
+    "Duplicate evidence",
+    dup?.state === "available"
+      ? `<details class="knowledge-body" open><summary>Retrieval surfaces (hits / availability)</summary><pre>${escapeHtml(JSON.stringify(dup.retrieval_surfaces ?? {}, null, 2))}</pre></details>`
+      : `${knowledgeStateRow("Duplicate evidence", dup?.state || "unavailable", dup?.reason)}`
+  ));
+  const deliveries = detail.deliveries || {};
+  const deliveryBody = Object.entries(deliveries).length
+    ? Object.entries(deliveries).map(([target, d]) => `
+        <div class="delivery-detail target-${escapeHtml(target)}">
+          <div class="delivery-detail-head">${statusMarkup(d.status, true)}<strong>${escapeHtml(target.replace("_", " "))}</strong></div>
+          <dl class="knowledge-fields">
+            <div><dt>External object</dt><dd>${renderMaybeCode(d.external_object_id)}</dd></div>
+            <div><dt>External version</dt><dd>${renderMaybeCode(d.external_version)}</dd></div>
+            <div><dt>Attempts</dt><dd>${escapeHtml(String(d.attempt_count ?? "—"))}</dd></div>
+          </dl>
+          ${d.failure_code ? `<p class="knowledge-failure"><strong>${escapeHtml(d.failure_code)}</strong>${d.failure_detail ? `: ${escapeHtml(d.failure_detail)}` : ""}</p>` : ""}
+          ${d.operation_receipt ? `<details class="knowledge-body"><summary>Receipt</summary><pre>${escapeHtml(JSON.stringify(d.operation_receipt, null, 2))}</pre></details>` : ""}
+          ${d.readback_result ? `<details class="knowledge-body"><summary>Readback</summary><pre>${escapeHtml(JSON.stringify(d.readback_result, null, 2))}</pre></details>` : ""}
+        </div>`).join("")
+    : `<span class="knowledge-muted">No delivery rows recorded</span>`;
+  sections.push(knowledgeDetailSection("Dual-target delivery", deliveryBody, "knowledge-deliveries"));
+  sections.push(knowledgeDetailSection(
+    "Human audit",
+    `<p class="knowledge-audit">${knowledgeAuditLine(detail.human_audit)}</p>
+     <dl class="knowledge-fields"><div><dt>Slack thread</dt><dd>${knowledgeSlackLink(detail.slack)}</dd></div>${
+       detail.slack?.review_status ? `<div><dt>Notification</dt><dd>${statusMarkup(detail.slack.review_status, true)}${detail.slack.failure_code ? ` <span class="knowledge-muted">${escapeHtml(detail.slack.failure_code)}</span>` : ""}</dd></div>` : ""
+     }</dl>
+     <p class="knowledge-muted knowledge-readonly-note">Approve or reject by replying in the Slack thread. This page is read-only.</p>`
+  ));
+  return `
+    <article class="knowledge-detail" aria-labelledby="knowledge-detail-title">
+      <header class="knowledge-detail-head">
+        <h2 id="knowledge-detail-title">${escapeHtml(detail.title || detail.statement || detail.promotion_id)}</h2>
+        ${statusMarkup(detail.status)}
+        <code class="knowledge-promotion-id">${escapeHtml(detail.promotion_id)}</code>
+      </header>
+      ${sections.join("")}
+    </article>`;
+}
+
+function renderMaybeCode(value) {
+  if (value === null || value === undefined || String(value).trim() === "") {
+    return `<span class="knowledge-muted">—</span>`;
+  }
+  return `<code>${escapeHtml(String(value))}</code>`;
+}
+
+function renderKnowledgeReview() {
+  return `
+    <main class="knowledge-workspace" aria-label="Knowledge review">
+      <div class="knowledge-queue">
+        <header class="knowledge-queue-head">
+          <div><span class="eyebrow">Knowledge governance</span><h2>Review queue</h2></div>
+        </header>
+        ${knowledgeFilterBar()}
+        ${renderKnowledgeList()}
+      </div>
+      ${renderKnowledgeDetail()}
+    </main>`;
+}
+
+async function loadKnowledgePromotions({ selectFirst = true } = {}) {
+  state.knowledge.loading = true;
+  state.knowledge.error = null;
+  render();
+  try {
+    const filters = state.knowledge.filters;
+    const params = new URLSearchParams();
+    if (filters.status) params.set("status", filters.status);
+    if (filters.decision) params.set("decision", filters.decision);
+    if (filters.source_type) params.set("source_type", filters.source_type);
+    if (filters.slack_review_status) params.set("slack_review_status", filters.slack_review_status);
+    params.set("page", String(state.knowledge.page));
+    params.set("page_size", String(state.knowledge.pageSize));
+    const result = await request(`/dashboard/api/knowledge/promotions?${params.toString()}`);
+    state.knowledge.items = result.items || [];
+    state.knowledge.total = result.total || 0;
+    state.knowledge.page = result.page || 1;
+    state.knowledge.pageSize = result.page_size || 20;
+    if (selectFirst && state.knowledge.items.length && !state.knowledge.items.some((item) => item.promotion_id === state.knowledgeDetail?.promotion_id)) {
+      await loadKnowledgeDetail(state.knowledge.items[0].promotion_id, false);
+    }
+  } catch (error) {
+    state.knowledge.error = String(error?.message || error);
+  } finally {
+    state.knowledge.loading = false;
+    render();
+  }
+}
+
+async function loadKnowledgeDetail(promotionId, shouldRender = true) {
+  state.knowledgeDetailLoading = true;
+  if (shouldRender) render();
+  try {
+    const detail = await request(`/dashboard/api/knowledge/promotions/${encodeURIComponent(promotionId)}`);
+    state.knowledgeDetail = detail;
+  } catch (error) {
+    state.knowledgeDetail = null;
+    state.knowledge.error = String(error?.message || error);
+  } finally {
+    state.knowledgeDetailLoading = false;
+    if (shouldRender) render();
+  }
+}

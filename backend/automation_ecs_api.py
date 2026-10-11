@@ -1278,6 +1278,68 @@ def create_app(    *,
             headers={"Cache-Control": "no-store"},
         )
 
+    @app.get(
+        f"{base}/dashboard/api/knowledge/promotions",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_knowledge_promotions(
+        status: str | None = None,
+        decision: str | None = None,
+        source_type: str | None = None,
+        delivery_status: str | None = None,
+        slack_review_status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> JSONResponse:
+        """Stage 5 (p2-196): read-only Knowledge Review queue for the dashboard.
+
+        Session-protected, no-store, paginated projection assembled by the
+        knowledge review projection service. The page NEVER writes —
+        decisions happen in the Slack thread (C12)."""
+        from backend.services.knowledge_review_projection import (
+            list_knowledge_review_promotions,
+        )
+
+        if status is not None and status.strip() and status.strip() not in {
+            "queued", "active", "accepted", "failed", "outcome_unknown",
+            "human_review", "invalidated", "rejected",
+        }:
+            raise HTTPException(status_code=422, detail=f"unknown promotion status {status!r}")
+        result = await asyncio.to_thread(
+            list_knowledge_review_promotions,
+            _engineer_ticket_repository(),
+            status=status.strip() if status else None,
+            decision=decision.strip() if decision else None,
+            source_type=source_type.strip() if source_type else None,
+            delivery_status=delivery_status.strip() if delivery_status else None,
+            slack_review_status=slack_review_status.strip() if slack_review_status else None,
+            page=page,
+            page_size=page_size,
+        )
+        return JSONResponse(
+            content=jsonable_encoder(result), headers={"Cache-Control": "no-store"}
+        )
+
+    @app.get(
+        f"{base}/dashboard/api/knowledge/promotions/{{promotion_id}}",
+        dependencies=[Depends(require_dashboard_session)],
+    )
+    async def dashboard_knowledge_promotion_detail(promotion_id: str) -> JSONResponse:
+        """Stage 5 (p2-196): the full review evidence for one candidate."""
+        from backend.services.knowledge_review_projection import (
+            knowledge_review_detail,
+        )
+
+        detail = await asyncio.to_thread(
+            knowledge_review_detail,
+            _engineer_ticket_repository(),
+            str(promotion_id),
+        )
+        if detail is None:
+            raise HTTPException(status_code=404, detail="promotion not found")
+        return JSONResponse(
+            content=jsonable_encoder(detail), headers={"Cache-Control": "no-store"}
+        )
 
     @app.get(
         f"{base}/api/integrations/slack/engineer-cases/thread-bindings/resolve",

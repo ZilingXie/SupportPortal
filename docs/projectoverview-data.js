@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T06:39:12Z",
-  "source_base_commit": "e3b2378714ecef0be78ae264508ec9b1be288c12",
-  "registry_digest": "d031acabe3ddb4b67037346461ba8315fc62beb582f914dfe06bddd0981ca4f6",
+  "generated_at": "2026-10-11T08:08:03Z",
+  "source_base_commit": "bb18dd56dc8e1479fd81256390d02c06c45d3173",
+  "registry_digest": "76700929acf4677a53d48ffb25672a83b6ca71279b8687a132b58de9b5177672",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5651,6 +5651,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第七轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD e3b23787；全返回通道分类确认、proven-unposted 清单、outcome_unknown 不自动重投、5xx 恒 unknown；定向 111 项全过含阶段 4/Slack 入站/适配器/PG 集成；diff-check/Overview/快照校验通过）；允许转 Ready 并 finalize"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 专项合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "8 passed（真实 session+API 入口+真实仓库种子；含读前后快照一致证明零写入）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 PostgreSQL parity + 全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review_postgres.py + 全套 19 套件",
+          "result": "PG parity 1 passed（C14 同一 projection 双侧字段级一致含 outcome_unknown/缺源/malformed）；全套 524 passed / 0 failed（阶段 0-4 行为不变）"
         }
       ],
       "source_refs": [
@@ -5666,7 +5678,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 2,
+      "task_count": 3,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -17788,6 +17800,51 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第七轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD e3b23787；全返回通道分类确认、proven-unposted 清单、outcome_unknown 不自动重投、5xx 恒 unknown；定向 111 项全过含阶段 4/Slack 入站/适配器/PG 集成；diff-check/Overview/快照校验通过）；允许转 Ready 并 finalize"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-196",
+      "title": "Knowledge Review 页面/API 展示增强（阶段五）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-dualwrite-governance",
+      "created_at": "2026-10-12",
+      "updated_at": "2026-10-12",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage5。基线 main@bb18dd56。范围=Admin 页面 Knowledge Review Tab+只读审核证据+Session 保护 API；不含页面写操作/n8n 发布/部署/开关/真实 Slack。交付（分支 codex/weknora-dualwrite-phase5）：knowledge_review_projection.py（列表分页过滤+详情聚合：promotion lineage/来源快照/Summary/Review/重复证据分级（available/not_recorded/unavailable/malformed）/双目标 delivery 明细/人工审计/Slack thread URL 生成——仅持久化绑定+workspace 配置，缺则 url:null 带原因）；两个 Session 保护 no-store 只读 API（列表 status/decision/source_type/delivery_status/slack_review_status/page/page_size，排序 created_at,promotion_id，page_size≤100；详情 404 语义）；UI Knowledge Review Tab（视图切换/过滤栏/列表徽标/详情六分区：Candidate/Source snapshot/AI Summary/AI Review/Duplicate evidence/Dual-target delivery+Human audit，Slack 链接 noopener noreferrer，无任何写按钮）；styles.css 状态徽标/unknown/错误/链接样式。验证：专项 8 passed（真实 TestClient 登录 session+真实 InMemory 仓库经真实 accept/queue/complete 种子；401/只读快照对比/过滤分页稳定/缺源 unavailable/malformed 证据分级/outcome_unknown+无 workspace 链接缺失/404/审计投影）；PG parity 1 passed（同一 projection 双侧一致 C14）；全套 19 套件 524 passed/0 failed 含隔离 PG。",
+      "next_action": "阶段 5 待独立验收（Draft PR 就绪后）；验收点=C1-C14、只读边界、PG parity、UI 无写操作。通过后 finalize；阶段 6（Preproduction 十步发布+n8n Draft 转发布+SSM+真实证据）另行授权。",
+      "acceptance_criteria": [
+        "C1 未登录 401；响应 no-store",
+        "C2 过滤分页稳定只读",
+        "C3 持久化 ID 关联全部 lineage",
+        "C4 缺失/冲突 lineage 显式状态不猜测",
+        "C5 缺源显原因不伪装空快照",
+        "C6 Summary/Review 缺失/失败/malformed 显式状态",
+        "C7 重复证据四态分级",
+        "C8 完整正文+target/base_version/content_hash",
+        "C9 Slack URL 仅持久化绑定+配置，缺则 null 带原因",
+        "C10 双目标独立状态/外部 ID/版本/回执/回读/错误",
+        "C11 审计含 principal/Slack ID/邮箱/时间",
+        "C12 页面零写操作",
+        "C13 全部安全转义",
+        "C14 InMemory/PG 投影语义一致"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "阶段 5 专项合同测试",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review.py -q",
+          "result": "8 passed（真实 session+API 入口+真实仓库种子；含读前后快照一致证明零写入）"
+        },
+        {
+          "type": "test",
+          "label": "阶段 5 PostgreSQL parity + 全套回归",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://localhost/supportportal_dualwrite_test /opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage5_knowledge_review_postgres.py + 全套 19 套件",
+          "result": "PG parity 1 passed（C14 同一 projection 双侧字段级一致含 outcome_unknown/缺源/malformed）；全套 524 passed / 0 failed（阶段 0-4 行为不变）"
         }
       ]
     },
