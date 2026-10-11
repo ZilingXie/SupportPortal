@@ -5512,3 +5512,12 @@ For each new entry, record:
 - Affected files/config: `backend/services/hermes_knowledge_workflow.py`, `backend/services/automation_account_reply_sync.py`, `backend/automation_ecs_api.py`, `backend/scripts/automation_ecs_deploy.py`, knowledge-governance and deploy-render test suites, `docs/operations/weknora-adapter.md` + `docs/operations/environments.md` status notes.
 - Data impact: None on existing rows. Pending/failed/human_review governance tasks and promotion audit records are preserved untouched; no schema downgrade, no backlog approval, no replay of the historical 18 sources. WeKnora SSM parameter entities stay in place until the separate decommission plan deletes them.
 - Verification: 236 targeted tests passed (switch-off queueing/drain/producer-gate/decision-endpoint refusal; both render paths strip and pin; repeat-render idempotence; api+worker dual-role pin). `test_worker.py` failure set identical to main baseline; PostgreSQL-gated suites skipped locally (no local PostgreSQL; SQL layer unchanged). Live Preproduction verification runs after the release window per the plan's D checklist.
+
+
+## 2026-10-11 - Preproduction knowledge governance configuration injection (p2-197)
+
+- Summary: Added the Preproduction ECS renderer contract for the stage-6 knowledge rollout: API and Worker receive explicit default-off governance switches, an empty strict source allowlist, the Slack review lease, and SSM-backed AgentMemory Wiki/Slack workspace configuration.
+- Reason: Stage 6 step 2 requires configuration to be present and auditable before any intake, Summary/Review, delivery worker, external target, or Slack notification is enabled.
+- Affected files/config: `backend/scripts/automation_ecs_deploy.py`, `backend/tests/test_automation_ecs_deploy.py`; three new Preproduction String parameters under `/supportportal/preproduction/`, one Slack workspace String parameter, and reuse of the existing `hermes-wiki-core-user-key` SecureString.
+- Data impact: No source snapshot, candidate, Summary, Review, AgentMemory, WeKnora, or Slack business data was written. No ECS task definition was registered and no service was updated. All knowledge switches remain `0` and the allowlist remains empty.
+- Verification: Renderer/allowlist/AgentMemory suites passed (`114 passed`); live API/Worker 135 render preview showed all required switch values and SSM references without exposing secret values.

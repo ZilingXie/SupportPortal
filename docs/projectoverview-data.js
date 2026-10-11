@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T13:10:19Z",
-  "source_base_commit": "b8ff422e35b975b67b3d4458cc99b3eeae8391a2",
-  "registry_digest": "79c72b60edf55e5e5ac5d9bc6b43d171cff611f3bc6b8cb994695377907d0b6a",
+  "generated_at": "2026-10-11T13:43:46Z",
+  "source_base_commit": "dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c",
+  "registry_digest": "7aded5061bb8eec21270d200b05966722ed8cc619c8ff981cb06b3a1160a7d98",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5699,6 +5699,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "方案 A allowlist 专项+全套回归",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage6_source_allowlist.py -q && 全套 21 套件（RUN_POSTGRES_INTEGRATION=1）",
           "result": "专项 7 passed（默认空零处理/通配/列内外双路径/case 绑定双路径/快照保留证明）；全套 541 passed / 0 failed（存量 5 套件 env 适配为真实通配面）"
+        },
+        {
+          "type": "deployment",
+          "label": "步 2 SSM 配置与 task-definition 注入预览",
+          "command": "aws ssm put-parameter/describe-parameters（只记录元数据）+ live task definition 135 渲染预览",
+          "result": "新建 3 个 AgentMemory Wiki/1 个 Slack workspace String 参数，均 Version=1；AGENT_MEMORY_WIKI_USER_KEY 指向既有 hermes-wiki-core-user-key SecureString Version=1；API/Worker 预览均包含六个 KNOWLEDGE_* 开关=0、HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、空 KNOWLEDGE_SOURCE_ALLOWLIST、KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS=300 和五个 SSM 引用；尚未 register/update ECS service。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 renderer 回归",
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py（commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c）",
+          "result": "114 passed / 0 failed；git diff --check 通过"
         }
       ],
       "source_refs": [
@@ -17918,9 +17930,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-12",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6。基线 main@bb6addcc0（即 c6addcc0）。授权=用户方案 A（2026-10-12：七确认点按建议执行+先补 KNOWLEDGE_SOURCE_ALLOWLIST 代码再走十步）。已完成：步 1 只读基线冻结（docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md：api:135/worker:135/route:134/hermes:45、release r20261011-434ee35-p2、治理开关全关/未注入、SSM 无知识面参数、n8n 三链 active+draft 版本钉定）；方案 A 实现（knowledge_source_allowlist.py：默认空=零处理、type:id 与 type:* 通配、case_binding:\u003cid> 键；gate 点=standalone queue_standalone_summary_for_source 与 case-bound queue_hermes_summary_for_case 的任务创建，快照接收/审计不受影响）；专项 7 项（解析畸形/默认零处理/列内放行/未列持有+快照保留/列内建任务/case 未列持有+列内创建）。存量套件适配=真实 env 面 KNOWLEDGE_SOURCE_ALLOWLIST 通配（csd_issue/zendesk_ticket/article/case_binding），全套 21 套件 541 passed/0 failed 含隔离 PG。待执行：步 2-10（SP 部署全关→关闭态验证→n8n Draft×2 发布→intake→Summary/Review→Slack→人工样本→双写小范围→全量）。",
-      "next_action": "步 2 前置：AGENT_MEMORY_WIKI_* 与 KNOWLEDGE_SLACK_WORKSPACE_DOMAIN SSM 参数创建+worker/api task def 注入（含 KNOWLEDGE_SOURCE_ALLOWLIST 与六开关显式 0 入 env 清单），随后部署 c6addcc0+allowlist 代码。n8n 发布前刷新快照+validator。步 8 人工样本与步 10 全量放开前按计划逐项证据+回滚准备。",
+      "updated_at": "2026-10-11",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6。基线 main@c6addcc0。授权=用户方案 A（2026-10-12：七确认点按建议执行+先补 KNOWLEDGE_SOURCE_ALLOWLIST 代码再走十步）。已完成：步 1 只读基线冻结（docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md：api:135/worker:135/route:134/hermes:45、release r20261011-434ee35-p2、治理开关全关/未注入、SSM 无知识面参数、n8n 三链 active+draft 版本钉定）；方案 A 实现（knowledge_source_allowlist.py：默认空=零处理、type:id 与 type:* 通配、case_binding:\u003cid> 键；gate 点=standalone queue_standalone_summary_for_source 与 case-bound queue_hermes_summary_for_case 的任务创建，快照接收/审计不受影响）；专项 7 项（解析畸形/默认零处理/列内放行/未列持有+快照保留/列内建任务/case 未列持有+列内创建）。存量套件适配=真实 env 面 KNOWLEDGE_SOURCE_ALLOWLIST 通配（csd_issue/zendesk_ticket/article/case_binding），全套 21 套件 541 passed/0 failed 含隔离 PG。步 2 配置已完成：新建 3 个 AgentMemory Wiki/1 个 Slack workspace String SSM 参数（均 v1），复用既有 hermes-wiki-core-user-key SecureString；renderer commit dd7ca37f 注入 API/Worker 的五个 SSM 引用、六开关显式 0、空 allowlist、租约 300。待执行：步 2 代码 release/deploy 与步 3-10（SP 部署全关→关闭态验证→n8n Draft×2 发布→intake→Summary/Review→Slack→人工样本→双写小范围→全量）。",
+      "next_action": "步 2 配置已写入并回读：/supportportal/preproduction/agent-memory-wiki-base-url、agent-memory-wiki-service-id、agent-memory-wiki-team-id、knowledge-slack-workspace-domain 均 String v1；AGENT_MEMORY_WIKI_USER_KEY 复用既有 hermes-wiki-core-user-key SecureString v1。代码 commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c 已完成 renderer/test；下一门禁是将该代码纳入 origin/main 的正式 immutable release，再用 release pipeline 部署 API/Worker（全部知识开关 0、allowlist 为空），随后步 3 关闭态验证。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -17948,6 +17960,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "方案 A allowlist 专项+全套回归",
           "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage6_source_allowlist.py -q && 全套 21 套件（RUN_POSTGRES_INTEGRATION=1）",
           "result": "专项 7 passed（默认空零处理/通配/列内外双路径/case 绑定双路径/快照保留证明）；全套 541 passed / 0 failed（存量 5 套件 env 适配为真实通配面）"
+        },
+        {
+          "type": "deployment",
+          "label": "步 2 SSM 配置与 task-definition 注入预览",
+          "command": "aws ssm put-parameter/describe-parameters（只记录元数据）+ live task definition 135 渲染预览",
+          "result": "新建 3 个 AgentMemory Wiki/1 个 Slack workspace String 参数，均 Version=1；AGENT_MEMORY_WIKI_USER_KEY 指向既有 hermes-wiki-core-user-key SecureString Version=1；API/Worker 预览均包含六个 KNOWLEDGE_* 开关=0、HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、空 KNOWLEDGE_SOURCE_ALLOWLIST、KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS=300 和五个 SSM 引用；尚未 register/update ECS service。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 renderer 回归",
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py（commit dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c）",
+          "result": "114 passed / 0 failed；git diff --check 通过"
         }
       ]
     },
