@@ -1078,3 +1078,49 @@ def test_http_5xx_is_outcome_unknown_not_retried(monkeypatch) -> None:
     assert result["status"] == "outcome_unknown", result
     assert len(calls) == 1
     assert _row(host, promotion_id)["slack_review_status"] == "outcome_unknown"
+
+
+# ------------- stage-4 review F5 round 5: refusal error-code semantics ------
+
+
+def test_unproven_refusal_errors_are_outcome_unknown_and_never_retried(monkeypatch) -> None:
+    """Slack documents internal_error/fatal_error as possibly partially
+    succeeded; unknown/missing codes prove nothing. None may auto-retry."""
+    for error in ("internal_error", "fatal_error", "some_new_error_code", ""):
+        host = _Host()
+        promotion_id = _parked(host)
+
+        result, calls, row = _deliver_with_http(
+            monkeypatch, host, promotion_id,
+            [_http_response({"ok": False, **({"error": error} if error else {})}),],
+        )
+        assert result["status"] == "outcome_unknown", (error, result)
+        assert calls == 1, error
+        assert row["slack_review_status"] == "outcome_unknown", error
+
+        retry, calls2, _ = _deliver_with_http(
+            monkeypatch, host, promotion_id,
+            [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+        )
+        assert retry["status"] == "in_flight", (error, retry)
+        assert calls2 == 0, f"{error!r}: uncertain refusal must not be auto-retried"
+
+
+def test_proven_refusal_channel_not_found_stays_retriable(monkeypatch) -> None:
+    """The reviewer-verified definite refusal keeps the normal retry path."""
+    host = _Host()
+    promotion_id = _parked(host)
+
+    refusal, calls, row = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": False, "error": "channel_not_found"})],
+    )
+    assert refusal["status"] == "failed"
+    assert row["slack_review_status"] == "failed"
+
+    ok, calls2, row2 = _deliver_with_http(
+        monkeypatch, host, promotion_id,
+        [_http_response({"ok": True, "channel": CHANNEL, "ts": "1700.001"})],
+    )
+    assert ok["status"] == "delivered"
+    assert calls + calls2 == 2, "refusal + exactly one retry post"

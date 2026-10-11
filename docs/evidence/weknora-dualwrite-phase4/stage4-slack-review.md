@@ -106,9 +106,24 @@ decision 端点：客户端 operator 一律 422（"operator must not be supplied
 修复（严格回执分类，engineer_slack.post_engineer_slack_event）：
 
 - `ok is True` → 成功（channel/ts 校验保持）；
-- `ok is False` → Slack 明确拒绝（消息确定未创建）→ **failed 可重试**；
+- `ok is False` → 拒绝（轮 5 更正：仅 proven-unposted 允许清单内的错误码才证明消息未创建，见下轮）→ failed 可重试；
 - 其余一切（非 dict、缺 ok、ok 非布尔如字符串 "false"/"true"）→ 既不证明成功也不证明未创建 → **outcome_unknown 永不自动重试**（重投入口=人工/API）。
 
 真实适配器 HTTP 边界回归 7 形态（InMemory）：`{}`→unknown+重试零 POST；`[]`→unknown；`ok="false"` 带 channel/ts→**unknown 不再误报 delivered**；真 `ok=false error=channel_not_found`→failed+恰一次重试成功（共 2 POST）；干净成功→delivered；超时→unknown 零重试；HTTP 5xx→unknown 零重试。PG 侧同链（真实适配器+真实仓库，malformed 三形态 unknown 零重投+真拒绝恰一次重试）。
 
 验证：专项 **42 passed**（35+7）；全套 17 套件 **507 passed / 0 failed**（PG 13 项）；compileall / diff-check 通过。
+
+
+## 修复轮 5（2026-10-11，五轮验收 F5 拒绝语义阻断后）
+
+阻断：所有真布尔 `ok=false` 被当作"消息确定未创建"→ failed 可重试。Slack 官方文档对 `internal_error`/`fatal_error` 明确"操作可能已部分成功"；未知/缺失错误码同样无法证明结果——复现三种形态重试均产生第二次 POST。
+
+修复（拒绝码分级）：新增 `SLACK_REFUSAL_ERRORS_PROVEN_UNPOSTED` 允许清单（channel_not_found/channel_is_archived/not_in_channel/msg_too_long/no_text/invalid_arguments/invalid_ts/cannot_reply_to_thread/auth 系/rate_limited 等请求前置拒绝——语义上零副作用）：
+
+- 清单内 `ok=false` → failed 可重试（明确未创建）；
+- 清单外（internal_error/fatal_error/未知码/缺失 error）→ **outcome_unknown 永不自动重试**；
+- 代码注释与轮 4 文档中"所有 ok=false 都确定未创建"的表述已更正。
+
+回归：真实适配器 HTTP 边界——internal_error/fatal_error/未知码/缺失 error 四形态 ×（首次 unknown + 重试零新增 POST）；channel_not_found 保持 failed+恰一次重试。InMemory+PG 双侧（PG 同链四形态+真拒绝）。
+
+验证：专项 **44 passed**（42+2）；全套 17 套件 **509 passed / 0 failed**（PG 13）；compileall / diff-check 通过。

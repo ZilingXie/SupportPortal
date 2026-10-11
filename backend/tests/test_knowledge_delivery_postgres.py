@@ -625,6 +625,32 @@ def test_pg_receipt_classification_never_double_posts(repository) -> None:
         assert retry["status"] == "in_flight", (malformed, retry)
         assert len(calls) == 1, f"no second POST for {malformed!r}"
 
+    # uncertain refusals (internal_error/fatal_error/unknown/missing):
+    # outcome_unknown, retry adds ZERO posts
+    for uncertain in ("internal_error", "fatal_error", "brand_new_code", ""):
+        promotion_id = _pg_parked(repository)
+        calls = []
+
+        def fake_uncertain(request, timeout=None, _u=uncertain, _c=calls):
+            _c.append(request)
+            body = {"ok": False}
+            if _u:
+                body["error"] = _u
+            return _resp(body)
+
+        with mock.patch.dict(os.environ, env), mock.patch(
+            "urllib.request.urlopen", side_effect=fake_uncertain
+        ):
+            first = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=NOW
+            )
+            assert first["status"] == "outcome_unknown", (_u, first)
+            retry = deliver_knowledge_review_notification(
+                repository, _pg_row(repository, promotion_id), now_value=LATER
+            )
+            assert retry["status"] == "in_flight", (_u, retry)
+        assert len(calls) == 1, f"{_u!r}: no second POST"
+
     # genuine refusal: exactly one retry post, then delivered
     promotion_id = _pg_parked(repository)
     calls = []

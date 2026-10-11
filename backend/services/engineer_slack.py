@@ -17,6 +17,32 @@ LOGGER = logging.getLogger("supportportal.engineer_slack")
 
 ENGINEER_SLACK_SCHEMA_VERSION = 1
 SLACK_CHAT_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage"
+
+# chat.postMessage refusal errors whose semantics PROVE no message was
+# created (request rejected before any side effect: unknown/archived
+# channel, membership/permission refusal, payload/auth/limit rejection).
+# Slack's OWN docs warn that internal_error/fatal_error "may have partially
+# succeeded" — every code outside this set, including unknown or missing
+# codes, is treated as possibly-posted and never auto-retried.
+SLACK_REFUSAL_ERRORS_PROVEN_UNPOSTED = frozenset({
+    "account_inactive",
+    "cannot_reply_to_thread",
+    "channel_is_archived",
+    "channel_not_found",
+    "invalid_arguments",
+    "invalid_auth",
+    "invalid_ts",
+    "is_bot_blocked_by_channel",
+    "missing_scope",
+    "msg_too_long",
+    "no_posting_privileges",
+    "no_text",
+    "not_authed",
+    "not_in_channel",
+    "rate_limited",
+    "token_revoked",
+    "upload_not_found",
+})
 SLACK_USERS_INFO_URL = "https://slack.com/api/users.info"
 HERMES_REVIEW_PENDING_EVENT_TYPE = "hermes_review_pending"
 HERMES_CASE_OPENED_EVENT_TYPE = "hermes_case_opened"
@@ -527,16 +553,20 @@ def post_engineer_slack_event(
             "engineer_slack_response_invalid", outcome_unknown=True
         ) from exc
 
-    # Stage-4 review F5 round 4: strict receipt classification. Only
-    # ``ok is True`` proves success; a genuine ``ok is False`` refusal (Slack
-    # answered, the message was definitively NOT created) stays a retriable
-    # failure; EVERYTHING else on HTTP 200 — a non-dict body, a missing ok,
-    # or a non-boolean ok like the string "false" — proves neither outcome,
-    # so it lands in outcome_unknown and is never auto-retried.
+    # Stage-4 review F5 rounds 4+5: strict receipt classification. Only
+    # ``ok is True`` proves success. An ``ok is False`` refusal is retriable
+    # ONLY when its error code is on the proven-unposted allowlist above —
+    # Slack documents internal_error/fatal_error as possibly partially
+    # succeeded, and unknown/missing codes prove nothing. EVERYTHING else on
+    # HTTP 200 (non-dict body, missing or non-boolean ok, unproven refusal)
+    # lands in outcome_unknown and is never auto-retried.
     if not isinstance(response_payload, dict) or response_payload.get("ok") is not True:
         if isinstance(response_payload, dict) and response_payload.get("ok") is False:
+            error_code = str(response_payload.get("error") or "").strip()
+            if error_code in SLACK_REFUSAL_ERRORS_PROVEN_UNPOSTED:
+                raise EngineerSlackDeliveryError(_failure_code(error_code))
             raise EngineerSlackDeliveryError(
-                _failure_code(response_payload.get("error"))
+                _failure_code(error_code or "unproven_refusal"), outcome_unknown=True
             )
         raise EngineerSlackDeliveryError(
             "engineer_slack_response_invalid", outcome_unknown=True

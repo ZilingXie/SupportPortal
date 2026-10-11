@@ -1,4 +1,12 @@
 # RAG Change Log
+## 2026-10-11 - Stage-4 review fix 5: refusal errors graded by proven-unposted semantics (p2-195)
+
+- Summary: an ``ok=false`` refusal is retriable ONLY when its error code is on a new proven-unposted allowlist (request-precondition refusals: unknown/archived channel, membership/permission, payload/auth/limit — semantically zero side effects). Slack documents internal_error/fatal_error as "possibly some aspect of the operation succeeded before the error", and unknown or missing codes prove nothing — all of those now land in outcome_unknown and are never auto-retried. The round-4 comment and evidence wording that treated every ok=false as definitely-not-created are corrected.
+- Reason: stage-4 fifth-round review blocker (uncertain refusals still auto-reposting).
+- Affected files/config: backend/services/engineer_slack.py (SLACK_REFUSAL_ERRORS_PROVEN_UNPOSTED + classification), tests, evidence docs.
+- Data impact: none (no runtime deployment).
+- Verification: stage-4 suite 44 passed (+2 real-adapter regressions: internal_error/fatal_error/unknown-code/missing-error forms each park at outcome_unknown with zero additional POST on retry; channel_not_found keeps failed + exactly one retry post); full 17-suite regression 509 passed / 0 failed including isolated PostgreSQL (same forms on PG).
+
 ## 2026-10-11 - Stage-4 review fix 4: strict Slack receipt classification (p2-195)
 
 - Summary: chat.postMessage receipts are now classified strictly. Only ``ok is True`` reports success; a genuine ``ok is False`` refusal (the message was definitively not created) stays a retriable failure; EVERY other HTTP-200 shape — a non-dict body, a missing ok, or a non-boolean ok such as the string "false" (previously truthy-passed as delivered) — lands in outcome_unknown and is never auto-retried. This closes the last double-post window: malformed receipts used to fall into retriable failed and a retry re-POSTed. Evidence correction from round 3 is recorded: the earlier lifecycle regressions substituted the whole adapter (state-machine proof), while this round's regressions drive the REAL adapter with only urllib mocked, covering {}, [], ok='false', genuine refusal (exactly one retry post), clean success, timeout and 5xx on both InMemory and isolated PostgreSQL.
