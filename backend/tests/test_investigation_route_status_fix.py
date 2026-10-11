@@ -23,6 +23,15 @@ def route_store(request):
 
 def route(store, event):
     receipt = store.accept_intake(event, store.settings.provenance())
+    if event.event_type == IntakeEventType.TICKET_CREATED:
+        # These regressions intentionally cover pre-fixed-task cases. New-case
+        # Account Router behavior has its own case_task suite; construct the
+        # legacy durable binding through the real hand-off entry here.
+        route_job = store.claim_job(JobKind.ROUTE, worker_id="route", lease_seconds=300)
+        store.hand_off_to_hermes_agent(route_job, prompt_release_id="prompt-1")
+        job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker", lease_seconds=300)
+        assert job.execution_id == receipt.execution_id
+        return receipt, job
     classifier = Mock(side_effect=AssertionError("legacy classification must not run"))
     worker = RouteWorker(store.settings, store, persona_resolver=lambda _: None,
                          route_decider=classifier, default_case_engine="hermes")
@@ -174,7 +183,7 @@ def test_customer_original_body_is_delivered_once_before_work_in_original_thread
         assert key.endswith(":work")
         tool_save_investigation_progress(store, repo, turn_id=job.payload["turn_id"], summary="Progress", evidence=[], blockers=[], next_steps=[])
     processor = HermesAgentTurnProcessor(store, client=FakeHermesClient(on_run_completed=complete), environment="preproduction", repository=repo, poll_interval_seconds=.01)
-    with patch("backend.services.automation_native_notifications.post_engineer_slack_event", return_value=delivered()) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as notify, patch.object(processor, "_ensure_case_thread", side_effect=AssertionError("customer continuation cannot create a root")):
+    with patch("backend.services.automation_native_notifications._to_english_display", return_value=body), patch("backend.services.automation_native_notifications.post_engineer_slack_event", return_value=delivered()) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as notify, patch.object(processor, "_ensure_case_thread", side_effect=AssertionError("customer continuation cannot create a root")):
         assert processor.process(job)["status"] == "awaiting_investigation_review"
         assert processor.process(job)["idempotent_replay"]
     post.assert_called_once()
