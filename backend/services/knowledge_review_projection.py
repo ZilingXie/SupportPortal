@@ -308,19 +308,37 @@ def _duplicate_evidence(lineage: dict[str, Any]) -> dict[str, Any]:
     for key in bundle_keys:
         surface = report.get(key)
         surfaces[key] = surface if isinstance(surface, dict) else None
-    decisions = report.get("decisions")
-    if not isinstance(decisions, list) and not any(
-        value is not None for value in surfaces.values()
-    ):
-        # C7: an empty report has neither decisions nor surfaces — malformed,
-        # not a silently empty "available" evidence surface.
+    structural_error = _review_report_structural_error(report)
+    if structural_error is not None:
         return {
             "state": "malformed",
-            "reason": "review_report_empty",
+            "reason": structural_error,
             "report": report,
             "retrieval_surfaces": surfaces,
         }
     return {"state": "available", "report": report, "retrieval_surfaces": surfaces}
+
+
+def _review_report_structural_error(report: dict[str, Any]) -> str | None:
+    """C6/C7 (review B6): structural validation of a review report.
+
+    Returns None when the report is structurally sound, or a stable reason:
+    - no decisions AND no surfaces at all -> review_report_empty
+    - decisions present but not a list -> review_report_decisions_not_a_list
+    - a present retrieval surface that is not an object ->
+      review_report_surface_not_an_object
+    """
+    decisions = report.get("decisions")
+    if "decisions" in report and not isinstance(decisions, list):
+        return "review_report_decisions_not_a_list"
+    for key in ("weknora", "agent_memory"):
+        if key in report and not isinstance(report.get(key), dict):
+            return "review_report_surface_not_an_object"
+    if not isinstance(decisions, list) and not any(
+        isinstance(report.get(key), dict) for key in ("weknora", "agent_memory")
+    ):
+        return "review_report_empty"
+    return None
 
 
 def _summary_projection(lineage: dict[str, Any]) -> dict[str, Any]:
@@ -330,9 +348,20 @@ def _summary_projection(lineage: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(summary, dict):
         return {"state": "not_recorded", "reason": "summary_task_not_recorded"}
     status = _clean(summary.get("status")) or None
+    # C6 (review B5): a FAILED Summary is an explicit failure state with its
+    # recorded error — never "available" with a dropped packet.
+    packet = summary.get("packet")
+    if status == "failed":
+        return {
+            "state": "failed",
+            "failure_reason": _clean(summary.get("error")) or "summary_failed",
+            "status": status,
+            "session_id": _clean(summary.get("summary_session_id")) or None,
+            "run_id": _clean(summary.get("run_id")) or None,
+            "error": _clean(summary.get("error")) or None,
+        }
     # C6: a completed Summary whose packet is not a structured object is
     # malformed — never "available" with a silently dropped packet.
-    packet = summary.get("packet")
     if status == "completed" and not isinstance(packet, dict):
         return {
             "state": "malformed",
@@ -362,15 +391,13 @@ def _review_projection(lineage: dict[str, Any]) -> dict[str, Any]:
     state = "available" if report is not None else "malformed"
     malformed_reason = None if report is not None else "review_report_missing"
     if report is not None:
-        # C7: an EMPTY report object carries no decisions and no retrieval
-        # surfaces — it proves nothing and must not grade as available.
-        decisions = report.get("decisions")
-        surfaces = [report.get(key) for key in ("weknora", "agent_memory")]
-        if not isinstance(decisions, list) and not any(
-            isinstance(surface, dict) for surface in surfaces
-        ):
+        # C6/C7 (review B6): the report must be STRUCTURALLY valid, not just
+        # non-empty — decisions (when present) must be a list and every
+        # present retrieval surface must be an object; anything else is
+        # malformed and never enters the available path.
+        malformed_reason = _review_report_structural_error(report)
+        if malformed_reason is not None:
             state = "malformed"
-            malformed_reason = "review_report_empty"
     return {
         "state": state,
         "malformed_reason": malformed_reason,

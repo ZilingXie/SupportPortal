@@ -56,3 +56,13 @@
 | B4 Overview 过期 | 重新 --write（5c80251c）并通过 --check | 命令复跑通过 |
 
 验证：专项 **12 passed**（8+4 新回归）；PG parity 1 passed；全套 19 套件 **528 passed / 0 failed**；node --check/compileall/diff-check/Overview --check/快照校验全过。
+
+
+## 修复轮 2（2026-10-12，二轮验收 B5/B6 后）
+
+| 阻断 | 修复 | 回归 |
+|---|---|---|
+| B5 失败 Summary 标 available | `_summary_projection`：status=failed → `state="failed"` + failure_reason=记录的 error（显式失败态，永不 available） | failed+error="boom" 注入→state=failed/failure_reason=boom |
+| B6 非空但结构错误的 report 标 available | 共享结构校验 `_review_report_structural_error`：decisions 存在但非 list→decisions_not_a_list；检索面存在但非对象→surface_not_an_object；完全空→empty——review 投影与 duplicate_evidence 双 malformed | decisions="bad"+weknora={} 注入→双 malformed(decisions_not_a_list)；agent_memory="garbage" 注入→双 malformed(surface_not_an_object) |
+
+验证：专项 **15 passed**（12+3）；PG parity 1；全套 19 套件 **531 passed / 0 failed**；全部校验命令通过。

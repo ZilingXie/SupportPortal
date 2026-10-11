@@ -1,4 +1,12 @@
 # RAG Change Log
+## 2026-10-12 - Stage-5 review fix 2: failed summaries and structurally invalid reports grade explicitly (p2-196)
+
+- Summary: two second-round blockers close the anomaly-state boundary. A Summary row with status=failed now projects as an explicit ``state="failed"`` carrying the recorded error as failure_reason — never "available" with a dropped packet. Review reports are structurally validated by a shared grader: decisions present but not a list (``review_report_decisions_not_a_list``), a retrieval surface present but not an object (``review_report_surface_not_an_object``), or a completely empty report (``review_report_empty``) all grade malformed for BOTH the review projection and the duplicate evidence — structurally invalid retrieval evidence can no longer enter the available path.
+- Reason: stage-5 second-round review blockers (C6/C7 anomaly-state contract).
+- Affected files/config: backend/services/knowledge_review_projection.py, backend/tests/test_stage5_knowledge_review.py.
+- Data impact: none (no runtime deployment).
+- Verification: stage-5 suite 15 passed (+3 regressions covering the reviewer's repro shapes); full 19-suite regression 531 passed / 0 failed; all verification commands pass.
+
 ## 2026-10-12 - Stage-5 review fixes: tab wiring, contract ordering, malformed grading (p2-196)
 
 - Summary: four first-round blockers fixed. (B1) the Knowledge Review tab's interactive elements are wired in bindEvents — tab switch loads the queue, filter form submits, list buttons open details, pagination pages (the earlier insertion had been lost in an editing chain). (B2) the projection now enforces the (created_at, promotion_id) contract ordering itself instead of inheriting repository return order, so InMemory insertion order and PostgreSQL index order paginate identically. (B3) malformed states grade correctly: a completed Summary whose packet is not an object is malformed (summary_packet_missing_or_not_object), and a Review report that is an empty object (no decisions, no retrieval surfaces) grades malformed for both the review projection and the duplicate evidence — never a silently-empty "available". (B4) the stale Project Overview was regenerated.

@@ -559,3 +559,73 @@ def test_knowledge_tab_handlers_are_bound() -> None:
         assert fragment in bind_src, f"bindEvents missing handler for {fragment}"
     # the tab switch actually loads the queue
     assert "loadKnowledgePromotions({ selectFirst: true })" in bind_src
+
+
+# ----------------- stage-5 review fixes B5/B6 (failure/structure grading) ----
+
+
+def test_failed_summary_is_explicit_failure_state(monkeypatch) -> None:
+    """B5: status=failed with a recorded error must surface as state=failed,
+    never available."""
+    client, _store = _client_and_store()
+    repository = _seed_repository()
+    promotion_id = _promotion_id(repository)
+    _patch_repository(client, monkeypatch, repository)
+    _login(client)
+    summary_id = _summary_task_id()
+    repository._standalone_summary_tasks[summary_id]["status"] = "failed"
+    repository._standalone_summary_tasks[summary_id]["error"] = "boom"
+
+    detail = client.get(
+        f"/automation/production/dashboard/api/knowledge/promotions/{promotion_id}"
+    )
+    aggregate = detail.json()
+    assert aggregate["summary"]["state"] == "failed"
+    assert aggregate["summary"]["failure_reason"] == "boom"
+    assert aggregate["summary"]["packet"] is None if "packet" in aggregate["summary"] else True
+
+
+def test_structurally_invalid_decisions_is_malformed(monkeypatch) -> None:
+    """B6: decisions present but not a list grades malformed for BOTH the
+    review projection and the duplicate evidence."""
+    client, _store = _client_and_store()
+    repository = _seed_repository()
+    promotion_id = _promotion_id(repository)
+    _patch_repository(client, monkeypatch, repository)
+    _login(client)
+    review_id = f"{_summary_task_id()}:review"
+    repository._standalone_review_tasks[review_id]["report"] = {
+        "decisions": "bad",
+        "weknora": {},
+    }
+
+    detail = client.get(
+        f"/automation/production/dashboard/api/knowledge/promotions/{promotion_id}"
+    )
+    aggregate = detail.json()
+    assert aggregate["review"]["state"] == "malformed"
+    assert aggregate["review"]["malformed_reason"] == "review_report_decisions_not_a_list"
+    assert aggregate["duplicate_evidence"]["state"] == "malformed"
+    assert aggregate["duplicate_evidence"]["reason"] == "review_report_decisions_not_a_list"
+
+
+def test_structurally_invalid_surface_is_malformed(monkeypatch) -> None:
+    """B6: a retrieval surface present but not an object grades malformed."""
+    client, _store = _client_and_store()
+    repository = _seed_repository()
+    promotion_id = _promotion_id(repository)
+    _patch_repository(client, monkeypatch, repository)
+    _login(client)
+    review_id = f"{_summary_task_id()}:review"
+    repository._standalone_review_tasks[review_id]["report"] = {
+        "decisions": [],
+        "agent_memory": "garbage",
+    }
+
+    detail = client.get(
+        f"/automation/production/dashboard/api/knowledge/promotions/{promotion_id}"
+    )
+    aggregate = detail.json()
+    assert aggregate["review"]["state"] == "malformed"
+    assert aggregate["review"]["malformed_reason"] == "review_report_surface_not_an_object"
+    assert aggregate["duplicate_evidence"]["state"] == "malformed"
