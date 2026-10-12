@@ -27,6 +27,7 @@ HERMES_PERSONA_ENABLED=0
 AUTOMATION_CASE_ENGINE="legacy"
 HERMES_AGENT_ENABLED=0
 ENABLEMENT_WORKFLOW_MODE="manual"
+KNOWLEDGE_STAGE_CONFIG=""
 AGENT_MODEL_VALUE=""
 AGENT_MODEL_VERSION=""
 SCHEMA_MIGRATION_PARAMETER="${AUTOMATION_ECS_SCHEMA_MIGRATION_PARAMETER:-}"
@@ -211,6 +212,7 @@ parse_args() {
       --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
       --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
       --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; shift 2 ;;
+      --knowledge-stage-config) [[ $# -ge 2 ]] || fail "--knowledge-stage-config requires a value"; KNOWLEDGE_STAGE_CONFIG="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
       --preflight-evidence) [[ $# -ge 2 ]] || fail "--preflight-evidence requires a value"; PREFLIGHT_EVIDENCE="$2"; shift 2 ;;
@@ -232,6 +234,14 @@ parse_args() {
     || fail "Hermes real activation requires --bootstrap-account-schema"
   [[ "${ENABLEMENT_WORKFLOW_MODE}" = "manual" || "${ENABLEMENT_WORKFLOW_MODE}" = "archer" ]] \
     || fail "--enablement-workflow-mode must be manual or archer"
+  # Stage-6 knowledge staged enablement (p2-197): the stage config is the
+  # ONLY formal switch entry point and stays Preproduction-only.
+  if [[ -n "${KNOWLEDGE_STAGE_CONFIG}" ]]; then
+    [[ "${ENVIRONMENT}" = "preproduction" ]] \
+      || fail "--knowledge-stage-config is Preproduction-only"
+    [[ -f "${KNOWLEDGE_STAGE_CONFIG}" ]] \
+      || fail "--knowledge-stage-config file not found: ${KNOWLEDGE_STAGE_CONFIG}"
+  fi
 }
 
 file_sha256() {
@@ -779,6 +789,11 @@ render_role_task_definition() {
   if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
     args+=(--hermes-case-workflow-mode "${HERMES_CASE_WORKFLOW_MODE}")
   fi
+  if [[ "${ENVIRONMENT}" = "preproduction" && -n "${KNOWLEDGE_STAGE_CONFIG}" ]]; then
+    # Stage-6 staged enablement (p2-197): the validated stage config drives
+    # the knowledge master/branch switches and the source allowlist.
+    args+=(--knowledge-stage-config "${KNOWLEDGE_STAGE_CONFIG}")
+  fi
   if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
     args+=(--hermes-persona-enabled)
   fi
@@ -835,6 +850,25 @@ verify_agent_model_unchanged() {
     || fail "Preproduction agent-model parameter disappeared mid-release"
   [[ "${version_now}" = "${AGENT_MODEL_VERSION}" ]] \
     || fail "agent-model parameter changed during the release (expected version ${AGENT_MODEL_VERSION}, now ${version_now}); restart the release to pin the new model"
+}
+
+verify_knowledge_stage_config_rendered() {
+  # Stage-6 (p2-197): the rendered api/worker definitions must carry exactly
+  # the validated knowledge stage config (master, six switches, allowlist) and
+  # the canonical worker WeKnora client config — registration of a drifted
+  # definition never proceeds.
+  [[ "${ENVIRONMENT}" = "preproduction" ]] || return 0
+  local role
+  for role in api worker; do
+    [[ -f "${TEMP_DIR}/${role}.register.json" ]] || continue
+    "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
+      verify-knowledge-stage-config \
+      --task-definition "${TEMP_DIR}/${role}.register.json" \
+      ${KNOWLEDGE_STAGE_CONFIG:+--stage-config "${KNOWLEDGE_STAGE_CONFIG}"} \
+      --role "${role}" >/dev/null \
+      || fail "${role} rendered task definition does not match the knowledge stage config"
+  done
+  log "Knowledge stage config verified on rendered api/worker definitions"
 }
 
 ensure_agentrelay_parameters() {
@@ -1530,6 +1564,7 @@ main() {
   done
   ECR_STATUS="passed"
   verify_agent_model_unchanged
+  verify_knowledge_stage_config_rendered
   prepare_schema_bootstrap
 
   local suspension_reference suspension_recipients_json
@@ -1639,6 +1674,10 @@ main() {
   # task definitions were rendered from; a parameter switch mid-release must
   # restart the release instead of activating a split-model deployment.
   verify_agent_model_unchanged
+  # Activation gate (stage 6): re-verify the knowledge stage config against
+  # the definitions actually being activated — the render-time check must
+  # still hold at activation time.
+  verify_knowledge_stage_config_rendered
   DEPLOY_STARTED=1
   start_phase route_worker_rollout
   for role in route worker; do

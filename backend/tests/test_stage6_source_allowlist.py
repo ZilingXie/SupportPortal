@@ -18,6 +18,7 @@ from backend.services.knowledge_source_allowlist import (  # noqa: E402
     case_binding_allowed,
     parse_allowlist,
     source_allowed,
+    validate_allowlist,
 )
 
 NOW = "2026-10-12T08:00:00+00:00"
@@ -31,6 +32,27 @@ def test_parse_allows_whitespace_and_case_variants() -> None:
 def test_parse_rejects_malformed_entries() -> None:
     # missing type, missing id, extra colons — all skipped fail-closed
     assert parse_allowlist(":id, type:, a:b:c, ,") == frozenset()
+
+
+def test_validate_allowlist_accepts_live_shapes() -> None:
+    # empty, exact ids, type wildcards, and case bindings all validate
+    validate_allowlist("")
+    validate_allowlist(None)
+    validate_allowlist("csd_issue:CSD-TEST-1, zendesk_ticket:990001")
+    validate_allowlist("csd_issue:*, solved_ticket:*")
+    validate_allowlist("case_binding:990001-1, csd_issue:CSD-1")
+
+
+def test_validate_allowlist_rejects_dead_entries() -> None:
+    # every entry the runtime parser would silently drop is a hard
+    # configuration error at render time
+    for raw in (":id", "type:", "a:b:c", "no-colon", "type:id:extra"):
+        try:
+            validate_allowlist(raw)
+        except ValueError as exc:
+            assert raw in str(exc), f"the error must name the dead entry {raw!r}"
+        else:
+            raise AssertionError(f"dead allowlist entry accepted: {raw!r}")
 
 
 def test_default_empty_processes_nothing(monkeypatch) -> None:

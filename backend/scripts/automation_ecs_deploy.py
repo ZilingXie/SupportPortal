@@ -19,6 +19,7 @@ from backend.services.automation_release_manifest import (
 from backend.services.account_internal_email_recipients import (
     resolve_account_internal_email_recipients,
 )
+from backend.services.knowledge_source_allowlist import validate_allowlist
 
 
 PROVENANCE_ENV_NAMES = {
@@ -157,10 +158,14 @@ AGENTRELAY_SECRET_SUFFIXES = {
     "AGENTRELAY_USERNAME": "agentrelay-username",
     "AGENTRELAY_TOKEN": "agentrelay-token",
 }
-# WeKnora is retired from Preproduction renders (AgentMemory recovery): the
-# map is kept only so formal upgrades can STRIP these inherited references
-# from observed definitions.  The SSM parameter entities themselves are
-# deleted separately by the WeKnora service decommission plan.
+# WeKnora env names known to the renderer. The dual-write client set below
+# is rendered fresh on every Preproduction worker revision (stage 6,
+# p2-197); WEKNORA_MEMORY_IDENTITY is deliberately NOT part of it — the
+# pinned fork contract has no memory operations, so the identity stays
+# unset and the client fails closed rather than guessing one. All names in
+# this map are stripped from observed definitions before the canonical
+# client set is rendered, so repeat renders never resurrect retired or
+# stale references.
 WEKNORA_SECRET_SUFFIXES = {
     "WEKNORA_BASE_URL": "weknora-base-url",
     "WEKNORA_API_TOKEN": "weknora-api-token",
@@ -170,6 +175,17 @@ WEKNORA_SECRET_SUFFIXES = {
     "HERMES_WEKNORA_BASE_URL": "weknora-base-url",
     "HERMES_WEKNORA_API_TOKEN": "weknora-api-token",
     "HERMES_WEKNORA_KNOWLEDGE_BASE_ID": "weknora-knowledge-base-id",
+}
+WEKNORA_CLIENT_SECRET_SUFFIXES = {
+    name: suffix
+    for name, suffix in WEKNORA_SECRET_SUFFIXES.items()
+    if name != "WEKNORA_MEMORY_IDENTITY"
+}
+# The fork instance authenticates API keys via the X-API-Key header with no
+# scheme prefix (the client's Authorization/Bearer default is rejected 401).
+WEKNORA_CLIENT_ENV = {
+    "WEKNORA_AUTH_HEADER_NAME": "X-API-Key",
+    "WEKNORA_AUTH_SCHEME": "",
 }
 # Retired Enablement runtime dependency gate (p2-149/p2-163): Worker task
 # definitions must not carry the Archer credential in either mode — since
@@ -194,6 +210,101 @@ KNOWLEDGE_PREPRODUCTION_SECRET_SUFFIXES = {
     "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN": "knowledge-slack-workspace-domain",
 }
 KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS = "300"
+# Stage-6 staged enablement (p2-197 step 2): the knowledge stage config is
+# the ONLY formal way the governance switches turn on. It is validated at
+# render time, rendered verbatim into the task definitions, bound into the
+# release pipeline checkpoint, and re-verified after render — manual ECS
+# edits are never the enablement path.
+KNOWLEDGE_MASTER_SWITCH_ENV = "HERMES_KNOWLEDGE_WORKFLOW_ENABLED"
+KNOWLEDGE_STAGE_CONFIG_KEYS = frozenset({"master", "switches", "source_allowlist"})
+# A switch may only be on when its prerequisite is on. The layering comes
+# from the runtime contracts (knowledge_dual_write: the six switches are
+# layered under the master; delivery rows are processed only by the
+# dual-write worker; Slack notifications are sent by the same worker) — a
+# configuration that violates it would queue work nothing consumes.
+KNOWLEDGE_STAGE_SWITCH_DEPENDENCIES = {
+    "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+    "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+    "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+}
+
+
+def default_knowledge_stage_config() -> dict[str, Any]:
+    """The all-off stage: every release without an explicit stage config."""
+    return {
+        "master": "0",
+        "switches": {name: "0" for name in KNOWLEDGE_GOVERNANCE_SWITCHES},
+        "source_allowlist": "",
+    }
+
+
+def load_knowledge_stage_config(source: str | None) -> dict[str, Any]:
+    """Load and validate a knowledge stage config from a JSON file path.
+
+    Returns the normalized config: master and all six switches as "0"/"1"
+    plus the source allowlist string. Defaults (no source) are all-off with
+    an empty allowlist. Invalid files, unknown keys, non-"0"/"1" values,
+    dead allowlist entries, and dependency violations are hard errors —
+    the rollout never renders a config the runtime would silently half
+    honor."""
+    config = default_knowledge_stage_config()
+    if source is None:
+        return config
+    path = Path(source)
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"knowledge stage config {source} is not a readable JSON file: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("knowledge stage config must be a JSON object")
+    unknown = set(payload) - KNOWLEDGE_STAGE_CONFIG_KEYS
+    if unknown:
+        raise ValueError(
+            f"knowledge stage config has unknown keys {sorted(unknown)}; "
+            f"valid keys are {sorted(KNOWLEDGE_STAGE_CONFIG_KEYS)}"
+        )
+    if "master" in payload:
+        master = payload["master"]
+        if not (isinstance(master, str) and master in {"0", "1"}):
+            raise ValueError('knowledge stage config master must be the string "0" or "1"')
+        config["master"] = master
+    if "switches" in payload:
+        switches = payload["switches"]
+        if not isinstance(switches, dict):
+            raise ValueError("knowledge stage config switches must be an object")
+        unknown_switches = set(switches) - set(KNOWLEDGE_GOVERNANCE_SWITCHES)
+        if unknown_switches:
+            raise ValueError(
+                f"knowledge stage config has unknown switches {sorted(unknown_switches)}; "
+                f"valid switches are {list(KNOWLEDGE_GOVERNANCE_SWITCHES)}"
+            )
+        for name, value in switches.items():
+            if not (isinstance(value, str) and value in {"0", "1"}):
+                raise ValueError(
+                    f'knowledge stage config switch {name} must be the string "0" or "1"'
+                )
+            config["switches"][name] = value
+    if "source_allowlist" in payload:
+        allowlist = payload["source_allowlist"]
+        if not isinstance(allowlist, str):
+            raise ValueError("knowledge stage config source_allowlist must be a string")
+        config["source_allowlist"] = allowlist
+    validate_allowlist(config["source_allowlist"])
+    if config["master"] != "1" and any(
+        value == "1" for value in config["switches"].values()
+    ):
+        raise ValueError(
+            "knowledge stage config switches are layered under "
+            f"{KNOWLEDGE_MASTER_SWITCH_ENV}: no switch may be \"1\" while master is \"0\""
+        )
+    for name, prerequisite in KNOWLEDGE_STAGE_SWITCH_DEPENDENCIES.items():
+        if config["switches"][name] == "1" and config["switches"][prerequisite] != "1":
+            raise ValueError(
+                f"knowledge stage config {name}=\"1\" requires {prerequisite}=\"1\" "
+                "(delivery rows and Slack notifications are processed only by the "
+                "dual-write worker)"
+            )
+    return config
 REGISTER_TASK_DEFINITION_FIELDS = {
     "family",
     "taskRoleArn",
@@ -447,23 +558,31 @@ def _apply_preproduction_knowledge_configuration(
     environment: str,
     parameter_prefix_arn: str,
     knowledge_source_allowlist: str | None = None,
+    knowledge_stage_config: dict[str, Any] | None = None,
 ) -> None:
     """Render the stage-6 knowledge configuration on API and Worker only.
 
-    All governance switches stay explicitly off in the first Preproduction
-    release. The AgentMemory and Slack values are SSM references so no secret
-    or environment-specific value is copied into the task-definition JSON.
+    The master switch and all governance switches come from the validated
+    knowledge stage config (all-off by default — the first Preproduction
+    release). The AgentMemory and Slack values are SSM references so no
+    secret or environment-specific value is copied into the
+    task-definition JSON.
     """
     if environment != "preproduction":
         return
-    allowlist = (
-        knowledge_source_allowlist
-        if knowledge_source_allowlist is not None
-        else os.getenv("KNOWLEDGE_SOURCE_ALLOWLIST", "")
-    )
-    _set_environment_value(container, "KNOWLEDGE_SOURCE_ALLOWLIST", str(allowlist or ""))
+    stage = knowledge_stage_config or default_knowledge_stage_config()
+    _set_environment_value(container, KNOWLEDGE_MASTER_SWITCH_ENV, stage["master"])
     for name in KNOWLEDGE_GOVERNANCE_SWITCHES:
-        _set_environment_value(container, name, "0")
+        _set_environment_value(container, name, stage["switches"][name])
+    if knowledge_stage_config is not None:
+        allowlist = str(knowledge_stage_config.get("source_allowlist") or "")
+    else:
+        allowlist = (
+            knowledge_source_allowlist
+            if knowledge_source_allowlist is not None
+            else os.getenv("KNOWLEDGE_SOURCE_ALLOWLIST", "")
+        )
+    _set_environment_value(container, "KNOWLEDGE_SOURCE_ALLOWLIST", str(allowlist or ""))
     _set_environment_value(
         container,
         "KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS",
@@ -474,6 +593,34 @@ def _apply_preproduction_knowledge_configuration(
     _remove_secret_references(container, names)
     for name, suffix in sorted(KNOWLEDGE_PREPRODUCTION_SECRET_SUFFIXES.items()):
         _set_secret_reference(container, name, _parameter_arn(parameter_prefix_arn, suffix))
+
+
+def _apply_preproduction_weknora_client_configuration(
+    container: dict[str, Any],
+    *,
+    environment: str,
+    parameter_prefix_arn: str,
+) -> None:
+    """Render the WeKnora dual-write client configuration (Worker only).
+
+    Stage 6 (p2-197): the worker carries the fork client credentials, the
+    pinned API contract, the knowledge base id, and the X-API-Key auth
+    shape on every rendered Preproduction revision. Observed definitions
+    are normalized first (every known WeKnora name, including the retired
+    memory identity, is stripped) so repeat renders stay idempotent. The
+    retired p2-181 auto-promotion path (WEKNORA_PROMOTION_ENABLED) stays
+    explicitly off — the KNOWLEDGE_WEKNORA_DELIVERY_ENABLED switch in the
+    knowledge stage config is the only way WeKnora writes turn on.
+    """
+    if environment != "preproduction":
+        return
+    _remove_secret_references(container, set(WEKNORA_SECRET_SUFFIXES))
+    _remove_environment_values(container, set(WEKNORA_SECRET_SUFFIXES) | set(WEKNORA_CLIENT_ENV))
+    for name, suffix in sorted(WEKNORA_CLIENT_SECRET_SUFFIXES.items()):
+        _set_secret_reference(container, name, _parameter_arn(parameter_prefix_arn, suffix))
+    for name, value in WEKNORA_CLIENT_ENV.items():
+        _set_environment_value(container, name, value)
+    _set_environment_value(container, "WEKNORA_PROMOTION_ENABLED", "0")
 
 
 def _parameter_arn(prefix_arn: str, name: str) -> str:
@@ -503,6 +650,7 @@ def _base_environment(
     hermes_case_workflow_mode: str,
     automation_case_engine: str = "legacy",
     enablement_workflow_mode: str = "manual",
+    knowledge_stage_config: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
     values = {
         "AUTOMATION_RUNTIME_ALLOW_MEMORY": "0",
@@ -535,10 +683,15 @@ def _base_environment(
             }
         )
     if role in {"api", "worker"} and environment == "preproduction":
-        # Knowledge governance master switch (AgentMemory recovery): explicit
-        # OFF on both queueing roles — runtime readiness (real Hermes mode +
-        # configured gateway) alone never re-enables governance.
-        values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] = "0"
+        # Knowledge governance master switch: the stage-6 knowledge stage
+        # config owns the value (all-off by default); runtime readiness
+        # (real Hermes mode + configured gateway) alone never re-enables
+        # governance. The knowledge configuration call later in the render
+        # flow re-applies the same validated value, so this seed exists only
+        # for roles/paths that never reach it.
+        values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] = str(
+            (knowledge_stage_config or default_knowledge_stage_config())["master"]
+        )
         if role == "worker":
             # The retired promotion path stays explicitly off, never derived
             # from the Hermes workflow mode.
@@ -645,6 +798,7 @@ def render_initial_task_definition(
     graph_efs_access_point_id: str | None = None,
     agent_model: str | None = None,
     knowledge_source_allowlist: str | None = None,
+    knowledge_stage_config: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -652,6 +806,12 @@ def render_initial_task_definition(
         raise ValueError("initial task definitions may only target preproduction")
     if repository != "supportportal/preproduction":
         raise ValueError("initial Preproduction repository must be supportportal/preproduction")
+    if knowledge_stage_config and knowledge_source_allowlist is not None:
+        raise ValueError(
+            "knowledge stage config and the standalone source allowlist are "
+            "mutually exclusive; put source_allowlist in the stage config"
+        )
+    stage_config = load_knowledge_stage_config(knowledge_stage_config)
     normalized_agent_model = " ".join(str(agent_model or "").split()).strip()
     if not normalized_agent_model:
         raise ValueError(
@@ -772,6 +932,7 @@ def render_initial_task_definition(
             hermes_case_workflow_mode=hermes_case_workflow_mode,
             automation_case_engine=automation_case_engine,
             enablement_workflow_mode=enablement_workflow_mode,
+            knowledge_stage_config=stage_config,
         ),
         "secrets": [
             {"name": name, "valueFrom": _parameter_arn(parameter_prefix_arn, suffix)}
@@ -840,8 +1001,14 @@ def render_initial_task_definition(
             environment=environment,
             parameter_prefix_arn=parameter_prefix_arn,
             knowledge_source_allowlist=knowledge_source_allowlist,
+            knowledge_stage_config=stage_config,
         )
     if role == "worker":
+        _apply_preproduction_weknora_client_configuration(
+            container,
+            environment=environment,
+            parameter_prefix_arn=parameter_prefix_arn,
+        )
         validate_worker_contract(rendered)
     return rendered
 
@@ -911,6 +1078,7 @@ def render_task_definition(
     graph_efs_file_system_id: str | None = None,
     graph_efs_access_point_id: str | None = None,
     knowledge_source_allowlist: str | None = None,
+    knowledge_stage_config: str | None = None,
 ) -> dict[str, Any]:
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
@@ -919,6 +1087,14 @@ def render_task_definition(
     expected_repository = f"supportportal/{environment}"
     if repository != expected_repository:
         raise ValueError(f"repository must be {expected_repository}")
+    if knowledge_stage_config and environment != "preproduction":
+        raise ValueError("the knowledge stage config is a Preproduction-only entry point")
+    if knowledge_stage_config and knowledge_source_allowlist is not None:
+        raise ValueError(
+            "knowledge stage config and the standalone source allowlist are "
+            "mutually exclusive; put source_allowlist in the stage config"
+        )
+    stage_config = load_knowledge_stage_config(knowledge_stage_config)
     normalized_agent_model = " ".join(str(agent_model or "").split()).strip()
     if environment == "preproduction":
         if not normalized_agent_model:
@@ -1111,36 +1287,37 @@ def render_task_definition(
                     container, name, _parameter_arn(relay_prefix_arn, suffix)
                 )
         if environment == "preproduction":
-            # WeKnora promotion retired from Preproduction (AgentMemory
-            # recovery): strip every inherited secret reference and config
-            # env from observed definitions so repeat renders never
-            # resurrect the credential or the mode-derived enable flag; the
-            # promotion flag itself stays explicitly off.
-            _remove_secret_references(container, set(WEKNORA_SECRET_SUFFIXES))
-            _remove_environment_values(
+            # Stage-6 dual-write (p2-197): the worker renders the WeKnora
+            # client configuration (credentials, pinned contract, knowledge
+            # base id, X-API-Key auth shape) from the environment SSM
+            # prefix. Observed definitions are normalized first so repeat
+            # renders never resurrect retired references; the retired
+            # p2-181 auto-promotion flag stays explicitly off.
+            weknora_prefix_arn = _parameter_prefix_arn(container, environment=environment)
+            _apply_preproduction_weknora_client_configuration(
                 container,
-                {"WEKNORA_AUTH_HEADER_NAME", "WEKNORA_AUTH_SCHEME"},
+                environment=environment,
+                parameter_prefix_arn=weknora_prefix_arn,
             )
-            _set_environment_value(container, "WEKNORA_PROMOTION_ENABLED", "0")
     if role in {"api", "worker"}:
         # Ensure the Zendesk side-effects gate is enabled on every rendered
         # api/worker revision (p2-163, ticket 13567): the hermes engine's
         # business tools must never be silently blocked.
         _set_environment_value(container, "AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED", "1")
     if role in {"api", "worker"} and environment == "preproduction":
-        # Knowledge governance master switch (AgentMemory recovery): explicit
-        # OFF on every rendered Preproduction api/worker revision regardless
-        # of what the observed definition carried.
-        _set_environment_value(container, "HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "0")
-        # Stage 6 starts with all knowledge switches off. The SSM references
-        # are still rendered now so later allowlist/switch changes can be
-        # audited as task-definition revisions rather than hidden defaults.
+        # Stage-6 knowledge governance: the master switch and all six
+        # switches come from the validated knowledge stage config (all-off
+        # by default) on every rendered Preproduction api/worker revision,
+        # regardless of what the observed definition carried. The SSM
+        # references are rendered alongside so each stage change is a
+        # task-definition revision, never a hidden runtime default.
         prefix_arn = _parameter_prefix_arn(container, environment=environment)
         _apply_preproduction_knowledge_configuration(
             container,
             environment=environment,
             parameter_prefix_arn=prefix_arn,
             knowledge_source_allowlist=knowledge_source_allowlist,
+            knowledge_stage_config=stage_config,
         )
     if role in {"api", "worker"}:
         # Ensure the outbound Slack kill switch reflects the target environment
@@ -1244,6 +1421,117 @@ def render_schema_bootstrap_task_definition(
     for name in ("AUTOMATION_DB_MIGRATION_DSN", "TICKET_DB_MIGRATION_DSN"):
         _set_secret_reference(container, name, migration_secret_reference)
     return rendered
+
+
+def verify_knowledge_stage_config(
+    *,
+    task_definition_path: str | Path,
+    stage_config_path: str | Path | None,
+    role: str,
+    environment: str = "preproduction",
+) -> dict[str, Any]:
+    """Post-render drift check for the stage-6 knowledge configuration.
+
+    The rendered api/worker task definition must carry EXACTLY the
+    validated stage config: the master switch, all six governance switches,
+    and the source allowlist verbatim. The worker must additionally carry
+    the canonical WeKnora client references with their EXACT SSM valueFrom
+    paths (the environment prefix's weknora-* parameters — full-path
+    comparison, never mere presence), must never carry the retired memory
+    identity in secret OR environment form, and must pin the retired
+    auto-promotion flag off; the api must carry none of the WeKnora client
+    config. A mismatch is a hard error — registration of a definition that
+    silently drifted from the recorded stage config must never proceed.
+    """
+    if role not in {"api", "worker"}:
+        raise ValueError("knowledge stage verification supports only api or worker")
+    if environment != "preproduction":
+        raise ValueError("knowledge stage verification is Preproduction-only")
+    stage = load_knowledge_stage_config(
+        str(stage_config_path) if stage_config_path is not None else None
+    )
+    source = _read_json(task_definition_path)
+    task_definition = source.get("taskDefinition") if "taskDefinition" in source else source
+    if not isinstance(task_definition, dict):
+        raise ValueError("taskDefinition object is required")
+    container = _container(task_definition, role)
+    environment_values = _environment_map(container)
+    problems: list[str] = []
+    expected_env = {
+        KNOWLEDGE_MASTER_SWITCH_ENV: stage["master"],
+        **stage["switches"],
+        "KNOWLEDGE_SOURCE_ALLOWLIST": stage["source_allowlist"],
+    }
+    for name, expected in expected_env.items():
+        actual = environment_values.get(name)
+        if actual is None:
+            problems.append(f"missing environment {name} (expected {expected!r})")
+        elif actual != expected:
+            problems.append(f"environment {name} is {actual!r}, expected {expected!r}")
+    secret_names = _secret_names(container)
+    secret_references = {
+        str(item.get("name") or ""): str(item.get("valueFrom") or "")
+        for item in container.get("secrets") or []
+    }
+    if role == "worker":
+        # B1: every WeKnora client secret must point at the environment SSM
+        # prefix's weknora-* parameter — exact full-path comparison, so a
+        # wrong prefix (production/foreign), a wrong suffix, or a relative
+        # reference can never pass as "present".
+        prefix_arn = _parameter_prefix_arn(container, environment=environment)
+        for name, suffix in sorted(WEKNORA_CLIENT_SECRET_SUFFIXES.items()):
+            expected_reference = _parameter_arn(prefix_arn, suffix)
+            actual_reference = secret_references.get(name)
+            if actual_reference is None:
+                problems.append(f"worker is missing the WeKnora client secret {name}")
+            elif actual_reference != expected_reference:
+                problems.append(
+                    f"worker WeKnora client secret {name} must reference "
+                    f"{expected_reference}, got {actual_reference}"
+                )
+        # Only the seven canonical client references may point at weknora-*
+        # parameters; anything else reaching for one is drift.
+        for name, reference in sorted(secret_references.items()):
+            if "/weknora-" in reference and name not in WEKNORA_CLIENT_SECRET_SUFFIXES:
+                problems.append(
+                    f"worker secret {name} unexpectedly references a WeKnora "
+                    f"parameter: {reference}"
+                )
+        if "WEKNORA_MEMORY_IDENTITY" in secret_names:
+            problems.append("worker carries the retired WEKNORA_MEMORY_IDENTITY secret")
+        if "WEKNORA_MEMORY_IDENTITY" in environment_values:
+            problems.append(
+                "worker carries the retired WEKNORA_MEMORY_IDENTITY environment "
+                "variable (the pinned contract has no memory operations; the "
+                "identity must stay unset and fail closed)"
+            )
+        if environment_values.get("WEKNORA_PROMOTION_ENABLED") != "0":
+            problems.append("worker must pin WEKNORA_PROMOTION_ENABLED=0")
+        for name, expected in WEKNORA_CLIENT_ENV.items():
+            actual = environment_values.get(name)
+            if actual != expected:
+                problems.append(
+                    f"worker environment {name} is {actual!r}, expected {expected!r}"
+                )
+    else:
+        leaked = (set(WEKNORA_SECRET_SUFFIXES) | set(WEKNORA_CLIENT_ENV)) & (
+            secret_names | set(environment_values)
+        )
+        if leaked:
+            problems.append(f"api carries WeKnora client config that belongs on the worker: {sorted(leaked)}")
+    if problems:
+        raise ValueError(
+            "rendered task definition does not match the knowledge stage "
+            f"config: {'; '.join(problems)}"
+        )
+    return {
+        "status": "ok",
+        "role": role,
+        "master": stage["master"],
+        "switches": dict(stage["switches"]),
+        "source_allowlist": stage["source_allowlist"],
+        "weknora_client": role == "worker",
+    }
 
 
 def verify_heartbeats(
@@ -1374,6 +1662,7 @@ def build_parser() -> argparse.ArgumentParser:
     render.add_argument("--graph-efs-file-system-id", default=None)
     render.add_argument("--graph-efs-access-point-id", default=None)
     render.add_argument("--knowledge-source-allowlist", default=None)
+    render.add_argument("--knowledge-stage-config", default=None)
     render.add_argument("--output", required=True)
     disable_hermes = subparsers.add_parser(
         "render-production-hermes-disabled-task-definition"
@@ -1413,7 +1702,15 @@ def build_parser() -> argparse.ArgumentParser:
     initial.add_argument("--graph-efs-access-point-id")
     initial.add_argument("--agent-model", default=None)
     initial.add_argument("--knowledge-source-allowlist", default=None)
+    initial.add_argument("--knowledge-stage-config", default=None)
     initial.add_argument("--output", required=True)
+    verify_knowledge = subparsers.add_parser("verify-knowledge-stage-config")
+    verify_knowledge.add_argument("--task-definition", required=True)
+    verify_knowledge.add_argument("--stage-config", default=None)
+    verify_knowledge.add_argument("--role", choices=("api", "worker"), required=True)
+    verify_knowledge.add_argument(
+        "--environment", choices=("preproduction",), default="preproduction"
+    )
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
     bootstrap.add_argument("--manifest", required=True)
@@ -1463,6 +1760,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             graph_efs_file_system_id=args.graph_efs_file_system_id,
             graph_efs_access_point_id=args.graph_efs_access_point_id,
             knowledge_source_allowlist=args.knowledge_source_allowlist,
+            knowledge_stage_config=args.knowledge_stage_config,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
@@ -1500,12 +1798,20 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             graph_efs_access_point_id=args.graph_efs_access_point_id,
             agent_model=args.agent_model,
             knowledge_source_allowlist=args.knowledge_source_allowlist,
+            knowledge_stage_config=args.knowledge_stage_config,
         )
         Path(args.output).write_text(
             json.dumps(result, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         return {"status": "ok", "output": args.output}
+    if args.command == "verify-knowledge-stage-config":
+        return verify_knowledge_stage_config(
+            task_definition_path=args.task_definition,
+            stage_config_path=args.stage_config,
+            role=args.role,
+            environment=args.environment,
+        )
     if args.command == "render-schema-bootstrap-task-definition":
         result = render_schema_bootstrap_task_definition(
             current_path=args.current,

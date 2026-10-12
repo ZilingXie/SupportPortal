@@ -53,6 +53,27 @@ def allowlist_entries() -> frozenset[str]:
     return parse_allowlist(os.getenv(ALLOWLIST_ENV))
 
 
+def validate_allowlist(raw: str | None) -> None:
+    """Raise ValueError when a non-empty entry cannot be honored.
+
+    ``parse_allowlist`` drops malformed entries fail-closed at runtime; for
+    a deployment-pinned allowlist that silent drop is an operator mistake
+    (the operator meant to allow a source and configured a dead entry), so
+    render-time preflight makes the same condition a hard configuration
+    error instead of a quietly smaller allowed set."""
+    for chunk in str(raw or "").split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        source_type, _, source_id = chunk.partition(":")
+        if not source_type.strip() or not source_id.strip() or ":" in source_id:
+            raise ValueError(
+                f"invalid KNOWLEDGE_SOURCE_ALLOWLIST entry {chunk!r}: "
+                "entries must be 'type:id' with a non-empty type and id "
+                "(id may be the '*' wildcard, e.g. 'csd_issue:*')"
+            )
+
+
 def allowlist_configured() -> bool:
     """True when the allowlist is EXPLICITLY set to a non-empty value.
 
@@ -103,4 +124,5 @@ __all__ = [
     "case_binding_allowed",
     "parse_allowlist",
     "source_allowed",
+    "validate_allowlist",
 ]

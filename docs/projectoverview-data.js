@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-12T07:10:27Z",
-  "source_base_commit": "1bb3690d12fcc63508df8e6c6e36f146b06b3d9f",
-  "registry_digest": "8ccf5d81dfe936903396d2136857329d27f1742d895eb54b3bacf0aa2a2d3ca3",
+  "generated_at": "2026-10-12T10:59:50Z",
+  "source_base_commit": "dff24e8361e080501ebae21bb14dad656d42b342",
+  "registry_digest": "b042b46fdc48fa6bac6265066e6832c1a2af916e49738b97a7e874787e60b116",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5786,6 +5786,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 renderer 回归",
           "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
           "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 WeKnora 客户端合同 v4 实弹验证",
+          "command": "WeKnoraClient 实弹脚本（/tmp 一次性）：health probe、hybrid-search top_k、supports_conditional_update、create(idempotency_key+lineage)、重放同 id、read 回读、update(base_version)→v2、陈旧 base_version 412、清理 DELETE",
+          "result": "15/16 通过：probe ok/search 2 hits/条件更新声明 true/create v1/重放同 object_id/read 内容+标题+lineage 全对/update v2/读回 v2/412 conflict 且零写入；唯一 FAIL=search 不含新建条目=fork draft 不索引（EnableStatus disabled，预期；publish 触发 fork 侧模型消耗，留待全量期决策）。SSM weknora-api-contract-json 已升 v4 并回读一致。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 渲染器分阶段入口专项+知识面全套",
+          "command": "pytest backend/tests/test_automation_ecs_deploy.py（102）+ test_automation_ecs_release_pipeline.py（47）+ test_stage6_source_allowlist.py（含 validate_allowlist 新增）；知识面 21 套件 RUN_POSTGRES_INTEGRATION=1 隔离 PG",
+          "result": "B1 修复（5937c9e7）+I1 main 同步（merge dff24e83，他线 daa06ba8/ca94a4cc 仅生成文件冲突，重新生成解决）后：deploy 106 passed（含 B1 三回归：错误 valueFrom 路径/环境变量形式 WEKNORA_MEMORY_IDENTITY/野引用）；pipeline 47 passed；22 文件定向+知识面全套（21 知识面+pipeline）在 root venv python 3.13 与 homebrew 3.12 双解释器各 626 passed / 0 failed（8 subtests）含隔离 PG；他线受影响 test_automation_provider_probe 3 passed；CLI 实弹 render --knowledge-stage-config → verify-knowledge-stage-config 通过，七个 WeKnora 引用 valueFrom 逐字为 /supportportal/preproduction/weknora-*。"
+        },
+        {
+          "type": "pr",
+          "label": "步 2 Draft PR",
+          "command": "gh pr create --draft (codex/stage6-deploy @ 44833cb4)",
+          "result": "PR #1482（10 文件 +1115/-69）：阶段配置入口/checkpoint 绑定/双 verify 门禁/WeKnora 客户端渲染/allowlist 渲染期校验/专项+全套证据与开放项；等独立验收。"
+        },
+        {
+          "type": "document",
+          "label": "步 2 独立验收 B1 修复记录",
+          "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
+          "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
         }
       ],
       "source_refs": [
@@ -18052,9 +18076,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-11",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6。基线 main@c6addcc0。授权=用户方案 A（2026-10-12：七确认点按建议执行+先补 KNOWLEDGE_SOURCE_ALLOWLIST 代码再走十步）。已完成：步 1 只读基线冻结（docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md：api:135/worker:135/route:134/hermes:45、release r20261011-434ee35-p2、治理开关全关/未注入、SSM 无知识面参数、n8n 三链 active+draft 版本钉定）；方案 A 实现（knowledge_source_allowlist.py：默认空=零处理、type:id 与 type:* 通配、case_binding:\u003cid> 键；gate 点=standalone queue_standalone_summary_for_source 与 case-bound queue_hermes_summary_for_case 的任务创建，快照接收/审计不受影响）；专项 7 项（解析畸形/默认零处理/列内放行/未列持有+快照保留/列内建任务/case 未列持有+列内创建）。存量套件适配=真实 env 面 KNOWLEDGE_SOURCE_ALLOWLIST 通配（csd_issue/zendesk_ticket/article/case_binding），全套 21 套件 541 passed/0 failed 含隔离 PG。步 2 配置已完成：新建 3 个 AgentMemory Wiki/1 个 Slack workspace String SSM 参数（均 v1），复用既有 hermes-wiki-core-user-key SecureString；renderer commit dd7ca37f 注入 API/Worker 的五个 SSM 引用、六开关显式 0、空 allowlist、租约 300。待执行：步 2 代码 release/deploy 与步 3-10（SP 部署全关→关闭态验证→n8n Draft×2 发布→intake→Summary/Review→Slack→人工样本→双写小范围→全量）。",
-      "next_action": "步 2 配置已写入并回读：/supportportal/preproduction/agent-memory-wiki-base-url、agent-memory-wiki-service-id、agent-memory-wiki-team-id、knowledge-slack-workspace-domain 均 String v1；AGENT_MEMORY_WIKI_USER_KEY 复用既有 hermes-wiki-core-user-key SecureString v1。代码 commits dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c 与 a7e218b79961c4c27efcec09108e704e05772020 已完成 renderer、allowlist 与存量测试适配；步 2 当前 21 套件使用一次性本机 PostgreSQL 14.19 复测 540 passed / 0 failed。下一门禁仍是将该代码纳入 origin/main 的正式 immutable release，再用 release pipeline 部署 API/Worker（全部知识开关 0、allowlist 为空），随后步 3 关闭态验证。",
+      "updated_at": "2026-10-12",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
+      "next_action": "I1 修复完成：已同步 origin/main（daa06ba8+ca94a4cc，Hermes Unified Customer Reply v3.2 他线，无步 2 代码文件冲突；唯一冲突 docs/projectoverview-data.js 由重新生成解决，merge commit dff24e83）。合并后复验：22 文件定向+知识面全套 626 passed / 0 failed 含隔离 PG 双解释器（root venv 3.13 与 homebrew 3.12）；他线直接受影响文件 test_automation_provider_probe 3 passed；git diff --check 与 Overview --check 通过。等待独立复验 PR #1482（最终 HEAD 见 PR）；通过后 finalize→步 3 重新冻结发布基线→步 4-7 全关闭部署（历史队列盘点前置）→步 8 n8n 三链→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft 保持）→步 11 观察窗口汇总后暂停并再次请求用户确认才全量放开。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18094,6 +18118,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 renderer 回归",
           "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
           "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 WeKnora 客户端合同 v4 实弹验证",
+          "command": "WeKnoraClient 实弹脚本（/tmp 一次性）：health probe、hybrid-search top_k、supports_conditional_update、create(idempotency_key+lineage)、重放同 id、read 回读、update(base_version)→v2、陈旧 base_version 412、清理 DELETE",
+          "result": "15/16 通过：probe ok/search 2 hits/条件更新声明 true/create v1/重放同 object_id/read 内容+标题+lineage 全对/update v2/读回 v2/412 conflict 且零写入；唯一 FAIL=search 不含新建条目=fork draft 不索引（EnableStatus disabled，预期；publish 触发 fork 侧模型消耗，留待全量期决策）。SSM weknora-api-contract-json 已升 v4 并回读一致。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 渲染器分阶段入口专项+知识面全套",
+          "command": "pytest backend/tests/test_automation_ecs_deploy.py（102）+ test_automation_ecs_release_pipeline.py（47）+ test_stage6_source_allowlist.py（含 validate_allowlist 新增）；知识面 21 套件 RUN_POSTGRES_INTEGRATION=1 隔离 PG",
+          "result": "B1 修复（5937c9e7）+I1 main 同步（merge dff24e83，他线 daa06ba8/ca94a4cc 仅生成文件冲突，重新生成解决）后：deploy 106 passed（含 B1 三回归：错误 valueFrom 路径/环境变量形式 WEKNORA_MEMORY_IDENTITY/野引用）；pipeline 47 passed；22 文件定向+知识面全套（21 知识面+pipeline）在 root venv python 3.13 与 homebrew 3.12 双解释器各 626 passed / 0 failed（8 subtests）含隔离 PG；他线受影响 test_automation_provider_probe 3 passed；CLI 实弹 render --knowledge-stage-config → verify-knowledge-stage-config 通过，七个 WeKnora 引用 valueFrom 逐字为 /supportportal/preproduction/weknora-*。"
+        },
+        {
+          "type": "pr",
+          "label": "步 2 Draft PR",
+          "command": "gh pr create --draft (codex/stage6-deploy @ 44833cb4)",
+          "result": "PR #1482（10 文件 +1115/-69）：阶段配置入口/checkpoint 绑定/双 verify 门禁/WeKnora 客户端渲染/allowlist 渲染期校验/专项+全套证据与开放项；等独立验收。"
+        },
+        {
+          "type": "document",
+          "label": "步 2 独立验收 B1 修复记录",
+          "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
+          "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
         }
       ]
     },

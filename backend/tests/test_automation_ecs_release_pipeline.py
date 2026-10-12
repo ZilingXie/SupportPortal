@@ -675,10 +675,12 @@ def test_pipeline_preserves_allowed_persona_and_mock_modes(
 def test_direct_production_branch_skips_preproduction_ecs_and_reuses_production_preflight() -> None:
     source = Path(__file__).resolve().parents[1] / "scripts" / "automation_ecs_release_pipeline.py"
     text = source.read_text(encoding="utf-8")
-    preproduction_branch = text[
-        text.index("if not direct_production:") : text.index('if args.through == "production":')
-    ]
-    production_branch = text[text.index('if args.through == "production":') :]
+    # Slice from the preproduction branch onward so earlier top-of-function
+    # guards (e.g. the knowledge stage config Preproduction-only check) do
+    # not shift the anchor.
+    tail = text[text.index("if not direct_production:") :]
+    preproduction_branch = tail[: tail.index('if args.through == "production":')]
+    production_branch = tail[tail.index('if args.through == "production":') :]
     assert '"preproduction_preflight"' in preproduction_branch
     assert '"preproduction_deploy"' in preproduction_branch
     assert 'promotion_args.append("--codebuild-direct-production")' in production_branch
@@ -767,3 +769,148 @@ def test_resume_prompt_state_readback_forces_read_only_connection() -> None:
     assert "default_transaction_read_only=on" in constructor.call_args.kwargs["dsn"]
     repository.get_prompt_release.assert_called_once_with("prompt-1")
     repository.close.assert_called_once_with()
+
+
+# ---------------------------------------------------------------------------
+# Stage-6 knowledge staged enablement (p2-197 step 2)
+# ---------------------------------------------------------------------------
+
+
+def _knowledge_stage_config_file(tmp_path: Path, payload: dict) -> Path:
+    path = tmp_path / "knowledge-stage-config.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_pipeline_rejects_knowledge_stage_config_for_production(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The stage config is a Preproduction-only entry point; a
+    Production-through run fails before any release work starts."""
+    stage = _knowledge_stage_config_file(tmp_path, {"master": "0"})
+    args = pipeline.build_parser().parse_args(
+        [
+            "run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
+            "--through", "production", "--knowledge-stage-config", str(stage),
+        ]
+    )
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    git = MagicMock(side_effect=AssertionError("release source must not be resolved"))
+    state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
+    monkeypatch.setattr(pipeline, "_git", git)
+    monkeypatch.setattr(pipeline, "PipelineState", state)
+
+    with pytest.raises(ValueError, match="Preproduction-only"):
+        pipeline.run_pipeline(args)
+
+    git.assert_not_called()
+    state.assert_not_called()
+    assert not (tmp_path / ".deployments").exists()
+
+
+def test_pipeline_rejects_invalid_knowledge_stage_config_before_state(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An illegal stage config (a switch on while the master is off) fails
+    before any release work or checkpoint state is created."""
+    repo, release = _repo(tmp_path)
+    stage = _knowledge_stage_config_file(
+        tmp_path, {"switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"}}
+    )
+    args = pipeline.build_parser().parse_args(
+        [
+            "run", "--project-root", str(repo), "--release-commit", release,
+            "--prompt-release-id", "prompt-1", "--knowledge-stage-config", str(stage),
+        ]
+    )
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
+    monkeypatch.setattr(pipeline, "PipelineState", state)
+
+    with pytest.raises(ValueError, match="layered under"):
+        pipeline.run_pipeline(args)
+
+    state.assert_not_called()
+
+
+def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A valid stage config enters the checkpoint identity (a switch change
+    is a NEW release, never a silent resume mutation) and rides the
+    Preproduction deploy argv via a self-contained state-dir copy."""
+    repo, release = _repo(tmp_path)
+    stage = _knowledge_stage_config_file(
+        tmp_path,
+        {
+            "master": "1",
+            "switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"},
+            "source_allowlist": "csd_issue:CSD-TEST-1",
+        },
+    )
+    arguments = [
+        "run", "--project-root", str(repo), "--release-commit", release,
+        "--prompt-release-id", "prompt-test", "--through", "preproduction",
+        "--knowledge-stage-config", str(stage), "--keep-release-worktree",
+    ]
+    monkeypatch.setattr(
+        pipeline,
+        "sanitized_aws_environment",
+        lambda: {"PROMPT_RELEASE_TARGET_DSN": "isolated-test-target"},
+    )
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    stages = []
+
+    def record_stage(state, name, command, *, env, **kwargs):
+        stages.append((name, list(command)))
+        if name == "codebuild":
+            release_dir = Path(command[command.index("--output-dir") + 1])
+            release_dir.mkdir(parents=True)
+            _manifest(release_dir / "release-manifest.json", release)
+            (release_dir / "publish-record.json").write_text("{}", encoding="utf-8")
+        state.append({"stage": name, "status": "passed", "duration_seconds": 0})
+
+    monkeypatch.setattr(pipeline, "_run_stage", record_stage)
+    args = pipeline.build_parser().parse_args(arguments)
+    pipeline.run_pipeline(args)
+
+    assert [item[0] for item in stages] == [
+        "codebuild", "preproduction_preflight", "preproduction_deploy",
+    ]
+    state_dir = next((repo / ".deployments").glob("ecs-pipeline-*"))
+    expected_config = {
+        "master": "1",
+        "switches": {
+            "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+            "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0",
+            "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+            "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+            "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
+            "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+        },
+        "source_allowlist": "csd_issue:CSD-TEST-1",
+    }
+    checkpoint = json.loads((state_dir / "checkpoint.json").read_text(encoding="utf-8"))
+    assert checkpoint["identity"]["mode"]["knowledge_stage"] == expected_config
+    state_copy = state_dir / "knowledge-stage-config.json"
+    assert json.loads(state_copy.read_text(encoding="utf-8")) == expected_config
+    for name, command in stages:
+        if name in {"preproduction_preflight", "preproduction_deploy"}:
+            assert command[command.index("--knowledge-stage-config") + 1] == str(state_copy)
+    assert not any("--knowledge-stage-config" in command for command in [stages[0][1]])
+
+    # Resume with the same config reuses the checkpoint; a changed config is
+    # an identity mismatch, never a silent resume mutation.
+    stages.clear()
+    args.resume = True
+    pipeline.run_pipeline(args)
+    assert [item[0] for item in stages] == ["preproduction_preflight", "preproduction_deploy"]
+
+    stage.write_text(json.dumps({"master": "0"}), encoding="utf-8")
+    stages.clear()
+    args.resume = True
+    with pytest.raises(ValueError, match="checkpoint identity"):
+        pipeline.run_pipeline(args)
+    assert stages == []
