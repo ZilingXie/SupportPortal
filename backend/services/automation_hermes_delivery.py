@@ -515,6 +515,10 @@ def queue_hermes_draft_delivery(
     if not comments_revision:
         raise HermesDraftStateError(draft_id, "could not determine the current Zendesk comments revision")
     delivery_content = str(draft.get("delivery_content") or "").strip() or str(draft["content"])
+    delivery_attachments = list((draft.get("basis") or {}).get("attachments") or [])
+    compatibility_job_id = str((draft.get("basis") or {}).get("compatibility_account_reply_job_id") or "").strip()
+    if compatibility_job_id:
+        delivery_attachments.append({"_hermes_compatibility_job_id": compatibility_job_id})
     repository.create_account_zendesk_comment_delivery(
         account_case_id=account_case_id,
         message_id=draft_id,
@@ -533,7 +537,7 @@ def queue_hermes_draft_delivery(
         draft_version=int(draft.get("case_revision") or draft.get("conversation_version") or 0),
         comments_revision=comments_revision,
         immutable_content=delivery_content,
-        attachments=list((draft.get("basis") or {}).get("attachments") or []),
+        attachments=delivery_attachments,
     )
     queued = store.mark_hermes_draft_queued(draft_id, delivery_message_id=draft_id)
     LOGGER.info(

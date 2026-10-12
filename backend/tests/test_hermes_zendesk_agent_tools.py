@@ -131,6 +131,13 @@ def _setup_case() -> tuple[InMemoryAutomationEcsStore, FakeRepository, str]:
         "missing_fields": [],
         "allowed_claims": ["state:ready"],
     }
+    store.save_hermes_investigation(
+        handoff["turn_id"],
+        summary="Verified investigation result.",
+        evidence=[],
+        blockers=[],
+        next_steps=[],
+    )
     return store, repository, handoff["turn_id"]
 
 
@@ -345,6 +352,7 @@ class TestDraftTools:
         store, repository, turn_id = _setup_case()
         store._hermes_turns[turn_id]["phase"] = "persona"
         store._hermes_turns[turn_id]["work_result"] = None
+        store._hermes_bindings[(store.settings.job_namespace, "123")]["investigation"] = None
         with pytest.raises(HermesToolError) as excinfo:
             tool_save_reply_draft(
                 store, repository, turn_id=turn_id, content="Draft", basis={}
@@ -353,15 +361,15 @@ class TestDraftTools:
 
     def test_auto_policy_requires_automation_direction(self) -> None:
         store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
         ):
-            store._hermes_turns[turn_id]["phase"] = "persona"
             draft = tool_save_reply_draft(
                 store, repository, turn_id=turn_id, content="Hello", basis={}
             )
-        assert draft["publish_policy"] == "manual"  # server derives from direction
+        assert draft["publish_policy"] == "manual"
 
     def test_manual_draft_saves_guardrail_result(self) -> None:
         store, repository, turn_id = _setup_case()
@@ -421,6 +429,7 @@ class TestDraftTools:
         fresh_store, fresh_repository, fresh_turn = _setup_case()
         fresh_store._hermes_turns[fresh_turn]["phase"] = "persona"
         fresh_store._hermes_turns[fresh_turn]["work_result"] = None
+        fresh_store._hermes_bindings[(fresh_store.settings.job_namespace, "123")]["investigation"] = None
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=capture_guardrail,

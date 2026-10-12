@@ -46,6 +46,31 @@ def _store() -> InMemoryAutomationEcsStore:
     return store
 
 
+def _valid_enablement_workflow(**kwargs):
+    """Test double that honors the v3.2 identity contract."""
+    from backend.services.automation_account_intake import _create_reply_job
+
+    repository = kwargs["repository"]
+    account_case = kwargs["account_case"]
+    ticket_id = kwargs["ticket_id"]
+    job = _create_reply_job(
+        repository=repository,
+        ticket_id=ticket_id,
+        trigger_message_created_at=kwargs["trigger_message_created_at"],
+        reply_facts={"behavior": "enablement", "reply_intent": "submission_confirmation"},
+        asked_field_keys=[],
+        persona_assignment=None,
+        close_after_publish=False,
+        reply_intent="submission_confirmation",
+        processing_profile=kwargs.get("processing_profile") or "preproduction",
+    )
+    context = dict(account_case.get("automation_context") or {})
+    context["enablement_auto_workflow"] = {"reply_job_id": str(job["job_id"]), "state": "awaiting_public_reply"}
+    account_case["automation_context"] = context
+    repository.save_account_case(account_case)
+    return account_case, NS(job_id=job["job_id"]), "review_requested"
+
+
 class ToolFailureHandoffTests(unittest.TestCase):
     def _seed(self, store: InMemoryAutomationEcsStore, *, route: str = "enablement"):
         event = harness._event()
@@ -415,7 +440,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         )
 
         async def fake_workflow(**kwargs):
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 
@@ -769,7 +794,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
 
         async def fake_workflow(**kwargs):
             workflow_calls.append(kwargs)
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 
@@ -848,7 +873,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         )
 
         async def fake_workflow(**kwargs):
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 

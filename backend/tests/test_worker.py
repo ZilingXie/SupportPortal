@@ -1392,8 +1392,14 @@ class WorkerResilienceTests(unittest.TestCase):
                 "execution_action": "enablement",
                 "created_at": "2026-09-20T00:00:00+00:00",
                 "updated_at": "2026-09-20T00:00:00+00:00",
+                "automation_context": {
+                    "enablement_auto_workflow": {"reply_job_id": "compat-job-auto"}
+                },
             }
         )
+        repository._account_reply_jobs["compat-job-auto"] = {
+            "job_id": "compat-job-auto", "ticket_id": "1362A", "status": "queued", "payload": {}
+        }
         repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")] = {
             "account_case_id": "AC-AUTO",
             "message_id": "draft-auto-1",
@@ -1411,6 +1417,7 @@ class WorkerResilienceTests(unittest.TestCase):
             "draft_version": 1,
             "comments_revision": "rev-auto",
             "immutable_content": "automation reply body",
+            "attachments": [{"_hermes_compatibility_job_id": "compat-job-auto"}],
             "created_at": "2026-09-20T00:01:00+00:00",
             "updated_at": "2026-09-20T00:01:00+00:00",
         }
@@ -5582,6 +5589,56 @@ class WorkerResilienceTests(unittest.TestCase):
         self.assertEqual(job["status"], "manual_attention")
         self.assertEqual(job["payload"]["persona_render_status"], "hermes_compatibility_only")
         repository.update_claimed_account_reply_job.assert_called_once()
+
+    def test_hermes_enablement_delivery_missing_identity_fails_closed_idempotently(self) -> None:
+        account_case = {
+            "account_case_id": "AC-HERMES-FAIL-CLOSED",
+            "client_ticket_id": "TK-HERMES-FAIL-CLOSED",
+            "execution_action": "enablement",
+            "automation_context": {"enablement_auto_workflow": {"reply_job_id": "job-1"}},
+            "automation_status": "automation",
+        }
+        repository = Mock()
+        repository.get_account_case.return_value = account_case
+        with patch.object(worker, "ticket_repository", repository):
+            delivery = {
+                "account_case_id": account_case["account_case_id"],
+                "message_id": "draft-1",
+                "zendesk_ticket_id": account_case["client_ticket_id"],
+                "immutable_content": "Hi Customer,\n\nReceived.",
+            }
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+        self.assertEqual(account_case["automation_status"], "human_review_required")
+        self.assertEqual(account_case["execution_reason_code"], "enablement_compatibility_job_missing")
+        repository.release_account_internal_email_after_public_reply.assert_not_called()
+        repository.release_enablement_relay_requests_after_public_reply.assert_not_called()
+        self.assertEqual(repository.record_event.call_count, 1)
+
+    def test_hermes_enablement_delivery_identity_matches_before_release(self) -> None:
+        account_case = {
+            "account_case_id": "AC-HERMES-VALID",
+            "client_ticket_id": "TK-HERMES-VALID",
+            "execution_action": "enablement",
+            "automation_context": {"enablement_auto_workflow": {"reply_job_id": "job-1"}},
+            "automation_status": "automation",
+        }
+        repository = Mock()
+        repository.get_account_case.return_value = account_case
+        repository.get_account_reply_job.return_value = {
+            "job_id": "job-1", "ticket_id": "TK-HERMES-VALID", "status": "queued", "payload": {}
+        }
+        repository.get_ticket.return_value = {"ticket_id": "TK-HERMES-VALID", "messages": []}
+        with patch.object(worker, "ticket_repository", repository):
+            worker._complete_hermes_customer_reply_side_effects({
+                "account_case_id": account_case["account_case_id"],
+                "message_id": "draft-1",
+                "zendesk_ticket_id": account_case["client_ticket_id"],
+                "immutable_content": "Hi Customer,\n\nReceived.",
+                "attachments": [{"_hermes_compatibility_job_id": "job-1"}],
+            })
+        repository.release_account_internal_email_after_public_reply.assert_called_once()
+        repository.release_enablement_relay_requests_after_public_reply.assert_called_once()
 
     def test_rag_fallback_job_renders_through_persona(self) -> None:
         job = {

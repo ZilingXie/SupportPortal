@@ -59,6 +59,9 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "office_address": {"office address", "办公地址"},
     "contact_number": {"contact number", "official contact number", "phone number", "联系电话"},
     "contact_email": {"contact email", "official contact email", "email address", "联系邮箱"},
+    "tax_id": {"tax id", "tax number", "tax identification number", "vat number", "vat id", "税号", "税务登记号"},
+    "passport_number": {"passport number", "passport id", "护照号"},
+    "social_security_number": {"social security number", "ssn", "社保号"},
 }
 
 
@@ -155,7 +158,7 @@ def basis_from_work_result(
     conclusion = {
         key: result[key]
         for key in (
-            "status", "reason", "outcome", "internal_email_send_status",
+            "status", "outcome", "internal_email_send_status",
             "internal_email_send_reason", "answer", "references", "progress",
             "followup_kind", "reply_kind", "message_action_reply",
         )
@@ -179,8 +182,71 @@ def basis_from_work_result(
         if isinstance(turn.get("input_snapshot"), dict)
         else "Customer",
         draft_language=result.get("draft_language"),
-        extra={"source_work_status": status} if status else None,
+        extra={
+            key: status if key == "source_work_status" else result.get(key)
+            for key in ("source_work_status", "compatibility_account_reply_job_id")
+            if (key == "source_work_status" and status)
+            or (key != "source_work_status" and result.get(key) not in (None, ""))
+        },
     )
+
+
+def basis_for_persona_turn(
+    *, turn: dict[str, Any], binding: dict[str, Any] | None = None
+) -> dict[str, Any] | None:
+    """Return the server-owned basis that the Persona must receive.
+
+    Work results are authoritative for automation turns. Investigation reply
+    turns use the reviewed binding conclusion, while the turn linkage is
+    validated by the tool entry before a draft can be saved.
+    """
+    direction = str(turn.get("direction") or "").strip().lower()
+    turn_kind = str(turn.get("turn_kind") or "normal").strip().lower()
+    work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else {}
+    basis = None
+    if direction == "automation" and work_result:
+        basis = basis_from_work_result(turn=turn, work_result=work_result)
+    investigation = (
+        binding.get("investigation")
+        if isinstance(binding, dict) and isinstance(binding.get("investigation"), dict)
+        else {}
+    )
+    if direction == "investigation" and turn_kind != "investigation_reply":
+        if str(investigation.get("recorded_turn_id") or "") != str(turn.get("turn_id") or ""):
+            return None
+        basis = basis_from_work_result(
+            turn=turn,
+            work_result={},
+            stage="investigation_result",
+        )
+    if direction == "investigation" and turn_kind == "investigation_reply":
+        source_turn_id = str(work_result.get("source_turn_id") or "").strip()
+        source_turn = (
+            binding.get("investigation_source_turn")
+            if isinstance(binding, dict) and isinstance(binding.get("investigation_source_turn"), dict)
+            else {}
+        )
+        if not source_turn_id or str(source_turn.get("turn_id") or "") != source_turn_id:
+            return None
+        source_result = source_turn.get("result") if isinstance(source_turn.get("result"), dict) else {}
+        if str(source_result.get("continued_turn_id") or "") != str(turn.get("turn_id") or ""):
+            return None
+        if str(investigation.get("recorded_turn_id") or "") != source_turn_id:
+            return None
+        basis = basis_from_work_result(
+            turn=turn,
+            work_result={},
+            stage="investigation_result",
+        )
+    if basis is None:
+        return None
+    if str(turn.get("direction") or "").strip().lower() == "investigation" and investigation:
+        conclusion = dict(basis.get("trusted_conclusion") or {})
+        for key in ("summary", "evidence", "known_facts", "unknowns", "next_steps"):
+            if investigation.get(key) not in (None, "", [], {}):
+                conclusion[key] = investigation[key]
+        basis["trusted_conclusion"] = conclusion
+    return basis
 
 
 def _basis_field_values(basis: dict[str, Any]) -> list[str]:
@@ -209,6 +275,36 @@ def _basis_field_values(basis: dict[str, Any]) -> list[str]:
                     values.append(str(item).strip().lower())
         elif str(value).strip():
             values.append(str(value).strip().lower())
+    return values
+
+
+def _authorized_claim_values(basis: dict[str, Any]) -> list[str]:
+    """Collect only server-authorized claim/commitment text.
+
+    Customer-provided collected facts are deliberately excluded. They can be
+    restated, but they cannot authorize a recovery state or a time promise.
+    """
+    values: list[str] = []
+    for key in ("allowed_claims", "allowed_commitments"):
+        value = basis.get(key)
+        if isinstance(value, dict):
+            values.extend(str(item).strip().lower() for item in value.values() if str(item).strip())
+        elif isinstance(value, (list, tuple, set)):
+            values.extend(str(item).strip().lower() for item in value if str(item).strip())
+        elif str(value).strip():
+            values.append(str(value).strip().lower())
+    conclusion = basis.get("trusted_conclusion")
+    if isinstance(conclusion, dict):
+        for key in (
+            "status", "outcome", "reason", "reply_intent", "account_status",
+            "recovery_status", "completion_status", "time_commitment",
+            "contact_commitment", "handoff",
+        ):
+            value = conclusion.get(key)
+            if isinstance(value, (list, tuple, set)):
+                values.extend(str(item).strip().lower() for item in value if str(item).strip())
+            elif value not in (None, ""):
+                values.append(str(value).strip().lower())
     return values
 
 
@@ -250,7 +346,7 @@ def _contains_authorized_claim(text: str, basis: dict[str, Any], pattern: re.Pat
         return True
     if _has_negation_before(text, match.start()):
         return True
-    normalized_values = _basis_field_values(basis)
+    normalized_values = _authorized_claim_values(basis)
     # The claim is authorized only when its semantic marker appears in a
     # server-owned conclusion/commitment.  Customer names and arbitrary
     # collected values cannot authorize a state transition.
@@ -261,7 +357,11 @@ def _contains_authorized_claim(text: str, basis: dict[str, Any], pattern: re.Pat
         if token in marker
     }
     if pattern is _TIME_COMMITMENT_RE:
-        return any("24" in value or "48" in value or "72" in value for value in normalized_values)
+        return any(
+            re.search(r"(?:within|in)\s+(?:the\s+next\s+)?(?:24|48|72)\s+hours?", value, re.I)
+            or any(token in value for token in ("24", "48", "72"))
+            for value in normalized_values
+        )
     return any(any(token in value for token in markers) for value in normalized_values)
 
 
@@ -300,6 +400,10 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
     }
     if missing and collected and missing.intersection(collected):
         raise HermesReplyBasisError("basis_missing_collected_conflict")
+    conclusion = basis.get("trusted_conclusion") if isinstance(basis.get("trusted_conclusion"), dict) else {}
+    handoff = conclusion.get("handoff") is True or "handoff" in str(conclusion.get("reply_intent") or "").lower()
+    if handoff and any(pattern.search(text) for pattern in _HANDOFF_REASK_PATTERNS):
+        raise HermesReplyBasisError("handoff_reasks_information")
     # A model may restate a collected field, but it may not ask the customer
     # to provide it again.  Use aliases so ``full name`` and ``name`` share
     # one server-owned identity.
@@ -311,15 +415,20 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
             match = re.search(rf"\b{re.escape(alias)}\b", text, re.I)
             if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 20]):
                 raise HermesReplyBasisError("collected_field_reask")
+    missing_keys = _basis_missing_keys(basis)
+    for field_key, aliases in _FIELD_ALIASES.items():
+        if field_key in collected:
+            continue
+        for alias in aliases:
+            match = re.search(rf"\b{re.escape(alias)}\b", text, re.I)
+            if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 24]):
+                if field_key not in missing_keys and not _has_negation_before(text, match.start()):
+                    raise HermesReplyBasisError("unauthorized_field_request")
     if _contains_authorized_claim(text, basis, _RECOVERY_CLAIM_RE) is False:
         raise HermesReplyBasisError("unsupported_account_state_claim")
     if _contains_authorized_claim(text, basis, _TIME_COMMITMENT_RE) is False:
         raise HermesReplyBasisError("unsupported_time_commitment")
     # A handoff basis may never ask for new customer data.
-    conclusion = basis.get("trusted_conclusion") if isinstance(basis.get("trusted_conclusion"), dict) else {}
-    handoff = conclusion.get("handoff") is True or "handoff" in str(conclusion.get("reply_intent") or "").lower()
-    if handoff and any(pattern.search(text) for pattern in _HANDOFF_REASK_PATTERNS):
-        raise HermesReplyBasisError("handoff_reasks_information")
     return {
         "decision": "pass",
         "reply_owner": HERMES_REPLY_OWNER,

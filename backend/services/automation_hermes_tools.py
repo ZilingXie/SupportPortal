@@ -82,6 +82,43 @@ def _require_account_case(context: dict[str, Any]) -> dict[str, Any]:
     return account_case
 
 
+def _validate_enablement_compatibility_job(
+    repository: Any,
+    *,
+    account_case: dict[str, Any],
+    ticket_id: str,
+    reply_job: dict[str, Any] | None,
+) -> tuple[str, dict[str, Any] | None, str | None]:
+    """Validate the exact legacy identity retained for Enablement relay release."""
+    context = account_case.get("automation_context") if isinstance(account_case.get("automation_context"), dict) else {}
+    workflows = [context.get("enablement_manual_workflow"), context.get("enablement_auto_workflow")]
+    context_ids = {
+        str(item.get("reply_job_id") or "").strip()
+        for item in workflows
+        if isinstance(item, dict) and str(item.get("reply_job_id") or "").strip()
+    }
+    returned_id = str((reply_job or {}).get("job_id") or "").strip()
+    if not context_ids:
+        return returned_id, None, "enablement_compatibility_job_missing"
+    job_id = returned_id or (next(iter(context_ids)) if len(context_ids) == 1 else "")
+    if not job_id:
+        return "", None, "enablement_compatibility_job_missing"
+    if returned_id and context_ids and returned_id not in context_ids:
+        return job_id, None, "enablement_compatibility_job_missing"
+    try:
+        job = repository.get_account_reply_job(job_id)
+    except Exception:
+        return job_id, None, "enablement_compatibility_job_lookup_failed"
+    if not isinstance(job, dict):
+        return job_id, None, "enablement_compatibility_job_not_found"
+    job_ticket = str(job.get("ticket_id") or job.get("zendesk_ticket_id") or "").strip()
+    if job_ticket != str(ticket_id).strip():
+        return job_id, job, "enablement_compatibility_job_ticket_mismatch"
+    if str(job.get("status") or "").strip().lower() in {"cancelled", "failed", "manual_attention"}:
+        return job_id, job, "enablement_compatibility_job_terminal"
+    return job_id, job, None
+
+
 def tool_get_case_context(
     store: AutomationEcsStore, repository: Any, *, turn_id: str
 ) -> dict[str, Any]:
@@ -863,6 +900,9 @@ async def tool_execute_automation_action(
     timestamp = str(turn["created_at"])
 
     attempt: dict[str, Any] | None = None
+    hermes_prior_follow_up_count = int(
+        (account_case.get("automation_context") or {}).get("hermes_follow_up_count") or 0
+    ) if isinstance(account_case.get("automation_context"), dict) else 0
     try:
         if handler_implementation == "account_verification" or normalized_route == "fraud_account":
             # Legacy parity (main.py build_automation_attempt): carry the
@@ -873,21 +913,11 @@ async def tool_execute_automation_action(
             # the internal email never sends (live evidence: ticket 13978
             # asked twice for the same fields).
             prior_context = dict(account_case.get("automation_context") or {})
-            prior_follow_up_count = int(prior_context.get("follow_up_count") or 0)
-            if prior_follow_up_count == 0:
-                # Legacy parity: an outstanding ask reply job means the
-                # fields were already requested once (main.py derives this
-                # from already_requested_fields on the pending job).
-                latest_job = repository.get_latest_account_reply_job(ticket_id) or {}
-                latest_payload = (
-                    latest_job.get("payload")
-                    if isinstance(latest_job.get("payload"), dict)
-                    else {}
-                )
-                if str(latest_job.get("status") or "") not in {"cancelled"} and (
-                    list(latest_payload.get("asked_field_keys") or [])
-                ):
-                    prior_follow_up_count = 1
+            prior_follow_up_count = int(
+                prior_context.get("hermes_follow_up_count")
+                or prior_context.get("follow_up_count")
+                or 0
+            )
             attempt = _build_verification_attempt(
                 ticket_subject=subject,
                 customer_messages=messages,
@@ -979,6 +1009,17 @@ async def tool_execute_automation_action(
         merged_context = dict(account_case.get("automation_context") or {})
         merged_context.update(dict(attempt.get("automation_context") or {}))
         account_case["automation_context"] = merged_context
+        if normalized_route == "fraud_account":
+            # Follow-up state belongs to the Hermes case, never to whichever
+            # legacy reply job happens to be newest for this ticket.
+            merged_context["hermes_follow_up_count"] = (
+                hermes_prior_follow_up_count + 1 if missing_fields else hermes_prior_follow_up_count
+            )
+            merged_context["hermes_source_turn_id"] = str(turn_id)
+            merged_context["hermes_asked_field_keys"] = sorted(
+                set(str(item).strip() for item in (prior_context.get("hermes_asked_field_keys") or []) if str(item).strip())
+                | set(str(item).strip() for item in (missing_fields or []) if str(item).strip())
+            )
         # Legacy parity (automation_account_intake.py reply_conversation_context):
         # the reply-job persona reads this to see the (sanitized) public
         # conversation — acknowledgement, context awareness, and language
@@ -1111,28 +1152,33 @@ async def tool_execute_automation_action(
                     if isinstance(compatibility_reply_job, dict)
                     else ""
                 ).strip()
-                if not compatibility_job_id:
-                    compatibility_job_id = str(
-                        (account_case.get("automation_context") or {}).get("enablement_auto_workflow", {}).get("reply_job_id")
-                        if isinstance((account_case.get("automation_context") or {}).get("enablement_auto_workflow"), dict)
-                        else ""
-                    ).strip()
-                if compatibility_job_id:
-                    # Keep the legacy job id because Enablement relay release
-                    # still binds its readback to account_reply_job_id.  Mark
-                    # the job as compatibility-only so the legacy worker
-                    # cannot generate or publish a second customer reply.
-                    compatibility_job = repository.get_account_reply_job(compatibility_job_id)
-                    if isinstance(compatibility_job, dict):
-                        compatibility_payload = dict(compatibility_job.get("payload") or {})
-                        compatibility_payload.update(
-                            {
-                                "reply_owner": "hermes_persona",
-                                "hermes_compatibility_only": True,
-                            }
-                        )
-                        compatibility_job["payload"] = compatibility_payload
-                        repository.save_account_reply_job(compatibility_job)
+                compatibility_job_id, compatibility_job, compatibility_error = _validate_enablement_compatibility_job(
+                    repository,
+                    account_case=account_case,
+                    ticket_id=ticket_id,
+                    reply_job=compatibility_reply_job if isinstance(compatibility_reply_job, dict) else None,
+                )
+                if compatibility_error:
+                    return _escalate_uncompleted_automation(
+                        store=store,
+                        repository=repository,
+                        account_case=account_case,
+                        ticket_id=ticket_id,
+                        turn_id=turn_id,
+                        automation_handler=automation_handler,
+                        reason_code=compatibility_error,
+                        detail="Enablement compatibility reply job identity could not be validated; customer reply and relay release are blocked.",
+                    )
+                # Keep the legacy job id because Enablement relay release
+                # still binds its readback to account_reply_job_id.  Mark
+                # the job as compatibility-only so the legacy worker cannot
+                # generate or publish a second customer reply.
+                compatibility_payload = dict(compatibility_job.get("payload") or {})
+                compatibility_payload.update(
+                    {"reply_owner": "hermes_persona", "hermes_compatibility_only": True}
+                )
+                compatibility_job["payload"] = compatibility_payload
+                repository.save_account_reply_job(compatibility_job)
                 skip_persona_result = {
                     "status": "workflow_completed",
                     "route": normalized_route,
@@ -1693,7 +1739,7 @@ def tool_save_reply_draft(
     from backend.services.hermes_customer_reply_basis import (
         HERMES_CUSTOMER_REPLY_BASIS_KIND,
         HermesReplyBasisError,
-        basis_from_work_result,
+        basis_for_persona_turn,
         validate_customer_reply_draft,
     )
 
@@ -1704,28 +1750,17 @@ def tool_save_reply_draft(
     # authoritative Work/investigation record exists.
     work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else {}
     investigation = binding.get("investigation") if isinstance(binding.get("investigation"), dict) else {}
-    persisted_basis = work_result.get("reply_basis") if isinstance(work_result, dict) else None
     if isinstance(basis, dict) and basis.get("source_turn_id") not in (None, "", str(turn.get("turn_id") or "")):
         raise HermesToolError("basis_turn_mismatch", "reply basis is not bound to the current turn")
-    if isinstance(persisted_basis, dict) and persisted_basis.get("kind") == HERMES_CUSTOMER_REPLY_BASIS_KIND:
-        candidate_basis = dict(persisted_basis)
-    elif work_result:
-        candidate_basis = basis_from_work_result(turn=turn, work_result=work_result)
-    elif investigation:
-        candidate_basis = basis_from_work_result(turn=turn, work_result={}, stage="investigation_result")
-    else:
+    basis_context = dict(binding)
+    if str(turn.get("turn_kind") or "") == "investigation_reply":
+        source_turn_id = str(work_result.get("source_turn_id") or "").strip()
+        source_turn = store.get_hermes_turn(source_turn_id) if source_turn_id else None
+        if isinstance(source_turn, dict):
+            basis_context["investigation_source_turn"] = source_turn
+    candidate_basis = basis_for_persona_turn(turn=turn, binding=basis_context)
+    if not isinstance(candidate_basis, dict) or candidate_basis.get("kind") != HERMES_CUSTOMER_REPLY_BASIS_KIND:
         raise HermesToolError("reply_basis_unavailable", "a server-owned Work or investigation result is required before drafting")
-    if str(turn.get("direction") or "") == "investigation":
-        investigation_facts = {
-            key: investigation.get(key)
-            for key in ("summary", "evidence", "known_facts", "unknowns", "next_steps")
-            if investigation.get(key) not in (None, "", [], {})
-        }
-        if investigation_facts:
-            candidate_basis["trusted_conclusion"] = {
-                **dict(candidate_basis.get("trusted_conclusion") or {}),
-                **investigation_facts,
-            }
     if str(candidate_basis.get("source_turn_id") or "") != str(turn.get("turn_id") or ""):
         raise HermesToolError("basis_turn_mismatch", "reply basis is not bound to the current turn")
     try:

@@ -121,3 +121,30 @@ def test_validator_accepts_authorized_handoff_commitment_and_blocks_handoff_reas
         )
     assert reask.value.code == "handoff_reasks_information"
 
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        "Hi Customer,\n\nYour account has been restored.",
+        "Hi Customer,\n\nWe will complete this within 24 hours.",
+        "Hi Customer,\n\nPlease provide your tax ID.",
+    ],
+)
+def test_customer_collected_facts_never_authorize_claims_or_new_fields(content):
+    basis = _basis(
+        collected_facts={"customer_statement": "account restored within 24 hours; tax ID 123"},
+        missing_fields=[],
+        trusted_conclusion={"status": "missing_fields"},
+        allowed_claims=["state:missing_fields"],
+    )
+    with pytest.raises(HermesReplyBasisError):
+        validate_customer_reply_draft(content, basis)
+
+
+def test_validator_requires_unknown_requested_field_to_be_server_missing_field():
+    with pytest.raises(HermesReplyBasisError) as exc:
+        validate_customer_reply_draft(
+            "Hi Customer,\n\nPlease provide your passport number.", _basis(missing_fields=[])
+        )
+    assert exc.value.code == "unauthorized_field_request"
+

@@ -701,36 +701,19 @@ class MessageActionWorkTests(unittest.TestCase):
         store = email_harness._store()
         handoff = email_harness._seed_turn(store, route="fraud_account")
         # Case carries 3 previously collected fields (turn-1 ask answered
-        # partially) and an outstanding ask job with asked_field_keys.
+        # partially) and Hermes' durable follow-up state.  The current chain
+        # must not infer this from whichever legacy job is newest.
         case = email_harness._account_case(route="fraud_account", status="not_ready")
         case["collected_fields"] = {
             "account_type": "Enterprise",
             "name": "Zac Tester",
             "contact_email": "zac.tester@example.com",
         }
+        case["automation_context"] = {
+            "hermes_follow_up_count": 1,
+            "hermes_asked_field_keys": list(ALL_FIELDS),
+        }
         repository = email_harness._repository(case)
-        from backend.services.account_reply_jobs import create_account_reply_job
-        from backend.services.automation_account_intake import _reply_facts
-
-        create_account_reply_job(
-            repository,
-            ticket_id="123",
-            trigger_message_created_at="2026-09-08T10:00:00Z",
-            created_at="2026-09-08T10:00:05Z",
-            delay_seconds=30,
-            draft_content="",
-            reply_facts=_reply_facts(
-                handler="billing",
-                action="fraud_account",
-                missing_fields=list(ALL_FIELDS),
-                collected_fields={},
-                submitted=False,
-                customer_name=None,
-            ),
-            asked_field_keys=list(ALL_FIELDS),
-            persona_assignment=None,
-            close_after_publish=False,
-        )
         gate = OwnershipGateResult(
             eligible=True,
             state=OWNERSHIP_STATE_ASSIGNED,

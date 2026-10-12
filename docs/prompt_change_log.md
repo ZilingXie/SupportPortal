@@ -5160,3 +5160,14 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - The legacy `account_reply_job_id` is retained only as a compatibility relay
   identity; it is marked `hermes_compatibility_only` so the legacy worker does
   not render a second customer reply.
+
+### 2026-10-12 — Hermes Unified Customer Reply v3.2
+
+- Persona input now receives the canonical server-owned basis for ordinary
+  automation and investigation turns as well as restricted follow-ups.
+- The basis validator authorizes state and time claims only from explicit
+  server claims/commitments; customer-collected text cannot authorize them or
+  introduce an unlisted field request.
+- Enablement compatibility job identity is fail-closed at workflow, Hermes
+  tool, and delivered-readback boundaries; missing or mismatched identity parks
+  the case for human review without releasing internal email or relay.

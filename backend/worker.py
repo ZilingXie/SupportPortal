@@ -2271,7 +2271,55 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
             if isinstance(workflow, dict)
             else ""
         )
-    if route == "enablement" and compatibility_job_id:
+    if route == "enablement":
+        delivery_job_id = str(delivery.get("compatibility_account_reply_job_id") or "").strip()
+        if not delivery_job_id:
+            for marker in delivery.get("attachments") or []:
+                if isinstance(marker, dict) and marker.get("_hermes_compatibility_job_id"):
+                    delivery_job_id = str(marker.get("_hermes_compatibility_job_id") or "").strip()
+                    break
+        job_error = None
+        if not delivery_job_id:
+            job_error = "enablement_compatibility_job_missing"
+        elif not compatibility_job_id or delivery_job_id != compatibility_job_id:
+            job_error = "enablement_compatibility_job_missing"
+        else:
+            try:
+                compatibility_job = ticket_repository.get_account_reply_job(delivery_job_id)
+            except Exception:
+                compatibility_job = None
+                job_error = "enablement_compatibility_job_lookup_failed"
+            if job_error is None and not isinstance(compatibility_job, dict):
+                job_error = "enablement_compatibility_job_not_found"
+            elif job_error is None:
+                job_ticket = str(compatibility_job.get("ticket_id") or compatibility_job.get("zendesk_ticket_id") or "")
+                if job_ticket != str(zendesk_ticket_id):
+                    job_error = "enablement_compatibility_job_ticket_mismatch"
+                elif str(compatibility_job.get("status") or "").lower() in {"cancelled", "failed", "manual_attention"}:
+                    job_error = "enablement_compatibility_job_terminal"
+        if job_error:
+            already_blocked = (
+                str(account_case.get("automation_status") or "") == "human_review_required"
+                and str(account_case.get("execution_reason_code") or "") == job_error
+                and str(account_case.get("hermes_compatibility_blocked_message_id") or "") == message_id
+            )
+            account_case["automation_status"] = "human_review_required"
+            account_case["execution_reason_code"] = job_error
+            account_case["hermes_compatibility_blocked_message_id"] = message_id
+            try:
+                ticket_repository.save_account_case(account_case)
+            except Exception:
+                LOGGER.exception("hermes_enablement_compatibility_block_persist_failed account_case_id=%s", account_case_id)
+            if not already_blocked:
+                try:
+                    ticket_repository.record_event(
+                        zendesk_ticket_id or None,
+                        "hermes_enablement_compatibility_release_blocked",
+                        {"account_case_id": account_case_id, "message_id": message_id, "reason_code": job_error},
+                    )
+                except Exception:
+                    LOGGER.exception("hermes_enablement_compatibility_block_event_failed account_case_id=%s", account_case_id)
+            return
         ticket_id = str(account_case.get("client_ticket_id") or zendesk_ticket_id or "").strip()
         try:
             ticket = ticket_repository.get_ticket(ticket_id) if ticket_id else None
@@ -2669,7 +2717,11 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         )
         if not bool(claimed.get("claimed")):
             return
-        attachments = [dict(ref) for ref in delivery.get("attachments") or []]
+        attachments = [
+            dict(ref)
+            for ref in delivery.get("attachments") or []
+            if isinstance(ref, dict) and not ref.get("_hermes_compatibility_job_id")
+        ]
         submitted = False
         try:
             uploads = []

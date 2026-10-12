@@ -1,8 +1,8 @@
-# Hermes Unified Customer Reply — v3
+# Hermes Unified Customer Reply — v3.2
 
 ## Contract
 
-计划名称：`Hermes Unified Customer Reply`；修订：`v3.1-repair`。
+计划名称：`Hermes Unified Customer Reply v3.2 — Enablement Relay Identity Fail-Closed`；修订：`v3.2`。
 
 所有 Hermes 客户可见回复统一由 `hermes_persona` 生成，服务端持有
 `hermes_customer_reply_basis_v1` 事实 basis，Persona 只负责自然措辞。
@@ -38,5 +38,7 @@ Persona draft 门禁、Prompt 版本和针对性测试；不包含数据库迁�
 发布或真实客户投递。代码和离线/入口证据完成后提交独立复验；代码验收、
 Preproduction 发布验证和真实业务验收仍分别判断。Enablement 保留
 `account_reply_job_id` 作为兼容 relay identity，但标记
-`hermes_compatibility_only=true`，旧 worker 不能再生成第二封正文；Hermes
+`hermes_compatibility_only=true`，旧 worker 不能再生成第二封正文；Enablement
+缺少、错误或无法读回该身份时 fail-closed，进入 `human_review_required`，不生成
+客户回复、不进入 Persona、不释放内部邮件或 relay，并记录原因码和幂等事件；Hermes
 delivery readback 负责释放内部邮件、relay 请求和后续业务收尾。
