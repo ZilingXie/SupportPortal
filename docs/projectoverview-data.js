@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-12T07:08:12Z",
-  "source_base_commit": "b57b2ae00cd024d56cfe458cb311474867005d69",
-  "registry_digest": "ae1bfa7692d7118d38cb561f5a15e72224e2ef7c13db08c3b335b1bf1c12a8b5",
+  "generated_at": "2026-10-12T07:10:27Z",
+  "source_base_commit": "1bb3690d12fcc63508df8e6c6e36f146b06b3d9f",
+  "registry_digest": "8ccf5d81dfe936903396d2136857329d27f1742d895eb54b3bacf0aa2a2d3ca3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -18108,7 +18108,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-12",
-      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@1439a348。",
+      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
       "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",

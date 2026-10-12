@@ -12,7 +12,7 @@
 ## Baseline and scope
 
 修复基线为完整 HEAD `5a94a9997a9e770d9ba50505510ac56a1a45d108`，当前 main 为
-`1439a34839b00b7da63bd3914e55528b92eccf0b`；本轮保持同一任务分支。范围为 Hermes automation、
+`c4f71c50f63686286ba90955fc9e595d07c7257a`；本轮保持同一任务分支。范围为 Hermes automation、
 investigation、conversation follow-up、message action 的客户回复事实合同、
 Persona draft 门禁、Prompt 版本和针对性测试；不包含数据库迁移、Production
 发布、真实客户工单或外部业务写入。
