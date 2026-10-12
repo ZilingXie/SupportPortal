@@ -21,7 +21,11 @@ from backend.services.automation_release_manifest import (
     read_preproduction_publish_record,
     validate_preproduction_publish_record,
 )
-from backend.scripts.automation_ecs_deploy import _registrable_task_definition
+from backend.scripts.automation_ecs_deploy import (
+    _registrable_task_definition,
+    default_knowledge_stage_config,
+    load_knowledge_stage_config,
+)
 from backend.repositories.ticket_repository import PostgresTicketRepository
 
 
@@ -774,6 +778,15 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     direct_production = bool(args.codebuild_direct_production)
     if direct_production and args.through != "production":
         raise ValueError("--codebuild-direct-production requires --through production")
+    # Stage-6 knowledge staged enablement (p2-197): validate the stage config
+    # before any state is created; it is bound into the checkpoint identity so
+    # a switch change is a new release, never a silent resume mutation.
+    knowledge_stage_config = None
+    knowledge_stage_arg = getattr(args, "knowledge_stage_config", None)
+    if knowledge_stage_arg:
+        if args.through == "production":
+            raise ValueError("--knowledge-stage-config is Preproduction-only")
+        knowledge_stage_config = load_knowledge_stage_config(knowledge_stage_arg)
     if direct_production and (
         args.hermes_persona_enabled
         or args.hermes_case_workflow_mode not in {None, "disabled"}
@@ -827,8 +840,19 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                     getattr(args, "enablement_workflow_mode", "manual") or "manual"
                 ),
                 "codebuild_direct_production": direct_production,
+                # Stage-6 knowledge stage (p2-197): the full normalized config
+                # rides in the checkpoint so every switch/allowlist change is
+                # a new release with its own auditable identity.
+                "knowledge_stage": knowledge_stage_config
+                or default_knowledge_stage_config(),
             },
         }
+    )
+    # Self-contained release state: the Preproduction deploy stages read the
+    # stage config from the checkpoint copy, not the caller's transient path.
+    knowledge_stage_config_path = state.path / "knowledge-stage-config.json"
+    _write_json_atomic(
+        knowledge_stage_config_path, knowledge_stage_config or default_knowledge_stage_config()
     )
     release_worktree = state.path / "release-worktree"
     release_dir = state.path / "release"
@@ -857,6 +881,12 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         str(record_path),
         *mode_args,
     ]
+    if knowledge_stage_config is not None:
+        # Stage-6 (p2-197): only the Preproduction legs carry the stage
+        # config; the Production deploy path builds its own argv.
+        common_deploy.extend(
+            ["--knowledge-stage-config", str(knowledge_stage_config_path)]
+        )
     try:
         codebuild_ready = bool(
             args.resume and state.completed("codebuild") and manifest_path.exists() and record_path.exists()
@@ -1090,6 +1120,14 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("manual", "archer"),
         default="manual",
         help="Enablement execution mode deployed to the target environment (p2-152)",
+    )
+    pipeline.add_argument(
+        "--knowledge-stage-config",
+        default=None,
+        help=(
+            "Path to the validated stage-6 knowledge stage config (JSON) for the "
+            "Preproduction deployment (p2-197); rejected for Production-through runs"
+        ),
     )
     pipeline.add_argument("--resume", action="store_true")
     pipeline.add_argument("--keep-release-worktree", action="store_true", help=argparse.SUPPRESS)

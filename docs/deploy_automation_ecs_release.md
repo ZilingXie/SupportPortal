@@ -344,6 +344,51 @@ RAG_SERVICE_SHARED_TOKEN=<secret>
 
 任何 schema或 job namespace不包含当前 environment时，runtime拒绝启动。Secrets不得写入 Release Manifest、task definition明文或 Promotion Record。
 
+## Knowledge 治理分阶段开关（2026-10-12 p2-197 阶段六步 2 起）
+
+WeKnora 并行双写链的知识治理开关只有**一个正式入口**：发布管线
+`--knowledge-stage-config <JSON 文件>`（Preproduction 专用，Production
+拒绝）。手工修改 ECS task definition 绕过门禁不属于启用路径。
+
+文件格式（全部字段可省略，缺省=全关+空 allowlist）：
+
+```json
+{
+  "master": "0|1",
+  "switches": {
+    "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "0|1",
+    "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0|1",
+    "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0|1",
+    "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0|1",
+    "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0|1",
+    "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0|1"
+  },
+  "source_allowlist": "csd_issue:CSD-TEST-1, csd_issue:*, case_binding:<id>"
+}
+```
+
+渲染时（`backend/scripts/automation_ecs_deploy.py`
+`load_knowledge_stage_config`）拒绝：未知键、非 `"0"/"1"` 字符串值、
+`parse_allowlist` 会静默丢弃的死 allowlist 条目、master 关闭时任一分开关
+开启（六开关在 `knowledge_dual_write` 合同下分层于
+`HERMES_KNOWLEDGE_WORKFLOW_ENABLED`）、delivery/Slack 开启而 dual-write
+worker 关闭（投递行与 Slack 通知只由该 worker 消费）。allowlist 条目校验
+复用 `backend/services/knowledge_source_allowlist.py::validate_allowlist`。
+
+配置流转：管线启动即校验并把规范化内容写入 checkpoint
+`identity.mode.knowledge_stage`（`automation_ecs_release_pipeline.py`；
+开关变化=新 release，`--resume` 携带不同内容报 identity 不匹配），状态目录
+留存自包含副本 `knowledge-stage-config.json` 并传给 Preproduction
+deploy。部署脚本在渲染后与激活前各跑一次
+`verify-knowledge-stage-config`，api/worker 渲染必须与配置逐字一致。
+Worker 同时渲染 WeKnora 客户端配置（`WEKNORA_BASE_URL` /
+`WEKNORA_API_TOKEN` / `WEKNORA_API_CONTRACT_JSON` /
+`WEKNORA_KNOWLEDGE_BASE_ID` / `HERMES_WEKNORA_*` SSM 引用 +
+`WEKNORA_AUTH_HEADER_NAME=X-API-Key` + 空 scheme；SSM 参数
+`/supportportal/preproduction/weknora-*`），`WEKNORA_MEMORY_IDENTITY`
+（未钉 memory 操作，fail-closed）与退役的
+`WEKNORA_PROMOTION_ENABLED=1` 自动剔除。验证记录见 p2-197。
+
 ## Enablement 工作流模式（p2-163 起：manual 默认 + auto 经 AgentRelay/Mac 执行）
 
 `ENABLEMENT_WORKFLOW_MODE`（`manual` | `archer`，默认 `manual`）仍经

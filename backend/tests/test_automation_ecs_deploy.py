@@ -13,7 +13,10 @@ import pytest
 from backend.scripts.automation_ecs_deploy import (
     HERMES_OUTBOUND_SECRET_NAMES,
     PREPRODUCTION_LLM_ENV_OVERRIDES,
+    WEKNORA_CLIENT_SECRET_SUFFIXES,
     WEKNORA_SECRET_SUFFIXES,
+    default_knowledge_stage_config,
+    load_knowledge_stage_config,
     render_initial_task_definition,
     render_production_hermes_disabled_task_definition,
     render_schema_bootstrap_task_definition,
@@ -22,6 +25,7 @@ from backend.scripts.automation_ecs_deploy import (
     validate_suspension_recipients,
     validate_promotion,
     verify_heartbeats,
+    verify_knowledge_stage_config,
 )
 from backend.services.automation_ecs_contracts import RELEASE_MANIFEST_VERSION, SCHEMA_REVISION
 from backend.services.automation_release_manifest import contract_versions
@@ -1114,13 +1118,14 @@ def test_initial_disabled_case_workflow_can_enable_persona_endpoint(tmp_path: Pa
     }["HERMES_CASE_WORKFLOW_MODE"] == "disabled"
 
 
-def test_initial_preproduction_worker_retires_weknora_and_pins_governance_off(
+def test_initial_preproduction_worker_renders_weknora_client_and_pins_governance_off(
     tmp_path: Path,
 ) -> None:
-    """AgentMemory recovery contract: initial Preproduction worker renders
-    carry no WeKnora credential or auth config, keep the promotion flag
-    explicitly off (never derived from the Hermes workflow mode), and pin the
-    knowledge-governance master switch off even with mode=real."""
+    """Stage-6 dual-write contract (p2-197): initial Preproduction worker
+    renders carry the WeKnora client credentials, the pinned contract, the
+    knowledge base id, and the X-API-Key auth shape; the retired memory
+    identity and auto-promotion flag stay off; the knowledge-governance
+    master switch stays off by default even with mode=real."""
     rendered = render_initial_task_definition(
         role="worker",
         manifest_path=_manifest(tmp_path),
@@ -1144,20 +1149,25 @@ def test_initial_preproduction_worker_retires_weknora_and_pins_governance_off(
     values = {item["name"]: item["value"] for item in container["environment"]}
     assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "0"
     assert values["WEKNORA_PROMOTION_ENABLED"] == "0"
-    assert "WEKNORA_AUTH_HEADER_NAME" not in values
-    assert "WEKNORA_AUTH_SCHEME" not in values
-    secret_names = {item["name"] for item in container["secrets"]}
-    assert not (set(WEKNORA_SECRET_SUFFIXES) & secret_names)
+    assert values["WEKNORA_AUTH_HEADER_NAME"] == "X-API-Key"
+    assert values["WEKNORA_AUTH_SCHEME"] == ""
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    assert "WEKNORA_MEMORY_IDENTITY" not in secrets
+    for name in WEKNORA_CLIENT_SECRET_SUFFIXES:
+        assert secrets[name].endswith(
+            f"parameter/supportportal/preproduction/{WEKNORA_CLIENT_SECRET_SUFFIXES[name]}"
+        ), name
 
 
-def test_render_task_definition_strips_inherited_weknora_and_pins_governance_off(
+def test_render_task_definition_normalizes_weknora_client_and_pins_governance_off(
     tmp_path: Path,
 ) -> None:
-    """AgentMemory recovery: rendering from an observed Preproduction worker
-    definition that still carries WeKnora secrets, auth env, and the stale
-    mode-derived promotion flag strips every reference, pins promotion and
-    the governance master switch off, and re-rendering the first output
-    changes nothing (repeat renders never resurrect retired references)."""
+    """Stage-6 dual-write: rendering from an observed Preproduction worker
+    definition that still carries stale WeKnora references (including the
+    retired memory identity and the mode-derived promotion flag) normalizes
+    to the canonical client set, pins the auto-promotion flag and the
+    governance master switch off, and re-rendering the first output changes
+    nothing (repeat renders never resurrect retired references)."""
     current = _task_definition(tmp_path, "worker")
     _as_preproduction(current)
     payload = json.loads(current.read_text(encoding="utf-8"))
@@ -1171,8 +1181,8 @@ def test_render_task_definition_strips_inherited_weknora_and_pins_governance_off
     )
     container["environment"].extend(
         [
-            {"name": "WEKNORA_AUTH_HEADER_NAME", "value": "X-API-Key"},
-            {"name": "WEKNORA_AUTH_SCHEME", "value": ""},
+            {"name": "WEKNORA_AUTH_HEADER_NAME", "value": "Authorization"},
+            {"name": "WEKNORA_AUTH_SCHEME", "value": "Bearer"},
             {"name": "WEKNORA_PROMOTION_ENABLED", "value": "1"},
             {"name": "HERMES_CASE_WORKFLOW_MODE", "value": "real"},
         ]
@@ -1195,12 +1205,13 @@ def test_render_task_definition_strips_inherited_weknora_and_pins_governance_off
     def _assert_contract(rendered: dict) -> None:
         container = rendered["containerDefinitions"][0]
         values = {item["name"]: item["value"] for item in container["environment"]}
-        secret_names = {item["name"] for item in container["secrets"]}
+        secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
         assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "0"
         assert values["WEKNORA_PROMOTION_ENABLED"] == "0"
-        assert "WEKNORA_AUTH_HEADER_NAME" not in values
-        assert "WEKNORA_AUTH_SCHEME" not in values
-        assert not (set(WEKNORA_SECRET_SUFFIXES) & secret_names)
+        assert values["WEKNORA_AUTH_HEADER_NAME"] == "X-API-Key"
+        assert values["WEKNORA_AUTH_SCHEME"] == ""
+        assert "WEKNORA_MEMORY_IDENTITY" not in secrets
+        assert set(WEKNORA_CLIENT_SECRET_SUFFIXES) <= set(secrets)
 
     rendered = _render(current)
     _assert_contract(rendered)
@@ -2438,3 +2449,415 @@ def test_attachment_api_secret_is_only_added_for_preproduction_hermes(tmp_path: 
         assert ("ENGINEER_SLACK_ACCESS_TOKEN" in secrets) == (env == "preproduction")
         if env == "preproduction":
             assert secrets["ENGINEER_SLACK_ACCESS_TOKEN"].endswith("/preproduction/engineer-slack-access-token")
+
+
+# ---------------------------------------------------------------------------
+# Stage-6 knowledge staged enablement (p2-197 step 2)
+# ---------------------------------------------------------------------------
+
+
+def _stage_config_file(tmp_path: Path, payload: dict) -> Path:
+    path = tmp_path / "knowledge-stage-config.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
+def test_load_knowledge_stage_config_defaults_to_all_off() -> None:
+    config = load_knowledge_stage_config(None)
+    assert config == default_knowledge_stage_config()
+    assert config["master"] == "0"
+    assert set(config["switches"]) == {
+        "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+        "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
+        "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED",
+    }
+    assert all(value == "0" for value in config["switches"].values())
+    assert config["source_allowlist"] == ""
+
+
+def test_load_knowledge_stage_config_accepts_staged_rollout_shape(tmp_path: Path) -> None:
+    """The step-5 rollout shape: master + intake on, everything else off."""
+    path = _stage_config_file(
+        tmp_path,
+        {
+            "master": "1",
+            "switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"},
+            "source_allowlist": "csd_issue:CSD-TEST-1, zendesk_ticket:990001",
+        },
+    )
+    config = load_knowledge_stage_config(path)
+    assert config["master"] == "1"
+    assert config["switches"]["KNOWLEDGE_SOURCE_INTAKE_ENABLED"] == "1"
+    assert config["switches"]["KNOWLEDGE_DUALWRITE_WORKER_ENABLED"] == "0"
+    assert config["source_allowlist"] == "csd_issue:CSD-TEST-1, zendesk_ticket:990001"
+
+
+@pytest.mark.parametrize(
+    "payload,match",
+    [
+        ({"master": "true"}, "master must be"),
+        ({"master": 1}, "master must be"),
+        ({"unknown": "1"}, "unknown keys"),
+        ({"switches": {"KNOWLEDGE_TYPO_SWITCH": "1"}}, "unknown switches"),
+        ({"switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "yes"}}, 'must be the string "0" or "1"'),
+        ({"switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": 1}}, 'must be the string "0" or "1"'),
+        ({"switches": "on"}, "switches must be an object"),
+        ({"source_allowlist": 7}, "source_allowlist must be a string"),
+        # Dead allowlist entries: runtime would silently drop them.
+        ({"source_allowlist": "csd_issue:CSD-1:extra"}, "invalid KNOWLEDGE_SOURCE_ALLOWLIST entry"),
+        ({"source_allowlist": "no-colon-entry"}, "invalid KNOWLEDGE_SOURCE_ALLOWLIST entry"),
+        ({"source_allowlist": "csd_issue:"}, "invalid KNOWLEDGE_SOURCE_ALLOWLIST entry"),
+        # Layering: a switch on while the master is off.
+        ({"switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"}}, "layered under"),
+        # Dependencies: delivery/slack without the dual-write worker.
+        (
+            {
+                "master": "1",
+                "switches": {"KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "1"},
+            },
+            "requires KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+        ),
+        (
+            {
+                "master": "1",
+                "switches": {"KNOWLEDGE_SLACK_NOTIFY_ENABLED": "1"},
+            },
+            "requires KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+        ),
+    ],
+)
+def test_load_knowledge_stage_config_rejects_invalid_entries(
+    tmp_path: Path, payload: dict, match: str
+) -> None:
+    path = _stage_config_file(tmp_path, payload)
+    with pytest.raises(ValueError, match=match):
+        load_knowledge_stage_config(path)
+
+
+def test_load_knowledge_stage_config_rejects_unreadable_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not a readable JSON file"):
+        load_knowledge_stage_config(str(tmp_path / "missing.json"))
+    broken = tmp_path / "broken.json"
+    broken.write_text("{not json", encoding="utf-8")
+    with pytest.raises(ValueError, match="not a readable JSON file"):
+        load_knowledge_stage_config(str(broken))
+
+
+def test_load_knowledge_stage_config_accepts_step9_dual_write_shape(tmp_path: Path) -> None:
+    """The step-9 shape: worker + both delivery targets + Slack on."""
+    path = _stage_config_file(
+        tmp_path,
+        {
+            "master": "1",
+            "switches": {
+                "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+                "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+                "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "1",
+                "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "1",
+                "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "1",
+                "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "1",
+            },
+            "source_allowlist": "csd_issue:*",
+        },
+    )
+    config = load_knowledge_stage_config(path)
+    assert config["master"] == "1"
+    assert all(value == "1" for value in config["switches"].values())
+    assert config["source_allowlist"] == "csd_issue:*"
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
+def test_render_task_definition_renders_knowledge_stage_config(
+    tmp_path: Path, role: str
+) -> None:
+    """A validated stage config drives the master switch, all six switches,
+    and the allowlist verbatim on BOTH queueing roles."""
+    current = _task_definition(tmp_path, role)
+    _as_preproduction(current)
+    stage = _stage_config_file(
+        tmp_path,
+        {
+            "master": "1",
+            "switches": {
+                "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+                "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+            },
+            "source_allowlist": "csd_issue:CSD-TEST-1",
+        },
+    )
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "1"
+    assert values["KNOWLEDGE_SOURCE_INTAKE_ENABLED"] == "1"
+    assert values["KNOWLEDGE_SUMMARY_REVIEW_ENABLED"] == "1"
+    assert values["KNOWLEDGE_DUALWRITE_WORKER_ENABLED"] == "0"
+    assert values["KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED"] == "0"
+    assert values["KNOWLEDGE_WEKNORA_DELIVERY_ENABLED"] == "0"
+    assert values["KNOWLEDGE_SLACK_NOTIFY_ENABLED"] == "0"
+    assert values["KNOWLEDGE_SOURCE_ALLOWLIST"] == "csd_issue:CSD-TEST-1"
+
+
+def test_render_task_definition_rejects_stage_config_for_production(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "worker")
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+
+    with pytest.raises(ValueError, match="Preproduction-only entry point"):
+        render_task_definition(
+            role="worker",
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="production",
+            repository="supportportal/production",
+            knowledge_stage_config=str(stage),
+        )
+
+
+def test_render_task_definition_rejects_stage_config_with_standalone_allowlist(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        render_task_definition(
+            role="worker",
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            knowledge_stage_config=str(stage),
+            knowledge_source_allowlist="csd_issue:CSD-1",
+        )
+
+
+def test_render_task_definition_rejects_dependency_violation_before_render(
+    tmp_path: Path,
+) -> None:
+    """An illegal stage config (WeKnora delivery without the dual-write
+    worker) is a render-time error, never a silently half-honored config."""
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    stage = _stage_config_file(
+        tmp_path,
+        {"master": "1", "switches": {"KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "1"}},
+    )
+
+    with pytest.raises(ValueError, match="requires KNOWLEDGE_DUALWRITE_WORKER_ENABLED"):
+        render_task_definition(
+            role="worker",
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            knowledge_stage_config=str(stage),
+        )
+
+
+def test_initial_render_applies_knowledge_stage_config(tmp_path: Path) -> None:
+    """The initial render path honors the same validated stage config."""
+    stage = _stage_config_file(
+        tmp_path,
+        {"master": "1", "switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"}},
+    )
+    rendered = render_initial_task_definition(
+        role="api",
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        execution_role_arn="arn:aws:iam::123456789012:role/preproduction-execution",
+        task_role_arn="arn:aws:iam::123456789012:role/preproduction-task",
+        log_group_name="/ecs/supportportal/preproduction",
+        parameter_prefix_arn=(
+            "arn:aws:ssm:us-east-1:123456789012:"
+            "parameter/supportportal/preproduction"
+        ),
+        graph_efs_file_system_id="fs-preproduction",
+        graph_efs_access_point_id="fsap-preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+    values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+    assert values["HERMES_KNOWLEDGE_WORKFLOW_ENABLED"] == "1"
+    assert values["KNOWLEDGE_SOURCE_INTAKE_ENABLED"] == "1"
+    assert values["KNOWLEDGE_WEKNORA_DELIVERY_ENABLED"] == "0"
+
+
+def test_verify_knowledge_stage_config_accepts_matching_render(tmp_path: Path) -> None:
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    stage = _stage_config_file(
+        tmp_path,
+        {
+            "master": "1",
+            "switches": {"KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1"},
+            "source_allowlist": "csd_issue:CSD-TEST-1",
+        },
+    )
+    rendered_path = tmp_path / "worker.rendered.json"
+    rendered_path.write_text(
+        json.dumps(
+            render_task_definition(
+                role="worker",
+                current_path=current,
+                manifest_path=_manifest(tmp_path),
+                registry_id="123456789012",
+                region="us-east-1",
+                environment="preproduction",
+                repository="supportportal/preproduction",
+                agent_model="gpt-6-sol",
+                knowledge_stage_config=str(stage),
+            )
+        ),
+        encoding="utf-8",
+    )
+
+    result = verify_knowledge_stage_config(
+        task_definition_path=rendered_path,
+        stage_config_path=stage,
+        role="worker",
+    )
+    assert result["status"] == "ok"
+    assert result["master"] == "1"
+    assert result["weknora_client"] is True
+
+
+def test_verify_knowledge_stage_config_rejects_drift(tmp_path: Path) -> None:
+    """A rendered definition whose switch drifted from the recorded stage
+    config fails verification — registration must not proceed."""
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+    container = rendered["containerDefinitions"][0]
+    next(
+        item for item in container["environment"] if item["name"] == "HERMES_KNOWLEDGE_WORKFLOW_ENABLED"
+    )["value"] = "1"
+    drifted_path = tmp_path / "worker.drifted.json"
+    drifted_path.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="HERMES_KNOWLEDGE_WORKFLOW_ENABLED"):
+        verify_knowledge_stage_config(
+            task_definition_path=drifted_path,
+            stage_config_path=stage,
+            role="worker",
+        )
+
+
+def test_verify_knowledge_stage_config_rejects_worker_missing_weknora_client(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+    container = rendered["containerDefinitions"][0]
+    container["secrets"] = [
+        item for item in container["secrets"] if item["name"] != "WEKNORA_API_TOKEN"
+    ]
+    missing_path = tmp_path / "worker.missing.json"
+    missing_path.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="missing the WeKnora client secret WEKNORA_API_TOKEN"):
+        verify_knowledge_stage_config(
+            task_definition_path=missing_path,
+            stage_config_path=stage,
+            role="worker",
+        )
+
+
+def test_verify_knowledge_stage_config_rejects_api_leaking_weknora_client(
+    tmp_path: Path,
+) -> None:
+    current = _task_definition(tmp_path, "api")
+    _as_preproduction(current)
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = render_task_definition(
+        role="api",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+    container = rendered["containerDefinitions"][0]
+    container["secrets"].append(
+        {
+            "name": "WEKNORA_API_TOKEN",
+            "valueFrom": "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/preproduction/weknora-api-token",
+        }
+    )
+    leaked_path = tmp_path / "api.leaked.json"
+    leaked_path.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="belongs on the worker"):
+        verify_knowledge_stage_config(
+            task_definition_path=leaked_path,
+            stage_config_path=stage,
+            role="api",
+        )
+
+
+def test_deploy_script_wires_knowledge_stage_config_end_to_end() -> None:
+    """Stage-6 (p2-197): the deploy script parses --knowledge-stage-config,
+    rejects it outside Preproduction, threads it into the task-definition
+    render, and re-verifies the rendered definitions against it at render
+    time and at activation."""
+    script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
+    assert '--knowledge-stage-config) [[ $# -ge 2 ]] || fail "--knowledge-stage-config requires a value"' in script
+    assert '"--knowledge-stage-config is Preproduction-only"' in script
+    assert 'args+=(--knowledge-stage-config "${KNOWLEDGE_STAGE_CONFIG}")' in script
+    assert "verify-knowledge-stage-config" in script
+    assert "verify_knowledge_stage_config_rendered" in script
+    # Both gates: after the render loop and before activation.
+    occurrences = script.count("verify_knowledge_stage_config_rendered\n")
+    assert occurrences >= 2, "the render-time and activation-time gates must both be present"
