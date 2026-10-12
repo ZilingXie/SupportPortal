@@ -2847,6 +2847,99 @@ def test_verify_knowledge_stage_config_rejects_api_leaking_weknora_client(
         )
 
 
+def _render_worker_for_verify(tmp_path: Path, stage: Path) -> dict:
+    current = _task_definition(tmp_path, "worker")
+    _as_preproduction(current)
+    return render_task_definition(
+        role="worker",
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+        knowledge_stage_config=str(stage),
+    )
+
+
+def test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path(
+    tmp_path: Path,
+) -> None:
+    """B1: a WeKnora client secret pointing anywhere other than the exact
+    environment SSM weknora-* path (here: the production prefix) fails
+    verification — presence alone never passes."""
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = _render_worker_for_verify(tmp_path, stage)
+    container = rendered["containerDefinitions"][0]
+    target = next(
+        item for item in container["secrets"] if item["name"] == "WEKNORA_API_TOKEN"
+    )
+    target["valueFrom"] = (
+        "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/production/weknora-api-token"
+    )
+    wrong_path = tmp_path / "worker.wrong-path.json"
+    wrong_path.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="WEKNORA_API_TOKEN must reference"):
+        verify_knowledge_stage_config(
+            task_definition_path=wrong_path,
+            stage_config_path=stage,
+            role="worker",
+        )
+
+
+def test_verify_knowledge_stage_config_rejects_retired_identity_environment(
+    tmp_path: Path,
+) -> None:
+    """B1: the retired WEKNORA_MEMORY_IDENTITY is rejected in ENVIRONMENT
+    form too — the pinned contract has no memory operations, so an unset
+    identity must fail closed at the client instead of being honored."""
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = _render_worker_for_verify(tmp_path, stage)
+    container = rendered["containerDefinitions"][0]
+    container["environment"].append(
+        {"name": "WEKNORA_MEMORY_IDENTITY", "value": "supportportal-governance"}
+    )
+    env_identity = tmp_path / "worker.env-identity.json"
+    env_identity.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="WEKNORA_MEMORY_IDENTITY environment"):
+        verify_knowledge_stage_config(
+            task_definition_path=env_identity,
+            stage_config_path=stage,
+            role="worker",
+        )
+
+
+def test_verify_knowledge_stage_config_rejects_foreign_weknora_reference(
+    tmp_path: Path,
+) -> None:
+    """B1: only the seven canonical client references may point at weknora-*
+    parameters — any other secret reaching for one is drift."""
+    stage = _stage_config_file(tmp_path, {"master": "0"})
+    rendered = _render_worker_for_verify(tmp_path, stage)
+    container = rendered["containerDefinitions"][0]
+    container["secrets"].append(
+        {
+            "name": "SOME_OTHER_SECRET",
+            "valueFrom": (
+                "arn:aws:ssm:us-east-1:123456789012:parameter/supportportal/"
+                "preproduction/weknora-api-token"
+            ),
+        }
+    )
+    foreign = tmp_path / "worker.foreign-ref.json"
+    foreign.write_text(json.dumps(rendered), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unexpectedly references a WeKnora parameter"):
+        verify_knowledge_stage_config(
+            task_definition_path=foreign,
+            stage_config_path=stage,
+            role="worker",
+        )
+
+
 def test_deploy_script_wires_knowledge_stage_config_end_to_end() -> None:
     """Stage-6 (p2-197): the deploy script parses --knowledge-stage-config,
     rejects it outside Preproduction, threads it into the task-definition

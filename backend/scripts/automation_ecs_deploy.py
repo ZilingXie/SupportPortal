@@ -1435,11 +1435,13 @@ def verify_knowledge_stage_config(
     The rendered api/worker task definition must carry EXACTLY the
     validated stage config: the master switch, all six governance switches,
     and the source allowlist verbatim. The worker must additionally carry
-    the canonical WeKnora client references (and never the retired memory
-    identity or the auto-promotion flag); the api must carry none of the
-    WeKnora client config. A mismatch is a hard error — registration of a
-    definition that silently drifted from the recorded stage config must
-    never proceed.
+    the canonical WeKnora client references with their EXACT SSM valueFrom
+    paths (the environment prefix's weknora-* parameters — full-path
+    comparison, never mere presence), must never carry the retired memory
+    identity in secret OR environment form, and must pin the retired
+    auto-promotion flag off; the api must carry none of the WeKnora client
+    config. A mismatch is a hard error — registration of a definition that
+    silently drifted from the recorded stage config must never proceed.
     """
     if role not in {"api", "worker"}:
         raise ValueError("knowledge stage verification supports only api or worker")
@@ -1467,12 +1469,42 @@ def verify_knowledge_stage_config(
         elif actual != expected:
             problems.append(f"environment {name} is {actual!r}, expected {expected!r}")
     secret_names = _secret_names(container)
+    secret_references = {
+        str(item.get("name") or ""): str(item.get("valueFrom") or "")
+        for item in container.get("secrets") or []
+    }
     if role == "worker":
-        for name in WEKNORA_CLIENT_SECRET_SUFFIXES:
-            if name not in secret_names:
+        # B1: every WeKnora client secret must point at the environment SSM
+        # prefix's weknora-* parameter — exact full-path comparison, so a
+        # wrong prefix (production/foreign), a wrong suffix, or a relative
+        # reference can never pass as "present".
+        prefix_arn = _parameter_prefix_arn(container, environment=environment)
+        for name, suffix in sorted(WEKNORA_CLIENT_SECRET_SUFFIXES.items()):
+            expected_reference = _parameter_arn(prefix_arn, suffix)
+            actual_reference = secret_references.get(name)
+            if actual_reference is None:
                 problems.append(f"worker is missing the WeKnora client secret {name}")
+            elif actual_reference != expected_reference:
+                problems.append(
+                    f"worker WeKnora client secret {name} must reference "
+                    f"{expected_reference}, got {actual_reference}"
+                )
+        # Only the seven canonical client references may point at weknora-*
+        # parameters; anything else reaching for one is drift.
+        for name, reference in sorted(secret_references.items()):
+            if "/weknora-" in reference and name not in WEKNORA_CLIENT_SECRET_SUFFIXES:
+                problems.append(
+                    f"worker secret {name} unexpectedly references a WeKnora "
+                    f"parameter: {reference}"
+                )
         if "WEKNORA_MEMORY_IDENTITY" in secret_names:
             problems.append("worker carries the retired WEKNORA_MEMORY_IDENTITY secret")
+        if "WEKNORA_MEMORY_IDENTITY" in environment_values:
+            problems.append(
+                "worker carries the retired WEKNORA_MEMORY_IDENTITY environment "
+                "variable (the pinned contract has no memory operations; the "
+                "identity must stay unset and fail closed)"
+            )
         if environment_values.get("WEKNORA_PROMOTION_ENABLED") != "0":
             problems.append("worker must pin WEKNORA_PROMOTION_ENABLED=0")
         for name, expected in WEKNORA_CLIENT_ENV.items():
