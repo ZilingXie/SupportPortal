@@ -656,10 +656,29 @@ Route 与 Worker 会先完成 update，然后并行等待 service 指针和唯�
 都收敛到已注册 revision、`rolloutState=COMPLETED` 及 `1/1/0`；两者 digest 和 heartbeat
 通过后才更新 API，API 使用相同 revision 门禁。公网 health/provenance、CloudWatch错误窗口
 和 EC2 backup health作为只读检查并行执行。
-技术验证时序提示（2026-10-11）：CloudWatch 门禁扫描从 deployment start 起的三个角色
-log stream prefix。使用同一 worker task definition 的隔离 probe，也会落在相同窗口；
-若 probe 预期异常会输出 traceback，应安排在正式 pipeline complete 后执行，或使用
-不会产生模拟错误日志的检查。不要删除模拟日志、改写失败 evidence 或跳过错误门禁。
+CloudWatch 归属门禁（2026-10-11，F-R1-DEPLOY-01）：[shell 入口](../deployment/deploy_automation_ecs_release.sh)
+调用 [collect-cloudwatch-evidence](../backend/scripts/automation_ecs_release_pipeline.py)，
+从 checkpoint 的原 deployment start 到采集开始查询完整角色 prefix，并用 ECS
+`group=service:<目标服务>` 和精确新 task definition ARN 分类。查询 RUNNING、STOPPED
+两组服务 task（CLI 合并分页、DescribeTasks 每批最多 100）；日志涉及但列表未列出的 task
+也必须回读身份。新版本服务错误计入硬门禁，包括已停止 task；窗口内启动失败、非零退出、
+退出状态/停止时间未知即使没有日志也阻断。resume 复用的 running task 不按创建时间排除。
+同 revision 的历史停止任务保留身份，生命周期失败仅在停止时间属于本窗口时计入。
+
+旧 revision 和非目标服务/一次性 probe 的匹配事件单独留证（event ID、timestamp、stream、
+task ARN/group/revision、分类与计数），不保留日志正文。身份缺失、AWS 查询失败、没有新版本
+服务 task 都 fail closed；三角色全部采集，不因 API 首先失败而遗漏 route/worker。Provider
+probe 仍有独立硬门禁，不能用非服务分类豁免它。沿用 refreshable AWS provider，剥离临时
+静态凭证和 Terraform 的派生配置。
+
+ECS DescribeTasks 对已停止 task 的可查询保证至少一小时（[AWS 文档](https://docs.aws.amazon.com/AmazonECS/latest/APIReference/API_DescribeTasks.html)）。
+本门禁只接受不超过 55 分钟的原观察窗口，预留 5 分钟采集；采集结束跨过一小时也阻断。
+更旧的 resume 不能证明早期启动失败未被漏掉，须按正式 pipeline 创建新 release，不能重置
+`deployment-start-ms` 或绕过门禁。正式失败 evidence/attempt 原样保留。
+
+技术验证时序提示：产生预期 traceback 的隔离 probe 仍安排在正式 pipeline complete 后执行。
+不要删除模拟日志、改写失败 evidence 或跳过错误门禁。回归与反向检出命令见
+[修复证据](plans/investigation-cloudwatch-gate-repair-evidence.json)。
 Target Health每5秒读取一次汇总，最多等待
 15分钟，直到至少一个target healthy且没有draining/unhealthy target；超时保留最后汇总并
 fail closed，不记录target IP。目标 Prompt sync 后还会从目标数据库执行

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-11T14:22:39Z",
-  "source_base_commit": "f5493332feeeffd91b376061eb3a1d1d27ed7ad6",
-  "registry_digest": "2fb58cf03c0d03a69ecc90b0ab17587e559b26f6e1731248d5e20b453a2e0f77",
+  "generated_at": "2026-10-11T14:45:03Z",
+  "source_base_commit": "3be28ebd741dd77d66b29cfa6569313a62f22bc3",
+  "registry_digest": "751fe0003fca12d52be4f810bc7e156b2c4828ff5e98068715ed100a9d418b44",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1566,6 +1566,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-followup-pp-release-evidence.json",
           "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-cloudwatch-gate-repair-evidence.json",
+          "label": "F-R1-DEPLOY-01 已授权修复：实际 shell/CLI 回归与反向检出，等待独立复审，不代表部署或业务验收。"
         },
         {
           "type": "document",
@@ -17596,15 +17601,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
       "status": "blocked",
-      "next_action": "等待用户确认是否授权窄发布门禁修复；原代码独立复审通过保留。完成当前自动回滚并归档失败证据，保留任务工作区。Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
+      "next_action": "用户已授权 F-R1-DEPLOY-01 窄发布门禁修复；修复完成，等待 Draft PR 完整 HEAD 的独立复审。通过后 finalize 并重跑正式 ECS Preproduction pipeline。附件代码既有验收保留，Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-11",
       "acceptance_criteria": [
-        "C1-C7 见 docs/plans/investigation-attachments-v1.md"
+        "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。"
       ],
       "blockers": [
-        "F-R1-DEPLOY-01：正式 CloudWatch 门禁包含旧 worker 272 条错误和隔离 probe 1 条模拟 traceback；改为仅统计本轮全部服务 task 涉及发布验收范围，待用户授权及独立复审。"
+        "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。"
       ],
       "evidence": [
         {
@@ -17651,6 +17656,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-followup-pp-release-evidence.json",
           "label": "R1 发布门禁未通过；failed_before_activation、rollback succeeded；三服务恢复原 release，14002 账本未变。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-cloudwatch-gate-repair-evidence.json",
+          "label": "F-R1-DEPLOY-01 已授权修复：实际 shell/CLI 回归与反向检出，等待独立复审，不代表部署或业务验收。"
         }
       ]
     },

@@ -1739,7 +1739,9 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
         "'.taskDefinition.containerDefinitions[] | select(.name == $role) "
         '| .logConfiguration.options["awslogs-group"]\''
     ) in script
-    assert '--log-stream-name-prefix "${role}/${role}/"' in script
+    # Prefix querying and task attribution now live in the real Python collector;
+    # behavior is covered by test_automation_ecs_cloudwatch_gate via the shell gate.
+    assert 'collect-cloudwatch-evidence --region "${REGION}" --cluster "${CLUSTER}"' in script
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
     prompt_sync = main_script.index("run_release_prompt_cli sync")
     schema_bootstrap = main_script.index("run_schema_bootstrap")
@@ -1898,9 +1900,20 @@ exit 42
     assert not (state_dir / "route.runtime-digest").exists()
 
 
-def test_failure_evidence_is_valid_without_collector_files(tmp_path: Path) -> None:
+@pytest.mark.parametrize("with_cloudwatch", [False, True])
+def test_failure_evidence_is_valid_without_collector_files(tmp_path: Path, with_cloudwatch: bool) -> None:
     state_dir = tmp_path / "state"
     state_dir.mkdir()
+    cloudwatch_report = {
+        "role": "worker", "status": "passed", "error_count": 0,
+        "excluded_counts": {"old_revision": 272, "non_service": 1},
+        # Exceeds an argv-sized JSON argument; evidence must read the report file.
+        "events": [{"event_id": "event-" + "x" * 100 + str(i), "category": "non_service"}
+                   for i in range(3000)],
+        "tasks": [{"task_id": "probe-1", "category": "non_service"}],
+    }
+    if with_cloudwatch:
+        (state_dir / "worker.cloudwatch-count.json").write_text(json.dumps(cloudwatch_report))
     manifest = tmp_path / "manifest.json"
     manifest.write_text(
         json.dumps(
@@ -1938,10 +1951,29 @@ write_evidence failed_before_activation
     evidence = json.loads((state_dir / "evidence.json").read_text(encoding="utf-8"))
     assert evidence["status"] == "failed_before_activation"
     assert evidence["phase_timings"] == []
-    assert evidence["cloudwatch"] == {"error_count": 0, "roles": []}
+    assert evidence["cloudwatch"] == {
+        "error_count": 0, "roles": [cloudwatch_report] if with_cloudwatch else []}
     attempts = list((state_dir / "evidence-attempts").glob("*-failed_before_activation.json"))
     assert len(attempts) == 1
     assert json.loads(attempts[0].read_text(encoding="utf-8")) == evidence
+
+
+def test_provider_failure_still_blocks_parallel_post_deploy_gate(tmp_path: Path) -> None:
+    shell = '''
+source "$1"
+TEMP_DIR="$2"
+verify_public_runtime() { return 0; }
+verify_cloudwatch() { return 0; }
+curl() { return 0; }
+verify_target_health() { return 0; }
+run_terraform_zero_plan() { return 0; }
+run_provider_probe() { return 1; }
+if run_parallel_post_deploy_checks 1; then exit 99; fi
+[[ "$PROVIDER_PROBE_STATUS" == failed ]]
+'''
+    result = subprocess.run(["bash", "-c", shell, "bash", str(DEPLOY_SCRIPT), str(tmp_path)],
+                            cwd=ROOT, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_target_health_accepts_new_healthy_target_while_old_target_drains(tmp_path: Path) -> None:
