@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-12T10:59:50Z",
-  "source_base_commit": "dff24e8361e080501ebae21bb14dad656d42b342",
-  "registry_digest": "b042b46fdc48fa6bac6265066e6832c1a2af916e49738b97a7e874787e60b116",
+  "generated_at": "2026-10-12T12:08:48Z",
+  "source_base_commit": "286b8f92e0dbbc8d3433c87ac08d421a2113c0f1",
+  "registry_digest": "d395c2050603ed9f98dbe68d0e098593324caccc53e3e84c1d90a766a117c60e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5810,6 +5810,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 独立验收 B1 修复记录",
           "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
           "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
+        },
+        {
+          "type": "deployment",
+          "label": "步 4-9 全关闭部署+n8n 发布+关闭态验证",
+          "command": "release_automation_ecs_pipeline（r20261012-42a187a，--bootstrap-account-schema，经三次 resume：TICKET_DB_SCHEMA 修正/DEPLOY_PREPRODUCTION_APPROVED 补齐）+ n8n MCP publish×3 + 公网探针",
+          "result": "全阶段 passed（preflight/prompt_schema/rollout×2/heartbeat/collector/activation/release_note）；api:140/worker:140/route:138 运行 42a187ae；开关全 0+allowlist 空+WEKNORA_PROMOTION_ENABLED=0；Worker 七 WeKnora SSM 引用+X-API-Key/空 scheme 上线、无 MEMORY_IDENTITY；schema v23 六列实证；Terraform 零漂移；n8n active 切换至 6fed47a6/6a262f9a/4ed2c0c3（validator 前后通过）；关闭态探针 503 零写入。SLO breach=总时长 1284s（resume+bootstrap 开销，非失败）。证据 docs/evidence/weknora-dualwrite-phase6/stage6-final-baseline.md。"
         }
       ],
       "source_refs": [
@@ -18078,7 +18084,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-12",
       "updated_at": "2026-10-12",
       "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "I1 修复完成：已同步 origin/main（daa06ba8+ca94a4cc，Hermes Unified Customer Reply v3.2 他线，无步 2 代码文件冲突；唯一冲突 docs/projectoverview-data.js 由重新生成解决，merge commit dff24e83）。合并后复验：22 文件定向+知识面全套 626 passed / 0 failed 含隔离 PG 双解释器（root venv 3.13 与 homebrew 3.12）；他线直接受影响文件 test_automation_provider_probe 3 passed；git diff --check 与 Overview --check 通过。等待独立复验 PR #1482（最终 HEAD 见 PR）；通过后 finalize→步 3 重新冻结发布基线→步 4-7 全关闭部署（历史队列盘点前置）→步 8 n8n 三链→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft 保持）→步 11 观察窗口汇总后暂停并再次请求用户确认才全量放开。",
+      "next_action": "步 3-9 前半完成（v2-A #4-#9 关闭态）：PR#1482 已 finalize 合入 main=42a187ae；最终基线冻结+历史队列盘点（无未授权可消费行，65 条无 Summary 的 zendesk_ticket 快照由 allowlist 默认严格合同挡住）；全关闭部署 r20261012-42a187a 全阶段 passed（api:140/worker:140/route:138、开关全 0、Worker 七 WeKnora 引用+X-API-Key 首次上线、schema v23 实证、Terraform 零漂移、步 2 双 verify 门实弹通过）；n8n 三链 Draft 发布且回读 activeVersionId 切换（回滚基线 b5cf6d6b/1f544830/b02f3ed5 保留）；关闭态验证=探针 503 零写入。下一步=小范围开启序列（各=新 release 经管线+checkpoint identity）：A) master+intake 开（快照接收持久化、零 AI；CSD 自然触发 202 受执为自然证据）→B) +summary_review+精确 allowlist（受控样本 AI 处理→candidate）→C) +dualwrite_worker+slack_notify（delivery 目标仍关；Slack 人工 Review 通知=人工停点）→D) +双 delivery 目标（approve 双写+按 ID 回读；WeKnora 保持 draft）。需用户输入：受控样本来源清单（已登记非业务来源）与步 10 人工 Slack 操作窗口。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18142,6 +18148,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 独立验收 B1 修复记录",
           "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
           "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
+        },
+        {
+          "type": "deployment",
+          "label": "步 4-9 全关闭部署+n8n 发布+关闭态验证",
+          "command": "release_automation_ecs_pipeline（r20261012-42a187a，--bootstrap-account-schema，经三次 resume：TICKET_DB_SCHEMA 修正/DEPLOY_PREPRODUCTION_APPROVED 补齐）+ n8n MCP publish×3 + 公网探针",
+          "result": "全阶段 passed（preflight/prompt_schema/rollout×2/heartbeat/collector/activation/release_note）；api:140/worker:140/route:138 运行 42a187ae；开关全 0+allowlist 空+WEKNORA_PROMOTION_ENABLED=0；Worker 七 WeKnora SSM 引用+X-API-Key/空 scheme 上线、无 MEMORY_IDENTITY；schema v23 六列实证；Terraform 零漂移；n8n active 切换至 6fed47a6/6a262f9a/4ed2c0c3（validator 前后通过）；关闭态探针 503 零写入。SLO breach=总时长 1284s（resume+bootstrap 开销，非失败）。证据 docs/evidence/weknora-dualwrite-phase6/stage6-final-baseline.md。"
         }
       ]
     },
