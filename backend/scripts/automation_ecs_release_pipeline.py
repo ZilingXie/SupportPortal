@@ -129,6 +129,155 @@ def _git(repo: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def _cloudwatch_aws(region: str, *args: str) -> dict[str, Any]:
+    # CLI JSON output merges every page. Never use a per-page --query count.
+    env = sanitized_aws_environment()
+    # Use the same refreshable provider as the shell aws() wrapper, rather than
+    # Terraform's temporary exported session/configuration.
+    if "AUTOMATION_AWS_SOURCE_PROFILE" in os.environ:
+        env["AWS_PROFILE"] = os.environ["AUTOMATION_AWS_SOURCE_PROFILE"]
+    for source, target in (
+        ("AUTOMATION_AWS_SOURCE_CONFIG_FILE", "AWS_CONFIG_FILE"),
+        ("AUTOMATION_AWS_SOURCE_SHARED_CREDENTIALS_FILE", "AWS_SHARED_CREDENTIALS_FILE"),
+    ):
+        if source in os.environ:
+            env.pop(target, None)
+            if os.environ[source]:
+                env[target] = os.environ[source]
+    result = subprocess.run(
+        ["aws", *args, "--region", region, "--output", "json"],
+        env=env, check=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    value = json.loads(result.stdout)
+    if not isinstance(value, dict):
+        raise ValueError("invalid AWS response")
+    return value
+
+
+def collect_cloudwatch_evidence(
+    *, region: str, cluster: str, service: str, role: str,
+    task_definition: str, log_group: str, start_ms: int, output: str | Path,
+) -> dict[str, Any]:
+    """Gate only release service tasks; retain excluded event identities, not text."""
+    end_ms = int(_utc_now().timestamp() * 1000)
+    report: dict[str, Any] = {
+        "role": role, "status": "failed", "error_count": 0,
+        "cluster": cluster, "service": service, "task_definition": task_definition,
+        "log_group": log_group, "start_ms": start_ms, "end_ms": end_ms,
+        "tasks": [], "events": [], "blocking_reasons": [],
+        "excluded_counts": {"old_revision": 0, "non_service": 0},
+    }
+    blocked = report["blocking_reasons"]
+    try:
+        if role not in ("api", "route", "worker") or not all(
+            (region, cluster, service, task_definition, log_group)
+        ):
+            blocked.append("missing_scope")
+            raise ValueError("missing_scope")
+        # DescribeTasks guarantees stopped-task visibility for at least one hour.
+        # Leave five minutes for collection; never certify an older resume window.
+        if not 0 <= end_ms - start_ms <= 55 * 60 * 1000:
+            blocked.append("task_history_window_expired")
+            raise ValueError("task_history_window_expired")
+        candidates: set[str] = set()
+        for desired in ("RUNNING", "STOPPED"):
+            response = _cloudwatch_aws(
+                region, "ecs", "list-tasks", "--cluster", cluster,
+                "--service-name", service, "--desired-status", desired,
+            )
+            candidates.update(response["taskArns"])
+        logs = _cloudwatch_aws(
+            region, "logs", "filter-log-events", "--log-group-name", log_group,
+            "--log-stream-name-prefix", f"{role}/{role}/", "--start-time", str(start_ms),
+            "--end-time", str(end_ms), "--filter-pattern", "?ERROR ?Traceback ?Exception",
+        )
+        events = logs["events"]
+        for event in events:
+            stream = event.get("logStreamName", "")
+            match = re.fullmatch(rf"{role}/{role}/([0-9a-f]{{32}})", stream)
+            task_id = match.group(1) if match else ""
+            report["events"].append({
+                "event_id": event.get("eventId"), "timestamp": event.get("timestamp"),
+                "log_stream": stream, "task_id": task_id, "category": "unresolved",
+            })
+            if task_id:
+                if not any(arn.rsplit("/", 1)[-1] == task_id for arn in candidates):
+                    candidates.add(task_id)
+            else:
+                blocked.append("unresolved_log_stream")
+        identities: dict[str, dict[str, Any]] = {}
+        ordered = sorted(candidates)
+        for offset in range(0, len(ordered), 100):
+            response = _cloudwatch_aws(
+                region, "ecs", "describe-tasks", "--cluster", cluster,
+                "--tasks", *ordered[offset:offset + 100],
+            )
+            if response.get("failures"):
+                blocked.append("task_identity_unavailable")
+            for task in response["tasks"]:
+                task_id = task["taskArn"].rsplit("/", 1)[-1]
+                group = task.get("group")
+                definition = task.get("taskDefinitionArn")
+                if not group or not definition:
+                    blocked.append("task_identity_incomplete")
+                    continue
+                category = (
+                    "non_service" if group != f"service:{service}" else
+                    "release_service" if definition == task_definition else "old_revision"
+                )
+                identity = {
+                    "task_id": task_id, "task_arn": task["taskArn"], "group": group,
+                    "task_definition": definition, "category": category,
+                    "last_status": task.get("lastStatus"), "stop_code": task.get("stopCode"),
+                    "stopped_at": task.get("stoppedAt"),
+                    "containers": [{"name": c.get("name"), "exit_code": c.get("exitCode")}
+                                   for c in task.get("containers", [])],
+                }
+                identities[task_id] = identity
+                report["tasks"].append(identity)
+                if category == "release_service" and task.get("lastStatus") == "STOPPED":
+                    stopped_at = task.get("stoppedAt")
+                    if not stopped_at:
+                        blocked.append("release_task_stop_time_unknown")
+                    elif int(_parse_time(stopped_at).timestamp() * 1000) < start_ms:
+                        # Equivalent revision may be reused on resume. Retain earlier
+                        # stopped identities, but gate lifecycle failures in this window.
+                        continue
+                    codes = [c.get("exitCode") for c in task.get("containers", [])]
+                    if task.get("stopCode") == "TaskFailedToStart" or any(
+                        code is not None and code != 0 for code in codes
+                    ):
+                        blocked.append("release_task_failed")
+                    elif not codes or any(code is None for code in codes):
+                        blocked.append("release_task_exit_unknown")
+        if any(arn.rsplit("/", 1)[-1] not in identities for arn in candidates):
+            blocked.append("task_identity_unavailable")
+        if not any(t["category"] == "release_service" for t in report["tasks"]):
+            blocked.append("no_release_service_tasks")
+        for event in report["events"]:
+            identity = identities.get(event["task_id"])
+            if not identity:
+                blocked.append("event_identity_unavailable")
+                continue
+            event["category"] = identity["category"]
+            if event["category"] == "release_service":
+                report["error_count"] += 1
+            else:
+                report["excluded_counts"][event["category"]] += 1
+        if report["error_count"]:
+            blocked.append("release_service_errors")
+        if int(_utc_now().timestamp() * 1000) - start_ms >= 60 * 60 * 1000:
+            blocked.append("task_history_window_expired")
+    except (ValueError, KeyError, TypeError, OSError, subprocess.CalledProcessError):
+        # Do not persist AWS stderr or log bodies: they may contain customer data.
+        blocked.append("collection_failed")
+    report["blocking_reasons"] = sorted(set(blocked))
+    report["status"] = "failed" if blocked else "passed"
+    assert_evidence_secret_free(report)
+    _write_json_atomic(Path(output), report)
+    return report
+
+
 def _allowed_post_release_path(path: str) -> bool:
     return path.startswith("docs/") or path in ALLOWED_POST_RELEASE_PATHS
 
@@ -915,6 +1064,11 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_state.add_argument("--schema", required=True)
     prompt_state.add_argument("--release-id", required=True)
 
+    cloudwatch = subparsers.add_parser("collect-cloudwatch-evidence")
+    for field in ("region", "cluster", "service", "role", "task-definition", "log-group", "output"):
+        cloudwatch.add_argument(f"--{field}", required=True)
+    cloudwatch.add_argument("--start-ms", type=int, required=True)
+
     pipeline = subparsers.add_parser("run")
     pipeline.add_argument("--project-root", default=str(Path(__file__).resolve().parents[2]))
     pipeline.add_argument("--release-commit")
@@ -982,6 +1136,12 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         return collect_prompt_target_identity(args.schema)
     if args.command == "prompt-target-state":
         return collect_prompt_target_state(args.schema, args.release_id)
+    if args.command == "collect-cloudwatch-evidence":
+        return collect_cloudwatch_evidence(
+            region=args.region, cluster=args.cluster, service=args.service, role=args.role,
+            task_definition=args.task_definition, log_group=args.log_group,
+            start_ms=args.start_ms, output=args.output,
+        )
     return run_pipeline(args)
 
 

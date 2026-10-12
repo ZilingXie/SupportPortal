@@ -53,12 +53,27 @@ n8n 修改前 active/draft 已再次远端回读，两个目标 workflow 均无 
 
 - 首轮镜像 probe：worker :136、digest `sha256:ef09c0cfd1cd3f8a27b78d97f01d7a9ef6282d9c15c0e6938f37c6c9e7beb04a`，四项合同通过、exit 0、业务写入 0；见 `investigation-followup-pp-probe.json`。`investigation-followup-image-probe.py` 为可复现脚本，Fargate worker override command 为 `python -c <脚本原文>`，使用该角色现有 networkConfiguration；必须在正式 pipeline 完成后运行，因为预期翻译失败会在相同 CloudWatch log group 留下模拟 traceback。首轮执行时序安排有误，原证据保留，正式门禁需要新干净观察窗口。
 
-### F-R1-DEPLOY-01（发布范围决策待确认）
+### F-R1-DEPLOY-01（已授权门禁修复，等待独立复审）
 
 CloudWatch 正式检查为 api=0、route=0、worker=273：旧 worker :135/task `dc4aaa796ddf44f291672610ddf068b8` 的 `attachment_binding_changed` 包含 136 条 ERROR + 136 条 traceback；隔离 probe/task `49d8beaebd3746c8889026fac7d94c60` 有 1 条预期翻译失败 traceback。旧 task 的 digest 为 `sha256:4b7d3582cdf87f13a2ea04f5409349566f986ccd728a3b9b276e1e9e3a49ceb2`。因此不能把失败只归因为 probe；新服务 revision 没有窗口内匹配错误，仍不能当作正式门禁通过。
 
-原脚本 `verify_cloudwatch` 按整个 role prefix 从 deployment start 查询，包含滚动切换中的旧 worker；直接重发仍会受到同一错误流影响。已向用户明确请求是否授权额外发布门禁修复：匹配本轮新 revision 的全部服务 task（包括已停止/启动失败 task，不限于最终 running task），旧版本与隔离 probe 错误保留独立证据，Provider probe 保留自己的硬门禁。该变更未实施，需独立复审后才能发布。恢复并保留原失败证据，禁止改写错误计数、跳过门禁或擅自暂停 poller。
+原脚本 `verify_cloudwatch` 按整个 role prefix 从 deployment start 查询，包含滚动切换中的旧 worker；直接重发仍会受到同一错误流影响。用户已明确授权“门禁修复，独立复审后重发”：匹配本轮新 revision 的全部服务 task（包括已停止/启动失败 task，不限于最终 running task），旧版本与隔离 probe 错误保留独立证据，Provider probe 保留自己的硬门禁。独立复审前不 finalize/merge/deploy。恢复并保留原失败证据，禁止改写错误计数、跳过门禁或擅自暂停 poller。
 
 另有本机 TLS 检查失败：本机 DNS 返回 `198.18.0.71`，SNI 为 SupportPortal 却呈现 github.com 证书；DoH 查询 CNAME 与 AWS ALB DNS 一致，`/usr/bin/curl --doh-url https://cloudflare-dns.com/dns-query` 在正常 TLS 校验下回读 `/automation/preproduction/health/live` 通过。仅验证了本次进程解析替代，未修改主机配置或部署目标；无需通过关闭证书校验解决。
 
-最终首轮状态：`r20261011-f1efe32` 的 pipeline exit 1、`failed_before_activation`、`checks.rollback=succeeded`。2026-10-11T14:12Z 后独立回读三服务 api :135 / route :134 / worker :135，均单 PRIMARY、COMPLETED、desired/running/pending=1/1/0；公网正常 TLS+DoH 回读原 release `r20261011-434ee35-p2`。两条 14002 附件仍 failed、403、无 Slack file ID、updated_at 与发布前相同，未重投递。正式收尾证据见 `investigation-followup-pp-release-evidence.json`。第二轮未启动，发布脚本修复未实施；工作区保留，等待用户范围决策。
+最终首轮状态：`r20261011-f1efe32` 的 pipeline exit 1、`failed_before_activation`、`checks.rollback=succeeded`。2026-10-11T14:12Z 后独立回读三服务 api :135 / route :134 / worker :135，均单 PRIMARY、COMPLETED、desired/running/pending=1/1/0；公网正常 TLS+DoH 回读原 release `r20261011-434ee35-p2`。两条 14002 附件仍 failed、403、无 Slack file ID、updated_at 与发布前相同，未重投递。正式收尾证据见 `investigation-followup-pp-release-evidence.json`。第二轮未启动；任务工作区保留，门禁修复完成后交独立复审。
+
+#### 新增门禁合同（R1，不改变 C1–C10/L1）
+
+| 合同 | 真实入口 / 行为 | 证据 |
+|---|---|---|
+| G1 | verify_cloudwatch → Python CLI → AWS 边界；完整 prefix 窗口、精确 service group + 新 revision；运行中/已停止任务均计入，新服务错误阻断 | 实际 bash/CLI 回归，272 旧错误 + 1 同 revision probe 排除且保留事件归属；running/stopped 错误负向 |
+| G2 | 无日志的启动失败/非零退出阻断；未知 task/stream、AWS 失败、缺失新服务、停止时间或退出状态未知 fail closed | 实际 gate 负向；三角色继续采集，100 task 分批不遗漏 |
+| G3 | 未通过与排除项全部进入角色 report 和最终 evidence；Provider 仍阻断；凭证来源与原发布脚本相同 | evidence 回读、Provider gate 回归、AWS 边界凭证断言 |
+| G4 | resume 保留原窗口与复用 task；55 分钟采集上限、结束时一小时硬上限，不能认证已过 ECS 停止任务保留保证的历史窗口 | resume 创建时间不排除、历史停止时间区分、过期窗口阻断 |
+
+新增代码仅涉及发布采集器、shell 门禁、回归与 Runbook，未修改附件/业务行为。当前修复基线
+`bd2ce145a16672ecb38f0892598ffa4681ad61d5`，已包含 `main` 的原失败证据记录
+`11da09080388059b3934197aeb09c5200acce128`。验证命令与结果统一见
+[`investigation-cloudwatch-gate-repair-evidence.json`](investigation-cloudwatch-gate-repair-evidence.json)。
+原失败记录保留；代码自测不等于独立复审通过，更不等于 Preproduction 或真实业务验收。
