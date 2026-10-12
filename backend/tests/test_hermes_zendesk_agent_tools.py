@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -17,6 +17,7 @@ from backend.services.automation_hermes_delivery import (
 )
 from backend.services.automation_hermes_tools import (
     HermesToolError,
+    _validate_enablement_compatibility_job,
     apply_greeting_projection,
     derive_publish_policy,
     publication_decision_for_turn,
@@ -119,6 +120,25 @@ def _setup_case() -> tuple[InMemoryAutomationEcsStore, FakeRepository, str]:
         "route": None,
         "automation_context": {},
     }
+    # Every draft test now carries the same server-owned Work conclusion that
+    # production Persona receives; a model-only basis is intentionally not a
+    # valid test fixture after the F1 repair.
+    store._hermes_turns[handoff["turn_id"]]["direction"] = "investigation"
+    store._hermes_turns[handoff["turn_id"]]["route"] = "investigation"
+    store._hermes_turns[handoff["turn_id"]]["work_result"] = {
+        "status": "ready",
+        "route": "investigation",
+        "collected_fields": {},
+        "missing_fields": [],
+        "allowed_claims": ["state:ready"],
+    }
+    store.save_hermes_investigation(
+        handoff["turn_id"],
+        summary="Verified investigation result.",
+        evidence=[],
+        blockers=[],
+        next_steps=[],
+    )
     return store, repository, handoff["turn_id"]
 
 
@@ -280,21 +300,107 @@ class TestInvestigationTool:
 
 
 class TestDraftTools:
-    def test_auto_policy_requires_automation_direction(self) -> None:
-        store, repository, turn_id = _setup_case()
-        with patch(
-            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-            side_effect=_guardrail_pass,
-        ):
-            store._hermes_turns[turn_id]["phase"] = "persona"
-            draft = tool_save_reply_draft(
-                store, repository, turn_id=turn_id, content="Hello", basis={}
-            )
-        assert draft["publish_policy"] == "manual"  # server derives from direction
+    def test_unknown_compatibility_job_status_is_terminal_at_tool_boundary(self) -> None:
+        class _Repository:
+            def get_account_reply_job(self, _job_id: str) -> dict[str, Any]:
+                return {"job_id": "job-1", "ticket_id": "123", "status": "made_up_state"}
 
-    def test_manual_draft_saves_guardrail_result(self) -> None:
+        job_id, job, reason = _validate_enablement_compatibility_job(
+            _Repository(),
+            account_case={
+                "automation_context": {
+                    "enablement_auto_workflow": {"reply_job_id": "job-1"}
+                }
+            },
+            ticket_id="123",
+            reply_job={"job_id": "job-1"},
+        )
+        assert (job_id, job["status"], reason) == (
+            "job-1",
+            "made_up_state",
+            "enablement_compatibility_job_terminal",
+        )
+
+    def test_persona_requires_canonical_basis_without_legacy_fallback(self) -> None:
+        """A malformed follow-up cannot start Persona from legacy facts."""
+        from types import SimpleNamespace
+
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+        from backend.services.hermes_agent_runtime import HermesAgentError
+
+        class _Store:
+            def bind_hermes_case_persona(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def get_hermes_case_binding(self, _ticket_id: str) -> dict[str, Any]:
+                return {"session_kind": "case", "hermes_session_id": "session-1"}
+
+            def get_or_create_hermes_turn_run(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                return {"status": "queued", "run_id": None, "request_id": "request-1"}
+
+        payload = SimpleNamespace(
+            turn_id="turn-1",
+            event=SimpleNamespace(ticket=SimpleNamespace(id="123"), routing_text=lambda: "follow-up"),
+        )
+        turn = {
+            "turn_id": "turn-1",
+            "direction": "automation",
+            "route": "conversation_followup",
+            "turn_kind": "follow_up",
+            "work_result": {"reply_basis": {"legacy": "must not authorize Persona"}},
+        }
+        client = SimpleNamespace(start_run=Mock(), get_run=Mock())
+        processor = HermesAgentTurnProcessor(
+            _Store(), client=client, repository=object(), sleeper=lambda _seconds: None
+        )
+        with patch(
+            "backend.services.automation_hermes_agent.resolve_persona_style",
+            return_value={"persona_key": "default", "version": 1, "instruction": "plain", "fell_back": False},
+        ), patch(
+            "backend.services.hermes_customer_reply_basis.basis_for_persona_turn",
+            return_value=None,
+        ), patch(
+            "backend.services.automation_hermes_agent.reply_basis_for_run",
+            return_value='{"legacy":"should never be used"}',
+        ):
+            with pytest.raises(HermesAgentError) as excinfo:
+                processor._run_phase(
+                    payload,
+                    turn,
+                    phase="persona",
+                    snapshot={"ticket_id": "123"},
+                    workspace="workspace-1",
+                )
+        assert excinfo.value.code == "reply_basis_unavailable"
+        client.start_run.assert_not_called()
+
+    def test_model_basis_cannot_override_server_work_basis(self) -> None:
+        from backend.services.hermes_customer_reply_basis import build_hermes_customer_reply_basis
+
         store, repository, turn_id = _setup_case()
-        store._hermes_turns[turn_id]["phase"] = "persona"
+        authoritative = build_hermes_customer_reply_basis(
+            source_turn_id=turn_id,
+            direction="automation",
+            route="fraud_account",
+            stage="request_missing_information",
+            collected_facts={"name": "Jordan"},
+            missing_fields=["office_address"],
+            trusted_conclusion={"status": "missing_fields"},
+            allowed_claims=["state:missing_fields"],
+            forbidden_topics=["payment_information"],
+        )
+        store._hermes_turns[turn_id].update(
+            phase="persona",
+            direction="automation",
+            route="fraud_account",
+            work_result={
+                "status": "missing_fields",
+                "route": "fraud_account",
+                "missing_fields": ["office_address"],
+                "collected_fields": {"name": "Jordan"},
+                "reply_basis": authoritative,
+            },
+        )
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=_guardrail_pass,
@@ -303,10 +409,55 @@ class TestDraftTools:
                 store,
                 repository,
                 turn_id=turn_id,
+                content="We still need your office address.",
+                basis={
+                    "source_turn_id": turn_id,
+                    "route": "account_restored",
+                    "missing_fields": [],
+                    "trusted_conclusion": {"status": "restored"},
+                },
+            )
+        saved = store.get_hermes_draft(draft["draft_id"])
+        assert saved is not None
+        assert saved["basis"]["route"] == "fraud_account"
+        assert saved["basis"]["missing_fields"] == ["office_address"]
+        assert saved["basis"]["trusted_conclusion"]["status"] == "missing_fields"
+
+    def test_draft_without_server_work_result_is_fail_closed(self) -> None:
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        store._hermes_turns[turn_id]["work_result"] = None
+        store._hermes_bindings[(store.settings.job_namespace, "123")]["investigation"] = None
+        with pytest.raises(HermesToolError) as excinfo:
+            tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content="Draft", basis={}
+            )
+        assert excinfo.value.code == "reply_basis_unavailable"
+
+    def test_auto_policy_requires_automation_direction(self) -> None:
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            draft = tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content="Hello", basis={}
+            )
+        assert draft["publish_policy"] == "manual"
+
+    def test_manual_draft_saves_guardrail_result(self) -> None:
+        store, repository, turn_id = _setup_case()
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with pytest.raises(HermesToolError) as excinfo:
+            tool_save_reply_draft(
+                store,
+                repository,
+                turn_id=turn_id,
                 content="We are looking into this and will reply within 24 hours.",
                 basis={"summary": "investigating"},
             )
-        assert draft["publish_policy"] == "manual" and draft["guardrail_decision"] == "approved_for_final_engineer_review"
+        assert excinfo.value.code == "unsupported_time_commitment"
 
     def test_investigation_draft_over_1200_chars_is_rejected_before_guardrail(self) -> None:
         store, repository, turn_id = _setup_case()
@@ -352,12 +503,15 @@ class TestDraftTools:
         # no recorded work (fresh turn, no investigation, no work_result) stays blocked
         fresh_store, fresh_repository, fresh_turn = _setup_case()
         fresh_store._hermes_turns[fresh_turn]["phase"] = "persona"
+        fresh_store._hermes_turns[fresh_turn]["work_result"] = None
+        fresh_store._hermes_bindings[(fresh_store.settings.job_namespace, "123")]["investigation"] = None
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
             side_effect=capture_guardrail,
         ):
-            tool_save_reply_draft(fresh_store, fresh_repository, turn_id=fresh_turn, content="Draft", basis={})
-        assert captured["ready_for_customer_reply"] is False
+            with pytest.raises(HermesToolError) as excinfo:
+                tool_save_reply_draft(fresh_store, fresh_repository, turn_id=fresh_turn, content="Draft", basis={})
+        assert excinfo.value.code == "reply_basis_unavailable"
 
     def _persona_draft(self, store, repository, turn_id, *, content="Draft", guardrail=None):
         store._hermes_turns[turn_id]["phase"] = "persona"

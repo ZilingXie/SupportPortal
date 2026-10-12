@@ -50,6 +50,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
     account_reply_delay_seconds_for_profile,
     create_account_reply_job,
+    is_hermes_compatibility_job_active_status,
 )
 from backend.services.account_route_pipeline import account_route_metadata
 from backend.services.account_zendesk_comments import normalize_snapshot
@@ -690,6 +691,26 @@ _ENABLEMENT_APP_ID_RE = re.compile(r"[0-9a-fA-F]{32}")
 ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY = "enablement_manual_workflow"
 
 
+def _enablement_reply_job_identity(
+    repository: Any, *, reply_job: dict[str, Any] | None, ticket_id: str
+) -> tuple[str, str | None]:
+    """Check the compatibility job before the workflow reports success."""
+    job_id = str((reply_job or {}).get("job_id") or "").strip()
+    if not job_id:
+        return "", "enablement_compatibility_job_missing"
+    try:
+        persisted = repository.get_account_reply_job(job_id)
+    except Exception:
+        return job_id, "enablement_compatibility_job_lookup_failed"
+    if not isinstance(persisted, dict):
+        return job_id, "enablement_compatibility_job_not_found"
+    if str(persisted.get("ticket_id") or persisted.get("zendesk_ticket_id") or "") != str(ticket_id):
+        return job_id, "enablement_compatibility_job_ticket_mismatch"
+    if not is_hermes_compatibility_job_active_status(persisted.get("status")):
+        return job_id, "enablement_compatibility_job_terminal"
+    return job_id, None
+
+
 def _start_enablement_manual_review(
     *,
     repository: Any,
@@ -750,6 +771,27 @@ def _start_enablement_manual_review(
             reply_intent=intent,
             processing_profile=processing_profile,
         )
+        reply_job_id, identity_error = _enablement_reply_job_identity(
+            repository, reply_job=reply_job, ticket_id=ticket_id
+        )
+        if identity_error:
+            account_case["automation_status"] = "human_review_required"
+            account_case["execution_reason_code"] = identity_error
+            account_case["updated_at"] = timestamp
+            repository.save_account_case(account_case)
+            repository.record_event(ticket_id or None, "enablement_manual_review", {
+                "account_case_id": account_case_id, "outcome": "failed",
+                "reason_code": identity_error, "reply_job_id": reply_job_id,
+                "attempted_at": timestamp,
+            })
+            return account_case, None, identity_error
+        context = dict(account_case.get("automation_context") or {})
+        context[ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY] = {
+            "version": 1, "state": "awaiting_public_reply", "reply_job_id": reply_job_id,
+            "prepared_at": timestamp, "updated_at": timestamp,
+        }
+        account_case["automation_context"] = context
+        repository.save_account_case(account_case)
         repository.record_event(
             ticket_id or None,
             "enablement_manual_review",
@@ -804,22 +846,40 @@ def _start_enablement_manual_review(
         submitted=True,
         customer_name=str(account_case.get("customer_name") or "") or None,
     )
-    reply_job = _create_reply_job(
-        repository=repository,
-        ticket_id=ticket_id,
-        trigger_message_created_at=trigger_message_created_at,
-        reply_facts=reply_facts,
-        asked_field_keys=[],
-        persona_assignment=persona_assignment,
-        automation_delivery_key=str(payload.get("delivery_key") or ""),
-        reply_intent=ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
-        processing_profile=processing_profile,
+    existing_workflow = (account_case.get("automation_context") or {}).get(ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY)
+    existing_job_id = str(existing_workflow.get("reply_job_id") or "").strip() if isinstance(existing_workflow, dict) else ""
+    reply_job = repository.get_account_reply_job(existing_job_id) if existing_job_id else None
+    if not isinstance(reply_job, dict):
+        reply_job = _create_reply_job(
+            repository=repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at=trigger_message_created_at,
+            reply_facts=reply_facts,
+            asked_field_keys=[],
+            persona_assignment=persona_assignment,
+            automation_delivery_key=str(payload.get("delivery_key") or ""),
+            reply_intent=ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+            processing_profile=processing_profile,
+        )
+    reply_job_id, identity_error = _enablement_reply_job_identity(
+        repository, reply_job=reply_job, ticket_id=ticket_id
     )
+    if identity_error:
+        account_case["automation_status"] = "human_review_required"
+        account_case["execution_reason_code"] = identity_error
+        account_case["updated_at"] = timestamp
+        repository.save_account_case(account_case)
+        repository.record_event(ticket_id or None, "enablement_manual_review", {
+            "account_case_id": account_case_id, "outcome": "failed",
+            "reason_code": identity_error, "reply_job_id": reply_job_id,
+            "attempted_at": timestamp,
+        })
+        return account_case, None, identity_error
     context = dict(account_case.get("automation_context") or {})
     context[ENABLEMENT_MANUAL_WORKFLOW_CONTEXT_KEY] = {
         "version": 1,
         "state": "awaiting_public_reply",
-        "reply_job_id": str(reply_job.get("job_id") or ""),
+        "reply_job_id": reply_job_id,
         "delivery_key": str(payload.get("delivery_key") or ""),
         "prepared_at": timestamp,
         "updated_at": timestamp,
@@ -937,6 +997,27 @@ def _start_enablement_auto_dispatch(
             reply_intent=intent,
             processing_profile=processing_profile,
         )
+        reply_job_id, identity_error = _enablement_reply_job_identity(
+            repository, reply_job=reply_job, ticket_id=ticket_id
+        )
+        if identity_error:
+            account_case["automation_status"] = "human_review_required"
+            account_case["execution_reason_code"] = identity_error
+            account_case["updated_at"] = timestamp
+            repository.save_account_case(account_case)
+            repository.record_event(ticket_id or None, "enablement_auto_dispatch", {
+                "account_case_id": account_case_id, "outcome": "failed",
+                "reason_code": identity_error, "reply_job_id": reply_job_id,
+                "attempted_at": timestamp,
+            })
+            return account_case, None, identity_error
+        context = dict(account_case.get("automation_context") or {})
+        context[ENABLEMENT_AUTO_WORKFLOW_CONTEXT_KEY] = {
+            "version": 1, "state": "awaiting_public_reply", "reply_job_id": reply_job_id,
+            "updated_at": timestamp,
+        }
+        account_case["automation_context"] = context
+        repository.save_account_case(account_case)
         repository.record_event(
             ticket_id or None,
             "enablement_auto_dispatch",
@@ -993,16 +1074,33 @@ def _start_enablement_auto_dispatch(
     )
     # Auto-mode copy contract (p2-163): business-day review, no 24h promise.
     reply_facts["activation_sla"] = "business-day review"
-    reply_job = _create_reply_job(
-        repository=repository,
-        ticket_id=ticket_id,
-        trigger_message_created_at=trigger_message_created_at,
-        reply_facts=reply_facts,
-        asked_field_keys=[],
-        persona_assignment=persona_assignment,
-        reply_intent=ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
-        processing_profile=processing_profile,
+    existing_job_id = str(prior_workflow.get("reply_job_id") or "").strip() if isinstance(prior_workflow, dict) else ""
+    reply_job = repository.get_account_reply_job(existing_job_id) if existing_job_id else None
+    if not isinstance(reply_job, dict):
+        reply_job = _create_reply_job(
+            repository=repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at=trigger_message_created_at,
+            reply_facts=reply_facts,
+            asked_field_keys=[],
+            persona_assignment=persona_assignment,
+            reply_intent=ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
+            processing_profile=processing_profile,
+        )
+    reply_job_id, identity_error = _enablement_reply_job_identity(
+        repository, reply_job=reply_job, ticket_id=ticket_id
     )
+    if identity_error:
+        account_case["automation_status"] = "human_review_required"
+        account_case["execution_reason_code"] = identity_error
+        account_case["updated_at"] = timestamp
+        repository.save_account_case(account_case)
+        repository.record_event(ticket_id or None, "enablement_auto_dispatch", {
+            "account_case_id": account_case_id, "outcome": "failed",
+            "reason_code": identity_error, "reply_job_id": reply_job_id,
+            "attempted_at": timestamp,
+        })
+        return account_case, None, identity_error
     request_id = build_enablement_relay_request_id(account_case_id, request_version)
     ttl_seconds = enablement_relay_request_ttl_seconds()
     expires_at = _iso_after_seconds(timestamp, ttl_seconds)
@@ -1015,7 +1113,7 @@ def _start_enablement_auto_dispatch(
         app_id=app_id,
         request_version=request_version,
         workflow_mode="archer",
-        reply_job_id=str(reply_job.get("job_id") or ""),
+        reply_job_id=reply_job_id,
         target_params=dict(ENABLEMENT_RELAY_TARGET_PARAMS),
         relay_task_expires_at=expires_at,
         now=timestamp,
@@ -1023,7 +1121,7 @@ def _start_enablement_auto_dispatch(
     context[ENABLEMENT_AUTO_WORKFLOW_CONTEXT_KEY] = {
         "version": 1,
         "state": "awaiting_public_reply",
-        "reply_job_id": str(reply_job.get("job_id") or ""),
+        "reply_job_id": reply_job_id,
         "request_id": request_id,
         "request_version": request_version,
         "app_id": app_id,

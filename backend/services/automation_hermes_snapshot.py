@@ -107,6 +107,11 @@ def build_case_snapshot(
                 "direction": item.get("direction"),
                 "route": item.get("route"),
                 "status": item.get("status"),
+                "reply_basis": (
+                    dict((item.get("work_result") or {}).get("reply_basis") or {})
+                    if isinstance((item.get("work_result") or {}).get("reply_basis"), dict)
+                    else None
+                ),
                 "created_at": _snapshot_timestamp(item.get("created_at")),
             }
             for item in review.get("turns") or []

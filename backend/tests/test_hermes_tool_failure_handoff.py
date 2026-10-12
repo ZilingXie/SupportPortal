@@ -46,6 +46,31 @@ def _store() -> InMemoryAutomationEcsStore:
     return store
 
 
+def _valid_enablement_workflow(**kwargs):
+    """Test double that honors the v3.2 identity contract."""
+    from backend.services.automation_account_intake import _create_reply_job
+
+    repository = kwargs["repository"]
+    account_case = kwargs["account_case"]
+    ticket_id = kwargs["ticket_id"]
+    job = _create_reply_job(
+        repository=repository,
+        ticket_id=ticket_id,
+        trigger_message_created_at=kwargs["trigger_message_created_at"],
+        reply_facts={"behavior": "enablement", "reply_intent": "submission_confirmation"},
+        asked_field_keys=[],
+        persona_assignment=None,
+        close_after_publish=False,
+        reply_intent="submission_confirmation",
+        processing_profile=kwargs.get("processing_profile") or "preproduction",
+    )
+    context = dict(account_case.get("automation_context") or {})
+    context["enablement_auto_workflow"] = {"reply_job_id": str(job["job_id"]), "state": "awaiting_public_reply"}
+    account_case["automation_context"] = context
+    repository.save_account_case(account_case)
+    return account_case, NS(job_id=job["job_id"]), "review_requested"
+
+
 class ToolFailureHandoffTests(unittest.TestCase):
     def _seed(self, store: InMemoryAutomationEcsStore, *, route: str = "enablement"):
         event = harness._event()
@@ -284,6 +309,54 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(outcome["reason"], "review_requested")
         self.assertEqual(len(submissions), 2)  # route + work only
 
+    def test_enablement_workflow_completed_with_hermes_owner_runs_persona(self) -> None:
+        """The new Enablement chain keeps the workflow result but delegates
+        customer wording to Hermes Persona (skip_persona=False)."""
+        store = _store()
+        handoff, agent_job, _event = self._seed(store)
+        submissions: list[dict] = []
+
+        def on_run_completed(run_id, idempotency_key):
+            phase = idempotency_key.rsplit(":", 1)[-1]
+            if phase == "route":
+                store.record_hermes_turn_direction(
+                    handoff["turn_id"], direction="automation", route="enablement"
+                )
+                store.record_hermes_case_direction(
+                    handoff["turn_id"], direction="automation", reason="test automation direction"
+                )
+            if phase == "work":
+                store.record_hermes_turn_work(
+                    handoff["turn_id"],
+                    work_result={
+                        "status": "workflow_completed",
+                        "outcome": "review_requested",
+                        "skip_persona": False,
+                        "reply_owner": "hermes_persona",
+                    },
+                )
+
+        client = harness.FakeHermesClient(on_run_completed=on_run_completed)
+        original_start = client.start_run
+
+        def counting_start(*args, **kwargs):
+            submissions.append(kwargs)
+            return original_start(*args, **kwargs)
+
+        client.start_run = counting_start
+        processor = HermesAgentTurnProcessor(
+            store,
+            client=client,
+            environment="preproduction",
+            repository=None,
+            poll_interval_seconds=0.01,
+        )
+
+        outcome = processor.process(agent_job)
+
+        self.assertEqual(outcome["status"], "completed")
+        self.assertEqual([item["idempotency_key"].rsplit(":", 1)[-1] for item in submissions], ["route", "work", "persona"])
+
 
     def _seed_case_without_route_family(self, store: InMemoryAutomationEcsStore):
         """The production shape from ticket 13595: the hermes-created account
@@ -367,7 +440,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         )
 
         async def fake_workflow(**kwargs):
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 
@@ -417,7 +490,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         self.assertEqual(saved["route_family"], "automated")
         # Business execution completed through the enablement workflow.
         self.assertEqual(result["status"], "workflow_completed")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         escalate_mock.assert_not_called()
         self.assertEqual(notified, [])
 
@@ -721,7 +794,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
 
         async def fake_workflow(**kwargs):
             workflow_calls.append(kwargs)
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 
@@ -800,7 +873,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
         )
 
         async def fake_workflow(**kwargs):
-            return kwargs["account_case"], NS(job_id="job-1"), "review_requested"
+            return _valid_enablement_workflow(**kwargs)
 
         import asyncio
 
@@ -827,7 +900,7 @@ class ToolFailureHandoffTests(unittest.TestCase):
             )
         self.assertEqual(result["status"], "workflow_completed")
         binding = store.get_hermes_case_binding("123")
-        self.assertEqual(str(binding.get("status") or ""), "paused")
+        self.assertEqual(str(binding.get("status") or ""), "active")
         self.assertEqual(str(binding.get("direction") or ""), "automation")
         self.assertIsNone(binding.get("escalation"))
 

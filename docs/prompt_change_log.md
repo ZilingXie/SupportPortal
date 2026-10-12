@@ -5143,3 +5143,38 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 验证：新增 `test_hermes_case_task.py` 与 Route Worker 集成断言；focused contract/worker/prompt tests 50 passed。PostgreSQL 27 项因本机无 DSN skip；未合并、未部署。
 - r4-repair-1：移除 customer comment 的本地 message-action 分类，改由 Hermes 专用无工具 phase 输出并由服务端严格校验；固定 case 的完整 managed prompt catalog 在每个 Hermes phase 使用，comment 继承 case-level Prompt Release；澄清 `request_clarification` 与 contract 缺字段的边界。源码 catalog 仍未创建或激活 Prompt Release。
 - r4-repair-2：classification-only 结果现在作为 case 级路由锁持久化查询；后续 comment 继续只记录分类结果，不进入 Hermes，也不重新调用 Account Router。此修复未创建或激活 Prompt Release。
+## 2026-10-11 - Hermes Unified Customer Reply v3
+
+- Prompt versions: `hermes-persona-manual-v4` → `hermes-persona-manual-v5` and
+  `hermes-reply-contract-v4` → `hermes-reply-contract-v5`.
+- Customer-visible Hermes drafts now receive the server-owned
+  `hermes_customer_reply_basis_v1`; the Persona owns wording only. The manual
+  documents the `Hi Customer,` fallback, single greeting, no payment
+  credentials, no internal implementation terms, no handoff re-ask, and no
+  unsupported time promise rules.
+- Runtime prompt text remains English; customer-language translation continues
+  in the existing Hermes delivery preparation path.
+
+### 2026-10-11 — Hermes Unified Customer Reply v3.1-repair
+
+- Persona assembly no longer instructs Hermes to copy basis sentences or
+  anchors `VERBATIM` / character-for-character. The server basis remains the
+  complete fact boundary, while Hermes may organize the allowed facts,
+  missing fields, stage and commitments into natural support prose.
+- Enablement `workflow_completed` is an explicitly publishable Work status
+  when `skip_persona=false` and `reply_owner=hermes_persona`; the Persona phase
+  therefore remains in the route → work → persona chain.
+- The legacy `account_reply_job_id` is retained only as a compatibility relay
+  identity; it is marked `hermes_compatibility_only` so the legacy worker does
+  not render a second customer reply.
+
+### 2026-10-12 — Hermes Unified Customer Reply v3.2
+
+- Persona input now receives the canonical server-owned basis for ordinary
+  automation and investigation turns as well as restricted follow-ups.
+- The basis validator authorizes state and time claims only from explicit
+  server claims/commitments; customer-collected text cannot authorize them or
+  introduce an unlisted field request.
+- Enablement compatibility job identity is fail-closed at workflow, Hermes
+  tool, and delivered-readback boundaries; missing or mismatched identity parks
+  the case for human review without releasing internal email or relay.
