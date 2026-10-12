@@ -20,6 +20,7 @@ _RAGFLOW_DATASET_IDS = (
     "c2eaf30463e511f18586e7085c4194fc",
     "d3d8e64e63ea11f18586e7085c4194fc",
 )
+RAGFLOW_PROBE_TIMEOUT_SECONDS = 20.0
 
 
 def _read_json(url: str, *, headers: dict[str, str], timeout: float = 15.0) -> dict[str, Any]:
@@ -71,7 +72,7 @@ def _probe_ragflow() -> None:
             "page_size": 1,
             "similarity_threshold": 1.0,
         },
-        timeout=10.0,
+        timeout=RAGFLOW_PROBE_TIMEOUT_SECONDS,
     )
     if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
         raise RuntimeError("RAGFlow read probe failed")
