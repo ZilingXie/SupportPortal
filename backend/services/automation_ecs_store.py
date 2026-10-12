@@ -2053,7 +2053,10 @@ class InMemoryAutomationEcsStore:
                 "direction": "investigation",
                 "route": None,
                 "direction_reason": source_turn.get("direction_reason"),
-                "work_result": {"attachments": copy.deepcopy((source_turn.get("work_result") or {}).get("attachments") or [])},
+                "work_result": {
+                    "attachments": copy.deepcopy((source_turn.get("work_result") or {}).get("attachments") or []),
+                    "source_turn_id": source_turn_id,
+                },
                 "input_snapshot": None,
                 "request_id": request_id,
                 "prompt_release_id": str(prompt_release_id or "") or None,
@@ -4811,7 +4814,10 @@ class PostgresAutomationEcsStore:
                         source_turn.get("direction_reason"),
                         request_id,
                         str(prompt_release_id or "") or None,
-                        Jsonb({"attachments": (source_turn.get("work_result") or {}).get("attachments") or []}),
+                        Jsonb({
+                            "attachments": (source_turn.get("work_result") or {}).get("attachments") or [],
+                            "source_turn_id": source_turn_id,
+                        }),
                     ),
                 )
                 agent_job_id = _new_id("job")

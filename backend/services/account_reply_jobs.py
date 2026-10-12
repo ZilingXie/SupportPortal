@@ -25,6 +25,33 @@ ACCOUNT_REPLY_PERSONA_V8_QUEUED = "persona_v8_queued"
 ACCOUNT_REPLY_PERSONA_V8_PREPARING = "persona_v8_preparing"
 ACCOUNT_REPLY_PERSONA_V8_SCHEDULED = "persona_v8_scheduled"
 ACCOUNT_REPLY_PERSONA_V8_PUBLISHING = "persona_v8_publishing"
+# Compatibility jobs are read by the Hermes delivery path only as an
+# identity fence.  Keep the allowlist explicit so an unknown/corrupt status
+# can never release a gated relay or internal email.
+HERMES_COMPATIBILITY_JOB_ACTIVE_STATUSES = frozenset(
+    {
+        "queued",
+        "preparing",
+        "scheduled",
+        "publishing",
+        ACCOUNT_REPLY_PERSONA_QUEUED,
+        ACCOUNT_REPLY_PERSONA_PREPARING,
+        ACCOUNT_REPLY_PERSONA_SCHEDULED,
+        ACCOUNT_REPLY_PERSONA_PUBLISHING,
+        ACCOUNT_REPLY_PERSONA_V8_QUEUED,
+        ACCOUNT_REPLY_PERSONA_V8_PREPARING,
+        ACCOUNT_REPLY_PERSONA_V8_SCHEDULED,
+        ACCOUNT_REPLY_PERSONA_V8_PUBLISHING,
+        "published",
+    }
+)
+
+
+def is_hermes_compatibility_job_active_status(status: Any) -> bool:
+    """Return whether a persisted compatibility job is known and usable."""
+    return str(status or "").strip().lower() in HERMES_COMPATIBILITY_JOB_ACTIVE_STATUSES
+
+
 ACCOUNT_REPLY_DELAY_MIN_SECONDS = 6 * 60
 ACCOUNT_REPLY_DELAY_MAX_SECONDS = 10 * 60
 _ACCOUNT_REPLY_RANDOM = random.SystemRandom()
@@ -237,6 +264,10 @@ def create_account_reply_job(
             }
         ),
         "visibility": "account_only",
+        # Compatibility jobs are retained for non-Hermes intake/recovery
+        # paths. Hermes turns record ``reply_owner=hermes_persona`` in their
+        # Work result and never rely on this renderer for the new contract.
+        "reply_owner": "account_reply_job_legacy",
     }
     rag_fallback_without_provided_answer = (
         canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER

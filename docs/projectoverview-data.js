@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-12T10:40:33Z",
-  "source_base_commit": "5937c9e7ca61f8a1a365609bd22aabb87e9b3362",
-  "registry_digest": "0d61b23bc6c728b4e0ea6368d8d14812ca8dd32b3d4b83d7440a105013e651f9",
+  "generated_at": "2026-10-12T10:57:14Z",
+  "source_base_commit": "673fd873aa279a97cf89c4ae5e54717a0026cd61",
+  "registry_digest": "012888d6d911515092e9e42a88897d03e12375d5a8f975d57da58ac0397f5c91",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1601,6 +1601,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Hermes basis/validator and draft delivery regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "206 passed"
+        },
+        {
+          "type": "test",
+          "label": "Hermes delivery real-entry identity and side-effect matrix",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k \"hermes_delivery_unknown_compatibility_status or hermes_fraud_and_suspension_real_delivery_entries_finish_once or hermes_failed_and_unknown_readback_do_not_finish_business_side_effects or hermes_enablement_delivery_identity\" -q",
+          "result": "4 passed, 4 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "Canonical basis Persona gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_zendesk_agent_tools.py -k \"canonical_basis or unknown_compatibility_job_status\" -q",
+          "result": "2 passed"
+        },
+        {
+          "type": "test",
+          "label": "Worker full regression and baseline comparison",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -q",
+          "result": "153 passed, 14 failed, 25 subtests; the same 14 investigation ownership failures reproduce on current main and remain baseline limitations"
+        },
+        {
+          "type": "test",
+          "label": "Project registry and diff checks",
+          "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
+          "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1706,7 +1736,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 45,
+      "task_count": 46,
       "done_count": 23,
       "blocked_count": 1
     },
@@ -18112,6 +18142,64 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 独立验收 B1 修复记录",
           "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
           "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-198",
+      "title": "Hermes Unified Customer Reply（v3.2）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-11",
+      "updated_at": "2026-10-12",
+      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
+      "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
+      "acceptance_criteria": [
+        "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
+        "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
+        "有姓名使用 Hi \u003cName>,，无姓名使用唯一 Hi Customer,；Persona 不重复生成称呼。",
+        "支付凭据、内部实现、handoff 后重复索取资料、basis/turn 不匹配和重复称呼均被服务端 validator 拒绝。",
+        "automation auto 与 investigation manual 的发布策略继续由服务端决定。",
+        "Enablement workflow 返回的 reply job identity、context、ticket 和状态均通过服务端校验；缺失/错误/终态进入 human_review_required，不生成客户回复或释放 relay。",
+        "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
+      ],
+      "blockers": [
+        "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Hermes basis/validator and draft delivery regression",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
+          "result": "206 passed"
+        },
+        {
+          "type": "test",
+          "label": "Hermes delivery real-entry identity and side-effect matrix",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k \"hermes_delivery_unknown_compatibility_status or hermes_fraud_and_suspension_real_delivery_entries_finish_once or hermes_failed_and_unknown_readback_do_not_finish_business_side_effects or hermes_enablement_delivery_identity\" -q",
+          "result": "4 passed, 4 subtests passed"
+        },
+        {
+          "type": "test",
+          "label": "Canonical basis Persona gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_zendesk_agent_tools.py -k \"canonical_basis or unknown_compatibility_job_status\" -q",
+          "result": "2 passed"
+        },
+        {
+          "type": "test",
+          "label": "Worker full regression and baseline comparison",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -q",
+          "result": "153 passed, 14 failed, 25 subtests; the same 14 investigation ownership failures reproduce on current main and remain baseline limitations"
+        },
+        {
+          "type": "test",
+          "label": "Project registry and diff checks",
+          "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
+          "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
         }
       ]
     },

@@ -114,8 +114,8 @@ class PromptAssemblyTests(unittest.TestCase):
     def test_persona_instructions_carry_v4_manual_and_contract(self):
         from backend.services.automation_hermes_agent import phase_instructions
 
-        self.assertEqual(HERMES_PERSONA_MANUAL_VERSION, "hermes-persona-manual-v4")
-        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v4")
+        self.assertEqual(HERMES_PERSONA_MANUAL_VERSION, "hermes-persona-manual-v5")
+        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v5")
 
         instructions, key = phase_instructions(
             "persona",
@@ -129,17 +129,15 @@ class PromptAssemblyTests(unittest.TestCase):
         flat = " ".join(instructions.split())
         # Persona style block layer.
         self.assertIn("--- PERSONA STYLE (test-persona) ---", flat)
-        # v4 B-mode: server reply basis rendered verbatim.
+        # v5: server facts constrain a natural Persona draft.
         self.assertIn("server-built reply basis", flat)
-        self.assertIn("VERBATIM", flat)
         self.assertIn("never re-ask", flat)
         # v4 contract fraud section.
         self.assertIn("--- REPLY CONTRACT (hermes-reply-contract) ---", flat)
         self.assertIn("routes=fraud_account|detailed_invoice", flat)
-        self.assertIn("fraud_account_reply_basis_v1", flat)
-        self.assertIn("closing_anchor", flat)
-        self.assertIn("contact_commitment_anchor", flat)
-        self.assertIn("routing signal only", flat)
+        self.assertIn("hermes_customer_reply_basis_v1", flat)
+        self.assertIn("natural English reply", flat)
+        self.assertIn("allowed commitments", flat)
 
 
 class RealDraftEntryTests(unittest.TestCase):
@@ -350,13 +348,13 @@ class ToolReplyBasisTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "missing_fields")
         basis = result.get("reply_basis") or {}
-        self.assertEqual(basis.get("kind"), "fraud_account_reply_basis_v1")
-        self.assertEqual(basis.get("ask_layout"), "bullets")
-        self.assertIn("- Official contact number", basis.get("ask_bullets") or "")
+        self.assertEqual(basis.get("kind"), "hermes_customer_reply_basis_v1")
+        self.assertEqual(basis.get("missing_fields"), ALL_FIELDS)
+        self.assertEqual(basis.get("missing_field_labels", {}).get("contact_number"), "Official contact number")
         # The recorded turn work result carries the same basis (replayable).
         turn = store.get_hermes_turn(handoff["turn_id"])
         recorded = (turn.get("work_result") or {}).get("reply_basis") or {}
-        self.assertEqual(recorded.get("kind"), "fraud_account_reply_basis_v1")
+        self.assertEqual(recorded.get("kind"), "hermes_customer_reply_basis_v1")
 
 
 class JudgeScenarioTests(unittest.TestCase):
@@ -519,32 +517,21 @@ class FraudAskChannelTests(unittest.TestCase):
             )
         return store, repository, handoff, result
 
-    def test_missing_fields_creates_automatic_ask_reply_job_and_skips_persona(self):
+    def test_missing_fields_are_owned_by_hermes_persona_without_legacy_job(self):
         store, repository, handoff, result = self._run_fraud_turn(missing=True)
 
         self.assertEqual(result["status"], "missing_fields")
-        # The ask reply job is created with the Production intent and the
-        # trigger binding; real create_account_reply_job on the InMemory twin.
+        # Hermes owns the draft; the old account-reply job path is not used.
         jobs = [
             job
             for job in repository._account_reply_jobs.values()
             if job.get("ticket_id") == "123"
         ]
-        self.assertEqual(len(jobs), 1)
-        job = jobs[0]
-        self.assertEqual(
-            (job.get("payload") or {}).get("reply_intent"),
-            "request_missing_information",
-        )
-        self.assertEqual(
-            sorted((job.get("payload") or {}).get("asked_field_keys") or []),
-            sorted(ALL_FIELDS),
-        )
-        # The job is the SOLE reply: the tool result skips persona.
-        self.assertTrue(result["skip_persona"])
-        self.assertIn("ask_reply_job_created", result["executed_actions"])
+        self.assertEqual(len(jobs), 0)
+        self.assertFalse(result["skip_persona"])
+        self.assertIn("hermes_persona_reply_owned", result["executed_actions"])
         turn = store.get_hermes_turn(handoff["turn_id"])
-        self.assertTrue((turn.get("work_result") or {}).get("skip_persona"))
+        self.assertFalse((turn.get("work_result") or {}).get("skip_persona"))
         # Legacy semantics: missing fields -> not_ready (not the mirror's
         # initial not_applicable).
         persisted = repository.get_account_case("AC-123")
@@ -597,14 +584,13 @@ class FraudAskChannelTests(unittest.TestCase):
                     zendesk_side_effects_enabled=True,
                 )
             )
-        self.assertIn("ask_reply_job_reused", second["executed_actions"])
-        self.assertNotIn("ask_reply_job_created", second["executed_actions"])
+        self.assertIn("hermes_persona_reply_owned", second["executed_actions"])
         jobs = [
             job
             for job in repository._account_reply_jobs.values()
             if job.get("ticket_id") == "123"
         ]
-        self.assertEqual(len(jobs), 1)
+        self.assertEqual(len(jobs), 0)
 
     def test_complete_fields_no_ask_job(self):
         store, repository, handoff, result = self._run_fraud_turn(missing=False)
@@ -614,12 +600,8 @@ class FraudAskChannelTests(unittest.TestCase):
             for job in repository._account_reply_jobs.values()
             if job.get("ticket_id") == "123"
         ]
-        # The email-confirmation job (intent fraud_handoff_confirmation).
-        self.assertEqual(len(jobs), 1)
-        self.assertEqual(
-            (jobs[0].get("payload") or {}).get("reply_intent"),
-            "fraud_handoff_confirmation",
-        )
+        self.assertEqual(len(jobs), 0)
+        self.assertEqual(result.get("reply_intent"), "fraud_handoff_confirmation")
 
 
 class MessageActionWorkTests(unittest.TestCase):
@@ -684,11 +666,11 @@ class MessageActionWorkTests(unittest.TestCase):
                     zendesk_side_effects_enabled=True,
                 )
             )
-        # The tool EXECUTED (not replayed the stub): business result with
-        # ask job + skip_persona, and the classification is preserved.
+        # The tool EXECUTED (not replayed the stub); Hermes owns the ask and
+        # the classification is preserved.
         self.assertEqual(result["status"], "missing_fields")
         self.assertNotEqual(result["status"], "message_action_classified")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
         turn = store.get_hermes_turn(handoff["turn_id"])
         recorded = turn.get("work_result") or {}
         self.assertEqual(recorded.get("status"), "missing_fields")
@@ -700,7 +682,7 @@ class MessageActionWorkTests(unittest.TestCase):
             for job in repository._account_reply_jobs.values()
             if job.get("ticket_id") == "123"
         ]
-        self.assertEqual(len(jobs), 1)
+        self.assertEqual(len(jobs), 0)
 
     def test_second_turn_carries_existing_fields_and_proceeds(self):
         """Legacy parity: after the first ask, the next verification turn
@@ -719,36 +701,19 @@ class MessageActionWorkTests(unittest.TestCase):
         store = email_harness._store()
         handoff = email_harness._seed_turn(store, route="fraud_account")
         # Case carries 3 previously collected fields (turn-1 ask answered
-        # partially) and an outstanding ask job with asked_field_keys.
+        # partially) and Hermes' durable follow-up state.  The current chain
+        # must not infer this from whichever legacy job is newest.
         case = email_harness._account_case(route="fraud_account", status="not_ready")
         case["collected_fields"] = {
             "account_type": "Enterprise",
             "name": "Zac Tester",
             "contact_email": "zac.tester@example.com",
         }
+        case["automation_context"] = {
+            "hermes_follow_up_count": 1,
+            "hermes_asked_field_keys": list(ALL_FIELDS),
+        }
         repository = email_harness._repository(case)
-        from backend.services.account_reply_jobs import create_account_reply_job
-        from backend.services.automation_account_intake import _reply_facts
-
-        create_account_reply_job(
-            repository,
-            ticket_id="123",
-            trigger_message_created_at="2026-09-08T10:00:00Z",
-            created_at="2026-09-08T10:00:05Z",
-            delay_seconds=30,
-            draft_content="",
-            reply_facts=_reply_facts(
-                handler="billing",
-                action="fraud_account",
-                missing_fields=list(ALL_FIELDS),
-                collected_fields={},
-                submitted=False,
-                customer_name=None,
-            ),
-            asked_field_keys=list(ALL_FIELDS),
-            persona_assignment=None,
-            close_after_publish=False,
-        )
         gate = OwnershipGateResult(
             eligible=True,
             state=OWNERSHIP_STATE_ASSIGNED,
@@ -824,7 +789,7 @@ class MessageActionWorkTests(unittest.TestCase):
         # The email executed and the confirmation job replaced the ask.
         self.assertEqual(result["status"], "executed")
         self.assertEqual(result["internal_email_send_status"], "sent")
-        self.assertTrue(result["skip_persona"])
+        self.assertFalse(result["skip_persona"])
 
 
 class ReplyConversationContextTests(unittest.TestCase):
@@ -899,14 +864,8 @@ class ReplyConversationContextTests(unittest.TestCase):
 
     def test_ask_job_facts_carry_conversation_context(self):
         repository, result = self._run_fraud_turn()
-        jobs = [
-            job
-            for job in repository._account_reply_jobs.values()
-            if job.get("ticket_id") == "123"
-        ]
-        self.assertEqual(len(jobs), 1)
-        facts = jobs[0].get("payload") or {}
-        carried = facts.get("reply_facts", {}).get("conversation_context")
+        persisted = repository.get_account_case("AC-123")
+        carried = (persisted.get("automation_context") or {}).get("reply_conversation_context")
         self.assertIsInstance(carried, dict)
         self.assertEqual(carried.get("version"), "automation-context-v1")
         self.assertTrue(carried.get("conversation"))
