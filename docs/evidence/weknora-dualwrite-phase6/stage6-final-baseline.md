@@ -87,3 +87,20 @@
 | 步 2 门禁 | 部署日志两见 "Knowledge stage config verified on rendered api/worker definitions"（渲染后+激活前） |
 
 过程披露：首次启动因 TICKET_DB_SCHEMA 缺省（源 Prompt 校验读 supportportal schema 无权限）失败；恢复时孤儿 CodeBuild 已 SUCCESS，经 S3 证据恢复路径复用（无重复构建）；二次因缺 DEPLOY_PREPRODUCTION_APPROVED=1 于 deploy 门停下；三次带全环境完成。三次启动均落在同一 checkpoint（identity 一致）。
+
+## n8n 三链发布与关闭态验证（v2-A #8+#9 前半，2026-10-12）
+
+发布前三链快照与线上逐字一致（CSD 6fed47a6 / Solved 6a262f9a / FT 4ed2c0c3），validator 通过（15 published+4 drafts+56 redactions；LEGACY-EXPOSED 为旧链已知告警）。发布后回读 activeVersionId 已切换：
+
+| 链 | 新 active（原 draft） | 回滚基线（原 active） |
+|---|---|---|
+| [kb]Build\|CSD | **6fed47a6**（source-only） | b5cf6d6b（p2-186 直写链） |
+| [kb]Build\|Solved | **6a262f9a**（source-only） | 1f544830 |
+| [slack]Forward Thread | **4ed2c0c3**（raw_text+bot_user_id） | b02f3ed5 |
+
+关闭态验证（全部只读/零副作用）：
+
+- 探针 POST（合法 knowledge-source-v1 schema）→ **503** "knowledge source intake is disabled … no snapshot was accepted"，DB 零写入（intakes 表探针源 0 行）。
+- 治理开关回读：master=0、六开关全 0、allowlist 空（api:140/worker:140 task def）。
+- 自然触发路径：CSD 下一自然调度=2026-10-13 12:00 北京（发布前当日 12:00 已跑过旧链）；Solved 随真实工单关闭触发。关闭期内两链将收 503 并走 errorWorkflow 告警=关闭态的线上自然证据（预期行为；开启 intake 后消失）。
+- 零 claim/零外部写入/零 Slack：开关全 0 下 worker drain 与 delivery 目标均不可达（构造性 fail-closed+task def env 回读）。
