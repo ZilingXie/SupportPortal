@@ -1,4 +1,12 @@
 # RAG Change Log
+## 2026-10-12 - Stage-6 plan A: per-source allowlist gates knowledge task creation (p2-197)
+
+- Summary: stage 6's rollout switches are global — once Summary/Review is on, every accepted source flows into AI processing, which would process real CSD/Solved material before the observation window clears it. The new KNOWLEDGE_SOURCE_ALLOWLIST adds the missing middle gear: snapshots keep flowing (read-only intake, fully auditable), while Summary/Review task creation happens only for allowlisted sources (``type:id`` entries, ``type:*`` per-type wildcards, ``case_binding:<engineer_case_id>`` for case-bound candidates). Default empty = process NOTHING (default-strict); step 10's full rollout is itself an explicit, recorded allowlist update. The gate sits at both task-creation entry points (standalone queue and case-bound queue) and never touches accepted snapshots, promotions, deliveries or audits.
+- Reason: r2-stage6 plan A confirmed by the user after the review identified no existing per-source gating mechanism.
+- Affected files/config: backend/services/knowledge_source_allowlist.py (new), knowledge_standalone_workflow.py + hermes_knowledge_workflow.py (gates), tests (7 new stage-6 allowlist tests; 5 existing suites adapted to the real env wildcard surface).
+- Data impact: none deployed yet; the allowlist ships in the stage-6 release with the switch-off baseline.
+- Verification: stage-6 allowlist suite 7 passed (default-empty processes nothing with snapshot retention proven; listed source creates its task; unlisted held at both entry points); full 21-suite regression 541 passed / 0 failed including isolated PostgreSQL and the stage-5 rendering suite.
+
 ## 2026-10-12 - Stage-5 review fix 3: summary anomaly reasons reach the page (p2-196)
 
 - Summary: the Knowledge Review detail page now consumes the backend's dedicated anomaly fields — summaryAnomalyReason() falls through failure_reason → malformed_reason → reason → error, a failed Summary additionally renders its recorded error in a dedicated failure element, and knowledgeQualityTone maps failed to the danger tone (previously unknown). Real rendering assertions were added: a Node harness executes the REAL app.js render functions extracted from the source file against REAL API payloads from the injected anomaly states, asserting the failure reason ("boom") and the malformed reason actually appear in the rendered HTML with the correct tone.
@@ -5504,3 +5512,12 @@ For each new entry, record:
 - Affected files/config: `backend/services/hermes_knowledge_workflow.py`, `backend/services/automation_account_reply_sync.py`, `backend/automation_ecs_api.py`, `backend/scripts/automation_ecs_deploy.py`, knowledge-governance and deploy-render test suites, `docs/operations/weknora-adapter.md` + `docs/operations/environments.md` status notes.
 - Data impact: None on existing rows. Pending/failed/human_review governance tasks and promotion audit records are preserved untouched; no schema downgrade, no backlog approval, no replay of the historical 18 sources. WeKnora SSM parameter entities stay in place until the separate decommission plan deletes them.
 - Verification: 236 targeted tests passed (switch-off queueing/drain/producer-gate/decision-endpoint refusal; both render paths strip and pin; repeat-render idempotence; api+worker dual-role pin). `test_worker.py` failure set identical to main baseline; PostgreSQL-gated suites skipped locally (no local PostgreSQL; SQL layer unchanged). Live Preproduction verification runs after the release window per the plan's D checklist.
+
+
+## 2026-10-11 - Preproduction knowledge governance configuration injection (p2-197)
+
+- Summary: Added the Preproduction ECS renderer contract for the stage-6 knowledge rollout: API and Worker receive explicit default-off governance switches, an empty strict source allowlist, the Slack review lease, and SSM-backed AgentMemory Wiki/Slack workspace configuration.
+- Reason: Stage 6 step 2 requires configuration to be present and auditable before any intake, Summary/Review, delivery worker, external target, or Slack notification is enabled.
+- Affected files/config: `backend/scripts/automation_ecs_deploy.py`, `backend/tests/test_automation_ecs_deploy.py`; three new Preproduction String parameters under `/supportportal/preproduction/`, one Slack workspace String parameter, and reuse of the existing `hermes-wiki-core-user-key` SecureString.
+- Data impact: No source snapshot, candidate, Summary, Review, AgentMemory, WeKnora, or Slack business data was written. No ECS task definition was registered and no service was updated. All knowledge switches remain `0` and the allowlist remains empty.
+- Verification: Renderer/allowlist/AgentMemory suites passed (`114 passed`); live API/Worker 135 render preview showed all required switch values and SSM references without exposing secret values. Follow-up on `a7e218b7`: legacy governance/PG fixtures now set the stage-6 allowlist and AgentMemory read contract explicitly; the current 21-suite command with a disposable local PostgreSQL 14.19 completed `540 passed / 0 failed` (8 subtests), with no external business writes.

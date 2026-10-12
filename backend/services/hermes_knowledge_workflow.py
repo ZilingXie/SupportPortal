@@ -262,6 +262,16 @@ def queue_hermes_summary_for_case(
     # stops creating Summary rows while governance is disabled.
     if not knowledge_governance_enabled() or hermes_workflow_mode() != "real":
         return None
+    # Stage 6 plan A: case-bound Summaries are allowlisted per case binding
+    # (test cases only until step 10); held cases keep their accepted source
+    # snapshots untouched.
+    from backend.services.knowledge_source_allowlist import case_binding_allowed
+
+    if not case_binding_allowed(str(engineer_case_id)):
+        LOGGER.info(
+            "case_summary_held_by_allowlist engineer_case_id=%s", engineer_case_id
+        )
+        return None
     binding = repository.get_hermes_case_binding(engineer_case_id)
     if not isinstance(binding, dict):
         return None

@@ -36,6 +36,10 @@ def _enable_real_mode(env: dict) -> None:
         "HERMES_AGENT_API_TOKEN": "test-token",
         "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
         "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+        # Stage 6 plan A: pipeline-contract suites run with a permissive
+        # allowlist via the REAL env surface (the fail-closed default is
+        # covered by the stage-6 allowlist tests).
+        "KNOWLEDGE_SOURCE_ALLOWLIST": "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",
     }, clear=False)
     patcher.start()
     return patcher

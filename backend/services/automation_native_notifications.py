@@ -6,10 +6,64 @@ is external: an ambiguous submission or abandoned sending claim stays unknown.
 from __future__ import annotations
 
 import os
+import logging
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-from backend.services.engineer_slack import EngineerSlackDeliveryError, engineer_slack_outbound_disabled, post_engineer_slack_event
+from backend.services.engineer_slack import EngineerSlackDeliveryError, engineer_slack_outbound_disabled, post_engineer_slack_event, _to_english_display
+
+LOGGER = logging.getLogger(__name__)
+TRANSLATION_UNAVAILABLE = "Translation is temporarily unavailable. Please view the original message in Zendesk."
+
+
+def _attachment_failure(exc: Exception, *, stage: str) -> dict[str, Any]:
+    unknown = isinstance(exc, EngineerSlackDeliveryError) and exc.outcome_unknown
+    code = getattr(exc, "code", None)
+    # HTTPError is also an OSError: classify its HTTP identity first.
+    try:
+        http_status = int(code)
+    except (TypeError, ValueError):
+        http_status = None
+    if http_status is not None and 400 <= http_status <= 599:
+        failure_code = f"attachment_{stage}_http_{http_status}"
+        retryable = http_status == 429 or http_status >= 500
+    else:
+        failure_code = str(code or (str(exc) if isinstance(exc, ValueError) else "attachment_sync_failed"))
+        retryable = isinstance(exc, OSError) or failure_code.endswith(("_429", "_request_failed", "_ratelimited"))
+        if failure_code.startswith("attachment_slack_http_"):
+            retryable = failure_code.endswith("_429") or failure_code.rsplit("_", 1)[-1].startswith("5")
+    return {"status": "outcome_unknown" if unknown else "failed", "failure_code": failure_code,
+            "failure_stage": stage, "retryable": bool(retryable and not unknown)}
+
+
+def _attachment_failure_text(payload: dict[str, Any]) -> str:
+    code = str(payload["failure_code"])
+    stage = str(payload.get("failure_stage") or "transfer")
+    if payload.get("outcome_unknown"):
+        action = "Submission outcome is unknown. Read back the reserved Slack file ID before any resend."
+    elif stage == "download" and code.endswith(("_401", "_403")):
+        action = "Source access or CDN permission was refused. Check authenticated source access; automatic retry is stopped."
+    elif code.endswith("_404") or code in {"attachment_zendesk_source_unavailable", "attachment_zendesk_comment_missing", "attachment_source_unavailable_please_reattach"}:
+        action = "The source file is missing or unavailable. Reattach the file if it is still needed."
+    elif payload.get("retryable"):
+        action = "A temporary transfer failure occurred. The existing background recovery cycle will retry."
+    else:
+        action = "Check source identity, metadata and thread binding before retrying."
+    return f"File: {payload['file_name']}; stage: {stage}; reason: {code}. {action}"
+
+
+def _retryable_attachment_result(result: dict[str, Any] | None) -> bool:
+    """Normalize persisted retry state, including rows written by old code."""
+    result = result or {}
+    code = str(result.get("failure_code") or "")
+    marker = code.rsplit("_", 1)[-1]
+    if marker.isdigit():
+        status = int(marker)
+        if status in {401, 403, 404}:
+            return False
+        if status == 429 or status >= 500:
+            return True
+    return bool(result.get("retryable"))
 
 
 def now() -> str:
@@ -69,11 +123,12 @@ def deliver_native_notification(repository: Any, *, scope: str, key: str,
         elif payload["kind"] == "attachment_failure":
             event = {"event_id": f"{scope}:{key}", "event_type": "native_customer_comment",
                      "message_text": "Attachment transfer needs attention",
-                     "plain_text_sections": [f"File: {payload['file_name']}; reason: {payload['failure_code']}. If the source is unavailable, reattach the file and @Hermes. Unknown submissions require readback before any resend."]}
+                     "plain_text_sections": [_attachment_failure_text(payload)]}
         else:
+            display = _to_english_display(payload['body'], failure_text=TRANSLATION_UNAVAILABLE, preserve_layout=True)
             event = {"event_id": f"{scope}:{key}", "event_type": "native_customer_comment",
-                     "message_text": f"Customer comment {payload['comment_id']} — turn {payload['turn_id']} (untrusted quotation)",
-                     "plain_text_sections": [f"Author type: {payload['author_type']}; source time: {payload['source_updated_at']}", payload['body']]}
+                     "message_text": f"Customer message translation — comment {payload['comment_id']} — turn {payload['turn_id']} (untrusted quotation)",
+                     "plain_text_sections": [f"Author type: {payload['author_type']}; source time: {payload['source_updated_at']}\nhttps://agoraio.zendesk.com/agent/tickets/{payload['ticket_id']}", display]}
         before_external()  # Verify the current lease/fence immediately before POST.
         submitted = True
         result = post_engineer_slack_event(event, thread_ts=thread)
@@ -111,8 +166,11 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
             "channel_id": parent["channel_id"], "thread_ts": parent["thread_ts"]})
     if row["state"] == "completed":
         return row["response_payload"].get("delivery") or {}
+    if row["state"] == "failed" and not _retryable_attachment_result(row["response_payload"].get("delivery")):
+        return row["response_payload"].get("delivery") or {"status": "failed"}
     if row["state"] in {"sending", "outcome_unknown"}:
         # Do not repeat a completion with an unknown outcome. Read reserved ID.
+        before_external()
         file_id = row["response_payload"].get("slack_file_id")
         if file_id:
             try:
@@ -133,11 +191,13 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
         if not repository.checkpoint_native_notification(scope=scope, key=key, claim_token=claim_token,
             fields={"slack_file_id": file_id}, updated_at=now()):
             raise ValueError("attachment_receipt_checkpoint_failed")
+    stage = "download"
     try:
         if engineer_slack_outbound_disabled() or parent["channel_id"] != str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or ""):
             raise ValueError("attachment_thread_not_authorized")
         data = download_zendesk_attachment(ticket_id=parent["ticket_id"], comment_id=parent["comment_id"], attachment_id=attachment["attachment_id"])
         before_external()
+        stage = "upload"
         receipt = upload_slack_attachment(data=data, file_name=attachment["file_name"],
             channel_id=parent["channel_id"], thread_ts=parent["thread_ts"], persist_file_id=persist)
         result = {"status": "delivered", **receipt}
@@ -147,16 +207,40 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
         return result
 
     except Exception as exc:
-        unknown = isinstance(exc, EngineerSlackDeliveryError) and exc.outcome_unknown
-        result = {"status": "outcome_unknown" if unknown else "failed", "failure_code": getattr(exc, "code", str(exc) if isinstance(exc, ValueError) else "attachment_sync_failed"), "retryable": isinstance(exc, OSError) or getattr(exc, "code", "").endswith(("_429", "_request_failed", "_ratelimited"))}
+        result = _attachment_failure(exc, stage=stage)
         repository.finish_native_notification(scope=scope, key=key, claim_token=claim_token,
-            state="outcome_unknown" if unknown else "failed", result=result, updated_at=now())
+            state=result["status"], result=result, updated_at=now())
         notice_key = key + ":failure-notice"
         repository.enqueue_native_notification(scope=scope, key=notice_key, created_at=now(), payload={
             "kind": "attachment_failure", "ticket_id": parent["ticket_id"], "channel_id": parent["channel_id"],
-            "thread_ts": parent["thread_ts"], "file_name": attachment["file_name"], "failure_code": result["failure_code"]})
+            "thread_ts": parent["thread_ts"], "file_name": attachment["file_name"], "failure_code": result["failure_code"],
+            "failure_stage": stage, "retryable": result["retryable"], "outcome_unknown": result["status"] == "outcome_unknown"})
         deliver_native_notification(repository, scope=scope, key=notice_key, claim_token=claim_token, before_external=before_external)
         return result
+
+def attachment_recovery_blocker(store: Any, parent: dict[str, Any]) -> str | None:
+    from backend.services.automation_ecs_store import native_customer_lifecycle_blocker
+    binding = store.get_hermes_case_binding(parent["ticket_id"])
+    case = store.get_case_mirror(parent["ticket_id"])
+    if not binding or not case:
+        return "attachment_binding_missing"
+    blocked = native_customer_lifecycle_blocker(binding, case)
+    if blocked:
+        return blocked
+    if (not parent.get("channel_id") or not parent.get("thread_ts")
+            or binding.get("slack_channel_id") != parent["channel_id"]
+            or binding.get("slack_thread_ts") != parent["thread_ts"]):
+        return "attachment_thread_binding_changed"
+    direction = binding.get("direction")
+    fixed = binding.get("case_task")
+    if fixed is not None:
+        if not isinstance(fixed, dict) or fixed.get("direction") not in {"automation", "investigation", "human"}:
+            return "attachment_fixed_direction_invalid"
+        if direction not in {"pending", fixed["direction"]}:
+            return "attachment_direction_conflict"
+        direction = fixed["direction"]
+    return None if direction == "investigation" else "attachment_not_investigation"
+
 
 def drain_customer_attachments(repository: Any, store: Any) -> None:
     """Recover persisted attachment intents through the existing background cycle."""
@@ -169,15 +253,20 @@ def drain_customer_attachments(repository: Any, store: Any) -> None:
         if updated and datetime.fromisoformat(str(updated).replace("Z", "+00:00")) > datetime.now(timezone.utc) - timedelta(seconds=60):
             continue
         parent = row["response_payload"]
-        if row["state"] == "failed" and not (parent.get("delivery") or {}).get("retryable"):
+        if row["state"] == "failed" and not _retryable_attachment_result(parent.get("delivery")):
             continue
         def fence():
-            binding = store.get_hermes_case_binding(parent["ticket_id"]) or {}
-            if binding.get("direction") != "investigation" or binding.get("slack_channel_id") != parent.get("channel_id") or binding.get("slack_thread_ts") != parent.get("thread_ts"):
-                raise ValueError("attachment_binding_changed")
+            reason = attachment_recovery_blocker(store, parent)
+            if reason:
+                raise ValueError(reason)
         try:
+            reason = attachment_recovery_blocker(store, parent)
+            if reason:
+                LOGGER.info("attachment_recovery_skipped key=%s reason=%s", row["idempotency_key"], reason)
+                continue
             deliver_customer_attachment(repository, scope=scope, parent=parent, attachment=parent["attachment"], claim_token=str(uuid4()), before_external=fence)
+        except ValueError as exc:
+            LOGGER.info("attachment_recovery_skipped key=%s reason=%s", row["idempotency_key"], exc)
         except Exception:
-            import logging
-            logging.getLogger(__name__).exception("attachment_recovery_failed key=%s", row["idempotency_key"])
+            LOGGER.exception("attachment_recovery_failed key=%s", row["idempotency_key"])
             continue

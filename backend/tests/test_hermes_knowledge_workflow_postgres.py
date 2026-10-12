@@ -26,6 +26,14 @@ pytestmark = pytest.mark.skipif(
 )
 
 
+@pytest.fixture(autouse=True)
+def _stage6_case_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the legacy case-bound queue test explicit under stage-6 gating."""
+
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SOURCE_ALLOWLIST", "case_binding:*")
+
+
 @pytest.fixture()
 def repository() -> PostgresTicketRepository:
     dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()

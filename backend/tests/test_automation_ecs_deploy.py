@@ -362,6 +362,49 @@ def _as_preproduction(current: Path) -> None:
 
 
 @pytest.mark.parametrize("role", ["api", "worker"])
+def test_render_task_definition_preproduction_injects_knowledge_config(
+    tmp_path: Path, role: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("KNOWLEDGE_SOURCE_ALLOWLIST", raising=False)
+    current = _task_definition(tmp_path, role)
+    _as_preproduction(current)
+
+    rendered = render_task_definition(
+        role=role,
+        current_path=current,
+        manifest_path=_manifest(tmp_path),
+        registry_id="123456789012",
+        region="us-east-1",
+        environment="preproduction",
+        repository="supportportal/preproduction",
+        agent_model="gpt-6-sol",
+    )
+    container = rendered["containerDefinitions"][0]
+    values = {item["name"]: item["value"] for item in container["environment"]}
+    assert values["KNOWLEDGE_SOURCE_ALLOWLIST"] == ""
+    assert values["KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS"] == "300"
+    for name in (
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED",
+        "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
+        "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
+        "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED",
+    ):
+        assert values[name] == "0"
+    secrets = {item["name"]: item["valueFrom"] for item in container["secrets"]}
+    for name, suffix in {
+        "AGENT_MEMORY_WIKI_BASE_URL": "agent-memory-wiki-base-url",
+        "AGENT_MEMORY_WIKI_USER_KEY": "hermes-wiki-core-user-key",
+        "AGENT_MEMORY_WIKI_SERVICE_ID": "agent-memory-wiki-service-id",
+        "AGENT_MEMORY_WIKI_TEAM_ID": "agent-memory-wiki-team-id",
+        "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN": "knowledge-slack-workspace-domain",
+    }.items():
+        assert secrets[name].endswith(f"parameter/supportportal/preproduction/{suffix}")
+
+
+@pytest.mark.parametrize("role", ["api", "worker"])
 @pytest.mark.parametrize("environment,expected", [("production", "0"), ("preproduction", "1")])
 def test_render_task_definition_sets_engineer_slack_outbound_switch(
     tmp_path: Path, role: str, environment: str, expected: str
