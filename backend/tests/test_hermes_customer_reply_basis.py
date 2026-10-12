@@ -147,4 +147,3 @@ def test_validator_requires_unknown_requested_field_to_be_server_missing_field()
             "Hi Customer,\n\nPlease provide your passport number.", _basis(missing_fields=[])
         )
     assert exc.value.code == "unauthorized_field_request"
-

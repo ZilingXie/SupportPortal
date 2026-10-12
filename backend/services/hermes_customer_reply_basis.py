@@ -443,4 +443,3 @@ def project_greeting(content: str, greeting_name: str | None) -> str:
     expected = f"Hi {str(greeting_name or 'Customer').strip() or 'Customer'},"
     normalized = _GREETING_RE.sub("", normalized, count=1).strip()
     return f"{expected}\n\n{normalized}" if normalized else expected
-
