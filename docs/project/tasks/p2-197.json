@@ -10,7 +10,7 @@
   "created_at": "2026-10-12",
   "updated_at": "2026-10-12",
   "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。待执行：步 2 独立验收→合入→步 3 冻结版本→步 4 全关闭部署→步 5-10。",
-  "next_action": "步 2 代码停在 Draft PR（codex/stage6-deploy）等独立验收：渲染器分阶段入口+WeKnora 客户端渲染+管线 checkpoint 绑定+verify 双门禁+runbook 记录。验收通过后 finalize 合入 main，随即步 3 冻结最终发布版本（main/Prompt/镜像 digest/ECS revisions/回滚基线，重建 immutable release，正式 build+预发布门禁），步 4 全关闭部署（master+六开关全 0、allowlist 空、旧 promotion worker 关；验证 schema v23/delivery 表/Slack 字段/健康/镜像/Prompt/Provider/CloudWatch 门禁）。部署前须完成历史队列盘点（任务/候选/投递行；存在未授权可消费行→保持关闭并提交隔离方案）。",
+  "next_action": "步 2 代码停在 Draft PR #1482（codex/stage6-deploy @ 44833cb4）等独立验收：渲染器分阶段入口+WeKnora 客户端渲染+管线 checkpoint 绑定+verify 双门禁+runbook 记录。验收通过后 finalize 合入 main，随即步 3 冻结最终发布版本（main/Prompt/镜像 digest/ECS revisions/回滚基线，重建 immutable release，正式 build+预发布门禁），步 4 全关闭部署（master+六开关全 0、allowlist 空、旧 promotion worker 关；验证 schema v23/delivery 表/Slack 字段/健康/镜像/Prompt/Provider/CloudWatch 门禁）。部署前须完成历史队列盘点（任务/候选/投递行；存在未授权可消费行→保持关闭并提交隔离方案）。另建议另立任务修复两个与本任务无关的全库扫描存量问题（test_account_reroute_dispatch 间歇挂起；test_fix_ticket_subject_cli 在非 venv 解释器下触发被测脚本模块级 os.execv 重执行）。",
   "acceptance_criteria": [
     "C0 发布源/digest/n8n version/SSM 引用可追溯",
     "C1 关闭态 fail-closed 零候选零写入",
@@ -62,6 +62,12 @@
       "label": "步 2 渲染器分阶段入口专项+知识面全套",
       "command": "pytest backend/tests/test_automation_ecs_deploy.py（102）+ test_automation_ecs_release_pipeline.py（47）+ test_stage6_source_allowlist.py（含 validate_allowlist 新增）；知识面 21 套件 RUN_POSTGRES_INTEGRATION=1 隔离 PG",
       "result": "deploy 102 passed（含 loader 校验矩阵/双渲染路径 stage config/依赖拒绝/verify 匹配+漂移+worker 缺失+api 泄漏/壳脚本布线源断言/WeKnora 客户端规范化+幂等重渲染）；pipeline 47 passed（production 拒绝/非法配置先于 state/identity 绑定+deploy argv 携带状态目录副本/resume 换配置=identity 不匹配）；知识面 575 passed/0 failed 含 PG。CLI 实弹：render-task-definition --knowledge-stage-config → verify-knowledge-stage-config 全通过，env 逐字一致。"
+    },
+    {
+      "type": "pr",
+      "label": "步 2 Draft PR",
+      "command": "gh pr create --draft (codex/stage6-deploy @ 44833cb4)",
+      "result": "PR #1482（10 文件 +1115/-69）：阶段配置入口/checkpoint 绑定/双 verify 门禁/WeKnora 客户端渲染/allowlist 渲染期校验/专项+全套证据与开放项；等独立验收。"
     }
   ]
 }
