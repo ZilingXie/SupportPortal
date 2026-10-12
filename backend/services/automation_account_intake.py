@@ -50,6 +50,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
     account_reply_delay_seconds_for_profile,
     create_account_reply_job,
+    is_hermes_compatibility_job_active_status,
 )
 from backend.services.account_route_pipeline import account_route_metadata
 from backend.services.account_zendesk_comments import normalize_snapshot
@@ -705,7 +706,7 @@ def _enablement_reply_job_identity(
         return job_id, "enablement_compatibility_job_not_found"
     if str(persisted.get("ticket_id") or persisted.get("zendesk_ticket_id") or "") != str(ticket_id):
         return job_id, "enablement_compatibility_job_ticket_mismatch"
-    if str(persisted.get("status") or "").strip().lower() in {"cancelled", "failed", "manual_attention"}:
+    if not is_hermes_compatibility_job_active_status(persisted.get("status")):
         return job_id, "enablement_compatibility_job_terminal"
     return job_id, None
 

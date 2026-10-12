@@ -82,6 +82,7 @@ from backend.services.account_reply_jobs import (
     normalize_account_reply_contract,
     is_account_reply_persona_preparing_status,
     is_account_reply_persona_publishing_status,
+    is_hermes_compatibility_job_active_status,
 )
 from backend.services.account_processing_profiles import is_live_account_processing_profile
 from backend.services.automation_context import build_automation_context, persona_context
@@ -2295,7 +2296,7 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
                 job_ticket = str(compatibility_job.get("ticket_id") or compatibility_job.get("zendesk_ticket_id") or "")
                 if job_ticket != str(zendesk_ticket_id):
                     job_error = "enablement_compatibility_job_ticket_mismatch"
-                elif str(compatibility_job.get("status") or "").lower() in {"cancelled", "failed", "manual_attention"}:
+                elif not is_hermes_compatibility_job_active_status(compatibility_job.get("status")):
                     job_error = "enablement_compatibility_job_terminal"
         if job_error:
             already_blocked = (

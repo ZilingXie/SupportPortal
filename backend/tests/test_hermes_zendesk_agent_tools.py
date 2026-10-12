@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from typing import Any
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -17,6 +17,7 @@ from backend.services.automation_hermes_delivery import (
 )
 from backend.services.automation_hermes_tools import (
     HermesToolError,
+    _validate_enablement_compatibility_job,
     apply_greeting_projection,
     derive_publish_policy,
     publication_decision_for_turn,
@@ -299,6 +300,80 @@ class TestInvestigationTool:
 
 
 class TestDraftTools:
+    def test_unknown_compatibility_job_status_is_terminal_at_tool_boundary(self) -> None:
+        class _Repository:
+            def get_account_reply_job(self, _job_id: str) -> dict[str, Any]:
+                return {"job_id": "job-1", "ticket_id": "123", "status": "made_up_state"}
+
+        job_id, job, reason = _validate_enablement_compatibility_job(
+            _Repository(),
+            account_case={
+                "automation_context": {
+                    "enablement_auto_workflow": {"reply_job_id": "job-1"}
+                }
+            },
+            ticket_id="123",
+            reply_job={"job_id": "job-1"},
+        )
+        assert (job_id, job["status"], reason) == (
+            "job-1",
+            "made_up_state",
+            "enablement_compatibility_job_terminal",
+        )
+
+    def test_persona_requires_canonical_basis_without_legacy_fallback(self) -> None:
+        """A malformed follow-up cannot start Persona from legacy facts."""
+        from types import SimpleNamespace
+
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+        from backend.services.hermes_agent_runtime import HermesAgentError
+
+        class _Store:
+            def bind_hermes_case_persona(self, *_args: Any, **_kwargs: Any) -> None:
+                return None
+
+            def get_hermes_case_binding(self, _ticket_id: str) -> dict[str, Any]:
+                return {"session_kind": "case", "hermes_session_id": "session-1"}
+
+            def get_or_create_hermes_turn_run(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+                return {"status": "queued", "run_id": None, "request_id": "request-1"}
+
+        payload = SimpleNamespace(
+            turn_id="turn-1",
+            event=SimpleNamespace(ticket=SimpleNamespace(id="123"), routing_text=lambda: "follow-up"),
+        )
+        turn = {
+            "turn_id": "turn-1",
+            "direction": "automation",
+            "route": "conversation_followup",
+            "turn_kind": "follow_up",
+            "work_result": {"reply_basis": {"legacy": "must not authorize Persona"}},
+        }
+        client = SimpleNamespace(start_run=Mock(), get_run=Mock())
+        processor = HermesAgentTurnProcessor(
+            _Store(), client=client, repository=object(), sleeper=lambda _seconds: None
+        )
+        with patch(
+            "backend.services.automation_hermes_agent.resolve_persona_style",
+            return_value={"persona_key": "default", "version": 1, "instruction": "plain", "fell_back": False},
+        ), patch(
+            "backend.services.hermes_customer_reply_basis.basis_for_persona_turn",
+            return_value=None,
+        ), patch(
+            "backend.services.automation_hermes_agent.reply_basis_for_run",
+            return_value='{"legacy":"should never be used"}',
+        ):
+            with pytest.raises(HermesAgentError) as excinfo:
+                processor._run_phase(
+                    payload,
+                    turn,
+                    phase="persona",
+                    snapshot={"ticket_id": "123"},
+                    workspace="workspace-1",
+                )
+        assert excinfo.value.code == "reply_basis_unavailable"
+        client.start_run.assert_not_called()
+
     def test_model_basis_cannot_override_server_work_basis(self) -> None:
         from backend.services.hermes_customer_reply_basis import build_hermes_customer_reply_basis
 

@@ -1798,13 +1798,13 @@ class HermesAgentTurnProcessor:
                     if isinstance(source_turn, dict):
                         basis_binding["investigation_source_turn"] = source_turn
                 basis_record = basis_for_persona_turn(turn=turn, binding=basis_binding)
-                basis = json.dumps(basis_record, ensure_ascii=False, sort_keys=True) if basis_record else reply_basis_for_run(turn)
-                if not basis:
+                if not basis_record:
                     raise HermesAgentError(
                         "reply_basis_unavailable",
                         "server-owned reply basis is required before Persona",
                         retryable=False,
                     )
+                basis = json.dumps(basis_record, ensure_ascii=False, sort_keys=True)
                 input_text += f"\n\n--- REPLY BASIS FOR THIS TURN ---\n{basis}"
                 # Restricted follow-up/message-action turns retain their
                 # semantic rendering projection (references/progress labels)

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-12T04:45:52Z",
-  "source_base_commit": "12211a8fd3c49ca79ac3ad2ce550c99073fb3cc3",
-  "registry_digest": "ffcc5bca57890a72e26295e2dc53d2c20ee7fe109320e05ec4cedf8b387d36f1",
+  "generated_at": "2026-10-12T06:30:50Z",
+  "source_base_commit": "5a94a9997a9e770d9ba50505510ac56a1a45d108",
+  "registry_digest": "f73e6db014728657987a54765b88dd1b4c33d117774eca836ada3f6834237694",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1558,36 +1558,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
-          "result": "204 passed"
+          "result": "206 passed"
         },
         {
           "type": "test",
-          "label": "Enablement Persona ownership regression",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_tool_failure_handoff.py::ToolFailureHandoffTests::test_enablement_workflow_completed_with_hermes_owner_runs_persona -q",
-          "result": "passed; route → work(workflow_completed, skip_persona=false) → persona"
+          "label": "Hermes delivery real-entry identity and side-effect matrix",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k \"hermes_delivery_unknown_compatibility_status or hermes_fraud_and_suspension_real_delivery_entries_finish_once or hermes_failed_and_unknown_readback_do_not_finish_business_side_effects or hermes_enablement_delivery_identity\" -q",
+          "result": "4 passed, 4 subtests passed"
         },
         {
           "type": "test",
-          "label": "Hermes compatibility delivery guard",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py::WorkerResilienceTests::test_hermes_compatibility_job_cannot_render_legacy_persona backend/tests/test_worker.py::WorkerResilienceTests::test_automation_delivery_with_valid_ownership_sends -q",
+          "label": "Canonical basis Persona gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_zendesk_agent_tools.py -k \"canonical_basis or unknown_compatibility_job_status\" -q",
           "result": "2 passed"
         },
         {
           "type": "test",
-          "label": "v3.2 Enablement identity and worker readback fail-closed",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k 'hermes_enablement_delivery_identity or hermes_compatibility_job' -q",
-          "result": "2 passed"
+          "label": "Worker full regression and baseline comparison",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -q",
+          "result": "153 passed, 14 failed, 25 subtests; the same 14 investigation ownership failures reproduce on current main and remain baseline limitations"
         },
         {
           "type": "test",
           "label": "Project registry and diff checks",
-          "command": "python3 scripts/generate_project_overview.py --write --check; git diff --check",
-          "result": "Project Overview validation passed; git diff --check passed"
-        },
-        {
-          "type": "document",
-          "label": "Current implementation boundary",
-          "details": "Fraud, suspension, billing, verification and detailed-invoice Hermes Work results carry hermes_customer_reply_basis_v1 and reply_owner=hermes_persona. Enablement remains legacy-gated pending decision."
+          "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
+          "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
         },
         {
           "type": "test",
@@ -5722,6 +5717,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "第四轮独立验收通过",
           "command": "（验收方复验）",
           "result": "通过（HEAD 054b8fb1；summaryAnomalyReason 展示失败/malformed 原因+tone-danger、页面只读边界+Session/no-store 维持、真实渲染测试用真实 API 响应与当前 app.js；UI 3+专项 15+PG parity 1）；允许 finalize"
+        },
+        {
+          "type": "document",
+          "label": "步 1 只读基线冻结",
+          "command": "aws ecs describe-task-definition/ssm describe-parameters（只读）+ n8n MCP get_workflow_details",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md；公网 release 端点因本机 fake-ip 代理不可达（非服务端故障），release 由 task def env 三方一致取得"
+        },
+        {
+          "type": "test",
+          "label": "方案 A allowlist 专项+全套回归",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage6_source_allowlist.py -q && 全套 21 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 7 passed（默认空零处理/通配/列内外双路径/case 绑定双路径/快照保留证明）；全套 541 passed / 0 failed（存量 5 套件 env 适配为真实通配面）"
+        },
+        {
+          "type": "deployment",
+          "label": "步 2 SSM 配置与 task-definition 注入预览",
+          "command": "aws ssm put-parameter/describe-parameters（只记录元数据）+ live task definition 135 渲染预览",
+          "result": "新建 3 个 AgentMemory Wiki/1 个 Slack workspace String 参数，均 Version=1；AGENT_MEMORY_WIKI_USER_KEY 指向既有 hermes-wiki-core-user-key SecureString Version=1；API/Worker 预览均包含六个 KNOWLEDGE_* 开关=0、HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、空 KNOWLEDGE_SOURCE_ALLOWLIST、KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS=300 和五个 SSM 引用；尚未 register/update ECS service。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 renderer 回归",
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
+          "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
         }
       ],
       "source_refs": [
@@ -5737,7 +5756,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 3,
+      "task_count": 4,
       "done_count": 0,
       "blocked_count": 0
     },
@@ -17934,6 +17953,61 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "schema_version": 2,
       "task_id": "p2-197",
+      "title": "Preproduction 十步发布与真实证据闭环（阶段六）",
+      "status": "active",
+      "owner": "codex",
+      "phase_id": "phase-2",
+      "module_id": "rag-knowledge",
+      "function_id": "weknora-dualwrite-governance",
+      "created_at": "2026-10-12",
+      "updated_at": "2026-10-11",
+      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r2-stage6。基线 main@c6addcc0。授权=用户方案 A（2026-10-12：七确认点按建议执行+先补 KNOWLEDGE_SOURCE_ALLOWLIST 代码再走十步）。已完成：步 1 只读基线冻结（docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md：api:135/worker:135/route:134/hermes:45、release r20261011-434ee35-p2、治理开关全关/未注入、SSM 无知识面参数、n8n 三链 active+draft 版本钉定）；方案 A 实现（knowledge_source_allowlist.py：默认空=零处理、type:id 与 type:* 通配、case_binding:\u003cid> 键；gate 点=standalone queue_standalone_summary_for_source 与 case-bound queue_hermes_summary_for_case 的任务创建，快照接收/审计不受影响）；专项 7 项（解析畸形/默认零处理/列内放行/未列持有+快照保留/列内建任务/case 未列持有+列内创建）。存量套件适配=真实 env 面 KNOWLEDGE_SOURCE_ALLOWLIST 通配（csd_issue/zendesk_ticket/article/case_binding），全套 21 套件 541 passed/0 failed 含隔离 PG。步 2 配置已完成：新建 3 个 AgentMemory Wiki/1 个 Slack workspace String SSM 参数（均 v1），复用既有 hermes-wiki-core-user-key SecureString；renderer commit dd7ca37f 注入 API/Worker 的五个 SSM 引用、六开关显式 0、空 allowlist、租约 300。待执行：步 2 代码 release/deploy 与步 3-10（SP 部署全关→关闭态验证→n8n Draft×2 发布→intake→Summary/Review→Slack→人工样本→双写小范围→全量）。",
+      "next_action": "步 2 配置已写入并回读：/supportportal/preproduction/agent-memory-wiki-base-url、agent-memory-wiki-service-id、agent-memory-wiki-team-id、knowledge-slack-workspace-domain 均 String v1；AGENT_MEMORY_WIKI_USER_KEY 复用既有 hermes-wiki-core-user-key SecureString v1。代码 commits dd7ca37f8ef2a5f8a56b6376bc96854aadc5047c 与 a7e218b79961c4c27efcec09108e704e05772020 已完成 renderer、allowlist 与存量测试适配；步 2 当前 21 套件使用一次性本机 PostgreSQL 14.19 复测 540 passed / 0 failed。下一门禁仍是将该代码纳入 origin/main 的正式 immutable release，再用 release pipeline 部署 API/Worker（全部知识开关 0、allowlist 为空），随后步 3 关闭态验证。",
+      "acceptance_criteria": [
+        "C0 发布源/digest/n8n version/SSM 引用可追溯",
+        "C1 关闭态 fail-closed 零候选零写入",
+        "C2 n8n 仅投 source snapshot",
+        "C3 ID 关联完整",
+        "C4 失败/证据不足入人工",
+        "C5 Slack 根线程唯一/URL 回读/operator 审计",
+        "C6 决策目标版本哈希可追溯",
+        "C7 双目标独立成功失败重试回读",
+        "C8 超时/重复/重启/版本冲突 fail-closed",
+        "C9 页面只读可显异常",
+        "C10 Hermes 继续用 AgentMemory",
+        "C11 全量期无重复写入/旧版本覆盖/审计缺失"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "label": "步 1 只读基线冻结",
+          "command": "aws ecs describe-task-definition/ssm describe-parameters（只读）+ n8n MCP get_workflow_details",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-baseline.md；公网 release 端点因本机 fake-ip 代理不可达（非服务端故障），release 由 task def env 三方一致取得"
+        },
+        {
+          "type": "test",
+          "label": "方案 A allowlist 专项+全套回归",
+          "command": "/opt/homebrew/bin/python3.12 -m pytest backend/tests/test_stage6_source_allowlist.py -q && 全套 21 套件（RUN_POSTGRES_INTEGRATION=1）",
+          "result": "专项 7 passed（默认空零处理/通配/列内外双路径/case 绑定双路径/快照保留证明）；全套 541 passed / 0 failed（存量 5 套件 env 适配为真实通配面）"
+        },
+        {
+          "type": "deployment",
+          "label": "步 2 SSM 配置与 task-definition 注入预览",
+          "command": "aws ssm put-parameter/describe-parameters（只记录元数据）+ live task definition 135 渲染预览",
+          "result": "新建 3 个 AgentMemory Wiki/1 个 Slack workspace String 参数，均 Version=1；AGENT_MEMORY_WIKI_USER_KEY 指向既有 hermes-wiki-core-user-key SecureString Version=1；API/Worker 预览均包含六个 KNOWLEDGE_* 开关=0、HERMES_KNOWLEDGE_WORKFLOW_ENABLED=0、空 KNOWLEDGE_SOURCE_ALLOWLIST、KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS=300 和五个 SSM 引用；尚未 register/update ECS service。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 renderer 回归",
+          "command": "uv run pytest -q backend/tests/test_automation_ecs_deploy.py backend/tests/test_stage6_source_allowlist.py backend/tests/test_agent_memory_delivery.py；RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres uv run pytest -q（阶段 6 当前 21 套件）",
+          "result": "首版 renderer/allowlist/AgentMemory 定向 114 passed / 0 failed；修正测试合同后，当前 21 套件在一次性本机 PostgreSQL 14.19 上 540 passed / 0 failed，8 subtests；git diff --check 通过。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-198",
       "title": "Hermes Unified Customer Reply（v3.2）",
       "status": "active",
       "owner": "codex",
@@ -17942,8 +18016,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-12",
-      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。",
-      "next_action": "提交 v3.2 完整 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
+      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@1439a348。",
+      "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -17961,36 +18035,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
-          "result": "204 passed"
+          "result": "206 passed"
         },
         {
           "type": "test",
-          "label": "Enablement Persona ownership regression",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_tool_failure_handoff.py::ToolFailureHandoffTests::test_enablement_workflow_completed_with_hermes_owner_runs_persona -q",
-          "result": "passed; route → work(workflow_completed, skip_persona=false) → persona"
+          "label": "Hermes delivery real-entry identity and side-effect matrix",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k \"hermes_delivery_unknown_compatibility_status or hermes_fraud_and_suspension_real_delivery_entries_finish_once or hermes_failed_and_unknown_readback_do_not_finish_business_side_effects or hermes_enablement_delivery_identity\" -q",
+          "result": "4 passed, 4 subtests passed"
         },
         {
           "type": "test",
-          "label": "Hermes compatibility delivery guard",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py::WorkerResilienceTests::test_hermes_compatibility_job_cannot_render_legacy_persona backend/tests/test_worker.py::WorkerResilienceTests::test_automation_delivery_with_valid_ownership_sends -q",
+          "label": "Canonical basis Persona gate",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_zendesk_agent_tools.py -k \"canonical_basis or unknown_compatibility_job_status\" -q",
           "result": "2 passed"
         },
         {
           "type": "test",
-          "label": "v3.2 Enablement identity and worker readback fail-closed",
-          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -k 'hermes_enablement_delivery_identity or hermes_compatibility_job' -q",
-          "result": "2 passed"
+          "label": "Worker full regression and baseline comparison",
+          "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_worker.py -q",
+          "result": "153 passed, 14 failed, 25 subtests; the same 14 investigation ownership failures reproduce on current main and remain baseline limitations"
         },
         {
           "type": "test",
           "label": "Project registry and diff checks",
-          "command": "python3 scripts/generate_project_overview.py --write --check; git diff --check",
-          "result": "Project Overview validation passed; git diff --check passed"
-        },
-        {
-          "type": "document",
-          "label": "Current implementation boundary",
-          "details": "Fraud, suspension, billing, verification and detailed-invoice Hermes Work results carry hermes_customer_reply_basis_v1 and reply_owner=hermes_persona. Enablement remains legacy-gated pending decision."
+          "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
+          "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
         }
       ]
     },

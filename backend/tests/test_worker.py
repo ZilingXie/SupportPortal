@@ -1566,6 +1566,101 @@ class WorkerResilienceTests(unittest.TestCase):
         delivery = repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
         self.assertEqual(delivery["status"], "delivered")
 
+    def test_hermes_delivery_unknown_compatibility_status_blocks_release(self) -> None:
+        """The real Hermes delivery entry must treat an unknown job state as terminal."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        repository = InMemoryTicketRepository()
+        repository.initialize()
+        self._seed_automation_delivery(repository)
+        repository._account_reply_jobs["compat-job-auto"]["status"] = "made_up_state"
+        snapshot = self._ownership_snapshot(ticket_status="open", assignee_id="48557297720084")
+        ownership_globals = worker.ensure_production_automation_ownership.__globals__
+        with patch.object(worker, "ticket_repository", repository), patch.dict(
+            ownership_globals, {"read_ticket_ownership_snapshot": lambda **_kw: snapshot}
+        ), patch.object(worker, "read_ticket_ownership_snapshot", return_value=snapshot), patch(
+            "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch.object(
+            worker, "add_ticket_comment", return_value=_SN(comment_id="zc-unknown-status")
+        ) as add_comment, patch.object(
+            repository, "release_account_internal_email_after_public_reply"
+        ) as release_email, patch.object(
+            repository, "release_enablement_relay_requests_after_public_reply"
+        ) as release_relay:
+            worker._deliver_hermes_zendesk_comment(
+                repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+            )
+        self.assertEqual(add_comment.call_count, 1)
+        self.assertEqual(
+            repository._billing_tickets["AC-AUTO"]["automation_status"],
+            "human_review_required",
+        )
+        self.assertEqual(
+            repository._billing_tickets["AC-AUTO"]["execution_reason_code"],
+            "enablement_compatibility_job_terminal",
+        )
+        release_email.assert_not_called()
+        release_relay.assert_not_called()
+
+    def test_hermes_fraud_and_suspension_real_delivery_entries_finish_once(self) -> None:
+        """Fraud and Suspension cleanup is reached through the delivery entry."""
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from types import SimpleNamespace as _SN
+
+        for route, reply_intent in (
+            ("fraud_account", "fraud_handoff_confirmation"),
+            ("account_suspension", "account_suspension_handoff_and_close"),
+        ):
+            with self.subTest(route=route):
+                repository = InMemoryTicketRepository()
+                repository.initialize()
+                self._seed_automation_delivery(repository)
+                case = repository._billing_tickets["AC-AUTO"]
+                case["route"] = route
+                case["execution_action"] = route
+                delivery = copy.deepcopy(
+                    repository._account_zendesk_comment_deliveries[("AC-AUTO", "draft-auto-1")]
+                )
+                delivery["attachments"] = []
+                delivery["reply_intent"] = reply_intent
+                snapshot = self._ownership_snapshot(ticket_status="open", assignee_id="48557297720084")
+                ownership_globals = worker.ensure_production_automation_ownership.__globals__
+                with patch.object(worker, "ticket_repository", repository), patch.dict(
+                    ownership_globals, {"read_ticket_ownership_snapshot": lambda **_kw: snapshot}
+                ), patch.object(worker, "read_ticket_ownership_snapshot", return_value=snapshot), patch(
+                    "backend.services.zendesk_ticket_assignment.read_ticket_ownership_snapshot",
+                    return_value=snapshot,
+                ), patch.object(
+                    worker, "add_ticket_comment", return_value=_SN(comment_id=f"zc-{route}")
+                ) as add_comment, patch.object(
+                    worker, "_hand_off_review_after_public_reply"
+                ) as handoff:
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                self.assertEqual(add_comment.call_count, 1)
+                self.assertEqual(handoff.call_count, 1)
+
+    def test_hermes_failed_and_unknown_readback_do_not_finish_business_side_effects(self) -> None:
+        from unittest.mock import Mock
+
+        for status in ("failed", "outcome_unknown"):
+            with self.subTest(status=status):
+                repository = Mock()
+                delivery = {
+                    "account_case_id": "AC-READBACK",
+                    "message_id": f"draft-{status}",
+                    "status": status,
+                    "immutable_content": "reply",
+                    "zendesk_ticket_id": "TK-READBACK",
+                }
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "read_ticket_comment_audit", return_value=(None, set())
+                ), patch.object(worker, "_complete_hermes_customer_reply_side_effects") as finish:
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                finish.assert_not_called()
+
     def test_automation_takeover_with_empty_status_keeps_original_failure(self) -> None:
         """Human takeover with an empty ticket status: the definitive policy
         outcome terminates with the original failure code — never a永久

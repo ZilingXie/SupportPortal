@@ -20,6 +20,7 @@ from backend.services.automation_ecs_store import (
 from backend.services.enablement_automation import enablement_workflow_mode
 from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
 from backend.services.automation_persona import ENGINEER_CUSTOMER_DRAFT_MAX_CHARS
+from backend.services.account_reply_jobs import is_hermes_compatibility_job_active_status
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
 
@@ -114,7 +115,7 @@ def _validate_enablement_compatibility_job(
     job_ticket = str(job.get("ticket_id") or job.get("zendesk_ticket_id") or "").strip()
     if job_ticket != str(ticket_id).strip():
         return job_id, job, "enablement_compatibility_job_ticket_mismatch"
-    if str(job.get("status") or "").strip().lower() in {"cancelled", "failed", "manual_attention"}:
+    if not is_hermes_compatibility_job_active_status(job.get("status")):
         return job_id, job, "enablement_compatibility_job_terminal"
     return job_id, job, None
 
