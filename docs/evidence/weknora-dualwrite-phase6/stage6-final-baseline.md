@@ -68,3 +68,22 @@
 --bootstrap-account-schema（落 v23）
 （无 --knowledge-stage-config → 默认全关：master=0、六开关=0、allowlist 空）
 ```
+
+## 全关闭部署结果（v2-A #7，r20261012-42a187a）
+
+部署管线全阶段 passed（preflight→prompt_schema→route_worker_rollout→heartbeat→api_rollout→collector→activation→release_note；codebuild 经 S3 证据恢复；总 1284s，SLO breach=true 系 resume+bootstrap 开销，非失败）。证据：`.deployments/ecs-pipeline-r20261012-42a187a/preproduction-deploy/evidence.json`（根区）。
+
+部署后回读（全部通过）：
+
+| 验证项 | 结果 |
+|---|---|
+| ECS revisions | api **:140** / worker **:140** / route **:138**，服务 ACTIVE 1/1×3 |
+| 目标 release | 三角色 APP_BUILD_REF=42a187ae…、AUTOMATION_RELEASE_ID=r20261012-42a187a |
+| 治理开关 | master=0、六开关全 0、KNOWLEDGE_SOURCE_ALLOWLIST 空（api+worker） |
+| WeKnora 客户端 | worker 七引用（WEKNORA_BASE_URL/API_TOKEN/API_CONTRACT_JSON/KNOWLEDGE_BASE_ID+HERMES_WEKNORA_*）+WEKNORA_AUTH_HEADER_NAME=X-API-Key+空 scheme 首次上线；无 WEKNORA_MEMORY_IDENTITY |
+| 旧路径 | WEKNORA_PROMOTION_ENABLED=0（worker） |
+| schema v23 | support_ticket_schema_meta=2026-single-ai-managed-v23-knowledge-slack-review；support_weknora_promotions Slack 六列实证（slack_review_event_id/status/message_ts/failure_code/owner_token/claimed_at+human_decided_slack_user_id） |
+| Terraform | preflight plan 零漂移（exit 0） |
+| 步 2 门禁 | 部署日志两见 "Knowledge stage config verified on rendered api/worker definitions"（渲染后+激活前） |
+
+过程披露：首次启动因 TICKET_DB_SCHEMA 缺省（源 Prompt 校验读 supportportal schema 无权限）失败；恢复时孤儿 CodeBuild 已 SUCCESS，经 S3 证据恢复路径复用（无重复构建）；二次因缺 DEPLOY_PREPRODUCTION_APPROVED=1 于 deploy 门停下；三次带全环境完成。三次启动均落在同一 checkpoint（identity 一致）。
