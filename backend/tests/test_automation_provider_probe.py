@@ -5,7 +5,12 @@ import os
 from unittest.mock import patch
 
 from backend.services.account_internal_email_recipients import AccountInternalEmailRecipients
-from backend.services.automation_provider_probe import PROBE_SCHEMA_VERSION, main, run_probe
+from backend.services.automation_provider_probe import (
+    PROBE_SCHEMA_VERSION,
+    RAGFLOW_PROBE_TIMEOUT_SECONDS,
+    main,
+    run_probe,
+)
 
 
 class _Response:
@@ -47,7 +52,7 @@ def test_provider_probe_is_read_only_and_returns_only_boolean_and_counts() -> No
                 "page_size": 1,
                 "similarity_threshold": 1.0,
             }
-            assert timeout == 10.0
+            assert timeout == RAGFLOW_PROBE_TIMEOUT_SECONDS
             return _Response({"code": 0, "data": {"chunks": [], "total": 0}})
         assert request.method == "GET"
         assert request.data is None
