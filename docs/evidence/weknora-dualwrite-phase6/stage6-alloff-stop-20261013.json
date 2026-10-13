@@ -1,0 +1,26 @@
+{
+  "ecr": {
+    "api": {
+      "tag": "api-r20261013-c972239-stage6-alloff",
+      "digest": "sha256:fe28b7ae5c6258a046cb594d6007a6a8cd7870c90f879aed6cfba3a9f264df85",
+      "matches_manifest": true
+    },
+    "route": {
+      "tag": "route-r20261013-c972239-stage6-alloff",
+      "digest": "sha256:45cce9cba7fa2cf11be5c04ba607a2c180cf45d14e3c8d04c211c900abdf764a",
+      "matches_manifest": true
+    },
+    "worker": {
+      "tag": "worker-r20261013-c972239-stage6-alloff",
+      "digest": "sha256:5a69d5413db340ee6b958e125e9d3fc918f61737d54d446203bf595391ad20c0",
+      "matches_manifest": true
+    }
+  },
+  "historical_promotions_count": 64,
+  "historical_promotions_fingerprint": "f0b4671c72d72a77a2f71756f7acd8ef0d274915fce95304bf14e81df953787d",
+  "historical_promotions_unchanged": true,
+  "ecs_deploy_started": false,
+  "n8n_mutation": false,
+  "sample_replay": false,
+  "blocked_main": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda"
+}

@@ -1,0 +1,26 @@
+{
+  "codebuild_build_arn": "arn:aws:codebuild:us-east-1:891612554546:build/supportportal-automation-release:8478fad5-cdfe-439b-bba3-40749dc4a470",
+  "codebuild_build_number": 194,
+  "components": {
+    "api": {
+      "digest": "sha256:fe28b7ae5c6258a046cb594d6007a6a8cd7870c90f879aed6cfba3a9f264df85",
+      "tag": "api-r20261013-c972239-stage6-alloff"
+    },
+    "route": {
+      "digest": "sha256:45cce9cba7fa2cf11be5c04ba607a2c180cf45d14e3c8d04c211c900abdf764a",
+      "tag": "route-r20261013-c972239-stage6-alloff"
+    },
+    "worker": {
+      "digest": "sha256:5a69d5413db340ee6b958e125e9d3fc918f61737d54d446203bf595391ad20c0",
+      "tag": "worker-r20261013-c972239-stage6-alloff"
+    }
+  },
+  "evidence_object_version": "zGTHW_V0rWO5cFb7l3y94hp5oFEGjknP",
+  "published_at": "2026-10-13T11:39:27.958331+00:00",
+  "region": "us-east-1",
+  "registry_id": "891612554546",
+  "release_id": "r20261013-c972239-stage6-alloff",
+  "schema_version": "automation-preproduction-publish-v1",
+  "source_git_commit": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "target_repository": "supportportal/preproduction"
+}

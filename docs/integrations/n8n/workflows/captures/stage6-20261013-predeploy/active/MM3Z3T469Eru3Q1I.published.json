@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-13T11:42:17.090Z",
+  "source": {
+    "projectId": "sbTCwK2d5D7GOKQb",
+    "workflowId": "MM3Z3T469Eru3Q1I",
+    "workflowName": "[kb]Build|Solved Cases",
+    "snapshotKind": "published",
+    "versionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+    "draftVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+    "publishedVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+    "updatedAt": "2026-10-13T05:18:15.005Z",
+    "parentFolderId": "SLMnELm0z3huA2Cr"
+  },
+  "workflow": {
+    "id": "MM3Z3T469Eru3Q1I",
+    "name": "[kb]Build|Solved Cases",
+    "description": "阶段二 source-only（p2-194）：SOLVED→完整 ticket+全评论→校验→knowledge-source-v1 快照→投递 SP 来源接口→三态回执+非空 task_id 校验。AI/本地去重/Wiki 直写已移除；失败走 errorWorkflow；Draft 未发布。",
+    "nodes": [
+      {
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "579adbd3-0eeb-4a70-a45a-3a469328eece",
+          "options": {}
+        },
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "position": [
+          -2944,
+          704
+        ],
+        "id": "7102ba41-e434-4a78-9f0b-9f5ac5ff026f",
+        "name": "Ticket_Closure_Trigger",
+        "webhookId": "579adbd3-0eeb-4a70-a45a-3a469328eece"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            },
+            "conditions": [
+              {
+                "id": "f4f5d78a-3e02-4677-9e49-524e5248b4ce",
+                "leftValue": "={{ $json.body.detail.status }}",
+                "rightValue": "SOLVED",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals",
+                  "name": "filter.operator.equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          -2720,
+          704
+        ],
+        "id": "f0d98d80-bc7b-44ca-a18f-6c31536a2a9d",
+        "name": "If"
+      },
+      {
+        "id": "cb0cf46d-5665-4c94-807f-d0a0475841ca",
+        "name": "Get Ticket Snapshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -2496,
+          704
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}.json"
+        },
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
+      },
+      {
+        "id": "11c38549-2f87-496e-87bb-7a2385fc7ff9",
+        "name": "Get All Comments",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -2272,
+          704
+        ],
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "pagination": {
+              "pagination": {
+                "completeExpression": "={{ $response.body.next_page === null || $response.body.next_page === undefined }}",
+                "nextURL": "={{ $response.body.next_page }}",
+                "paginationCompleteWhen": "other",
+                "paginationMode": "responseContainsNextURL"
+              }
+            },
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "per_page",
+                "value": "100"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}/comments.json"
+        },
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        }
+      },
+      {
+        "id": "524c9ee5-2fb9-4a38-8fcf-b3423c08eca0",
+        "name": "Validate Snapshot Completeness",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -2048,
+          704
+        ],
+        "parameters": {
+          "jsCode": "const ticketResponse = $('Get Ticket Snapshot').first().json;\nconst ticket = ticketResponse && ticketResponse.ticket;\nif (!ticket || !ticket.id) { throw new Error('Ticket snapshot missing or malformed'); }\nconst pages = $input.all().map(item => item.json).filter(body => body && Array.isArray(body.comments));\nif (pages.length === 0) { throw new Error('No comment pages fetched'); }\nconst lastPage = pages[pages.length - 1];\nif (lastPage.next_page !== null && lastPage.next_page !== undefined) { throw new Error('Comment pagination incomplete: next_page still present'); }\nconst comments = pages.flatMap(body => body.comments);\nif (typeof ticket.comment_count === 'number' && comments.length < ticket.comment_count) { throw new Error('Comment pagination incomplete: got ' + comments.length + ', expected ' + ticket.comment_count); }\nreturn [{ json: { ticket, comments } }];"
+        }
+      },
+      {
+        "id": "e957ce1e-519f-4a4d-865c-2b97a415eb5f",
+        "name": "Build knowledge-source-v1",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1828,
+          704
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Stage 2 source-only (p2-194): build a knowledge-source-v1 snapshot.\n// Option A contract: idempotent identity = source_type + source_id +\n// source_updated_at; snapshot_hash travels in references as evidence.\nconst source = $input.first().json;\nconst ticket = source.ticket;\nconst comments = source.comments;\nif (!ticket || !ticket.id) { throw new Error('snapshot build: ticket missing'); }\nif (!Array.isArray(comments)) { throw new Error('snapshot build: comments missing'); }\nconst payload = {\n  ticket: ticket,\n  comments: comments,\n  comment_count: comments.length,\n  pagination_complete: true,\n};\nconst canonical = JSON.stringify(payload);\nfunction sha256Hex(message) {\n  const K = '428a2f98 71374491 b5c0fbcf e9b5dba5 3956c25b 59f111f1 923f82a4 ab1c5ed5 d807aa98 12835b01 243185be 550c7dc3 72be5d74 80deb1fe 9bdc06a7 c19bf174 e49b69c1 efbe4786 0fc19dc6 240ca1cc 2de92c6f 4a7484aa 5cb0a9dc 76f988da 983e5152 a831c66d b00327c8 bf597fc7 c6e00bf3 d5a79147 06ca6351 14292967 27b70a85 2e1b2138 4d2c6dfc 53380d13 650a7354 766a0abb 81c2c92e 92722c85 a2bfe8a1 a81a664b c24b8b70 c76c51a3 d192e819 d6990624 f40e3585 106aa070 19a4c116 1e376c08 2748774c 34b0bcb5 391c0cb3 4ed8aa4a 5b9cca4f 682e6ff3 748f82ee 78a5636f 84c87814 8cc70208 90befffa a4506ceb bef9a3f7 c67178f2'.split(' ').map(value => parseInt(value, 16));\n  const bytes = new TextEncoder().encode(message);\n  const bitLength = bytes.length * 8;\n  const blockLength = Math.ceil((bytes.length + 9) / 64) * 64;\n  const data = new Uint8Array(blockLength);\n  data.set(bytes);\n  data[bytes.length] = 0x80;\n  const high = Math.floor(bitLength / 0x100000000);\n  const low = bitLength >>> 0;\n  data[blockLength - 8] = high >>> 24;\n  data[blockLength - 7] = high >>> 16;\n  data[blockLength - 6] = high >>> 8;\n  data[blockLength - 5] = high;\n  data[blockLength - 4] = low >>> 24;\n  data[blockLength - 3] = low >>> 16;\n  data[blockLength - 2] = low >>> 8;\n  data[blockLength - 1] = low;\n  let h0 = 0x6a09e667;\n  let h1 = 0xbb67ae85;\n  let h2 = 0x3c6ef372;\n  let h3 = 0xa54ff53a;\n  let h4 = 0x510e527f;\n  let h5 = 0x9b05688c;\n  let h6 = 0x1f83d9ab;\n  let h7 = 0x5be0cd19;\n  const rotr = (value, bits) => (value >>> bits) | (value << (32 - bits));\n  for (let offset = 0; offset < blockLength; offset += 64) {\n    const words = new Uint32Array(64);\n    for (let index = 0; index < 16; index += 1) {\n      const position = offset + index * 4;\n      words[index] = ((data[position] << 24) | (data[position + 1] << 16) | (data[position + 2] << 8) | data[position + 3]) >>> 0;\n    }\n    for (let index = 16; index < 64; index += 1) {\n      const previous15 = words[index - 15];\n      const previous2 = words[index - 2];\n      const sigma0 = (rotr(previous15, 7) ^ rotr(previous15, 18) ^ (previous15 >>> 3)) >>> 0;\n      const sigma1 = (rotr(previous2, 17) ^ rotr(previous2, 19) ^ (previous2 >>> 10)) >>> 0;\n      words[index] = (words[index - 16] + sigma0 + words[index - 7] + sigma1) >>> 0;\n    }\n    let a = h0;\n    let b = h1;\n    let c = h2;\n    let d = h3;\n    let e = h4;\n    let f = h5;\n    let g = h6;\n    let h = h7;\n    for (let index = 0; index < 64; index += 1) {\n      const sigma1 = (rotr(e, 6) ^ rotr(e, 11) ^ rotr(e, 25)) >>> 0;\n      const choose = ((e & f) ^ (~e & g)) >>> 0;\n      const temp1 = (h + sigma1 + choose + K[index] + words[index]) >>> 0;\n      const sigma0 = (rotr(a, 2) ^ rotr(a, 13) ^ rotr(a, 22)) >>> 0;\n      const majority = ((a & b) ^ (a & c) ^ (b & c)) >>> 0;\n      const temp2 = (sigma0 + majority) >>> 0;\n      h = g;\n      g = f;\n      f = e;\n      e = (d + temp1) >>> 0;\n      d = c;\n      c = b;\n      b = a;\n      a = (temp1 + temp2) >>> 0;\n    }\n    h0 = (h0 + a) >>> 0;\n    h1 = (h1 + b) >>> 0;\n    h2 = (h2 + c) >>> 0;\n    h3 = (h3 + d) >>> 0;\n    h4 = (h4 + e) >>> 0;\n    h5 = (h5 + f) >>> 0;\n    h6 = (h6 + g) >>> 0;\n    h7 = (h7 + h) >>> 0;\n  }\n  return [h0, h1, h2, h3, h4, h5, h6, h7].map(value => value.toString(16).padStart(8, '0')).join('');\n}\nconst snapshot_hash = sha256Hex(canonical);\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'zendesk_ticket',\n  source_id: String(ticket.id),\n  source_updated_at: String(ticket.updated_at || ticket.created_at || ''),\n  payload: payload,\n  references: {\n    snapshot_hash: snapshot_hash,\n    snapshot_builder: 'n8n-solved-source-only',\n    captured_fields: 'ticket,comments'\n  }\n}}];"
+        }
+      },
+      {
+        "id": "3a4be35e-d5b3-4e42-9f4e-c3a836910b05",
+        "name": "Deliver Source Snapshot",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          -1608,
+          704
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 5000,
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          },
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        }
+      },
+      {
+        "id": "4a4aae51-bac7-4718-99a9-68a314487dbb",
+        "name": "Verify Receipt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          -1388,
+          704
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "// Stage 2 source-only (p2-194): three-state receipt gate. Only accepted /\n// already_exists / stale_ignored with a non-empty task_id pass; anything else\n// throws so the workflow error path (ops alert) fires.\nconst body = $input.first().json;\nconst status = body ? body.status : null;\nconst taskId = body ? body.task_id : null;\nconst allowed = ['accepted', 'already_exists', 'stale_ignored'];\nif (!allowed.includes(status)) {\n  throw new Error('receipt check: unexpected status ' + JSON.stringify(status));\n}\nif (!taskId || !String(taskId).trim()) {\n  throw new Error('receipt check: empty task_id');\n}\nreturn [{ json: { delivered: true, status: String(status), task_id: String(taskId) } }];"
+        }
+      }
+    ],
+    "connections": {
+      "Ticket_Closure_Trigger": {
+        "main": [
+          [
+            {
+              "node": "If",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Ticket Snapshot": {
+        "main": [
+          [
+            {
+              "node": "Get All Comments",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get All Comments": {
+        "main": [
+          [
+            {
+              "node": "Validate Snapshot Completeness",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [
+            {
+              "node": "Get Ticket Snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Snapshot Completeness": {
+        "main": [
+          [
+            {
+              "node": "Build knowledge-source-v1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build knowledge-source-v1": {
+        "main": [
+          [
+            {
+              "node": "Deliver Source Snapshot",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Deliver Source Snapshot": {
+        "main": [
+          [
+            {
+              "node": "Verify Receipt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "timezone": "Asia/Shanghai",
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "timeSavedMode": "fixed",
+      "availableInMCP": true,
+      "executionOrder": "v1"
+    },
+    "nodeGroups": [],
+    "tags": [],
+    "versionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+    "activeVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345"
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "redactedValues": [],
+    "credentials": "Credential references retained; redacted literals must be rebound from live credential stores before restore."
+  }
+}

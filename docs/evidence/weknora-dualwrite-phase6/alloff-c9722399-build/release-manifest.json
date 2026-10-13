@@ -1,0 +1,37 @@
+{
+  "artifact_kind": "registry",
+  "build_time": "2026-10-13T11:38:28Z",
+  "components": {
+    "api": {
+      "digest": "sha256:fe28b7ae5c6258a046cb594d6007a6a8cd7870c90f879aed6cfba3a9f264df85",
+      "platform": "linux/amd64",
+      "role": "api",
+      "tag": "api-r20261013-c972239-stage6-alloff"
+    },
+    "route": {
+      "digest": "sha256:45cce9cba7fa2cf11be5c04ba607a2c180cf45d14e3c8d04c211c900abdf764a",
+      "platform": "linux/amd64",
+      "role": "route",
+      "tag": "route-r20261013-c972239-stage6-alloff"
+    },
+    "worker": {
+      "digest": "sha256:5a69d5413db340ee6b958e125e9d3fc918f61737d54d446203bf595391ad20c0",
+      "platform": "linux/amd64",
+      "role": "worker",
+      "tag": "worker-r20261013-c972239-stage6-alloff"
+    }
+  },
+  "contracts": {
+    "execution": "automation-execution-v1",
+    "heartbeat": "automation-heartbeat-v1",
+    "intake": "automation-intake-v1",
+    "processing": "automation-processing-v1",
+    "route": "automation-route-v1"
+  },
+  "git_commit": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "platform": "linux/amd64",
+  "prompt_release_id": "pr-78386473bd08",
+  "release_id": "r20261013-c972239-stage6-alloff",
+  "schema_revision": "automation-ecs-015",
+  "schema_version": "automation-release-v2"
+}
