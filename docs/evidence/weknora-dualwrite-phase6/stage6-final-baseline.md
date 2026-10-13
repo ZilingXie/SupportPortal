@@ -116,3 +116,15 @@
 - 任务创建机制确认：allowlist 挡任务创建（受执时评估）；**重投=重试触发器**（queue_standalone_summary_for_source R25 合同）——层 2 加 allowlist 后对选定快照受控重投即建任务。
 
 层 2 待自然到达来源：CSD 链下次自然扫描 2026-10-13 12:00 北京（04:00 UTC）经 source-only active 链投递（JQL 窗口内 RESOLVED CSD）；Solved 链随真实工单关闭 webhook 触发。到达来源在 R1 态=202 受执+零任务（allowlist 空），从中选定 1–2 个可唯一追踪来源进层 2 的 allowlist，受控重投后走全链。
+
+## CSD 自然首跑暴露的链缺陷与修复（2026-10-13 04:00 UTC）
+
+CSD 链首次真实执行（execution 191877）逐步暴露三个阶段二作者期缺陷（此前均为 waiting-for-evidence 状态）：
+
+| # | 缺陷 | 修复 | 版本 |
+|---|---|---|---|
+| D1 | Build 节点 `crypto.createHash` 在 n8n JS task-runner 沙箱无 `crypto` 全局（ReferenceError） | 嵌入纯 JS SHA-256（本地对 node:crypto 六向量验证含 unicode/emoji/100KB），语义不变 | CSD/Solved 已发布 |
+| D2 | 投递 URL 钉旧域名 `support.stellarix.space`（nginx 410 Gone） | 两链 Deliver 节点改 `supportcenter.stellarix.space/.../knowledge/sources`（与探针实证一致） | CSD 85bbcb0c / Solved f665df09 |
+| D3 | n8n 凭据 `preprodcution`（id wk9Nn0OELBE6MOb7）的 intake token 无效（SP 401 invalid intake token；SSM token 从未轮转过 v1，凭据系作者期即错） | **未修复——阻断在 n8n owner 侧**：需在 n8n UI 更新凭据（Header Auth：Name=Authorization，Value=Bearer <SSM automation-intake-shared-token 现值>）或提供 n8n API key。Public API（X-N8N-API-KEY）与内部 REST 及浏览器会话（无登录）三条自动路径均已试不通 | 待用户 |
+
+修复后验证：D1+D2 修复实弹执行推进到投递节点（execution 191883：JQL 21 条→逐条详情→完整性门→快照（哈希 93f998cc…64 位正确）→投递 401=D3）。快照已按新版本刷新（validator 通过 15+4+56，URL allowlist 更新至正确主机并注释原因）。凭据修复后：受控重跑 CSD 即完成自然到达投递（21 条 RESOLVED CSD 满足 JQL 窗口），层 2 样本从中选定。

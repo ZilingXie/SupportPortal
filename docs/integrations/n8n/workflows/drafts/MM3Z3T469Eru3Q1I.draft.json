@@ -1,302 +1,304 @@
 {
- "capturedAt": "2026-10-10T00:00:00Z",
- "restoreNotes": {
-  "note": "source-only draft (p2-194 stage 2); NOT published; active version unchanged",
-  "redactedValues": []
- },
- "schemaVersion": 1,
- "source": {
-  "snapshotKind": "draft",
-  "sourceOnly": true,
-  "updatedAt": "2026-10-10T10:44:22.001Z",
-  "versionId": "6a262f9a-c6bc-4173-88a3-c96d60025a6f",
-  "workflowId": "MM3Z3T469Eru3Q1I",
-  "workflowName": "[kb]Build|Solved Cases"
- },
- "workflow": {
-  "connections": {
-   "Build knowledge-source-v1": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Deliver Source Snapshot",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "Deliver Source Snapshot": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Verify Receipt",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "Get All Comments": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Validate Snapshot Completeness",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "Get Ticket Snapshot": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Get All Comments",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "If": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Get Ticket Snapshot",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "Ticket_Closure_Trigger": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "If",
-       "type": "main"
-      }
-     ]
-    ]
-   },
-   "Validate Snapshot Completeness": {
-    "main": [
-     [
-      {
-       "index": 0,
-       "node": "Build knowledge-source-v1",
-       "type": "main"
-      }
-     ]
-    ]
-   }
+  "capturedAt": "2026-10-10T00:00:00Z",
+  "restoreNotes": {
+    "note": "source-only draft (p2-194 stage 2); NOT published; active version unchanged",
+    "redactedValues": []
   },
-  "name": "[kb]Build|Solved Cases",
-  "nodes": [
-   {
-    "id": "7102ba41-e434-4a78-9f0b-9f5ac5ff026f",
-    "name": "Ticket_Closure_Trigger",
-    "parameters": {
-     "httpMethod": "POST",
-     "options": {},
-     "path": "579adbd3-0eeb-4a70-a45a-3a469328eece"
-    },
-    "position": [
-     -2944,
-     704
-    ],
-    "type": "n8n-nodes-base.webhook",
-    "typeVersion": 2.1,
-    "webhookId": "579adbd3-0eeb-4a70-a45a-3a469328eece"
-   },
-   {
-    "id": "f0d98d80-bc7b-44ca-a18f-6c31536a2a9d",
-    "name": "If",
-    "parameters": {
-     "conditions": {
-      "combinator": "and",
-      "conditions": [
-       {
-        "id": "f4f5d78a-3e02-4677-9e49-524e5248b4ce",
-        "leftValue": "={{ $json.body.detail.status }}",
-        "operator": {
-         "name": "filter.operator.equals",
-         "operation": "equals",
-         "type": "string"
-        },
-        "rightValue": "SOLVED"
-       }
-      ],
-      "options": {
-       "caseSensitive": true,
-       "leftValue": "",
-       "typeValidation": "strict",
-       "version": 2
-      }
-     },
-     "options": {}
-    },
-    "position": [
-     -2720,
-     704
-    ],
-    "type": "n8n-nodes-base.if",
-    "typeVersion": 2.2
-   },
-   {
-    "credentials": {
-     "zendeskApi": {
-      "id": "f85Z4a0savbF0l5r",
-      "name": "Zendesk account 3"
-     }
-    },
-    "id": "cb0cf46d-5665-4c94-807f-d0a0475841ca",
-    "name": "Get Ticket Snapshot",
-    "parameters": {
-     "authentication": "predefinedCredentialType",
-     "method": "GET",
-     "nodeCredentialType": "zendeskApi",
-     "options": {
-      "redirect": {
-       "redirect": {}
-      }
-     },
-     "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}.json"
-    },
-    "position": [
-     -2496,
-     704
-    ],
-    "type": "n8n-nodes-base.httpRequest",
-    "typeVersion": 4.2
-   },
-   {
-    "credentials": {
-     "zendeskApi": {
-      "id": "f85Z4a0savbF0l5r",
-      "name": "Zendesk account 3"
-     }
-    },
-    "id": "11c38549-2f87-496e-87bb-7a2385fc7ff9",
-    "name": "Get All Comments",
-    "parameters": {
-     "authentication": "predefinedCredentialType",
-     "method": "GET",
-     "nodeCredentialType": "zendeskApi",
-     "options": {
-      "pagination": {
-       "pagination": {
-        "completeExpression": "={{ $response.body.next_page === null || $response.body.next_page === undefined }}",
-        "nextURL": "={{ $response.body.next_page }}",
-        "paginationCompleteWhen": "other",
-        "paginationMode": "responseContainsNextURL"
-       }
+  "schemaVersion": 1,
+  "source": {
+    "snapshotKind": "draft",
+    "sourceOnly": true,
+    "updatedAt": "2026-10-10T10:44:22.001Z",
+    "versionId": "6a262f9a-c6bc-4173-88a3-c96d60025a6f",
+    "workflowId": "MM3Z3T469Eru3Q1I",
+    "workflowName": "[kb]Build|Solved Cases"
+  },
+  "workflow": {
+    "connections": {
+      "Build knowledge-source-v1": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Deliver Source Snapshot",
+              "type": "main"
+            }
+          ]
+        ]
       },
-      "redirect": {
-       "redirect": {}
+      "Deliver Source Snapshot": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Verify Receipt",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Get All Comments": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Validate Snapshot Completeness",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Get Ticket Snapshot": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Get All Comments",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "If": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Get Ticket Snapshot",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Ticket_Closure_Trigger": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "If",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Validate Snapshot Completeness": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Build knowledge-source-v1",
+              "type": "main"
+            }
+          ]
+        ]
       }
-     },
-     "queryParameters": {
-      "parameters": [
-       {
-        "name": "per_page",
-        "value": "100"
-       }
-      ]
-     },
-     "sendQuery": true,
-     "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}/comments.json"
     },
-    "position": [
-     -2272,
-     704
+    "name": "[kb]Build|Solved Cases",
+    "nodes": [
+      {
+        "id": "7102ba41-e434-4a78-9f0b-9f5ac5ff026f",
+        "name": "Ticket_Closure_Trigger",
+        "parameters": {
+          "httpMethod": "POST",
+          "options": {},
+          "path": "579adbd3-0eeb-4a70-a45a-3a469328eece"
+        },
+        "position": [
+          -2944,
+          704
+        ],
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.1,
+        "webhookId": "579adbd3-0eeb-4a70-a45a-3a469328eece"
+      },
+      {
+        "id": "f0d98d80-bc7b-44ca-a18f-6c31536a2a9d",
+        "name": "If",
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "f4f5d78a-3e02-4677-9e49-524e5248b4ce",
+                "leftValue": "={{ $json.body.detail.status }}",
+                "operator": {
+                  "name": "filter.operator.equals",
+                  "operation": "equals",
+                  "type": "string"
+                },
+                "rightValue": "SOLVED"
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 2
+            }
+          },
+          "options": {}
+        },
+        "position": [
+          -2720,
+          704
+        ],
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2
+      },
+      {
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        },
+        "id": "cb0cf46d-5665-4c94-807f-d0a0475841ca",
+        "name": "Get Ticket Snapshot",
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}.json"
+        },
+        "position": [
+          -2496,
+          704
+        ],
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2
+      },
+      {
+        "credentials": {
+          "zendeskApi": {
+            "id": "f85Z4a0savbF0l5r",
+            "name": "Zendesk account 3"
+          }
+        },
+        "id": "11c38549-2f87-496e-87bb-7a2385fc7ff9",
+        "name": "Get All Comments",
+        "parameters": {
+          "authentication": "predefinedCredentialType",
+          "method": "GET",
+          "nodeCredentialType": "zendeskApi",
+          "options": {
+            "pagination": {
+              "pagination": {
+                "completeExpression": "={{ $response.body.next_page === null || $response.body.next_page === undefined }}",
+                "nextURL": "={{ $response.body.next_page }}",
+                "paginationCompleteWhen": "other",
+                "paginationMode": "responseContainsNextURL"
+              }
+            },
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "per_page",
+                "value": "100"
+              }
+            ]
+          },
+          "sendQuery": true,
+          "url": "=https://agoraio.zendesk.com/api/v2/tickets/{{ $('Ticket_Closure_Trigger').item.json.body.detail.id }}/comments.json"
+        },
+        "position": [
+          -2272,
+          704
+        ],
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2
+      },
+      {
+        "id": "524c9ee5-2fb9-4a38-8fcf-b3423c08eca0",
+        "name": "Validate Snapshot Completeness",
+        "parameters": {
+          "jsCode": "const ticketResponse = $('Get Ticket Snapshot').first().json;\nconst ticket = ticketResponse && ticketResponse.ticket;\nif (!ticket || !ticket.id) { throw new Error('Ticket snapshot missing or malformed'); }\nconst pages = $input.all().map(item => item.json).filter(body => body && Array.isArray(body.comments));\nif (pages.length === 0) { throw new Error('No comment pages fetched'); }\nconst lastPage = pages[pages.length - 1];\nif (lastPage.next_page !== null && lastPage.next_page !== undefined) { throw new Error('Comment pagination incomplete: next_page still present'); }\nconst comments = pages.flatMap(body => body.comments);\nif (typeof ticket.comment_count === 'number' && comments.length < ticket.comment_count) { throw new Error('Comment pagination incomplete: got ' + comments.length + ', expected ' + ticket.comment_count); }\nreturn [{ json: { ticket, comments } }];"
+        },
+        "position": [
+          -2048,
+          704
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "e957ce1e-519f-4a4d-865c-2b97a415eb5f",
+        "name": "Build knowledge-source-v1",
+        "parameters": {
+          "jsCode": "// sandbox-safe SHA-256: the JS task runner exposes no `crypto` global\n// (verified against node:crypto on 2026-10-13 before deployment).\nfunction sha256Hex(input) {\n  if (typeof input !== 'string') { throw new Error('sha256: string input required'); }\n  const enc = [];\n  for (let i = 0; i < input.length; i++) {\n    let c = input.codePointAt(i);\n    if (c > 0xffff) i++;\n    if (c < 0x80) enc.push(c);\n    else if (c < 0x800) enc.push(0xc0 | (c >> 6), 0x80 | (c & 63));\n    else if (c < 0x10000) enc.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n    else enc.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n  }\n  const bytes = Uint8Array.from(enc);\n  const K = [\n    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n  ];\n  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];\n  const l = bytes.length;\n  const bitLenHi = Math.floor(l / 0x20000000);\n  const bitLenLo = (l << 3) >>> 0;\n  const withOne = l + 1;\n  const totalLen = ((withOne + 63) >> 6) << 6;\n  const m = new Uint8Array(totalLen);\n  m.set(bytes);\n  m[l] = 0x80;\n  const dv = new DataView(m.buffer);\n  dv.setUint32(totalLen - 8, bitLenHi);\n  dv.setUint32(totalLen - 4, bitLenLo);\n  const w = new Int32Array(64);\n  const rr = (x, n) => (x >>> n) | (x << (32 - n));\n  for (let off = 0; off < totalLen; off += 64) {\n    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(off + i * 4);\n    for (let i = 16; i < 64; i++) {\n      const s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3);\n      const s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10);\n      w[i] = (w[i-16] + s0 + w[i-7] + s1) | 0;\n    }\n    let [a,b,c,d,e,f,g,h] = H;\n    for (let i = 0; i < 64; i++) {\n      const S1 = rr(e,6) ^ rr(e,11) ^ rr(e,25);\n      const ch = (e & f) ^ (~e & g);\n      const t1 = (h + S1 + ch + K[i] + w[i]) | 0;\n      const S0 = rr(a,2) ^ rr(a,13) ^ rr(a,22);\n      const mj = (a & b) ^ (a & c) ^ (b & c);\n      const t2 = (S0 + mj) | 0;\n      h=g; g=f; f=e; e=(d+t1)|0; d=c; c=b; b=a; a=(t1+t2)|0;\n    }\n    H[0]=(H[0]+a)|0; H[1]=(H[1]+b)|0; H[2]=(H[2]+c)|0; H[3]=(H[3]+d)|0;\n    H[4]=(H[4]+e)|0; H[5]=(H[5]+f)|0; H[6]=(H[6]+g)|0; H[7]=(H[7]+h)|0;\n  }\n    return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');\n}\n\n// Stage 2 source-only (p2-194): build a knowledge-source-v1 snapshot.\n// Option A contract: idempotent identity = source_type + source_id +\n// source_updated_at; snapshot_hash travels in references as evidence.\nconst source = $input.first().json;\nconst ticket = source.ticket;\nconst comments = source.comments;\nif (!ticket || !ticket.id) { throw new Error('snapshot build: ticket missing'); }\nif (!Array.isArray(comments)) { throw new Error('snapshot build: comments missing'); }\nconst payload = {\n  ticket: ticket,\n  comments: comments,\n  comment_count: comments.length,\n  pagination_complete: true,\n};\nconst canonical = JSON.stringify(payload);\nconst snapshot_hash = sha256Hex(canonical);\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'zendesk_ticket',\n  source_id: String(ticket.id),\n  source_updated_at: String(ticket.updated_at || ticket.created_at || ''),\n  payload: payload,\n  references: {\n    snapshot_hash: snapshot_hash,\n    snapshot_builder: 'n8n-solved-source-only',\n    captured_fields: 'ticket,comments'\n  }\n}}];",
+          "mode": "runOnceForAllItems"
+        },
+        "position": [
+          -1828,
+          704
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        },
+        "id": "3a4be35e-d5b3-4e42-9f4e-c3a836910b05",
+        "maxTries": 3,
+        "name": "Deliver Source Snapshot",
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "method": "POST",
+          "options": {
+            "timeout": 30000
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources"
+        },
+        "position": [
+          -1608,
+          704
+        ],
+        "retryOnFail": true,
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "4a4aae51-bac7-4718-99a9-68a314487dbb",
+        "name": "Verify Receipt",
+        "parameters": {
+          "jsCode": "// Stage 2 source-only (p2-194): three-state receipt gate. Only accepted /\n// already_exists / stale_ignored with a non-empty task_id pass; anything else\n// throws so the workflow error path (ops alert) fires.\nconst body = $input.first().json;\nconst status = body ? body.status : null;\nconst taskId = body ? body.task_id : null;\nconst allowed = ['accepted', 'already_exists', 'stale_ignored'];\nif (!allowed.includes(status)) {\n  throw new Error('receipt check: unexpected status ' + JSON.stringify(status));\n}\nif (!taskId || !String(taskId).trim()) {\n  throw new Error('receipt check: empty task_id');\n}\nreturn [{ json: { delivered: true, status: String(status), task_id: String(taskId) } }];",
+          "mode": "runOnceForAllItems"
+        },
+        "position": [
+          -1388,
+          704
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      }
     ],
-    "type": "n8n-nodes-base.httpRequest",
-    "typeVersion": 4.2
-   },
-   {
-    "id": "524c9ee5-2fb9-4a38-8fcf-b3423c08eca0",
-    "name": "Validate Snapshot Completeness",
-    "parameters": {
-     "jsCode": "const ticketResponse = $('Get Ticket Snapshot').first().json;\nconst ticket = ticketResponse && ticketResponse.ticket;\nif (!ticket || !ticket.id) { throw new Error('Ticket snapshot missing or malformed'); }\nconst pages = $input.all().map(item => item.json).filter(body => body && Array.isArray(body.comments));\nif (pages.length === 0) { throw new Error('No comment pages fetched'); }\nconst lastPage = pages[pages.length - 1];\nif (lastPage.next_page !== null && lastPage.next_page !== undefined) { throw new Error('Comment pagination incomplete: next_page still present'); }\nconst comments = pages.flatMap(body => body.comments);\nif (typeof ticket.comment_count === 'number' && comments.length < ticket.comment_count) { throw new Error('Comment pagination incomplete: got ' + comments.length + ', expected ' + ticket.comment_count); }\nreturn [{ json: { ticket, comments } }];"
+    "settings": {
+      "availableInMCP": true,
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "executionOrder": "v1",
+      "timeSavedMode": "fixed",
+      "timezone": "Asia/Shanghai"
     },
-    "position": [
-     -2048,
-     704
-    ],
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2
-   },
-   {
-    "id": "e957ce1e-519f-4a4d-865c-2b97a415eb5f",
-    "name": "Build knowledge-source-v1",
-    "parameters": {
-     "jsCode": "// Stage 2 source-only (p2-194): build a knowledge-source-v1 snapshot.\n// Option A contract: idempotent identity = source_type + source_id +\n// source_updated_at; snapshot_hash travels in references as evidence.\nconst source = $input.first().json;\nconst ticket = source.ticket;\nconst comments = source.comments;\nif (!ticket || !ticket.id) { throw new Error('snapshot build: ticket missing'); }\nif (!Array.isArray(comments)) { throw new Error('snapshot build: comments missing'); }\nconst payload = {\n  ticket: ticket,\n  comments: comments,\n  comment_count: comments.length,\n  pagination_complete: true,\n};\nconst canonical = JSON.stringify(payload);\nconst snapshot_hash = crypto.createHash('sha256').update(canonical).digest('hex');\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'zendesk_ticket',\n  source_id: String(ticket.id),\n  source_updated_at: String(ticket.updated_at || ticket.created_at || ''),\n  payload: payload,\n  references: {\n    snapshot_hash: snapshot_hash,\n    snapshot_builder: 'n8n-solved-source-only',\n    captured_fields: 'ticket,comments'\n  }\n}}];",
-     "mode": "runOnceForAllItems"
-    },
-    "position": [
-     -1828,
-     704
-    ],
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2
-   },
-   {
-    "credentials": {
-     "httpHeaderAuth": {
-      "id": "wk9Nn0OELBE6MOb7",
-      "name": "preprodcution"
-     }
-    },
-    "id": "3a4be35e-d5b3-4e42-9f4e-c3a836910b05",
-    "maxTries": 3,
-    "name": "Deliver Source Snapshot",
-    "parameters": {
-     "authentication": "genericCredentialType",
-     "genericAuthType": "httpHeaderAuth",
-     "jsonBody": "={{ JSON.stringify($json) }}",
-     "method": "POST",
-     "options": {
-      "timeout": 30000
-     },
-     "sendBody": true,
-     "specifyBody": "json",
-     "url": "https://support.stellarix.space/automation/preproduction/v1/knowledge/sources"
-    },
-    "position": [
-     -1608,
-     704
-    ],
-    "retryOnFail": true,
-    "type": "n8n-nodes-base.httpRequest",
-    "typeVersion": 4.2,
-    "waitBetweenTries": 5000
-   },
-   {
-    "id": "4a4aae51-bac7-4718-99a9-68a314487dbb",
-    "name": "Verify Receipt",
-    "parameters": {
-     "jsCode": "// Stage 2 source-only (p2-194): three-state receipt gate. Only accepted /\n// already_exists / stale_ignored with a non-empty task_id pass; anything else\n// throws so the workflow error path (ops alert) fires.\nconst body = $input.first().json;\nconst status = body ? body.status : null;\nconst taskId = body ? body.task_id : null;\nconst allowed = ['accepted', 'already_exists', 'stale_ignored'];\nif (!allowed.includes(status)) {\n  throw new Error('receipt check: unexpected status ' + JSON.stringify(status));\n}\nif (!taskId || !String(taskId).trim()) {\n  throw new Error('receipt check: empty task_id');\n}\nreturn [{ json: { delivered: true, status: String(status), task_id: String(taskId) } }];",
-     "mode": "runOnceForAllItems"
-    },
-    "position": [
-     -1388,
-     704
-    ],
-    "type": "n8n-nodes-base.code",
-    "typeVersion": 2
-   }
-  ],
-  "settings": {
-   "availableInMCP": true,
-   "binaryMode": "separate",
-   "callerPolicy": "workflowsFromSameOwner",
-   "errorWorkflow": "dV5vNA6l1MbDMHZt",
-   "executionOrder": "v1",
-   "timeSavedMode": "fixed",
-   "timezone": "Asia/Shanghai"
+    "versionId": "f665df09-9d90-4c1a-9a3b-524b3b0a3f18",
+    "activeVersionId": "f665df09-9d90-4c1a-9a3b-524b3b0a3f18"
   }
- }
 }

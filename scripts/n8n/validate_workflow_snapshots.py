@@ -65,8 +65,11 @@ SOURCE_ONLY_URL_ALLOW = (
     re.compile(r"^https://agoraio\.zendesk\.com/api/v2/"),
     re.compile(r"^https://jira\.agoralab\.co/"),
     re.compile(r"^https://oauth\.agoralab\.co/"),
+    # The live Preproduction API host. The chains were originally authored
+    # against support.stellarix.space, which answers nginx 410 Gone for this
+    # path (fixed 2026-10-13, p2-197 stage 6).
     re.compile(
-        r"^https://support\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"
+        r"^https://supportcenter\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"
     ),
 )
 DIRECT_WRITE_URL_PATTERNS = (
