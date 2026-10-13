@@ -683,6 +683,7 @@ class HermesAgentTurnProcessor:
                             payload,
                             account_case_for_park,
                             reason_code=park_reason,
+                            failed_phase="persona_publication",
                             detail=(
                                 "The work phase produced a business result that is "
                                 "not a publishable conclusion "
@@ -716,7 +717,7 @@ class HermesAgentTurnProcessor:
                 phase == HermesTurnPhase.WORK
                 and outcome == _PHASE_COMPLETED
                 and str(refreshed.get("turn_kind") or "normal")
-                in {"normal", "investigation_feedback"}
+                in {"normal", "fixed_task", "investigation_feedback"}
                 and str(refreshed.get("direction") or "") == "investigation"
             ):
                 # Human gate: the investigation result must be reviewed (Slack
@@ -1141,6 +1142,7 @@ class HermesAgentTurnProcessor:
                     reason_code="followup_reply_work_failed",
                     detail="The reply-only work phase raised before any reply basis was recorded.",
                     notification="failure",
+                    failed_phase="work",
                 )
             try:
                 self.store.record_hermes_turn_work(
@@ -1469,6 +1471,16 @@ class HermesAgentTurnProcessor:
             detail=(
                 "Zendesk ownership gate failed: "
                 f"{ownership_result.failure_detail or ownership_result.failure_code}"
+            ),
+            # C7: the ownership gate failure is its own phase — the alert
+            # must carry the real gate failure code, never <unknown>.
+            failed_phase="ownership_gate",
+            run_id=str(turn.get("run_id") or "").strip() or "not_started",
+            failure_reason=(
+                str(ownership_result.failure_detail
+                    or ownership_result.failure_code
+                    or "")
+                or None
             ),
         )
         return False

@@ -519,6 +519,11 @@ def queue_hermes_draft_delivery(
     compatibility_job_id = str((draft.get("basis") or {}).get("compatibility_account_reply_job_id") or "").strip()
     if compatibility_job_id:
         delivery_attachments.append({"_hermes_compatibility_job_id": compatibility_job_id})
+    relay_required_flag = (draft.get("basis") or {}).get("compatibility_relay_required")
+    if relay_required_flag is not None:
+        delivery_attachments.append(
+            {"_hermes_compatibility_relay_required": bool(relay_required_flag)}
+        )
     repository.create_account_zendesk_comment_delivery(
         account_case_id=account_case_id,
         message_id=draft_id,

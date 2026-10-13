@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T03:10:01Z",
-  "source_base_commit": "fd77fb832b272f77c671b0d077071fdf1bcad275",
-  "registry_digest": "e8f73d1480e0a5728f4ae15ea91826cfc4729fa052fcffe469aaef7c2516616d",
+  "generated_at": "2026-10-13T09:43:01Z",
+  "source_base_commit": "dbcae60a1144e7bec3189d48df36cec6995027c5",
+  "registry_digest": "a3c9e1757385e7f7aa6be6c3cea07fd99c87d68cffc47661eb0d3666cef84497",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1601,6 +1601,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
+        },
+        {
+          "type": "test",
+          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
+          "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(9)+style 27+相关回归 163+worker 153(14 存量)+PG 17；离线 v6 评估 7/7（/tmp/natural_persona_results.json）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
+        {
+          "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
           "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py -q",
           "result": "206 passed"
@@ -1628,6 +1652,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Project registry and diff checks",
           "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
           "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
+        },
+        {
+          "type": "test",
+          "label": "fixed_task审核与发布防回退",
+          "result": "隔离PostgreSQL p2199_native_review_test：fixed_task review、agent、route、pipeline、deploy定向回归249 passed；旧行为反向验证在Persona提交断言处失败。",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2199_native_review_test pytest backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py -q"
+        },
+        {
+          "type": "test",
+          "label": "正式Preproduction发布与独立回读",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "r20261013-ef52d04 complete；api145/route143/worker145 runtime digest逐一匹配；公网provenance一致；Route engine=hermes。"
+        },
+        {
+          "type": "test",
+          "label": "新票14031真实native首轮审核停车",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         },
         {
           "type": "test",
@@ -1736,8 +1778,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 46,
-      "done_count": 23,
+      "task_count": 47,
+      "done_count": 24,
       "blocked_count": 1
     },
     {
@@ -18179,9 +18221,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
-      "updated_at": "2026-10-12",
-      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
-      "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
+      "updated_at": "2026-10-13",
+      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
+      "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18192,9 +18234,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
       ],
       "blockers": [
-        "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
+        "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
+        },
+        {
+          "type": "test",
+          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
+          "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(9)+style 27+相关回归 163+worker 153(14 存量)+PG 17；离线 v6 评估 7/7（/tmp/natural_persona_results.json）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
         {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",
@@ -18224,6 +18290,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Project registry and diff checks",
           "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
           "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-199",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Preproduction native Hermes 配置恢复与发布防回退",
+      "status": "done",
+      "owner": "codex",
+      "created_at": "2026-10-13",
+      "updated_at": "2026-10-13",
+      "summary": "R2：fixed_task Investigation 接入调查审核与 Prepare draft；Preproduction 发布显式 engine、防未授权降级；保留其他配置，正式发布后新测试票停在人工审批前。",
+      "next_action": "本轮R2完成；新测试票14031保留在Slack调查审核，等待工程师检查并按Prepare draft。未执行客户发送或Production。",
+      "acceptance_criteria": [
+        "fixed_task Investigation Work 后停车，Persona 调用为0；Prepare draft唯一续接，revision与并发限制保留。",
+        "Preproduction遗漏engine或Hermes缺agent在构建前拒绝；未授权Hermes到legacy降级在pipeline和deploy均被拒绝。",
+        "checkpoint/preflight/evidence绑定明确engine与agent配置。",
+        "正式Preproduction完整发布门禁通过，运行engine=hermes；新票调查停在review，无客户投递。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "fixed_task审核与发布防回退",
+          "result": "隔离PostgreSQL p2199_native_review_test：fixed_task review、agent、route、pipeline、deploy定向回归249 passed；旧行为反向验证在Persona提交断言处失败。",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2199_native_review_test pytest backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py -q"
+        },
+        {
+          "type": "test",
+          "label": "正式Preproduction发布与独立回读",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "r20261013-ef52d04 complete；api145/route143/worker145 runtime digest逐一匹配；公网provenance一致；Route engine=hermes。"
+        },
+        {
+          "type": "test",
+          "label": "新票14031真实native首轮审核停车",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         }
       ]
     },

@@ -30,8 +30,20 @@ PREPRODUCTION_PROMPT_RELEASE_TARGET_DSN=<preproduction-migration-dsn> \
   --prompt-release-id <active-prompt-release-id> \
   --through preproduction \
   --hermes-case-workflow-mode disabled \
-  --hermes-persona-enabled
+  --hermes-persona-enabled \
+  --automation-case-engine hermes \
+  --hermes-agent-enabled
 ```
+
+### Preproduction Case engine 防回退（2026-10-13，p2-199）
+
+Preproduction 的 pipeline 和底层 deploy 均要求显式 `--automation-case-engine legacy|hermes`，遗漏时在发布工作开始前拒绝。`hermes` 必须同时传 `--hermes-agent-enabled`。Production 保留 legacy 默认与既有隔离门禁。
+
+pipeline 在构建前读取当前 Route task definition；底层 deploy 在观察当前定义后再次核验。当前 engine=hermes、目标=legacy 时拒绝降级。只有用户明确授权降级后，调用者才可设置 `AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED=1`；该变量不是自动授权，不能为通过门禁自行设置。模式和授权位绑定 checkpoint/preflight/evidence，resume 不得改变。
+
+恢复 native 时复刻当前有效 Prompt、模型、Enablement 和知识治理参数，只改变本任务批准的 engine。`HERMES_CASE_WORKFLOW_MODE` 是独立 typed workflow 配置，不能据其 disabled 判断 native 关闭。不要用旧 release 整体回滚覆盖其他任务配置。
+
+源码：[pipeline](../backend/scripts/automation_ecs_release_pipeline.py)、[deploy](../deployment/deploy_automation_ecs_release.sh)。验证：真实 CLI 缺项拒绝、构建前 mocked AWS 降级拒绝、transition CLI 授权/正常路径、隔离 PostgreSQL fixed-task 审核与并发续接回归。
 
 `--hermes-agent-enabled` 控制是否把 Hermes agent gateway 配置
 （SSM `hermes-agent-base-url` / `hermes-api-server-key`）挂到 task definition。

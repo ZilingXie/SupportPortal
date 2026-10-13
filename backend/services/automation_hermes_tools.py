@@ -1186,6 +1186,11 @@ async def tool_execute_automation_action(
                     "outcome": workflow_outcome,
                     "skip_persona": False,
                     "reply_owner": "hermes_persona",
+                    # C2: the relay workflow created a pending internal
+                    # email/relay release bound to this job — the worker
+                    # MUST validate the job before releasing (14009: only
+                    # real relay turns carry this flag).
+                    "compatibility_relay_required": True,
                     "compatibility_account_reply_job_id": compatibility_job_id,
                     "missing_fields": list(account_case.get("missing_fields") or []),
                     "collected_fields": dict(account_case.get("collected_fields") or {}),
@@ -1359,6 +1364,16 @@ async def tool_execute_automation_action(
         basis_from_work_result,
     )
     result["reply_owner"] = HERMES_REPLY_OWNER
+    if normalized_route == "enablement":
+        # C1: reaching the final result means no relay workflow completed in
+        # this turn (the workflow branch returns early with its own explicit
+        # True + job id) — no internal email or relay release is pending, so
+        # the server decision is False and the worker must not demand a
+        # compatibility job (14009 root cause: the worker guessed from the
+        # route name and wrongly released ownership for an ask turn).
+        result["compatibility_relay_required"] = bool(
+            result.get("compatibility_relay_required")
+        ) if result.get("compatibility_relay_required") is not None else False
     result["reply_basis"] = basis_from_work_result(
         turn=turn,
         work_result=result,
@@ -1971,7 +1986,7 @@ def resolve_awaiting_investigation_turn(
     for turn in review.get("turns") or []:
         result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
         if (
-            str(turn.get("turn_kind") or "") in {"normal", "investigation_feedback"}
+            str(turn.get("turn_kind") or "") in {"normal", "fixed_task", "investigation_feedback"}
             and str(turn.get("direction") or "") == "investigation"
             and str(turn.get("status") or "") == "completed"
             and str(result.get("status") or "") == "awaiting_investigation_review"
@@ -2012,7 +2027,7 @@ def continue_hermes_investigation(
         for turn in review.get("turns") or []:
             result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
             if (
-                str(turn.get("turn_kind") or "") in {"normal", "investigation_feedback"}
+                str(turn.get("turn_kind") or "") in {"normal", "fixed_task", "investigation_feedback"}
                 and str(result.get("status") or "") == "awaiting_investigation_review"
                 and result.get("continued_turn_id")
             ):
