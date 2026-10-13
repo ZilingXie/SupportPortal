@@ -242,12 +242,14 @@ def read_ticket_comment_audit(
     )
     solved_seen = _audit_contains_solved_change(audits)
     for audit in audits:
-        if attachments:
+        if not_before is not None or attachments:
             from datetime import datetime
             try:
-                if not not_before or datetime.fromisoformat(str(audit.get("created_at") or "").replace("Z", "+00:00")) < datetime.fromisoformat(str(not_before).replace("Z", "+00:00")):
+                audit_time = datetime.fromisoformat(str(audit.get("created_at") or "").replace("Z", "+00:00"))
+                delivery_time = datetime.fromisoformat(str(not_before or "").replace("Z", "+00:00"))
+                if audit_time.tzinfo is None or delivery_time.tzinfo is None or audit_time < delivery_time:
                     continue
-            except ValueError:
+            except (ValueError, TypeError, AttributeError):
                 continue
         events = audit.get("events") if isinstance(audit, dict) and isinstance(audit.get("events"), list) else []
         for event in reversed(events):

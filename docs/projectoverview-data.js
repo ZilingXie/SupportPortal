@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T09:04:32Z",
-  "source_base_commit": "1fc9d7a7d2674867093a1882eeb2f6455fbb9071",
-  "registry_digest": "951400cf50dd3fabb09a6214884fdb5ca858259282472c5ea308f9ff91b0ece2",
+  "generated_at": "2026-10-13T09:24:39Z",
+  "source_base_commit": "164859fe0d2200a563103810de6705916527f73b",
+  "registry_digest": "e1d6c6ec000e6b2d27d2ce15884ec411a86bddb34dd37c9eda2815e68a97dd4b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1598,6 +1598,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
+        },
+        {
+          "type": "test",
+          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
+          "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(9)+style 27+相关回归 163+worker 153(14 存量)+PG 17；离线 v6 评估 7/7（/tmp/natural_persona_results.json）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
         },
         {
           "type": "test",
@@ -18173,9 +18197,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
-      "updated_at": "2026-10-12",
-      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
-      "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
+      "updated_at": "2026-10-13",
+      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
+      "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18186,9 +18210,33 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
       ],
       "blockers": [
-        "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
+        "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
+        },
+        {
+          "type": "test",
+          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
+          "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
+        {
+          "type": "test",
+          "label": "历史执行者登记（已被二轮验收否定，不作为 rev v3 关闭证据）",
+          "command": "pytest test_worker_compatibility_scope.py(9)+style 27+相关回归 163+worker 153(14 存量)+PG 17；离线 v6 评估 7/7（/tmp/natural_persona_results.json）",
+          "result": "历史报告被二轮独立验收判定载具/证据不足；不得把旧 7/7、邮件 pending 或 helper mock 数量作为真实 relay 与自然回复闭环证明。当前证据见 rev v3 计划和 docs/evidence/hermes-natural-persona-v3/。"
+        },
         {
           "type": "test",
           "label": "Hermes basis/validator and draft delivery regression",

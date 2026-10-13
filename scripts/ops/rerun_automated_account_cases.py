@@ -34,25 +34,25 @@ from backend.services.automation_routing import (  # noqa: E402
 )
 from backend.services.account_admin import (  # noqa: E402
     ACCOUNT_PERSONA_PRESETS,
-    DEFAULT_PERSONA_SIGNATURE,
 )
 
 
-APPROVED_PERSONA_V1 = {
+APPROVED_PERSONA_V2 = {
     "default-support": {
         "seed_marker": "Seeded Sid Warm preset v1",
-        "content_sha256": "b94bc8fea422d85ca62593cae6b7995f6a79f7f5963c0812caf072216c6bb268",
+        "content_sha256": "d25a0f784a57ad256095a3036d519cd4df415b4707643802594799b0fa3572a9",
     },
     "sid-bright": {
         "seed_marker": "Seeded Sid Bright preset v1",
-        "content_sha256": "7e963cadd564ebac417a13abdd35234b790361b866dcae3d2b09550bad5b9ebd",
+        "content_sha256": "5ef7d4c78044057af3d7afd482db06f154c64b55bcf2a5339493720f0fc189d8",
     },
     "sid-precise": {
-        "seed_marker": "Seeded Sid Precise preset v1",
-        "content_sha256": "07a31faaedd034c33f6d84e9780550e9ccc14e0dc6f635c4ad7732467fe49c46",
+        "seed_marker": "Seeded Sid Precise preset v2",
+        "content_sha256": "95484cc143251546c13bc5c323d9ba07203a2e97d29ccb8b5f8a4c291fa29de1",
     },
 }
-EXPECTED_PERSONA_KEYS = frozenset(APPROVED_PERSONA_V1)
+PERSONA_APPROVAL_VERSION = "persona-instruction-opener-v2"
+EXPECTED_PERSONA_KEYS = frozenset(APPROVED_PERSONA_V2)
 TERMINAL_ITEM_STATUSES = frozenset({"completed", "failed", "skipped"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})
 TERMINAL_JOB_STATUSES = frozenset({"completed", "completed_with_errors", "failed"})
@@ -231,7 +231,7 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
     if set(approved_presets) != EXPECTED_PERSONA_KEYS:
         raise OperationError("built-in Persona preset catalog does not match the rollout contract")
     for persona_key, preset in approved_presets.items():
-        approved = APPROVED_PERSONA_V1[persona_key]
+        approved = APPROVED_PERSONA_V2[persona_key]
         canonical_content = json.dumps(
             preset.content,
             ensure_ascii=False,
@@ -243,7 +243,7 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
             preset.seed_marker != approved["seed_marker"]
             or not hmac.compare_digest(content_sha256, approved["content_sha256"])
         ):
-            raise OperationError(f"built-in Persona preset v1 is not approved: {persona_key}")
+            raise OperationError(f"built-in Persona preset v2 is not approved: {persona_key}")
 
     selected_by_key: dict[str, tuple[dict[str, Any], int, dict[str, Any]]] = {}
     for raw in raw_personas:
@@ -294,10 +294,10 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
     for persona_key in sorted(EXPECTED_PERSONA_KEYS):
         raw, published_version, selected = selected_by_key[persona_key]
         preset = approved_presets[persona_key]
-        approved = APPROVED_PERSONA_V1[persona_key]
+        approved = APPROVED_PERSONA_V2[persona_key]
         approved_content = preset.content
-        if approved_content.get("signature") != DEFAULT_PERSONA_SIGNATURE:
-            raise OperationError(f"built-in Persona signature mismatch for {persona_key}")
+        if set(approved_content) != {"instruction", "opener"}:
+            raise OperationError(f"built-in Persona schema mismatch for {persona_key}")
         if selected.get("status") != "published":
             raise OperationError(
                 f"Persona {persona_key} version {published_version} must be published"
@@ -325,6 +325,7 @@ def _published_persona_snapshot(payload: dict[str, Any]) -> tuple[list[dict[str,
                 "display_name": str(raw.get("display_name") or persona_key),
                 "published_version": published_version,
                 "content_sha256": approved_sha256,
+                "approval_version": PERSONA_APPROVAL_VERSION,
             }
         )
     fingerprint_material = json.dumps(

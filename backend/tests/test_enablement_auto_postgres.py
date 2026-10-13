@@ -30,6 +30,103 @@ from backend.repositories.ticket_repository import PostgresTicketRepository
     "set RUN_POSTGRES_INTEGRATION=1 to run PostgreSQL enablement relay contracts",
 )
 class EnablementRelayPostgresTests(unittest.TestCase):
+    def test_manual_hermes_readback_releases_email_once(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from backend import worker
+        from backend.tests.test_worker_compatibility_scope import compatibility_fixture, projected_messages
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            _, delivery = compatibility_fixture(auto=False, delivered=False, repository=repository)
+            delivery["status"] = "outcome_unknown"
+            with patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+            ):
+                worker._deliver_hermes_zendesk_comment(delivery)
+                worker._deliver_hermes_zendesk_comment(delivery)
+            self.assertEqual(len(projected_messages(repository)), 1)
+            case = repository.get_account_case("AC-COMPAT")
+            self.assertEqual(case["internal_email_send_status"], "pending")
+            self.assertEqual(case["automation_context"]["enablement_manual_workflow"]["state"], "email_released")
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
+    def test_hermes_readback_rejects_request_identity_mismatches(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from backend import worker
+        from backend.tests.test_worker_compatibility_scope import compatibility_fixture
+        for mismatch in ("ticket_id", "zendesk_ticket_id", "reply_job_id", "workflow", "request"):
+            with self.subTest(mismatch=mismatch):
+                schema, repository = self._temporary_repository()
+                dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+                try:
+                    repository.initialize()
+                    _, delivery = compatibility_fixture(auto=True, delivered=False, repository=repository)
+                    delivery["status"] = "outcome_unknown"
+                    if mismatch in {"workflow", "request"}:
+                        case = repository.get_account_case("AC-COMPAT")
+                        case["automation_context"]["enablement_auto_workflow"][
+                            "reply_job_id" if mismatch == "workflow" else "request_id"] = "wrong"
+                        repository.save_account_case(case)
+                    else:
+                        with psycopg.connect(dsn) as conn:
+                            with conn.cursor() as cursor:
+                                cursor.execute(f'UPDATE "{schema}".support_enablement_relay_requests '
+                                               f'SET {mismatch} = %s WHERE request_id = %s', ("wrong", "request-1"))
+                    with patch.object(worker, "ticket_repository", repository), patch.object(
+                        worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+                    ):
+                        worker._deliver_hermes_zendesk_comment(delivery)
+                    self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+                finally:
+                    repository.close()
+                    self._drop_schema(dsn, schema)
+
+    def test_hermes_uuid_readback_and_concurrent_release(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from backend import worker
+        from backend.tests.test_worker_compatibility_scope import compatibility_fixture, projected_messages
+
+        schema, repository = self._temporary_repository()
+        dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
+        try:
+            repository.initialize()
+            _, delivery = compatibility_fixture(auto=True, delivered=False, repository=repository)
+            delivery["status"] = "outcome_unknown"
+            actual = repository.release_enablement_relay_requests_after_public_reply
+            barrier = threading.Barrier(4)
+            outcomes = []
+            def release_concurrently(**kwargs):
+                def claim():
+                    barrier.wait()
+                    return actual(**kwargs)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+                    outcomes.extend(pool.map(lambda _: claim(), range(4)))
+                return [r for rows in outcomes for r in rows]
+            # Race the actual database claim reached after worker projection.
+            with patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+            ), patch.object(repository, "release_enablement_relay_requests_after_public_reply", side_effect=release_concurrently):
+                worker._deliver_hermes_zendesk_comment(delivery)
+            self.assertEqual([r["request_id"] for rows in outcomes for r in rows], ["request-1"])
+            with patch.object(worker, "ticket_repository", repository), patch.object(
+                worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+            ):
+                worker._deliver_hermes_zendesk_comment(delivery)
+            self.assertEqual(len(projected_messages(repository)), 1)
+            self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "dispatch_pending")
+            case = repository.get_account_case("AC-COMPAT")
+            self.assertEqual(case["internal_email_send_status"], "not_applicable")
+            self.assertEqual(case["automation_context"]["enablement_auto_workflow"]["state"], "dispatch_pending")
+        finally:
+            repository.close()
+            self._drop_schema(dsn, schema)
+
     def _temporary_repository(self) -> tuple[str, PostgresTicketRepository]:
         dsn = str(os.getenv("TICKET_DB_DSN") or "").strip()
         if not dsn:

@@ -3298,6 +3298,7 @@ class InMemoryTicketRepository(
                         for candidate in (
                             message.get("message_id"),
                             message.get("id"),
+                            meta.get("hermes_delivery_message_id"),
                         ):
                             if str(candidate or "").strip():
                                 confirmation_message_ids.add(str(candidate).strip())
@@ -8615,7 +8616,8 @@ class PostgresTicketRepository(
                         "SELECT 1 FROM {} d WHERE d.account_case_id = %s "
                         "AND d.is_public = TRUE AND d.status = 'delivered' "
                         "AND EXISTS ("
-                        "  SELECT 1 FROM {} m WHERE m.id::text = d.message_id "
+                        "  SELECT 1 FROM {} m WHERE (m.id::text = d.message_id "
+                        "  OR (d.source = 'hermes' AND m.meta->>'hermes_delivery_message_id' = d.message_id)) "
                         "  AND m.ticket_id = %s AND m.role = 'assistant' "
                         "  AND COALESCE(m.meta->>'account_reply_job_id','') = %s"
                         ") LIMIT 1"

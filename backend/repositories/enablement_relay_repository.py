@@ -254,6 +254,14 @@ class InMemoryEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                 reply_job_id = str(request.get("reply_job_id") or "").strip()
                 if not reply_job_id:
                     continue
+                if (
+                    str(workflow.get("reply_job_id") or "") != reply_job_id
+                    or str(case.get("client_ticket_id") or "") != str(request.get("ticket_id") or "")
+                    or str(request.get("zendesk_ticket_id") or request.get("ticket_id") or "")
+                    != str(case.get("zendesk_ticket_id") or case.get("client_ticket_id") or "")
+                    or (workflow.get("request_id") and workflow["request_id"] != request["request_id"])
+                ):
+                    continue
                 if not self._has_delivered_public_reply(
                     str(request.get("account_case_id") or ""),
                     str(case.get("client_ticket_id") or ""),
@@ -543,7 +551,10 @@ class InMemoryEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                     continue
                 for message in ticket.get("messages") or []:
                     if (
-                        str(message.get("id") or "") == message_id
+                        (str(message.get("id") or "") == message_id
+                         or (delivery.get("source") == "hermes" and str(
+                             (message.get("meta") or {}).get("hermes_delivery_message_id") or ""
+                         ) == message_id))
                         and str(message.get("role") or "") == "assistant"
                         and str((message.get("meta") or {}).get("account_reply_job_id") or "")
                         == str(reply_job_id)
@@ -777,6 +788,14 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                         "AND c.internal_email_send_status = 'awaiting_public_reply' "
                         "AND COALESCE(c.automation_context->'enablement_auto_workflow'"
                         "->>'state','') = 'awaiting_public_reply' "
+                        "AND c.client_ticket_id = r.ticket_id "
+                        "AND COALESCE(r.zendesk_ticket_id, r.ticket_id) = "
+                        "COALESCE(NULLIF(c.zendesk_ticket_id, ''), c.client_ticket_id) "
+                        "AND COALESCE(c.automation_context->'enablement_auto_workflow'"
+                        "->>'reply_job_id','') = r.reply_job_id "
+                        "AND (COALESCE(c.automation_context->'enablement_auto_workflow'"
+                        "->>'request_id','') = '' OR c.automation_context->'enablement_auto_workflow'"
+                        "->>'request_id' = r.request_id) "
                         "ORDER BY r.created_at, r.request_id "
                         "FOR UPDATE OF r SKIP LOCKED LIMIT %s"
                     ).format(
@@ -801,7 +820,8 @@ class PostgresEnablementRelayRepositoryMixin(EnablementRelayRepositoryMixin):
                             "SELECT 1 FROM {} d WHERE d.account_case_id = %s "
                             "AND d.is_public = TRUE AND d.status = 'delivered' "
                             "AND EXISTS ("
-                            "  SELECT 1 FROM {} m WHERE m.id::text = d.message_id "
+                            "  SELECT 1 FROM {} m WHERE (m.id::text = d.message_id "
+                            "  OR (d.source = 'hermes' AND m.meta->>'hermes_delivery_message_id' = d.message_id)) "
                             "  AND m.ticket_id = %s AND m.role = 'assistant' "
                             "  AND COALESCE(m.meta->>'account_reply_job_id','') = %s"
                             ") LIMIT 1"

@@ -184,9 +184,13 @@ def basis_from_work_result(
         draft_language=result.get("draft_language"),
         extra={
             key: status if key == "source_work_status" else result.get(key)
-            for key in ("source_work_status", "compatibility_account_reply_job_id")
+            for key in (
+                "source_work_status",
+                "compatibility_relay_required",
+                "compatibility_account_reply_job_id",
+            )
             if (key == "source_work_status" and status)
-            or (key != "source_work_status" and result.get(key) not in (None, ""))
+            or (key != "source_work_status" and result.get(key) is not None)
         },
     )
 
