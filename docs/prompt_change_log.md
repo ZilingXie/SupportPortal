@@ -6,6 +6,13 @@
 - 新工单 14037 发现 legacy worker 将 Hermes compatibility-only job 置为 manual_attention，阻断已确认回复后的内部邮件释放。本轮源头持久化所有权、claim 排除与旧 claim 恢复/CAS 修复不改 Prompt 文本、basis、footer 或发布策略。
 - 当前修复待独立代码验收，未再次部署；技术发布通过与业务未完成分别记录。见 [当前计划与证据](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md)。
 
+## 2026-10-13 - native Investigation Persona 草稿保存（p2-200，R1）
+
+- 仅 native investigation_reply：输入声明完整 1200 字符预算（含 greeting、换行及既有引用），只保留结论、关键证据/限制与下一步。保存拒绝且 rewrite_allowed=true 时只在当前 run 改写一次；耗尽停止保存，未知结果先回读。
+- 后端：turn JSON 与既有行锁保证最多两次候选校验；拒绝诊断提交后返回 422，最终原因传到 turn/工程师通知。明确技术名称不映射为个人姓名，混合个人姓名请求仍拒绝。
+- 兼容：普通 Automation 原生成/校验策略、人工审批、route、附件/翻译/投递不变。代码级提示词随镜像发布；无 managed Prompt catalog 修改、新模型或迁移。
+- 证据：[R1 合同及执行记录](plans/native-hermes-draft-save-r1.md)，[代码/部署/业务边界](plans/native-hermes-draft-save-r1-evidence.json)。真实业务写入及 Production 未授权；沿用 ECS PP 技术验收、本地官方栈豁免。
+
 ## 2026-10-11 - Investigation 客户续轮英文展示（p2-192，R1）
 
 - 计划名称：Investigation 附件传输与续轮英文展示修复。客户续轮通知复用现有英文转换能力，Slack 展示英文译文并保留 comment/turn/来源时间/Zendesk 链接；原文完整保存在 ticket mirror 与通知账本。

@@ -15,7 +15,7 @@
 
 ## 运行修复与证据（v3.2）
 
-基线为已发布 `main@4ecea0431f1b84490bab4bf51220faeef815e6b2`。同分支因原 PR 已合并，提交后续 Draft PR。原 v3.1 时间水位与附件/footer 合同继续保持，Prompt/basis 内容不变。
+发布源码为 `main@4ecea0431f1b84490bab4bf51220faeef815e6b2`。本轮提交集成最新 main `0124173bbc6c818efd89f05de9127684f6133ac4`（#1491 native Investigation 草稿保存），共享保存入口的集成验证单独记录；Preproduction 未随本地集成变化。同分支因原 PR 已合并，提交后续 Draft PR。原 v3.1 时间水位与附件/footer 合同继续保持，Prompt/basis 内容不变。
 
 **R2-F1-runtime-14037（implementation，原兼容身份合同）**：真实新测试工单 14037 缺 App ID 首轮正常追问，补齐后客户确认回复已投递；其兼容 job 被旧 worker 领取，prepare/publish 将 `hermes_compatibility_only=True` 的 job 置为 `manual_attention`。投递成功收尾正确拒绝终态身份，事件 `hermes_enablement_compatibility_release_blocked / enablement_compatibility_job_terminal`，内部邮件仍 awaiting_public_reply。后续观察到工单 closed/solved，不代表邮件释放恢复，也不认定关闭来源。没有改写该真实 job 或回放工单。
 

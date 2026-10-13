@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:38:07Z",
-  "source_base_commit": "70c9e720657d0b8f0d42176efd0ec1b87fa277ff",
-  "registry_digest": "85da35f2c318c80de0df8a0adc48b615986da7ad7419e086c2b85b95935c7626",
+  "generated_at": "2026-10-13T10:39:00Z",
+  "source_base_commit": "64e24f84ee37d2cec138a68005bd8e2a839564dd",
+  "registry_digest": "ac58916ba9eef8ce630ecb3deb80cb892b3ddf898837e8e8efcfe84916d49167",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5223,6 +5223,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Explicit non-goals",
           "command": "",
           "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
+        },
+        {
+          "type": "test",
+          "label": "R1真实保存入口及隔离PG回归",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
         }
       ],
       "source_refs": [
@@ -5230,8 +5236,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 5,
+      "status": "active",
+      "task_count": 6,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -18345,6 +18351,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "path": "docs/plans/native-hermes-review-release-evidence.json",
           "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-200",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "native Hermes Investigation 草稿保存修复",
+      "summary": "R1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读。关联p2-191与p2-199。",
+      "status": "active",
+      "next_action": "按R1实施与隔离PG回归，然后正常finalize及ECS Preproduction技术验收；不操作14031或客户发送。",
+      "owner": "codex",
+      "created_at": "2026-10-13",
+      "updated_at": "2026-10-13",
+      "acceptance_criteria": [
+        "C1-C5见docs/plans/native-hermes-draft-save-r1.md"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R1真实保存入口及隔离PG回归",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
+        }
+      ],
+      "source_refs": [
+        "docs/project/tasks/p2-191.json",
+        "docs/project/tasks/p2-199.json"
       ]
     },
     {

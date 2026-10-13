@@ -35,6 +35,30 @@ def test_basis_is_versioned_and_turn_bound():
     assert basis["publication_policy"] == "auto"
 
 
+@pytest.mark.parametrize("collected", [{}, {"name": "Jordan"}])
+@pytest.mark.parametrize("text", ["Please provide the channel name.", "请提供频道名字。"])
+def test_technical_name_is_not_customer_name(text, collected):
+    assert validate_customer_reply_draft(text, _basis(collected_facts=collected))["decision"] == "pass"
+
+
+@pytest.mark.parametrize("text", [
+    "Please provide your name.", "Please provide your full name.",
+    "Please share the channel name and your full name.",
+    "Please share the channel name. Please provide your name.",
+    "请提供频道名字及您的姓名。", "Please provide a name.",
+])
+def test_personal_name_occurrences_stay_restricted(text):
+    with pytest.raises(HermesReplyBasisError) as exc:
+        validate_customer_reply_draft(text, _basis(collected_facts={}))
+    assert exc.value.code == "unauthorized_field_request"
+
+
+def test_collected_technical_label_does_not_authorize_customer_name():
+    with pytest.raises(HermesReplyBasisError) as exc:
+        validate_customer_reply_draft("Please provide your name.", _basis(collected_facts={"channel name": "test"}))
+    assert exc.value.code == "unauthorized_field_request"
+
+
 def test_validator_accepts_natural_wording_and_single_greeting():
     basis = _basis()
     result = validate_customer_reply_draft(

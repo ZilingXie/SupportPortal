@@ -63,6 +63,24 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "passport_number": {"passport number", "passport id", "护照号"},
     "social_security_number": {"social security number", "ssn", "社保号"},
 }
+_TECHNICAL_NAME_RE = re.compile(
+    r"\b(?:channel|stream|room|application|app|project|device|codec|file|host|domain)\s+name\b"
+    r"|(?:频道|通道|流|房间|应用|项目|设备|文件|域)\s*(?:名称|名字|名)",
+    re.I,
+)
+
+
+def _field_matches(text: str, field_key: str):
+    """Exclude only the name occurrence belonging to a technical label."""
+    technical_spans = [m.span() for m in _TECHNICAL_NAME_RE.finditer(text)]
+    for alias in _FIELD_ALIASES[field_key]:
+        pattern = rf"\b{re.escape(alias)}\b" if alias.isascii() else re.escape(alias)
+        for match in re.finditer(pattern, text, re.I):
+            if field_key == "name" and any(
+                start <= match.start() and match.end() <= end for start, end in technical_spans
+            ):
+                continue
+            yield match
 
 
 class HermesReplyBasisError(ValueError):
@@ -333,8 +351,8 @@ def _basis_missing_keys(basis: dict[str, Any]) -> set[str]:
 
 def _field_key_from_text(text: str) -> str | None:
     lowered = str(text or "").strip().lower()
-    for key, aliases in _FIELD_ALIASES.items():
-        if any(alias in lowered for alias in aliases):
+    for key in _FIELD_ALIASES:
+        if any(_field_matches(lowered, key)):
             return key
     return None
 
@@ -414,18 +432,15 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
     for field_key in _FIELD_ALIASES:
         if field_key not in collected:
             continue
-        aliases = _FIELD_ALIASES[field_key]
-        for alias in aliases:
-            match = re.search(rf"\b{re.escape(alias)}\b", text, re.I)
-            if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 20]):
+        for match in _field_matches(text, field_key):
+            if _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 20]):
                 raise HermesReplyBasisError("collected_field_reask")
     missing_keys = _basis_missing_keys(basis)
-    for field_key, aliases in _FIELD_ALIASES.items():
+    for field_key in _FIELD_ALIASES:
         if field_key in collected:
             continue
-        for alias in aliases:
-            match = re.search(rf"\b{re.escape(alias)}\b", text, re.I)
-            if match and _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 24]):
+        for match in _field_matches(text, field_key):
+            if _REQUEST_VERB_RE.search(text[max(0, match.start() - 56):match.end() + 24]):
                 if field_key not in missing_keys and not _has_negation_before(text, match.start()):
                     raise HermesReplyBasisError("unauthorized_field_request")
     if _contains_authorized_claim(text, basis, _RECOVERY_CLAIM_RE) is False:
