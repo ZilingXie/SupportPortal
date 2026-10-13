@@ -325,14 +325,43 @@ class WorkerReadbackTests(unittest.TestCase):
                                  "not_applicable" if auto else "pending")
 
     def test_unconfirmed_readback_keeps_real_request_gated(self):
-        repository, delivery = compatibility_fixture(auto=True, delivered=False)
-        delivery["status"] = "outcome_unknown"
-        with patch.object(worker, "ticket_repository", repository), patch.object(
-            worker, "read_ticket_comment_audit", return_value=(None, set()),
-        ):
-            worker._deliver_hermes_zendesk_comment(delivery)
-        self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
-        self.assertEqual(projected_messages(repository), [])
+        for status in ("failed", "outcome_unknown"):
+            with self.subTest(status=status):
+                repository, delivery = compatibility_fixture(auto=True, delivered=False)
+                delivery["status"] = status
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "read_ticket_comment_audit", return_value=(None, set()),
+                ):
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+                self.assertEqual(projected_messages(repository), [])
+
+    def test_bad_compatibility_identity_blocks_real_readback_and_replay(self):
+        from types import SimpleNamespace
+        for invalid in ("missing", "wrong_ticket", "cancelled", "failed", "made_up_state"):
+            with self.subTest(invalid=invalid):
+                repository, delivery = compatibility_fixture(auto=True, delivered=False)
+                delivery["status"] = "outcome_unknown"
+                if invalid == "missing":
+                    delivery["attachments"] = [{"_hermes_compatibility_relay_required": True}]
+                else:
+                    job = repository.get_account_reply_job("job-1")
+                    job["ticket_id" if invalid == "wrong_ticket" else "status"] = (
+                        "other-ticket" if invalid == "wrong_ticket" else invalid)
+                    repository.save_account_reply_job(job)
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+                ), patch.object(repository, "release_enablement_relay_requests_after_public_reply",
+                                wraps=repository.release_enablement_relay_requests_after_public_reply) as release, patch.object(
+                    repository, "record_event", wraps=repository.record_event,
+                ) as event:
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                release.assert_not_called()
+                event.assert_called_once()
+                self.assertEqual(repository.get_account_case("AC-COMPAT")["automation_status"], "human_review_required")
+                self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+                self.assertEqual(projected_messages(repository), [])
 
 
 if __name__ == "__main__":

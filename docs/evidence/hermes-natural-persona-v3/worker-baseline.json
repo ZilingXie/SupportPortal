@@ -1,0 +1,118 @@
+{
+  "branch": {
+    "summary": "14 failed, 153 passed, 25 subtests passed in 1.84s",
+    "xml_failure_records": [
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+        "message": "AssertionError: True is not false"
+      }
+    ],
+    "failures": [
+      "SUBFAILED(status='new') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='open') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='pending') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='hold') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+      "SUBFAILED(status='') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status=None) backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status='unexpected') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued"
+    ]
+  },
+  "main": {
+    "summary": "14 failed, 153 passed, 25 subtests passed in 2.12s",
+    "xml_failure_records": [
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+        "message": "AssertionError: True is not false"
+      },
+      {
+        "test": "backend.tests.test_worker.WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+        "message": "AssertionError: True is not false"
+      }
+    ],
+    "failures": [
+      "SUBFAILED(status='new') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='open') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='pending') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='hold') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+      "SUBFAILED(status='') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status=None) backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status='unexpected') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued"
+    ]
+  },
+  "main_head": "ef52d04ef0a24149f74bf209ddaf2102f9a0e95d",
+  "branch_code_head": "74cb0c7b583b5f6514ce7ceab31042572e4617d5"
+}

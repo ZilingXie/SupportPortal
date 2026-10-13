@@ -1,0 +1,27 @@
+{
+  "code_head": "c95277e87ccc062a18d7bafc739a10bb49ef6881",
+  "additional_test_file_sha256": {
+    "backend/tests/test_worker_compatibility_scope.py": "135a6182c99a89920b5c36e405a253406a096ef8f5e28727b01ac022442369a1"
+  },
+  "main_head": "ef52d04ef0a24149f74bf209ddaf2102f9a0e95d",
+  "targeted_regression": {
+    "result": "291 passed, 4 warnings, 75 subtests passed in 11.18s",
+    "command_source": "docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md#可重现验证",
+    "postgres_skipped": false
+  },
+  "checks": [
+    "model source hashes match current tree",
+    "9 synthetic model samples all passed with returned model gpt-6.1-sol",
+    "7 model carrier negative controls detected",
+    "7 source mutation controls detected by behavior assertions",
+    "14 worker failure lines identical to main",
+    "new plan and operations document relative links exist",
+    "Project Overview --write followed by --check passed"
+  ],
+  "boundaries": {
+    "independent_acceptance": "pending",
+    "deployment": "not performed",
+    "real_customer_writes": "not performed",
+    "model_transport": "offline Responses API adapter, not live Hermes case session"
+  }
+}
