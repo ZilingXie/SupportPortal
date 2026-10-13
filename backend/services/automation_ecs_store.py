@@ -9,7 +9,7 @@ import threading
 from dataclasses import dataclass
 import json
 from datetime import datetime, timedelta, timezone
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 from uuid import NAMESPACE_URL, uuid4, uuid5
 
 import psycopg
@@ -43,6 +43,62 @@ from backend.services.automation_ecs_runtime import AutomationEcsSettings
 # injects AGENT_MODEL_ID from SSM /supportportal/<env>/agent-model; an absent
 # value keeps pre-policy behavior (gateway-resolved default model).
 AGENT_MODEL_ENV_NAME = "AGENT_MODEL_ID"
+
+
+def _investigation_draft_candidate(
+    turn: dict[str, Any], binding: dict[str, Any], case: dict[str, Any],
+    existing: dict[str, Any] | None, content: str, validator: Callable[[], dict[str, Any]],
+) -> dict[str, Any]:
+    """Called only under case/binding/turn locks; rejection is a committed result."""
+    turn_id = str(turn["turn_id"])
+    if turn.get("turn_kind") != "investigation_reply" or turn.get("direction") != "investigation":
+        raise HermesTurnStateError(turn_id, "not an investigation reply")
+    if turn.get("phase") != "persona":
+        raise HermesTurnStateError(turn_id, "not a persona turn")
+    blocker = native_customer_lifecycle_blocker(binding, case)
+    if blocker or int(case.get("case_revision") or 0) != int(turn["case_revision"]):
+        raise HermesTurnStateError(turn_id, blocker or "stale_case_revision")
+    if int(binding.get("conversation_version") or 0) > int(turn.get("input_version") or 0) + 1:
+        raise HermesTurnStateError(turn_id, "stale_conversation_version")
+    if existing:
+        if existing.get("status") not in {"draft", "awaiting_approval"}:
+            raise HermesDraftStateError(existing["draft_id"], "draft is no longer editable")
+        if existing["content"] != content:
+            return {"rejection": {"code": "draft_content_conflict", "rewrite_allowed": False}}
+        return {"existing": existing}
+    if turn.get("status") not in {"pending", "running"}:
+        raise HermesTurnStateError(turn_id, "turn is not active")
+    work = copy.deepcopy(turn.get("work_result") or {})
+    state = dict(work.get("draft_save") or {})
+    if state.get("outcome_unknown"):
+        return {"rejection": {**state["last_error"], "rewrite_allowed": False}}
+    attempt = int(state.get("attempts") or 0)
+    if attempt >= 2:
+        return {"rejection": {**(state.get("last_error") or {}),
+                              "code": "draft_rewrite_exhausted", "rewrite_allowed": False}}
+    attempt += 1
+    state["attempts"] = attempt
+    state["run_id"] = turn.get("run_id")
+    candidate = validator()
+    rejection = candidate.get("rejection")
+    if rejection:
+        diagnostic = {
+            "turn_id": turn_id, "run_id": turn.get("run_id"), "attempt": attempt,
+            "code": str(rejection["code"]), "actual_chars": len(content), "max_chars": 1200,
+            "rewrite_allowed": attempt < 2 and not rejection.get("outcome_unknown"),
+            "rewrite_exhausted": attempt >= 2,
+        }
+        if rejection.get("outcome_unknown"):
+            diagnostic["outcome_unknown"] = True
+            state["outcome_unknown"] = True
+        state["last_error"] = diagnostic
+        work["draft_save"] = state
+        turn["work_result"] = work
+        return {"rejection": diagnostic}
+    state.pop("last_error", None)
+    work["draft_save"] = state
+    turn["work_result"] = work
+    return candidate
 
 
 def _agent_model_env() -> str:
@@ -452,6 +508,9 @@ class AutomationEcsStore(Protocol):
     def bind_hermes_case_thread(self, zendesk_ticket_id: str, *, channel_id: str, thread_ts: str) -> dict[str, Any]: ...
     def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None: ...
     def bind_hermes_case_persona(self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int) -> dict[str, Any]: ...
+    def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
+                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]: ...
+
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
     def get_hermes_case_review(self, zendesk_ticket_id: str) -> dict[str, Any] | None: ...
@@ -1759,6 +1818,12 @@ class InMemoryAutomationEcsStore:
             turn = self._hermes_turns.get(turn_id)
             if turn is not None:
                 turn.update(phase=phase, run_id=run_id, updated_at=_iso())
+                state = (turn.get("work_result") or {}).get("draft_save")
+                if phase == "persona" and state:
+                    # Tool callbacks can arrive before the start-run receipt.
+                    state["run_id"] = run_id
+                    if state.get("last_error"):
+                        state["last_error"]["run_id"] = run_id
             return copy.deepcopy(row)
 
     def complete_hermes_turn_run(
@@ -2346,6 +2411,27 @@ class InMemoryAutomationEcsStore:
             if draft.get("status") != "queued" or draft.get("case_revision") != case.get("case_revision") or int(binding.get("conversation_version") or 0) > int(draft.get("conversation_version") or 0) + 1:
                 raise HermesDraftStateError(draft_id, "attachment_draft_stale")
             yield
+
+    def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
+                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        with self._lock:
+            turn = self._hermes_turns.get(turn_id)
+            if not turn:
+                raise HermesTurnStateError(turn_id, "turn not found")
+            binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"])) or {}
+            case = self._cases.get(turn["zendesk_ticket_id"]) or {}
+            existing = next((d for d in self._hermes_drafts.values() if d["turn_id"] == turn_id), None)
+            candidate = _investigation_draft_candidate(turn, binding, case, existing, content, validator)
+            if "existing" in candidate:
+                return copy.deepcopy(candidate["existing"])
+            if "rejection" in candidate:
+                return copy.deepcopy(candidate)
+            draft = self.save_hermes_case_draft(
+                turn_id, content=content, basis=candidate["basis"],
+                guardrail=candidate["guardrail"], publish_policy="manual",
+            )
+            turn["work_result"]["draft_save"]["draft_id"] = draft["draft_id"]
+            return draft
 
     def save_hermes_case_draft(
         self,
@@ -4406,9 +4492,16 @@ class PostgresAutomationEcsStore:
                     raise HermesTurnStateError(turn_id, f"turn run for phase {phase} not found")
                 cursor.execute(
                     sql.SQL(
-                        "UPDATE {} SET phase=%s,run_id=%s,updated_at=NOW() WHERE turn_id=%s"
+                        "UPDATE {} SET phase=%s,run_id=%s,updated_at=NOW(), "
+                        "work_result=CASE WHEN %s='persona' AND work_result ? 'draft_save' THEN "
+                        "jsonb_set(work_result, '{{draft_save}}', "
+                        "(work_result->'draft_save') || jsonb_build_object('run_id', %s::text) || "
+                        "CASE WHEN work_result->'draft_save' ? 'last_error' THEN "
+                        "jsonb_build_object('last_error', (work_result->'draft_save'->'last_error') || "
+                        "jsonb_build_object('run_id', %s::text)) ELSE '{{}}'::jsonb END) "
+                        "ELSE work_result END WHERE turn_id=%s"
                     ).format(self._table("automation_hermes_agent_turns")),
-                    (phase, run_id, turn_id),
+                    (phase, run_id, phase, run_id, run_id, turn_id),
                 )
                 return dict(row)
 
@@ -5479,6 +5572,39 @@ class PostgresAutomationEcsStore:
                     raise HermesDraftStateError(draft_id, "attachment_draft_stale")
                 yield
 
+    def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
+                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                identity = cursor.fetchone()
+                if not identity:
+                    raise HermesTurnStateError(turn_id, "turn not found")
+                args = (identity["namespace"], identity["zendesk_ticket_id"])
+                # Same lock order as intake/Prepare, so a new revision cannot
+                # invalidate the basis halfway through validating and saving.
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_cases")), args)
+                case = dict(cursor.fetchone() or {})
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), args)
+                binding = dict(cursor.fetchone() or {})
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE turn_id=%s FOR UPDATE").format(self._table("automation_hermes_agent_turns")), (turn_id,))
+                turn = dict(cursor.fetchone())
+                cursor.execute(sql.SQL("SELECT * FROM {} WHERE turn_id=%s ORDER BY created_at LIMIT 1").format(self._table("automation_hermes_case_drafts")), (turn_id,))
+                existing = cursor.fetchone()
+                candidate = _investigation_draft_candidate(turn, binding, case, dict(existing) if existing else None, content, validator)
+                if "existing" in candidate:
+                    return candidate["existing"]
+                if "rejection" in candidate:
+                    result = candidate
+                else:
+                    result = self._insert_hermes_draft(
+                        cursor, turn, binding, content=content, basis=candidate["basis"],
+                        guardrail=candidate["guardrail"], publish_policy="manual",
+                    )
+                    turn["work_result"]["draft_save"]["draft_id"] = result["draft_id"]
+                cursor.execute(sql.SQL("UPDATE {} SET work_result=%s,updated_at=NOW() WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (Jsonb(turn["work_result"]), turn_id))
+                return result
+
     def save_hermes_case_draft(
         self,
         turn_id: str,
@@ -5507,37 +5633,46 @@ class PostgresAutomationEcsStore:
                 binding = cursor.fetchone()
                 if binding is None:
                     raise HermesTurnStateError(turn_id, "case binding disappeared")
-                draft_id = _new_id("draft")
-                cursor.execute(
-                    sql.SQL(
-                        """
-                        INSERT INTO {} (draft_id,namespace,zendesk_ticket_id,turn_id,conversation_version,
-                            case_revision,content,basis,guardrail,publish_policy,status)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
-                        RETURNING *
-                        """
-                    ).format(self._table("automation_hermes_case_drafts")),
-                    (
-                        draft_id,
-                        turn["namespace"],
-                        turn["zendesk_ticket_id"],
-                        turn_id,
-                        int(binding["conversation_version"]),
-                        int(turn["case_revision"]),
-                        normalized,
-                        Jsonb({**(basis or {}), "attachments": (turn.get("work_result") or {}).get("attachments") or []}),
-                        Jsonb(guardrail) if guardrail is not None else None,
-                        publish_policy,
-                    ),
+                return self._insert_hermes_draft(
+                    cursor, turn, binding, content=normalized, basis=basis,
+                    guardrail=guardrail, publish_policy=publish_policy,
                 )
-                row = cursor.fetchone()
-                self._insert_timeline(
-                    cursor,
-                    str(turn["execution_id"]),
-                    "agent_turn.draft_saved",
-                    {"draft_id": draft_id, "publish_policy": publish_policy},
-                )
-                return dict(row)
+
+    def _insert_hermes_draft(self, cursor, turn, binding, *, content, basis, guardrail, publish_policy):
+        turn_id = turn["turn_id"]
+        normalized = str(content).strip()
+        draft_id = _new_id("draft")
+        cursor.execute(
+            sql.SQL(
+                """
+                INSERT INTO {} (draft_id,namespace,zendesk_ticket_id,turn_id,conversation_version,
+                    case_revision,content,basis,guardrail,publish_policy,status)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'draft')
+                RETURNING *
+                """
+            ).format(self._table("automation_hermes_case_drafts")),
+            (
+                draft_id,
+                turn["namespace"],
+                turn["zendesk_ticket_id"],
+                turn_id,
+                int(binding["conversation_version"]),
+                int(turn["case_revision"]),
+                normalized,
+                Jsonb({**(basis or {}), "attachments": (turn.get("work_result") or {}).get("attachments") or []}),
+                Jsonb(guardrail) if guardrail is not None else None,
+                publish_policy,
+            ),
+        )
+        row = cursor.fetchone()
+        self._insert_timeline(
+            cursor,
+            str(turn["execution_id"]),
+            "agent_turn.draft_saved",
+            {"draft_id": draft_id, "publish_policy": publish_policy},
+        )
+        return dict(row)
+
 
     def request_hermes_draft_publish(self, draft_id: str) -> dict[str, Any]:
         with self._connect() as connection:

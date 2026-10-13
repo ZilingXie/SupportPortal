@@ -1529,7 +1529,7 @@ def create_app(    *,
             except HermesToolError as exc:
                 raise HTTPException(
                     status_code=422,
-                    detail={"code": exc.code, "message": str(exc)},
+                    detail={**exc.details, "code": exc.code, "message": str(exc)},
                 ) from exc
             except (HermesTurnStateError, HermesDraftStateError) as exc:
                 raise HTTPException(status_code=409, detail=str(exc)) from exc

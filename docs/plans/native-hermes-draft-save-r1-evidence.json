@@ -1,0 +1,36 @@
+{
+  "plan_name": "native Hermes Investigation 草稿保存修复",
+  "revision": "R1",
+  "task_id": "p2-200",
+  "baseline": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+  "code": {
+    "status": "verified_locally",
+    "isolated_postgresql": "p2200_native_draft_test; UUID schema per fixture",
+    "targeted": {"passed": 303, "subtests_passed": 92, "skipped": 0},
+    "reverse": {
+      "old_field_rules": "detected: unauthorized_field_request on channel name positive test",
+      "candidate_cap_removed": "detected: third valid candidate returned 200, expected 422"
+    },
+    "expanded_initial": {"passed": 397, "failed": 9, "skipped": 44, "subtests_passed": 94},
+    "baseline_comparison": {
+      "commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+      "passed": 134,
+      "failed": 8,
+      "preexisting_failures": [
+        "test_automation_ecs_api.py::test_agent_tool_save_reply_draft_derives_publish_policy_server_side",
+        "test_automation_ecs_api.py::test_hermes_slack_action_endpoint_approves_draft",
+        "test_hermes_followup_reply_contract.py::TestRestrictedReplyPath::test_rag_unanswerable_completes_real_handoff",
+        "test_hermes_followup_reply_contract.py::TestHumanDirectionHandoff::test_priority_request_turn_completes_real_handoff",
+        "test_hermes_followup_reply_contract.py::TestHumanDirectionHandoff::test_completed_handoff_is_not_revived_by_later_appid",
+        "test_hermes_followup_reply_contract.py::TestFollowupReplyPostgres::test_rag_escalation_persists_handoff_state",
+        "test_hermes_followup_reply_contract.py::TestTerminalFailureHandoff::test_route_submission_failure_completes_handoff",
+        "test_hermes_followup_reply_contract.py::TestTerminalFailureHandoff::test_missing_direction_completes_handoff"
+      ],
+      "changed_contract_test": "native guardrail rejection now persists safe code and creates zero drafts; old test updated with stricter zero-draft assertion"
+    }
+  },
+  "deployment": {"status": "not_started"},
+  "business": {"status": "not_authorized", "ticket_14031_replayed": false, "customer_sends": 0, "real_slack_test_messages": 0},
+  "local_official_stack": "user exemption; ECS Preproduction technical acceptance",
+  "production": "not_authorized"
+}
