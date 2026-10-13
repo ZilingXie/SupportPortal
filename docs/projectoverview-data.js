@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:24:28Z",
-  "source_base_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
-  "registry_digest": "81369a30b97efae088cc685b2b20956b14b3b6f11d82ab0a14419f8d0b792700",
+  "generated_at": "2026-10-13T10:50:39Z",
+  "source_base_commit": "b9afa37c9f53023fab041ef7393b64c5a7275926",
+  "registry_digest": "68f9dc575a2269dc2e4bda5ad8bafa3d58c28145ff18982eb68cd7be602f79fc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5858,6 +5858,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 独立验收 B1 修复记录",
           "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
           "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
+        },
+        {
+          "type": "deployment",
+          "label": "步 4-9 全关闭部署+n8n 发布+关闭态验证",
+          "command": "release_automation_ecs_pipeline（r20261012-42a187a，--bootstrap-account-schema，经三次 resume：TICKET_DB_SCHEMA 修正/DEPLOY_PREPRODUCTION_APPROVED 补齐）+ n8n MCP publish×3 + 公网探针",
+          "result": "全阶段 passed（preflight/prompt_schema/rollout×2/heartbeat/collector/activation/release_note）；api:140/worker:140/route:138 运行 42a187ae；开关全 0+allowlist 空+WEKNORA_PROMOTION_ENABLED=0；Worker 七 WeKnora SSM 引用+X-API-Key/空 scheme 上线、无 MEMORY_IDENTITY；schema v23 六列实证；Terraform 零漂移；n8n active 切换至 6fed47a6/6a262f9a/4ed2c0c3（validator 前后通过）；关闭态探针 503 零写入。SLO breach=总时长 1284s（resume+bootstrap 开销，非失败）。证据 docs/evidence/weknora-dualwrite-phase6/stage6-final-baseline.md。"
+        },
+        {
+          "type": "deployment",
+          "label": "开启层 1：master+intake（r20261013-42a187a）",
+          "command": "release pipeline --knowledge-stage-config（master=1+intake=1+其余 0+空 allowlist）+ 合成探针 POST+只读 DB 回读",
+          "result": "全阶段 passed；worker:141 回读开关与配置逐字一致（步 2 双 verify 门部署日志两见）；探针 CSD-STAGE6-L1-PROBE 202 accepted+intakes 落库（102）+probe Summary 0+summaries/旧任务计数不变=受执与 AI 分离实证。旧全关部署 checkpoint/evidence/timings 归档于 docs/evidence/weknora-dualwrite-phase6/alloff-deploy-state/。"
+        },
+        {
+          "type": "document",
+          "label": "层 2 未通过与修复 A 合同",
+          "command": "用户复核报告 + 2026-10-13 选择 A + main native 恢复整合",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md；保留独立验收门。本轮未部署/未重投/未新增外部写入。"
+        },
+        {
+          "type": "test",
+          "label": "层 2 修复 A 自测（未释放独立验收门）",
+          "command": "23 知识/发布套件 RUN_POSTGRES_INTEGRATION=1（隔离 schema）+ 补充真实 renderer/worker CLI 专项；复现命令见修复记录",
+          "result": "497 passed / 0 failed / 0 skipped / 8 subtests；后补三角色 renderer 正向后专项 26 passed（与大回归重叠，不合并计数）。Bash syntax、diff、Overview passed；n8n 历史快照 validator exit 0，29 LEGACY-EXPOSED 未用于运行态结论。未部署/未重投。"
+        },
+        {
+          "type": "test",
+          "label": "F5/F6 修复专项（待独立复验）",
+          "command": "pytest -q backend/tests/test_n8n_source_only_contracts.py backend/tests/test_n8n_snapshot_identity.py + snapshot validator",
+          "result": "76 passed；完整 Build 余数 55/56/63/0 对 Node SHA256，多字节/100KB 与旧故障注入；六历史文件 byte equality、内部身份冲突负向；15 published/4 drafts/56 redactions + 2 unpublished candidates。29 历史告警保留。未部署/未在线改 n8n/未重投；证据 stage6-layer2-repair-A.md。"
+        },
+        {
+          "type": "test",
+          "label": "I1 main 0124173b 集成（待增量复验）",
+          "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
+          "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
         }
       ],
       "source_refs": [
@@ -18124,9 +18160,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-12",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "I1 修复完成：已同步 origin/main（daa06ba8+ca94a4cc，Hermes Unified Customer Reply v3.2 他线，无步 2 代码文件冲突；唯一冲突 docs/projectoverview-data.js 由重新生成解决，merge commit dff24e83）。合并后复验：22 文件定向+知识面全套 626 passed / 0 failed 含隔离 PG 双解释器（root venv 3.13 与 homebrew 3.12）；他线直接受影响文件 test_automation_provider_probe 3 passed；git diff --check 与 Overview --check 通过。等待独立复验 PR #1482（最终 HEAD 见 PR）；通过后 finalize→步 3 重新冻结发布基线→步 4-7 全关闭部署（历史队列盘点前置）→步 8 n8n 三链→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft 保持）→步 11 观察窗口汇总后暂停并再次请求用户确认才全量放开。",
+      "updated_at": "2026-10-13",
+      "summary": "I1 集成修复完成待增量复验：独立报告已关闭 F1-F6；同步 main 0124173b，唯一 Overview 冲突由合并源重生成，双方登记/Prompt 日志保留；76 项 F5/F6 + 213 项含隔离 PG 集成回归通过。未部署/未在线写入。F5/F6 本地修复完成，待同 Draft PR #1490 独立复验：前轮 HEAD 266e7209 验收未通过，F1-F4 核心证据保留；修复两链 SHA padding 与完整 Build 边界回归，六历史快照恢复原文，新增无远端版本 ID 的未发布候选及内部身份校验。未在线发布/未重投。当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
+      "next_action": "同 PR #1490 新 HEAD 增量复验 I1 集成差异与 GitHub MERGEABLE 回读；F1-F6 保留关闭，门禁尚未释放。通过后才按原授权推进。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18190,6 +18226,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "步 2 独立验收 B1 修复记录",
           "command": "独立验收发现 B1：WeKnora SSM 引用仅校验存在性、旧 identity 未拒环境变量形式",
           "result": "5937c9e7 修复：verify_knowledge_stage_config 逐引用精确 valueFrom 全路径比对（AUTOMATION_DB_DSN 前缀推导）+非规范 weknora-* 引用拒绝+WEKNORA_MEMORY_IDENTITY secret/environment 双形式拒绝；新增回归 test_verify_knowledge_stage_config_rejects_wrong_valuefrom_path / _rejects_retired_identity_environment / _rejects_foreign_weknora_reference。"
+        },
+        {
+          "type": "deployment",
+          "label": "步 4-9 全关闭部署+n8n 发布+关闭态验证",
+          "command": "release_automation_ecs_pipeline（r20261012-42a187a，--bootstrap-account-schema，经三次 resume：TICKET_DB_SCHEMA 修正/DEPLOY_PREPRODUCTION_APPROVED 补齐）+ n8n MCP publish×3 + 公网探针",
+          "result": "全阶段 passed（preflight/prompt_schema/rollout×2/heartbeat/collector/activation/release_note）；api:140/worker:140/route:138 运行 42a187ae；开关全 0+allowlist 空+WEKNORA_PROMOTION_ENABLED=0；Worker 七 WeKnora SSM 引用+X-API-Key/空 scheme 上线、无 MEMORY_IDENTITY；schema v23 六列实证；Terraform 零漂移；n8n active 切换至 6fed47a6/6a262f9a/4ed2c0c3（validator 前后通过）；关闭态探针 503 零写入。SLO breach=总时长 1284s（resume+bootstrap 开销，非失败）。证据 docs/evidence/weknora-dualwrite-phase6/stage6-final-baseline.md。"
+        },
+        {
+          "type": "deployment",
+          "label": "开启层 1：master+intake（r20261013-42a187a）",
+          "command": "release pipeline --knowledge-stage-config（master=1+intake=1+其余 0+空 allowlist）+ 合成探针 POST+只读 DB 回读",
+          "result": "全阶段 passed；worker:141 回读开关与配置逐字一致（步 2 双 verify 门部署日志两见）；探针 CSD-STAGE6-L1-PROBE 202 accepted+intakes 落库（102）+probe Summary 0+summaries/旧任务计数不变=受执与 AI 分离实证。旧全关部署 checkpoint/evidence/timings 归档于 docs/evidence/weknora-dualwrite-phase6/alloff-deploy-state/。"
+        },
+        {
+          "type": "document",
+          "label": "层 2 未通过与修复 A 合同",
+          "command": "用户复核报告 + 2026-10-13 选择 A + main native 恢复整合",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md；保留独立验收门。本轮未部署/未重投/未新增外部写入。"
+        },
+        {
+          "type": "test",
+          "label": "层 2 修复 A 自测（未释放独立验收门）",
+          "command": "23 知识/发布套件 RUN_POSTGRES_INTEGRATION=1（隔离 schema）+ 补充真实 renderer/worker CLI 专项；复现命令见修复记录",
+          "result": "497 passed / 0 failed / 0 skipped / 8 subtests；后补三角色 renderer 正向后专项 26 passed（与大回归重叠，不合并计数）。Bash syntax、diff、Overview passed；n8n 历史快照 validator exit 0，29 LEGACY-EXPOSED 未用于运行态结论。未部署/未重投。"
+        },
+        {
+          "type": "test",
+          "label": "F5/F6 修复专项（待独立复验）",
+          "command": "pytest -q backend/tests/test_n8n_source_only_contracts.py backend/tests/test_n8n_snapshot_identity.py + snapshot validator",
+          "result": "76 passed；完整 Build 余数 55/56/63/0 对 Node SHA256，多字节/100KB 与旧故障注入；六历史文件 byte equality、内部身份冲突负向；15 published/4 drafts/56 redactions + 2 unpublished candidates。29 历史告警保留。未部署/未在线改 n8n/未重投；证据 stage6-layer2-repair-A.md。"
+        },
+        {
+          "type": "test",
+          "label": "I1 main 0124173b 集成（待增量复验）",
+          "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
+          "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
         }
       ]
     },

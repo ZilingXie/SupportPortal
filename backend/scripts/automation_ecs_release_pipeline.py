@@ -799,7 +799,7 @@ def _recover_release_evidence(
         manifest = read_manifest(manifest_path)
         record = read_preproduction_publish_record(record_path)
         validate_preproduction_publish_record(manifest, record)
-        if manifest.git_commit != release_commit or manifest.prompt_release_id != prompt_release_id:
+        if (manifest.release_id, manifest.git_commit, manifest.prompt_release_id) != (release_id, release_commit, prompt_release_id):
             raise ValueError("recovered release evidence identity mismatch")
         return True
     except (OSError, ValueError, subprocess.CalledProcessError):
@@ -857,10 +857,13 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     else:
         # An inherited deploy-only override must not change the normal source gate.
         env.pop("AUTOMATION_ECS_HOTFIX_BASELINE", None)
-    release_id = f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
-    if args.resume:
+    requested_release_id = getattr(args, "release_id", None)
+    release_id = requested_release_id or f"r{_utc_now():%Y%m%d}-{release_commit[:7]}"
+    if not re.fullmatch(r"r[0-9]{8}-" + re.escape(release_commit[:7]) + r"(?:-[a-z0-9][a-z0-9-]{0,39})?", release_id):
+        raise ValueError("--release-id must be rYYYYMMDD-<commit7> with an optional lowercase suffix")
+    if args.resume and not requested_release_id:
         candidates = sorted(
-            (project_root / ".deployments").glob(f"ecs-pipeline-r*-{release_commit[:7]}")
+            (project_root / ".deployments").glob(f"ecs-pipeline-r*-{release_commit[:7]}*")
         )
         if len(candidates) > 1:
             raise ValueError("multiple pipeline checkpoints match this release commit")
@@ -868,6 +871,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError("pipeline checkpoint not found for --resume")
         release_id = candidates[0].name.removeprefix("ecs-pipeline-")
     state_path = project_root / ".deployments" / f"ecs-pipeline-{release_id}"
+    if args.resume and not (state_path / "checkpoint.json").exists():
+        raise ValueError("pipeline checkpoint not found for --resume")
     if state_path.exists() and not args.resume:
         raise ValueError(f"pipeline state already exists; review it and use --resume: {state_path}")
     state = PipelineState(state_path)
@@ -938,6 +943,11 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         codebuild_ready = bool(
             args.resume and state.completed("codebuild") and manifest_path.exists() and record_path.exists()
         )
+        if codebuild_ready:
+            manifest = read_manifest(manifest_path)
+            validate_preproduction_publish_record(manifest, read_preproduction_publish_record(record_path))
+            if (manifest.release_id, manifest.git_commit, manifest.prompt_release_id) != (release_id, release_commit, args.prompt_release_id):
+                raise ValueError("checkpoint release evidence identity mismatch; refusing image reuse")
         if args.resume and not codebuild_ready:
             codebuild_ready = _recover_release_evidence(
                 release_dir=release_dir,
@@ -1152,6 +1162,7 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline = subparsers.add_parser("run")
     pipeline.add_argument("--project-root", default=str(Path(__file__).resolve().parents[2]))
     pipeline.add_argument("--release-commit")
+    pipeline.add_argument("--release-id", help="Immutable release ID; use a unique suffix for a new stage, or --resume for the unchanged release")
     pipeline.add_argument("--hotfix-baseline")
     pipeline.add_argument("--prompt-release-id", required=True)
     pipeline.add_argument("--through", choices=("preproduction", "production"), default="preproduction")

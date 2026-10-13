@@ -1,5 +1,7 @@
 # n8n 工作流运维目录
 
+2026-10-13 修复验证：Git 历史 published/draft 与未发布 local candidate 分开存储，见 [快照约定](../../integrations/n8n/workflows/README.md)。候选代码不代表远端 Draft 或 published；上线前必须刷新线上两种版本，发布后回读再登记。`python3 scripts/n8n/validate_workflow_snapshots.py` 检查内部版本一致性；SHA-256 正确性另由完整 Build 入口测试对 Node 标准库逐值验证。本轮 F5/F6 仅本地修复，没有在线发布。
+
 本目录纳管个人项目 **Zac Xie**（`sbTCwK2d5D7GOKQb`）拥有的非归档工作流，实例为 [n8n.stellarix.space](https://n8n.stellarix.space)。范围按项目所有权筛选，不把当前账号能看到的其他项目工作流计入。纳管指在 SupportPortal 中维护用途、关系和排错知识，不迁移 n8n 项目。
 
 ## 命名规则与目录结构

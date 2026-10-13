@@ -1,4 +1,11 @@
 # RAG Change Log
+
+## 2026-10-13 - Stage 6 F5/F6 snapshot repair (unpublished)
+
+- Summary: two local knowledge-source Build candidates reserve the SHA-256 length field correctly; full entry tests compare canonical UTF-8 bytes with Node SHA-256 at residues 55/56/63/0. Six historical published/draft snapshots are restored byte-for-byte from 4ecea043; candidates carry base identity only and cannot claim a remote version. CSD captured_fields now describes its actual explicit request list, without changing the request node.
+- Verification: 76 targeted tests passed, including injected original padding faults and internal version conflicts. Snapshot validator separates 2 unpublished candidates from 15 published / 4 drafts / 56 redactions. Existing 29 historical warnings remain. F1-F4 evidence is retained; independent acceptance of PR #1490 remains pending.
+- Runtime impact: no n8n write, ECS deployment, sample replay or knowledge write in this repair. Historical files and local tests do not prove current live configuration or successful publication.
+
 ## 2026-10-12 - Stage-6 plan A: per-source allowlist gates knowledge task creation (p2-197)
 
 - Summary: stage 6's rollout switches are global — once Summary/Review is on, every accepted source flows into AI processing, which would process real CSD/Solved material before the observation window clears it. The new KNOWLEDGE_SOURCE_ALLOWLIST adds the missing middle gear: snapshots keep flowing (read-only intake, fully auditable), while Summary/Review task creation happens only for allowlisted sources (``type:id`` entries, ``type:*`` per-type wildcards, ``case_binding:<engineer_case_id>`` for case-bound candidates). Default empty = process NOTHING (default-strict); step 10's full rollout is itself an explicit, recorded allowlist update. The gate sits at both task-creation entry points (standalone queue and case-bound queue) and never touches accepted snapshots, promotions, deliveries or audits.
@@ -5521,3 +5528,7 @@ For each new entry, record:
 - Affected files/config: `backend/scripts/automation_ecs_deploy.py`, `backend/tests/test_automation_ecs_deploy.py`; three new Preproduction String parameters under `/supportportal/preproduction/`, one Slack workspace String parameter, and reuse of the existing `hermes-wiki-core-user-key` SecureString.
 - Data impact: No source snapshot, candidate, Summary, Review, AgentMemory, WeKnora, or Slack business data was written. No ECS task definition was registered and no service was updated. All knowledge switches remain `0` and the allowlist remains empty.
 - Verification: Renderer/allowlist/AgentMemory suites passed (`114 passed`); live API/Worker 135 render preview showed all required switch values and SSM references without exposing secret values. Follow-up on `a7e218b7`: legacy governance/PG fixtures now set the stage-6 allowlist and AgentMemory read contract explicitly; the current 21-suite command with a disposable local PostgreSQL 14.19 completed `540 passed / 0 failed` (8 subtests), with no external business writes.
+
+## 2026-10-13 — p2-197 知识治理执行门修复 A（待验收）
+
+Summary/Review 创建与消费分离，native 保持 typed disabled；两个服务 drain 和正式 worker 检查独立执行门，缺省零 claim/零 AI。allowlist、双目标写合同、人工 Review、draft 与全量停点不变。本轮未重投或发布；见 `docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md`。

@@ -7,8 +7,13 @@
 - `manifest.json`：当前启用清单、workflow ID、已发布版本 ID、草稿版本 ID、更新时间和文件位置。
 - `active/<workflow-id>.published.json`：每条启用工作流的已发布恢复基线。
 - `drafts/<workflow-id>.draft.json`：仅当草稿与已发布版本不同时保存，不能当作线上恢复基线直接发布。
+- `candidates/<workflow-id>.candidate.json`：未发布的本地修复候选，只有 baseVersionId，不携带远端 versionId/activeVersionId；manifest 单独登记 candidateFile，不计入 published/draft 数量。
 
-2026-09-16 第一批修复后的初始快照及已停用的 `[case]Intake|EC2 Staging` 发布版保留在 Git 历史中；当前基线包含 15 条启用工作流和 1 份未发布草稿。快照来自 n8n MCP `get_workflow_details` 的安全化结果，不包含 execution、pin data 或客户输入。n8n 返回的 credential ID/name 会保留，明文 Authorization、Cookie、token、secret、API key、私钥和邮箱会替换为 `__REDACTED__` 类占位符，并记录在每个文件的 `restoreNotes.redactedValues` 中。
+2026-10-13 F5/F6 修复：CSD、Solved、Forward 的六份历史 published/draft 文件逐字节恢复为 Git `4ecea0431f1b84490bab4bf51220faeef815e6b2` 原文；历史字段缺省保持缺省，不补造后来版本 ID。CSD/Solved 的 SHA-256 修复与当前投递地址保存在两个 local candidate 中。它们未写入远端 n8n，不能据此声称线上修复完成。历史草稿的旧地址与实现仅用于恢复记录，不作为新发布候选。
+
+校验器检查 source/manifest 与存在的 workflow 内部版本字段一致性，并拒绝 local candidate 冒充远端版本。完整 Build 入口的 SHA 字节边界回归运行：`python -m pytest -q backend/tests/test_n8n_source_only_contracts.py backend/tests/test_n8n_snapshot_identity.py`。线上修改前仍须按下述流程重新回读并刷新；本地历史校验不证明当前线上状态。
+
+2026-09-16 第一批修复后的初始快照及已停用的 `[case]Intake|EC2 Staging` 发布版保留在 Git 历史中；本地历史清单包含 15 条启用工作流和 4 份 divergent 草稿。快照来自 n8n MCP `get_workflow_details` 的安全化结果，不包含 execution、pin data 或客户输入。n8n 返回的 credential ID/name 会保留，明文 Authorization、Cookie、token、secret、API key、私钥和邮箱会替换为 `__REDACTED__` 类占位符，并记录在每个文件的 `restoreNotes.redactedValues` 中。
 
 ## 修改流程
 
@@ -23,6 +28,6 @@
 1. 停止继续发布或重放 execution，确认该 workflow 已经产生的外部写入和去重状态。
 2. 同一 n8n 实例优先使用 `manifest.json` 中的 `publishedVersionId` 调用版本恢复，再比较当前 draft、恢复版本和 Git 快照。恢复版本后仍需单独发布；恢复本身不授权重跑历史 execution。
 3. n8n 版本历史已被清理时，用对应 `published.json` 的 `workflow` 对象重建一条未启用副本。重新绑定 credential，并逐项补齐 `restoreNotes.redactedValues`，完成节点校验和无副作用检查后再替换原流程。
-4. 有 divergent draft 的 workflow 必须保留 draft，不得在恢复已发布版本时顺带发布。当前这类流程是 `[slack]Route Support`。
+4. 有 divergent draft 的 workflow 必须保留 draft，不得在恢复已发布版本时顺带发布。本地清单中的 divergent drafts 以 manifest 为准，不能据此推断线上当前草稿。
 
 Git 快照不是密钥备份。需要依靠 n8n credential store、SupportPortal SSM 或密钥管理系统恢复凭据；禁止为了“一键恢复”把明文密钥提交到仓库。
