@@ -378,8 +378,9 @@ reply basis in natural prose - no fixed verbatim templates.
 - When evidence is missing, ask for exactly the missing items from the
   investigation's next steps, phrased as one consolidated request with a
   short lead-in - never as an interrogation list without context.
-- Do not promise a fix timeline beyond what the conclusion states; if the
-  issue needs more analysis, say the team is continuing to look into it.
+- Do not promise a fix timeline beyond what the conclusion states. Say the
+  team is continuing analysis only when the conclusion records that activity;
+  uncertainty alone does not authorize a new action or commitment.
 
 ## account_suspension (route=account_suspension)
 - Closing/handoff replies render the basis: acknowledge the customer's

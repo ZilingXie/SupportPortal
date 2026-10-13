@@ -1,7 +1,7 @@
 """Ownership gate to persisted handoff and actual alert body (R2-F2)."""
 import os
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import patch, Mock
 
 import pytest
 import backend.tests.test_hermes_zendesk_agent as harness
@@ -77,3 +77,24 @@ def test_confirmed_gate_can_continue_without_alert():
     ), patch("backend.services.account_failure_alerts.send_graph_mail") as mail:
         assert processor._claim_automation_ownership_before_work(payload, processor.store.get_hermes_turn(payload.turn_id))
     mail.assert_not_called()
+
+
+def test_processor_released_ownership_stops_before_work_or_persona_model_run():
+    seeded, payload, job = setup_gate()
+    client = Mock()
+    client.start_run.return_value = {"run_id": "synthetic-route-run"}
+    client.get_run.return_value = {"status": "completed", "output": {}}
+    processor = HermesAgentTurnProcessor(seeded.store, repository=seeded.repository, client=client,
+                                         environment="preproduction", sleeper=lambda _: None)
+    gate = OwnershipGateResult(eligible=True, state="released_to_queue", failure_code="released_to_queue",
+                               failure_category="policy", failure_detail="Released by human")
+    with patch.dict(os.environ, {"AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED": "1"}), patch(
+        "backend.services.account_automation_ownership.ensure_production_automation_ownership", return_value=gate,
+    ), patch("backend.services.account_failure_alerts.send_graph_mail"), patch(
+        "backend.services.account_human_review_escalation.add_ticket_comment", return_value=SimpleNamespace(comment_id="note-1"),
+    ), patch("backend.services.account_human_review_escalation.route_ticket_back_to_queue", return_value=SimpleNamespace(status="queued")):
+        result = processor.process(job)
+    assert result["reason"] == "ownership_gate_failed"
+    client.start_run.assert_called_once()
+    assert not seeded.store.get_hermes_case_review("123")["drafts"]
+    assert not seeded.repository.list_account_zendesk_comment_deliveries_for_case("AC-123")

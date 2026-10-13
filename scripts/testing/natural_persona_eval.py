@@ -144,17 +144,19 @@ SAMPLES = [
 
 
 SAMPLES.extend([
-    {"sample_id": "billing_missing_transaction", "route": "billing", "customer_message":
-     "The charge on my account looks wrong. Can you check it?", "basis":
-     _basis("missing_fields", route="billing", missing=["transaction_id"], collected={"name": "Jordan"})},
-    {"sample_id": "verification_handoff", "route": "verification", "customer_message":
+    {"sample_id": "billing_usage_explanation", "route": "investigation", "customer_message":
+     "Why is there a $14.50 usage charge after I used the free quota?", "basis":
+     _basis("investigation_conclusion", route="investigation", collected={"name": "Jordan"},
+            conclusion={"answer": "The $14.50 line is usage accumulated after the free quota was exhausted. "
+                        "Checked the synthetic usage ledger and quota history. No refund or billing adjustment has been made."})},
+    {"sample_id": "verification_handoff", "route": "account_verification", "customer_message":
      "I sent the verification documents yesterday. Is there anything else you need?", "basis":
-     _basis("executed", route="verification", conclusion={"status": "review_requested", "handoff": True},
+     _basis("executed", route="account_verification", conclusion={"status": "review_requested", "handoff": True},
             commitments=["team_contact_within_24_hours"])},
 ])
 for sample in SAMPLES:
     sample["basis"]["source_turn_id"] = "synthetic-" + sample["sample_id"]
-    if sample["sample_id"] == "billing_missing_transaction":
+    if sample["sample_id"] == "billing_usage_explanation":
         sample["basis"]["greeting_name"] = "Jordan"
 
 
@@ -198,10 +200,11 @@ def _snapshot(sample):
     store.record_hermes_turn_direction(turn_id, direction=direction, route=sample["route"])
     store.record_hermes_case_direction(turn_id, direction=direction, reason="synthetic authoritative fixture")
     store.record_hermes_turn_work(turn_id, work_result={"status": sample["basis"]["stage"], "reply_basis": sample["basis"]})
+    store.set_hermes_turn_snapshot(turn_id, snapshot={"greeting_name": sample["basis"]["greeting_name"]})
     if direction == "investigation":
         store.save_hermes_investigation(turn_id, summary=sample["basis"]["trusted_conclusion"]["answer"],
-            evidence=[{"source": "synthetic logs", "finding": "weak cellular network correlates with freezes"}],
-            blockers=["Carrier UDP policy is unconfirmed"], next_steps=[])
+            evidence=[{"source": "synthetic investigation record", "finding": sample["basis"]["trusted_conclusion"]["answer"]}],
+            blockers=[], next_steps=[])
     turn = store.get_hermes_turn(turn_id)
     canonical = basis_for_persona_turn(turn=turn, binding=store.get_hermes_case_binding("00000"))
     assert canonical is not None
