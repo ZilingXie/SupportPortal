@@ -1,0 +1,94 @@
+{
+  "release": "r20261013-ef52d04",
+  "commit": "ef52d04ef0a24149f74bf209ddaf2102f9a0e95d",
+  "prompt": "pr-9737f67803f1",
+  "checks": {
+    "cloudwatch": "passed",
+    "ec2_backup": "passed",
+    "ecr": "passed",
+    "heartbeats": "passed",
+    "prompt_activation": "active",
+    "prompt_sync": "active",
+    "provider_probe": "passed",
+    "public_health": "passed",
+    "rollback": "not_started",
+    "schema_bootstrap": "not_requested",
+    "source_prompt": "passed",
+    "suspension_recipients": "passed",
+    "terraform_post_deploy_zero_drift": "passed",
+    "terraform_zero_drift": "passed"
+  },
+  "roles": {
+    "api": {
+      "revision": "145",
+      "digest": "sha256:5c60facb6d01f7736147d31913f7a1fbe793f7914547afa5758c8e02c4762e05",
+      "health": "HEALTHY",
+      "engine": null,
+      "typed_mode": "disabled"
+    },
+    "route": {
+      "revision": "143",
+      "digest": "sha256:c205e8b51df2825e8a9eef37c0eb5ce0bd7b35abf20709bff5600fdc46ffa346",
+      "health": "UNKNOWN",
+      "engine": "hermes",
+      "typed_mode": null
+    },
+    "worker": {
+      "revision": "145",
+      "digest": "sha256:4a1e0eed07ccf74d399b079ebaef8611b4fb8eed7a153fb7585946d63b2e84b0",
+      "health": "UNKNOWN",
+      "engine": null,
+      "typed_mode": "disabled"
+    }
+  },
+  "public_verified": true,
+  "plan": "Preproduction native Hermes 配置恢复与发布防回退",
+  "revision": "R2",
+  "formal_evidence": ".deployments/ecs-pipeline-r20261013-ef52d04/preproduction-deploy/evidence.json",
+  "deployment_attempts": "首次collector Provider探针CannotPullContainerError，正式回滚succeeded；同release/digest resume后complete。失败记录保留于正式evidence-attempts及phase-attempts。",
+  "business_status": "首轮native审核停车及零草稿/投递通过；Prepare后Persona、审批发送、多轮附件和真实RTC调查质量不属于本轮已验证结论。",
+  "business": {
+    "ticket": "14031",
+    "delivery_ledger_count": 0,
+    "zendesk_public_comments": 1,
+    "slack_message_count": 2,
+    "slack_actions": [
+      "prepare_draft"
+    ],
+    "slack_url": "https://app.slack.com/archives/C0BS0N61D1R/p1791881914491699",
+    "readback": {
+      "ticket": "14031",
+      "turns": [
+        {
+          "turn_id": "turn-ebc049386f15453d89c4e329e871b8dd",
+          "turn_kind": "fixed_task",
+          "phase": "work",
+          "status": "completed",
+          "direction": "investigation",
+          "run_id": "run_fbdc3cb4936d4ecabdadd40c4a10a263",
+          "result_status": "awaiting_investigation_review"
+        }
+      ],
+      "draft_count": 0,
+      "bindings": [
+        {
+          "status": "active",
+          "slack_channel_id": "C0BS0N61D1R",
+          "slack_thread_ts": "1791881914.491699",
+          "investigation_recorded": true,
+          "case_task": {
+            "route": "investigation",
+            "direction": "investigation",
+            "locked": true,
+            "source": "account_router",
+            "reason_code": "technical_request",
+            "source_event_id": "zendesk:ticket:14031:created",
+            "prompt_release_id": "pr-9737f67803f1"
+          }
+        }
+      ]
+    },
+    "customer_replies_sent": 0,
+    "approval_actions_executed": 0
+  }
+}

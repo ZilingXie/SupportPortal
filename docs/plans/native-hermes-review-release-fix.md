@@ -20,3 +20,12 @@ native r20261013-570aec2成立；后续知识治理r20261013-42a187a切回legacy
 - 反向验证：暂恢复旧审核类型集合，真实processor在work后提交persona，新断言失败；恢复修复后通过。
 - 初轮pipeline专项56 passed/2 skipped（PG未启用）；隔离PG专项21 passed。最终隔离PG与相关入口回归249 passed（无跳过），覆盖客户消息revision过期、并发Prepare唯一续接、真实发布入口遗漏engine拒绝、未授权降级构建前拒绝。
 - 代码、正式发布、业务验证分层记录。待发布前不写done。
+
+## 完成边界与发布证据
+
+- 代码PR #1488合入main ef52d04ef0a24149f74bf209ddaf2102f9a0e95d。
+- 正式release r20261013-ef52d04 complete；API:145 / Route:143 / Worker:145 单一PRIMARY COMPLETED；三角色运行digest与publish-record逐一一致，公网provenance一致。Route=hermes、typed=disabled；Prompt仍为pr-9737f67803f1。
+- 首次Provider探针发生CannotPullContainerError；ECR回读digest ACTIVE且有成功pull，正式回滚succeeded。同release/digest --resume后全部门禁passed。保留失败记录，未认定其底层原因。
+- 新票14031经测试邮件/n8n真实入口：固定Investigation任务，唯一fixed_task Work turn完成后awaiting_investigation_review；Slack prepare_draft按钮回读；零Persona、零draft、零投递账本，Zendesk仅首轮客户公开评论。
+- 本轮按已有授权以ECS PP技术验收替代本地官方栈。Prepare/Approve未点击；后续客户回复、多轮附件和真实RTC诊断质量仍需单独业务测试。不重放14028、不发布Production。
+- 结构化证据：[native-hermes-review-release-evidence.json](native-hermes-review-release-evidence.json)。
