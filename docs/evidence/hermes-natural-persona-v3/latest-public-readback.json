@@ -1,0 +1,25 @@
+{
+  "observed_at": "2026-10-13T10:40:01.770825+00:00",
+  "live": {
+    "status": "ok"
+  },
+  "ready": {
+    "status": "ok",
+    "environment": "preproduction",
+    "release_id": "r20261013-4ecea04",
+    "git_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+    "image_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+    "prompt_release_id": "pr-78386473bd08",
+    "db_schema": "supportportal_preproduction"
+  },
+  "release": {
+    "status": "ok",
+    "environment": "preproduction",
+    "release_id": "r20261013-4ecea04",
+    "git_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+    "image_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+    "prompt_release_id": "pr-78386473bd08",
+    "db_schema": "supportportal_preproduction",
+    "typed_workflow": "disabled"
+  }
+}

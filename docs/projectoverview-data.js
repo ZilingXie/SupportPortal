@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:39:00Z",
-  "source_base_commit": "64e24f84ee37d2cec138a68005bd8e2a839564dd",
-  "registry_digest": "ac58916ba9eef8ce630ecb3deb80cb892b3ddf898837e8e8efcfe84916d49167",
+  "generated_at": "2026-10-13T10:42:44Z",
+  "source_base_commit": "17ca6c91692b3efff254fd181d2c8b592b18e944",
+  "registry_digest": "59effdf2cda856299267b3843fa0d099f9c3e2a8379b0c976c201b19bde4e35a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1603,7 +1603,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
           "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。"
+          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
         },
         {
           "type": "test",
@@ -18222,7 +18222,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。",
+      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。 已集成最新 main@0124173b（#1491 Investigation draft-save），集成后308 passed + 48 subtests，无跳过；当前线上仍以最新发布回读单独判断。",
       "next_action": "提交后续 Draft PR 完整 HEAD 独立验收 v3.2 运行修复；通过后按既有授权 finalize 并再次发布 Preproduction，用新工单验证完整 Enablement 链。当前不重新部署/回放 14037，不强制释放；真实 relay 保留人工审批，Production 未授权。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
@@ -18242,7 +18242,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
           "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。"
+          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
         },
         {
           "type": "test",
