@@ -596,13 +596,51 @@ def deploy_mode_args(args: argparse.Namespace) -> list[str]:
         values.extend(["--hermes-case-workflow-mode", args.hermes_case_workflow_mode])
     if args.hermes_persona_enabled:
         values.append("--hermes-persona-enabled")
-    values.extend(["--automation-case-engine", str(getattr(args, "automation_case_engine", "legacy") or "legacy")])
+    engine = getattr(args, "automation_case_engine", None)
+    if engine is None and getattr(args, "through", "preproduction") == "production":
+        engine = "legacy"
+    if engine not in {"legacy", "hermes"}:
+        raise ValueError("Preproduction requires explicit --automation-case-engine")
+    values.extend(["--automation-case-engine", engine])
     if getattr(args, "hermes_agent_enabled", False):
         values.append("--hermes-agent-enabled")
     values.extend(
         ["--enablement-workflow-mode", str(getattr(args, "enablement_workflow_mode", "manual") or "manual")]
     )
     return values
+
+
+def validate_case_engine_transition(
+    task_definition: Mapping[str, Any], target_engine: str, *, downgrade_approved: bool = False
+) -> None:
+    definition = task_definition.get("taskDefinition", task_definition)
+    containers = [c for c in definition.get("containerDefinitions", []) if c.get("name") == "route"]
+    if len(containers) != 1:
+        raise ValueError("Route task definition must contain exactly one route container")
+    values = {v["name"]: v["value"] for v in containers[0].get("environment", [])}
+    current = values.get("AUTOMATION_CASE_ENGINE", "legacy")
+    if current not in {"legacy", "hermes"}:
+        raise ValueError("Unrecognized live automation case engine; reconciliation required")
+    if current == "hermes" and target_engine == "legacy" and not downgrade_approved:
+        raise ValueError("Hermes to legacy downgrade requires AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED=1 after explicit user authorization")
+
+
+def check_live_case_engine(target_engine: str, env: Mapping[str, str]) -> None:
+    # Check before build; the deploy entry checks again against its observed definition.
+    def read(*args: str) -> dict[str, Any]:
+        result = subprocess.run(
+            ["aws", *args, "--region", AWS_REGION, "--output", "json"],
+            env=dict(env), check=True, capture_output=True, text=True, timeout=35,
+        )
+        return json.loads(result.stdout)
+    response = read("ecs", "describe-services", "--cluster", "supportportal-preproduction",
+                    "--services", "supportportal-preproduction-route")
+    services = response.get("services", [])
+    if response.get("failures") or len(services) != 1 or not services[0].get("taskDefinition"):
+        raise ValueError("Live Preproduction Route definition unavailable")
+    definition = read("ecs", "describe-task-definition", "--task-definition", services[0]["taskDefinition"])
+    validate_case_engine_transition(definition, target_engine,
+        downgrade_approved=env.get("AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED") == "1")
 
 
 def prompt_target_dsn(env: Mapping[str, str], environment: str) -> str:
@@ -772,6 +810,12 @@ def _recover_release_evidence(
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
+    if args.through == "preproduction" and args.automation_case_engine is None:
+        raise ValueError("Preproduction requires explicit --automation-case-engine")
+    if args.automation_case_engine == "hermes" and not args.hermes_agent_enabled:
+        raise ValueError("Hermes case engine requires --hermes-agent-enabled")
+    if args.automation_case_engine is None:
+        args.automation_case_engine = "legacy"
     env = sanitized_aws_environment()
     env["AUTOMATION_RELEASE_PYTHON"] = sys.executable
     verify_aws_identity(env)
@@ -798,6 +842,8 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--through production keeps the automation case engine on legacy")
     if args.through == "production" and args.hermes_agent_enabled:
         raise ValueError("--through production keeps the Hermes agent disabled")
+    if args.through == "preproduction":
+        check_live_case_engine(args.automation_case_engine, env)
     release_commit = args.release_commit or _git(project_root, "rev-parse", "origin/main")
     release_commit = _git(project_root, "rev-parse", f"{release_commit}^{{commit}}")
     hotfix_baseline = getattr(args, "hotfix_baseline", None) or None
@@ -835,6 +881,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
                 "hermes_case_workflow": args.hermes_case_workflow_mode or "",
                 "hermes_persona_enabled": bool(args.hermes_persona_enabled),
                 "automation_case_engine": args.automation_case_engine,
+                "case_engine_downgrade_approved": env.get("AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED") == "1",
                 "hermes_agent_enabled": bool(args.hermes_agent_enabled),
                 "enablement_workflow": str(
                     getattr(args, "enablement_workflow_mode", "manual") or "manual"
@@ -1088,6 +1135,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     task_hash = subparsers.add_parser("task-definition-sha256")
     task_hash.add_argument("--task-definition", required=True)
+    engine_check = subparsers.add_parser("validate-case-engine-transition")
+    engine_check.add_argument("--task-definition", required=True)
+    engine_check.add_argument("--target-engine", choices=("legacy", "hermes"), required=True)
     prompt_target = subparsers.add_parser("prompt-target-identity")
     prompt_target.add_argument("--schema", required=True)
     prompt_state = subparsers.add_parser("prompt-target-state")
@@ -1113,7 +1163,8 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--bootstrap-account-schema", action="store_true")
     pipeline.add_argument("--hermes-case-workflow-mode", choices=("disabled", "mock", "real"))
     pipeline.add_argument("--hermes-persona-enabled", action="store_true")
-    pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"), default="legacy")
+    pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"),
+                          help="Required for Preproduction; Production retains legacy")
     pipeline.add_argument("--hermes-agent-enabled", action="store_true")
     pipeline.add_argument(
         "--enablement-workflow-mode",
@@ -1136,6 +1187,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(argv: list[str] | None = None) -> dict[str, Any]:
     args = build_parser().parse_args(argv)
+    if args.command == "validate-case-engine-transition":
+        validate_case_engine_transition(_read_json(args.task_definition), args.target_engine,
+            downgrade_approved=os.getenv("AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED") == "1")
+        return {"status": "passed", "target_engine": args.target_engine}
     if args.command == "validate-release-source":
         return validate_release_source(
             repo=args.repo,

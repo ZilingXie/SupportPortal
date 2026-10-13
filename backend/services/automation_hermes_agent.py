@@ -716,7 +716,7 @@ class HermesAgentTurnProcessor:
                 phase == HermesTurnPhase.WORK
                 and outcome == _PHASE_COMPLETED
                 and str(refreshed.get("turn_kind") or "normal")
-                in {"normal", "investigation_feedback"}
+                in {"normal", "fixed_task", "investigation_feedback"}
                 and str(refreshed.get("direction") or "") == "investigation"
             ):
                 # Human gate: the investigation result must be reviewed (Slack
