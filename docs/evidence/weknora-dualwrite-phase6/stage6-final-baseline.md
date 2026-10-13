@@ -104,3 +104,15 @@
 - 治理开关回读：master=0、六开关全 0、allowlist 空（api:140/worker:140 task def）。
 - 自然触发路径：CSD 下一自然调度=2026-10-13 12:00 北京（发布前当日 12:00 已跑过旧链）；Solved 随真实工单关闭触发。关闭期内两链将收 503 并走 errorWorkflow 告警=关闭态的线上自然证据（预期行为；开启 intake 后消失）。
 - 零 claim/零外部写入/零 Slack：开关全 0 下 worker drain 与 delivery 目标均不可达（构造性 fail-closed+task def env 回读）。
+
+## 小范围开启层 1：master+intake（v3-A 步 9 层 1，r20261013-42a187a）
+
+发布：`--knowledge-stage-config`（master=1、KNOWLEDGE_SOURCE_INTAKE_ENABLED=1、其余五开关 0、allowlist 空）；全阶段 passed（UTC 日期翻转后新 release id，无状态目录冲突；旧全关部署 checkpoint/evidence/timings 已归档至本目录 alloff-deploy-state/）。回读：worker **:141**、master=1、intake=1、summary/review/worker/delivery/slack 全 0、allowlist 空；步 2 双 verify 门再次通过（部署日志两见）。
+
+接收层验证（探针=显式合成非业务源，永不入 allowlist）：
+
+- POST `csd_issue:CSD-STAGE6-L1-PROBE` → **202 accepted** + task_id 回执；intakes 表落库（总数 101→102，状态 accepted）。
+- 零 AI：probe Summary 0 条；summaries 总数 36 不变、旧任务 1 不变——受执与 AI 处理面在本层彻底分离。
+- 任务创建机制确认：allowlist 挡任务创建（受执时评估）；**重投=重试触发器**（queue_standalone_summary_for_source R25 合同）——层 2 加 allowlist 后对选定快照受控重投即建任务。
+
+层 2 待自然到达来源：CSD 链下次自然扫描 2026-10-13 12:00 北京（04:00 UTC）经 source-only active 链投递（JQL 窗口内 RESOLVED CSD）；Solved 链随真实工单关闭 webhook 触发。到达来源在 R1 态=202 受执+零任务（allowlist 空），从中选定 1–2 个可唯一追踪来源进层 2 的 allowlist，受控重投后走全链。
