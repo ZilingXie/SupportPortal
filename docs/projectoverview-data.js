@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:50:39Z",
-  "source_base_commit": "b9afa37c9f53023fab041ef7393b64c5a7275926",
-  "registry_digest": "68f9dc575a2269dc2e4bda5ad8bafa3d58c28145ff18982eb68cd7be602f79fc",
+  "generated_at": "2026-10-13T11:29:05Z",
+  "source_base_commit": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "registry_digest": "99cddb9d1e2f226ea4231c9f60b1358b903dfbea47e21ffebc7a4b5ba15b5420",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5211,6 +5211,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1真实保存入口及隔离PG回归",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
           "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
+        },
+        {
+          "type": "test",
+          "label": "R1.1终态缺失Account Case状态同步",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
         }
       ],
       "source_refs": [
@@ -18395,9 +18401,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "engineer-workspace",
       "function_id": "engineer-investigation-reply",
       "title": "native Hermes Investigation 草稿保存修复",
-      "summary": "R1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读。关联p2-191与p2-199。",
+      "summary": "R1.1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读；补齐终态状态同步的历史缺失 Account Case 门禁修复。关联p2-191与p2-199。",
       "status": "active",
-      "next_action": "按R1实施与隔离PG回归，然后正常finalize及ECS Preproduction技术验收；不操作14031或客户发送。",
+      "next_action": "完成 R1.1 status-sync 回归并 finalize，重新走 ECS Preproduction 完整门禁；不操作 14031 或客户发送。",
       "owner": "codex",
       "created_at": "2026-10-13",
       "updated_at": "2026-10-13",
@@ -18411,6 +18417,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1真实保存入口及隔离PG回归",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
           "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
+        },
+        {
+          "type": "test",
+          "label": "R1.1终态缺失Account Case状态同步",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
         }
       ],
       "source_refs": [

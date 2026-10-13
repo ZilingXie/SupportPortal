@@ -172,8 +172,39 @@ class AccountBusinessProcessor:
             )
             return {"comment_sync": sync_result, "trigger": trigger}
 
-        before_external()
         native_context = None
+        # A terminal Zendesk update can outlive its local Account Case. This
+        # happens for historical/test tickets that were resolved and later
+        # cleaned up locally. Treat that specific combination as a terminal,
+        # auditable no-op so an old retry cannot fail the whole release gate.
+        # Active-status updates still raise below: silently dropping those
+        # would hide a real status-sync/data-loss problem.
+        if event.event_type == IntakeEventType.TICKET_UPDATED:
+            existing_case = await asyncio.to_thread(
+                self.repository.get_account_case_by_ticket_id,
+                ticket_id,
+            )
+            normalized_status = str(event.ticket.status or "").strip().lower()
+            if not isinstance(existing_case, dict) and normalized_status in {"solved", "closed"}:
+                LOGGER.warning(
+                    "Skipping terminal status sync for missing Account Case "
+                    "ticket_id=%s event_id=%s status=%s reason=terminal_account_case_missing",
+                    ticket_id,
+                    event.event_id,
+                    normalized_status,
+                )
+                return {
+                    "status": "ignored",
+                    "reason": "account_case_missing",
+                    "ticket_id": ticket_id,
+                    "zendesk_status": normalized_status,
+                    "source_updated_at": (
+                        event.ticket.updated_at.astimezone(timezone.utc).isoformat()
+                        if event.ticket.updated_at
+                        else event.occurred_at.astimezone(timezone.utc).isoformat()
+                    ),
+                }
+        before_external()
         binding = coordination_store.get_hermes_case_binding(ticket_id) if coordination_store is not None else None
         if binding is not None and str(binding.get("session_kind") or "case") == "case":
             if event.ticket.updated_at is None or processing_job is None:
