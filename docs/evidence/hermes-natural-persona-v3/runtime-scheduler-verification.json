@@ -23,36 +23,28 @@
   },
   "checks": [
     {
-      "command": "<project-python> -m pytest backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_enablement_auto_postgres.py -q --tb=short (isolated PG enabled)",
-      "result": "20 passed, 15 subtests passed, no skips"
+      "command": "RUN_POSTGRES_INTEGRATION=1 <project-python> -m pytest backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_enablement_auto_postgres.py -q --tb=short",
+      "result": "18 passed, 17 subtests passed; isolated PostgreSQL race/ownership suite, no skips"
     },
     {
-      "command": "<project-python> scripts/testing/verify_hermes_repair_negative_controls.py --control omit_source_hermes_ownership --control claim_hermes_compatibility_job --control terminalize_claimed_hermes_identity --control ignore_current_hermes_ownership --control overwrite_hermes_ownership_from_stale_claim --output <output-json>",
-      "result": "5/5 detected via behavior assertions; collection/import errors excluded"
+      "command": "<project-python> -m pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_worker_compatibility_scope.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_rerun_automated_account_cases.py backend/tests/test_ownership_gate_alert_context.py backend/tests/test_natural_persona_eval.py backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py -q",
+      "result": "278 passed, 50 subtests passed, no skips; reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 on base c9722399daa347a7a24e0f15fafb8fddaedebe39"
+    },
+    {
+      "command": "<project-python> scripts/testing/verify_hermes_repair_negative_controls.py --output <output-json>",
+      "result": "16/16 negative controls detected via behavior assertions; collection/import errors excluded"
     },
     {
       "command": "<project-python> -m pytest backend/tests/test_worker.py -q --tb=short",
-      "result": "branch/main: 153 passed, 14 failed, 25 subtests passed; same 14 failure signatures"
+      "result": "branch/main: 153 passed, 14 failed, 25 subtests; same 14 baseline failure signatures"
     },
     {
-      "command": "<project-python> -m pytest backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short",
-      "result": "branch/main: 101 passed, 6 failed, 7 subtests passed; same six legacy fixture failures"
+      "command": "Candidate and git archive origin/main: expanded worker/intake regression",
+      "result": "Both: 254 passed, 20 failed, 32 subtests; exact failure signatures equal; base c9722399daa347a7a24e0f15fafb8fddaedebe39"
     },
     {
-      "command": "Candidate and git archive origin/main: <project-python> -m pytest backend/tests/test_worker.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short",
-      "result": "Both latest main@0124173b and integrated candidate: 254 passed, 20 failed, 32 subtests passed; exact failure signatures equal (14 worker + 6 legacy intake); see runtime-scheduler-baseline.json"
-    },
-    {
-      "command": "... pytest backend/tests/test_native_hermes_draft_save.py with integrated main@0124173b",
-      "result": "308 passed, 48 subtests passed, no skips"
-    },
-    {
-      "command": "Candidate and origin/main expanded baseline comparison",
-      "result": "Both: 254 passed, 20 failed, 32 subtests; exact failure signatures equal"
-    },
-    {
-      "command": "RUN_POSTGRES_INTEGRATION=1 ... focused Hermes/basis/native/compatibility/worker/PG suite",
-      "result": "278 passed, 50 subtests passed, no skips after integrating origin/main c9722399"
+      "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check; git merge-tree",
+      "result": "passed"
     }
   ],
   "baseline_failures": {
@@ -96,11 +88,11 @@
     "diff_check": "passed"
   },
   "deployed_source": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
-  "integration_baseline": "0124173bbc6c818efd89f05de9127684f6133ac4",
+  "integration_baseline": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
   "integration_assessment": "Main #1491 changes shared draft-save entry and Investigation validator/turn JSON; does not alter compatibility scheduler/release code. Preserved both changes and reran shared/native entries. Prior model evidence belongs to the deployed 4ecea043 source; no new real model claim for integrated candidate.",
   "negative_controls": {
-    "count": 7,
-    "detected": 7,
+    "count": 16,
+    "detected": 16,
     "names": [
       "omit_source_hermes_ownership",
       "claim_hermes_compatibility_job",
@@ -108,9 +100,20 @@
       "ignore_current_hermes_ownership",
       "overwrite_hermes_ownership_from_stale_claim",
       "omit_human_review_ownership_cas",
-      "omit_publish_ownership_cas"
+      "omit_publish_ownership_cas",
+      "omit_plain_text_delivery_watermark",
+      "check_audit_time_only_with_attachments",
+      "omit_delivery_scope_flag",
+      "infer_relay_from_enablement_route",
+      "release_without_confirmed_public_delivery",
+      "omit_real_request_fixture",
+      "repeat_release_transition",
+      "omit_gate_failure_phase",
+      "omit_gate_failure_reason"
     ]
   },
-  "candidate_head": "4a1781d6",
-  "integrated_main": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
+  "candidate_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+  "integrated_main": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "reviewed_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+  "base": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
 }

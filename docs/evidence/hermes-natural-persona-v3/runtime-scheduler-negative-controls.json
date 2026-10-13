@@ -1,5 +1,5 @@
 {
-  "source_head": "4a1781d66e2f211a9d89d16b8f2daa7743bcdfea",
+  "source_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
   "controls": [
     {
       "control": "omit_source_hermes_ownership",
@@ -271,5 +271,8 @@
       },
       "output": "FF..                                                                     [100%]\n=================================== FAILURES ===================================\n____________ test_gate_failure_reaches_real_alert_and_parks[False] _____________\nbackend/tests/test_ownership_gate_alert_context.py:63: in test_gate_failure_reaches_real_alert_and_parks\n    assert line in body\nE   AssertionError: assert 'Failure reason: Ownership was released to the human queue' in 'SupportPortal Account automation stopped and requires human attention.\\nIncident: account-automation:AC-123:hermes_to...I: /account\\nAction: review the Account Case and continue manually. No customer reply was generated after the failure.'\n_____________ test_gate_failure_reaches_real_alert_and_parks[True] _____________\nbackend/tests/test_ownership_gate_alert_context.py:63: in test_gate_failure_reaches_real_alert_and_parks\n    assert line in body\nE   AssertionError: assert 'Failure reason: Ownership was released to the human queue' in 'SupportPortal Account automation stopped and requires human attention.\\nIncident: account-automation:AC-123:hermes_to...I: /account\\nAction: review the Account Case and continue manually. No customer reply was generated after the failure.'\n=========================== short test summary info ============================\nFAILED backend/tests/test_ownership_gate_alert_context.py::test_gate_failure_reaches_real_alert_and_parks[False]\nFAILED backend/tests/test_ownership_gate_alert_context.py::test_gate_failure_reaches_real_alert_and_parks[True]\n2 failed, 2 passed in 1.06s\n"
     }
-  ]
+  ],
+  "reviewed_base": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "count": 16,
+  "detected": 16
 }

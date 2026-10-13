@@ -6,8 +6,8 @@
 
 - 原基线：`42a187ae884015b833277b7b4e23d624a647663b`。
 - 修复起点：`378cc6fb6fd716c858777b4f13f6a7338626bb36`。
-- 集成 main：`9418f7f1aa2d3a474f0ef12a3596d6a0afda5ac1`；保留其 fixed-task Investigation 人工复核门禁、发布保护和 `p2-199`。
-- 分支/worktree：`codex/hermes-natural-persona` / `.worktrees/hermes-natural-persona`；完整最终 HEAD 以 PR 描述和交接消息为准。
+- 集成 main：`c9722399daa347a7a24e0f15fafb8fddaedebe39`；保留其 fixed-task Investigation 人工复核门禁、发布保护和 `p2-199`。
+- 分支/worktree：`codex/hermes-natural-persona` / `.worktrees/hermes-natural-persona`；reviewed HEAD 唯一锚点为 `0de4868ef1624e619255cff87a6b0808ccfb2fe3`，base 为 `c9722399daa347a7a24e0f15fafb8fddaedebe39`。
 - v3.1 独立代码验收通过 HEAD：`41f27f48ac6e2247d940d2fbd0387fd45c8ad3ce`；已 finalize，合并源码/main：`4ecea0431f1b84490bab4bf51220faeef815e6b2`，CodeGraph 与 CodeSight 已刷新。
 - 原代码与 v6 Prompt 已发布 Preproduction：`r20261013-4ecea04` / `pr-78386473bd08`；sid-precise published v2。技术发布成功，业务验收未完成。
 - 本轮局部运行修复仅在原 worktree 实施，等待独立验收；**不再次 finalize/部署**，不重开、回放或修写 14037，不强制释放邮件/relay。Production 未发布，真实 relay 执行保留人工审批。
@@ -15,7 +15,7 @@
 
 ## 运行修复与证据（v3.2）
 
-发布源码为 `main@4ecea0431f1b84490bab4bf51220faeef815e6b2`。本轮提交集成最新 main `0124173bbc6c818efd89f05de9127684f6133ac4`（#1491 native Investigation 草稿保存），共享保存入口的集成验证单独记录；Preproduction 未随本地集成变化。同分支因原 PR 已合并，提交后续 Draft PR。原 v3.1 时间水位与附件/footer 合同继续保持，Prompt/basis 内容不变。
+发布源码为 `main@4ecea0431f1b84490bab4bf51220faeef815e6b2`。本轮 reviewed HEAD 为 `0de4868ef1624e619255cff87a6b0808ccfb2fe3`，base 为 `main@c9722399daa347a7a24e0f15fafb8fddaedebe39`；已集成 #1491 native Investigation 草稿保存，共享保存入口的集成验证单独记录；Preproduction 未随本地集成变化。同分支因原 PR 已合并，提交后续 Draft PR。原 v3.1 时间水位与附件/footer 合同继续保持，Prompt/basis 内容不变。
 
 **R2-F1-runtime-14037（implementation，原兼容身份合同）**：真实新测试工单 14037 缺 App ID 首轮正常追问，补齐后客户确认回复已投递；其兼容 job 被旧 worker 领取，prepare/publish 将 `hermes_compatibility_only=True` 的 job 置为 `manual_attention`。投递成功收尾正确拒绝终态身份，事件 `hermes_enablement_compatibility_release_blocked / enablement_compatibility_job_terminal`，内部邮件仍 awaiting_public_reply。后续观察到工单 closed/solved，不代表邮件释放恢复，也不认定关闭来源。没有改写该真实 job 或回放工单。
 
@@ -28,13 +28,13 @@
 | C3 已领取兼容身份不终态化 | prepare 读取当前 payload；prepare/publish 使用既有 Persona queued 状态，claim filter 防止再次处理 | 先领取旧 payload，再持久化 Hermes 所有权，两个真实 worker 入口零 render/发送；manual/auto 的真实 audit parser→ledger→repo 回读只释放一次、单条投影 |
 | C4 旧 claim 不能移除所有权 | InMemory lock / PG UPDATE CAS 条件拒绝 marker true→非 true 的 claimed update | 相同 claim fence 仍不能覆盖所有权，携带正确 marker 的恢复更新可成功；terminal/unknown 白名单不变 |
 
-- 最新 main@0124173b 集成：新增 #1491 native Investigation draft-save 测试，真实 memory/PG API 与共享保存入口回归 **308 passed + 48 subtests，无跳过**；五项运行修复负控在集成版本继续检出。原模型证据绑定已发布的 4ecea043，不声称新集成版本已重新执行真实模型。
-- 定向核心/native/compatibility/version/publication 回归：**265 passed + 48 subtests，无跳过**；包括本地 PostgreSQL 16 隔离 schema。新 scheduler tests **10 passed**；PG suite **6 passed + 15 subtests**（其中新增十个恢复/调度子场景，含 legacy/v8 状态）。
-- 七个负控：遗漏源头所有权、允许 scheduler claim、将恢复置为 manual_attention、忽略最新 payload、stale claim 清除所有权，全部被行为断言检出；不把 import/collection 失败当作检出。
-- 本轮新增失败转人工与 publish 竞态：InMemory/隔离 PostgreSQL 均证明旧 payload 不会清除 Hermes marker，不进入 `manual_attention`，不写客户消息；七项负控全部检出。
-- 最新 main@c9722399 集成后，真实候选与 `git archive origin/main@0124173b` 五套扩大回归均 **254 passed、20 failed、32 subtests**，逐项失败签名一致（14 worker + 6 legacy intake），见 [最新基线对比](../evidence/hermes-natural-persona-v3/runtime-scheduler-baseline.json)。
+- 当前 reviewed HEAD `0de4868e` / base `c9722399`：原模型证据仍绑定已发布的 4ecea043，不声称新集成版本已重新执行真实模型。
+- 定向核心/native/compatibility/version/publication 回归：**278 passed、50 subtests，无跳过**；新增 PG 竞态套件 **18 passed、17 subtests**。
+- 当前 **16/16** 负控由行为断言检出；不把 import/collection 失败当作检出。
+- 本轮新增失败转人工与 publish 竞态：InMemory/隔离 PostgreSQL 均证明旧 payload 不会清除 Hermes marker，不进入 `manual_attention`，不写客户消息；当前 16 项负控全部检出。
+- 最新 main@c9722399 集成后，真实候选与 `git archive origin/main@c9722399` 五套扩大回归均 **254 passed、20 failed、32 subtests**，逐项失败签名一致（14 worker + 6 legacy intake），见 [最新基线对比](../evidence/hermes-natural-persona-v3/runtime-scheduler-baseline.json)。
 - 完整 worker 分支与发布 main 均 **153 passed、14 failed、25 subtests**，14 个失败签名相同。补充 legacy intake/manual/auto/version 四套分支与 main 均 **101 passed、6 failed、7 subtests**；同六个旧 fixture 失败，未弱化断言。
-- 复现命令与文件 hash：[本轮验证](../evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json)、[七项负控](../evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json)。仅 synthetic PostgreSQL，监听 `127.0.0.1:55437`；没有使用远端数据库作为测试数据库，无 migration/新状态。
+- 复现命令与文件 hash：[本轮验证](../evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json)、[16 项负控](../evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json)。历史 `32be4faa`、`265 passed + 48 subtests`、七项负控及旧 `0124173b` 数字仅保留为历史结果，不作为当前验收证据。仅 synthetic PostgreSQL，监听 `127.0.0.1:55437`；没有使用远端数据库作为测试数据库，无 migration/新状态。
 
 ### 已完成的发布与实际业务边界
 
@@ -108,7 +108,7 @@ RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<isolated-test-dsn> ../../.venv/bin/pyt
 
 结果：**291 passed + 75 subtests**，没有 PG skip。独立 PG 套件 **5 passed + 5 subtests**；Hermes worker delivery 矩阵 **4 passed + 4 subtests**。
 
-反向验证：`scripts/testing/verify_hermes_repair_negative_controls.py --output <json>`，在可销毁源码副本上修改，任务源码不变。七项均由行为断言检出：删除 scope flag、按 route 推断、未确认投递就释放、漏建真实 request、重复释放、删除 gate phase、删除 gate reason。见 [负控输出](../evidence/hermes-natural-persona-v3/negative-controls.json)。收集/import 错误不算检出。
+历史 v3 反向验证：`scripts/testing/verify_hermes_repair_negative_controls.py --output <json>`，在可销毁源码副本上修改，任务源码不变。旧七项均由行为断言检出；当前 v3.2 以 16/16 负控文件为准：删除 scope flag、按 route 推断、未确认投递就释放、漏建真实 request、重复释放、删除 gate phase、删除 gate reason。见历史 [负控输出](../evidence/hermes-natural-persona-v3/negative-controls.json)。收集/import 错误不算检出。
 
 完整 worker 在分支和 main 都为 **153 passed、14 failed、25 subtests**；每个失败/子测试及断言消息见 [worker-baseline.json](../evidence/hermes-natural-persona-v3/worker-baseline.json)。14 项逐项相同，均在旧 Investigation fixture 的 ownership eligibility 断言失败；不把新增失败纳入基线。
 

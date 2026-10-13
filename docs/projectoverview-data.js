@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T11:22:17Z",
-  "source_base_commit": "4a1781d66e2f211a9d89d16b8f2daa7743bcdfea",
-  "registry_digest": "f274fd3dedbc9b846f2ab0082e40ff4ecea698017403d3ed58027378640b212e",
+  "generated_at": "2026-10-13T11:44:04Z",
+  "source_base_commit": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+  "registry_digest": "9a7dfdc217896ea9b59c3884f022d6e04b5039070c088762a4363c4483c2cfb6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1601,9 +1601,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
-          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；七项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
+          "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json; docs/evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json",
+          "result": "reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 / base c9722399daa347a7a24e0f15fafb8fddaedebe39；278 passed、50 subtests，无跳过；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。旧 32be4faa、265 passed + 48 subtests、七项负控数字均标为历史结果。"
         },
         {
           "type": "test",
@@ -1625,7 +1625,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "label": "历史结果（不作为 reviewed HEAD 证据）：rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
           "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
           "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
         },
@@ -18294,8 +18294,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。 已集成最新 main@c9722399（#1491 Investigation draft-save），集成后308 passed + 48 subtests，无跳过；当前线上仍以最新发布回读单独判断。",
-      "next_action": "独立验收完整 HEAD（已集成最新 main@c9722399）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
+      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
+      "next_action": "独立验收 reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3（base c9722399daa347a7a24e0f15fafb8fddaedebe39）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18312,9 +18312,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "evidence": [
         {
           "type": "test",
-          "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
-          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；七项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
+          "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json; docs/evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json",
+          "result": "reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 / base c9722399daa347a7a24e0f15fafb8fddaedebe39；278 passed、50 subtests，无跳过；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。旧 32be4faa、265 passed + 48 subtests、七项负控数字均标为历史结果。"
         },
         {
           "type": "test",
@@ -18336,7 +18336,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "label": "历史结果（不作为 reviewed HEAD 证据）：rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
           "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
           "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
         },
@@ -18382,7 +18382,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
           "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
         }
-      ]
+      ],
+      "reviewed_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+      "reviewed_base": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
     },
     {
       "schema_version": 2,
