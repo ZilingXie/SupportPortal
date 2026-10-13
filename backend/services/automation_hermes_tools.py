@@ -26,9 +26,10 @@ LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
 
 
 class HermesToolError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
+    def __init__(self, code: str, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.code = code
+        self.details = dict(details or {})
 
 
 def tool_classify_route(
@@ -52,12 +53,14 @@ def tool_classify_route(
 
 
 def _resolve_turn_context(
-    store: AutomationEcsStore, repository: Any, turn_id: str
+    store: AutomationEcsStore, repository: Any, turn_id: str, *, allow_saved_reply: bool = False
 ) -> dict[str, Any]:
     turn = store.get_hermes_turn(turn_id)
     if turn is None:
         raise HermesToolError("turn_not_found", f"turn {turn_id} does not exist")
-    if str(turn["status"]) not in {"pending", "running"}:
+    if str(turn["status"]) not in {"pending", "running"} and not (
+        allow_saved_reply and turn.get("turn_kind") == "investigation_reply" and turn.get("status") == "completed"
+    ):
         raise HermesToolError("turn_not_active", f"turn {turn_id} is {turn['status']}")
     binding = store.get_hermes_case_binding(str(turn["zendesk_ticket_id"]))
     if binding is None:
@@ -123,7 +126,7 @@ def _validate_enablement_compatibility_job(
 def tool_get_case_context(
     store: AutomationEcsStore, repository: Any, *, turn_id: str
 ) -> dict[str, Any]:
-    context = _resolve_turn_context(store, repository, turn_id)
+    context = _resolve_turn_context(store, repository, turn_id, allow_saved_reply=True)
     turn = context["turn"]
     binding = context["binding"]
     ticket_id = str(turn["zendesk_ticket_id"])
@@ -147,6 +150,7 @@ def tool_get_case_context(
         "direction": binding["direction"],
         "engineer_authority": (turn.get("work_result") or {}).get("engineer_authority"),
         "investigation": binding.get("investigation"),
+        "draft_save": (turn.get("work_result") or {}).get("draft_save") or {},
         "collected_fields": (account_case or {}).get("collected_fields") or {},
         "missing_fields": (account_case or {}).get("missing_fields") or [],
         "automation_status": (account_case or {}).get("automation_status"),
@@ -1736,16 +1740,17 @@ def tool_save_reply_draft(
     content: str,
     basis: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    context = _resolve_turn_context(store, repository, turn_id)
+    context = _resolve_turn_context(store, repository, turn_id, allow_saved_reply=True)
     turn = context["turn"]
     if str(turn.get("phase") or "") != "persona":
         raise HermesToolError(
             "phase_mismatch", "drafts may only be saved during the persona phase"
         )
     binding = context["binding"]
+    native_reply = turn.get("turn_kind") == "investigation_reply" and turn.get("direction") == "investigation"
     normalized_policy = derive_publish_policy(turn)
     normalized_content = str(content or "").strip()
-    if not normalized_content:
+    if not normalized_content and not native_reply:
         raise HermesToolError("content_required", "draft content is required")
     greeting_name = "Customer"
     snapshot = turn.get("input_snapshot") or {}
@@ -1779,12 +1784,13 @@ def tool_save_reply_draft(
         raise HermesToolError("reply_basis_unavailable", "a server-owned Work or investigation result is required before drafting")
     if str(candidate_basis.get("source_turn_id") or "") != str(turn.get("turn_id") or ""):
         raise HermesToolError("basis_turn_mismatch", "reply basis is not bound to the current turn")
-    try:
-        validation = validate_customer_reply_draft(normalized_content, candidate_basis)
-    except HermesReplyBasisError as exc:
-        raise HermesToolError(exc.code, exc.detail) from exc
-    candidate_basis["reply_owner"] = "hermes_persona"
-    candidate_basis["validation"] = validation
+    if not native_reply:
+        # Preserve the existing Automation validator's input and ordering.
+        try:
+            candidate_basis["validation"] = validate_customer_reply_draft(normalized_content, candidate_basis)
+        except HermesReplyBasisError as exc:
+            raise HermesToolError(exc.code, exc.detail) from exc
+        candidate_basis["reply_owner"] = "hermes_persona"
     work_result = turn.get("work_result") if isinstance(turn.get("work_result"), dict) else None
     from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
     from backend.services.account_reply_rag_fallback import format_rag_fallback_references
@@ -1809,36 +1815,68 @@ def tool_save_reply_draft(
             str(item) for item in list(work_result.get("references") or []) if str(item).strip()
         ]
         normalized_content = normalized_content + format_rag_fallback_references(references)
-    if (
-        str(turn.get("direction") or "") == "investigation"
-        and len(normalized_content) > ENGINEER_CUSTOMER_DRAFT_MAX_CHARS
-    ):
-        raise HermesToolError(
-            "reply_too_long",
-            "customer reply draft exceeds the 1200-character limit",
+
+    def validate_candidate() -> dict[str, Any]:
+        if not str(content or "").strip():
+            raise HermesToolError("content_required", "draft content is required")
+        if turn.get("direction") == "investigation" and len(normalized_content) > ENGINEER_CUSTOMER_DRAFT_MAX_CHARS:
+            raise HermesToolError(
+                "reply_too_long", "customer reply draft exceeds the 1200-character limit",
+                details={"actual_chars": len(normalized_content), "max_chars": ENGINEER_CUSTOMER_DRAFT_MAX_CHARS},
+            )
+        if native_reply:
+            try:
+                validation = validate_customer_reply_draft(normalized_content, candidate_basis)
+            except HermesReplyBasisError as exc:
+                raise HermesToolError(exc.code, exc.detail) from exc
+            candidate_basis["reply_owner"] = "hermes_persona"
+            candidate_basis["validation"] = validation
+        guardrail = run_engineer_guardrail_final(
+            draft_customer_reply=normalized_content,
+            reply_readiness={
+                "summary": str(investigation.get("summary") or ""),
+                # Hermes-native self-report: the durable work record behind this
+                # draft — saved investigation progress or an executed automation
+                # action — is the readiness proof; drafts with no recorded work
+                # stay blocked.
+                "ready_for_customer_reply": bool(investigation) or bool(work_result),
+            },
+            # The greeting was applied above by the application (English, from
+            # the snapshot's greeting_name); the guardrail validates as-is so
+            # save/validate/approve/send all reference the same text.
+            preformatted=True,
         )
-    guardrail = run_engineer_guardrail_final(
-        draft_customer_reply=normalized_content,
-        reply_readiness={
-            "summary": str(investigation.get("summary") or ""),
-            # Hermes-native self-report: the durable work record behind this
-            # draft — saved investigation progress or an executed automation
-            # action — is the readiness proof; drafts with no recorded work
-            # stay blocked.
-            "ready_for_customer_reply": bool(investigation) or bool(work_result),
-        },
-        # The greeting was applied above by the application (English, from
-        # the snapshot's greeting_name); the guardrail validates as-is so
-        # save/validate/approve/send all reference the same text.
-        preformatted=True,
-    )
-    draft = store.save_hermes_case_draft(
-        turn_id,
-        content=normalized_content,
-        basis=candidate_basis,
-        guardrail=guardrail,
-        publish_policy=normalized_policy,
-    )
+        if native_reply and str((guardrail or {}).get("decision")) == "blocked":
+            raise HermesToolError("guardrail_blocked", "the final guardrail blocked the draft")
+        return {"basis": candidate_basis, "guardrail": guardrail}
+
+    if native_reply:
+        def native_validator() -> dict[str, Any]:
+            try:
+                return validate_candidate()
+            except HermesToolError as exc:
+                return {"rejection": {"code": exc.code}}
+            except Exception:
+                # An external guardrail outcome cannot be turned into another
+                # wording attempt. Persist unknown and require reconciliation.
+                return {"rejection": {"code": "draft_save_outcome_unknown", "outcome_unknown": True}}
+
+        draft = store.submit_hermes_investigation_draft(
+            turn_id, content=normalized_content, validator=native_validator,
+        )
+        if "rejection" in draft:
+            diagnostic = draft["rejection"]
+            LOGGER.warning("hermes_draft_save_rejected turn_id=%s run_id=%s attempt=%s code=%s actual_chars=%s max_chars=%s rewrite_exhausted=%s",
+                           turn_id, diagnostic.get("run_id"), diagnostic.get("attempt"), diagnostic.get("code"),
+                           diagnostic.get("actual_chars"), diagnostic.get("max_chars"), diagnostic.get("rewrite_exhausted"))
+            raise HermesToolError(str(diagnostic["code"]), "reply draft save rejected: " + str(diagnostic["code"]), details=diagnostic)
+    else:
+        candidate = validate_candidate()
+        draft = store.save_hermes_case_draft(
+            turn_id, content=normalized_content, basis=candidate["basis"],
+            guardrail=candidate["guardrail"], publish_policy=normalized_policy,
+        )
+    guardrail = draft.get("guardrail") or {}
     return {
         "draft_id": draft["draft_id"],
         "conversation_version": int(draft["conversation_version"]),

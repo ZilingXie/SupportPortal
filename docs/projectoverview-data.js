@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:36:08Z",
-  "source_base_commit": "266e720914ead230d1e12adb61d25312922ba7a2",
-  "registry_digest": "a752170c5d07e83b133f400e8c2c1361b7cf2b5687daf55a791ce440a526e538",
+  "generated_at": "2026-10-13T10:50:39Z",
+  "source_base_commit": "b9afa37c9f53023fab041ef7393b64c5a7275926",
+  "registry_digest": "68f9dc575a2269dc2e4bda5ad8bafa3d58c28145ff18982eb68cd7be602f79fc",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5205,6 +5205,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Explicit non-goals",
           "command": "",
           "details": "按 C5 未重放 Ticket 13923，未发送真实客户回复或真实 Slack 测试消息，未执行 Production 发布；因此自然业务样本仍不在本任务证据内。"
+        },
+        {
+          "type": "test",
+          "label": "R1真实保存入口及隔离PG回归",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
         }
       ],
       "source_refs": [
@@ -5212,8 +5218,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 5,
+      "status": "active",
+      "task_count": 6,
       "done_count": 5,
       "blocked_count": 0
     },
@@ -5882,6 +5888,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "F5/F6 修复专项（待独立复验）",
           "command": "pytest -q backend/tests/test_n8n_source_only_contracts.py backend/tests/test_n8n_snapshot_identity.py + snapshot validator",
           "result": "76 passed；完整 Build 余数 55/56/63/0 对 Node SHA256，多字节/100KB 与旧故障注入；六历史文件 byte equality、内部身份冲突负向；15 published/4 drafts/56 redactions + 2 unpublished candidates。29 历史告警保留。未部署/未在线改 n8n/未重投；证据 stage6-layer2-repair-A.md。"
+        },
+        {
+          "type": "test",
+          "label": "I1 main 0124173b 集成（待增量复验）",
+          "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
+          "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
         }
       ],
       "source_refs": [
@@ -18149,8 +18161,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
       "updated_at": "2026-10-13",
-      "summary": "F5/F6 本地修复完成，待同 Draft PR #1490 独立复验：前轮 HEAD 266e7209 验收未通过，F1-F4 核心证据保留；修复两链 SHA padding 与完整 Build 边界回归，六历史快照恢复原文，新增无远端版本 ID 的未发布候选及内部身份校验。未在线发布/未重投。当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "同 Draft PR #1490 新 HEAD 独立复验 F5/F6 与完整 diff；门禁仍未释放。层 2 修复 A 完成自测后提交 Draft PR 独立验收；通过后刷新实时发布基线，保留 native/shared 配置，以新 immutable release ID 发布 Preproduction 并回读。层 2 两样本精确 allowlist、AI execution=0：受控重投建 pending且零AI；层 3单独开 AI execution，取得 Summary/Review 实际会话；后续 dualwrite worker/targets/Slack 按序推进。人工 Review、draft 和全量放开人工停点保留。不得将自测、他线 native 恢复或 #190 SUCCEEDED 计为本轮部署/业务通过。",
+      "summary": "I1 集成修复完成待增量复验：独立报告已关闭 F1-F6；同步 main 0124173b，唯一 Overview 冲突由合并源重生成，双方登记/Prompt 日志保留；76 项 F5/F6 + 213 项含隔离 PG 集成回归通过。未部署/未在线写入。F5/F6 本地修复完成，待同 Draft PR #1490 独立复验：前轮 HEAD 266e7209 验收未通过，F1-F4 核心证据保留；修复两链 SHA padding 与完整 Build 边界回归，六历史快照恢复原文，新增无远端版本 ID 的未发布候选及内部身份校验。未在线发布/未重投。当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
+      "next_action": "同 PR #1490 新 HEAD 增量复验 I1 集成差异与 GitHub MERGEABLE 回读；F1-F6 保留关闭，门禁尚未释放。通过后才按原授权推进。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18244,6 +18256,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "F5/F6 修复专项（待独立复验）",
           "command": "pytest -q backend/tests/test_n8n_source_only_contracts.py backend/tests/test_n8n_snapshot_identity.py + snapshot validator",
           "result": "76 passed；完整 Build 余数 55/56/63/0 对 Node SHA256，多字节/100KB 与旧故障注入；六历史文件 byte equality、内部身份冲突负向；15 published/4 drafts/56 redactions + 2 unpublished candidates。29 历史告警保留。未部署/未在线改 n8n/未重投；证据 stage6-layer2-repair-A.md。"
+        },
+        {
+          "type": "test",
+          "label": "I1 main 0124173b 集成（待增量复验）",
+          "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
+          "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
         }
       ]
     },
@@ -18368,6 +18386,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "path": "docs/plans/native-hermes-review-release-evidence.json",
           "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-200",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "native Hermes Investigation 草稿保存修复",
+      "summary": "R1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读。关联p2-191与p2-199。",
+      "status": "active",
+      "next_action": "按R1实施与隔离PG回归，然后正常finalize及ECS Preproduction技术验收；不操作14031或客户发送。",
+      "owner": "codex",
+      "created_at": "2026-10-13",
+      "updated_at": "2026-10-13",
+      "acceptance_criteria": [
+        "C1-C5见docs/plans/native-hermes-draft-save-r1.md"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R1真实保存入口及隔离PG回归",
+          "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
+          "result": "303 passed, 92 subtests passed；两项反向验证检出旧行为；部署及业务边界分别记录。"
+        }
+      ],
+      "source_refs": [
+        "docs/project/tasks/p2-191.json",
+        "docs/project/tasks/p2-199.json"
       ]
     },
     {

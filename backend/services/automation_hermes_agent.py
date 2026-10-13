@@ -808,22 +808,37 @@ class HermesAgentTurnProcessor:
         ):
             # A Prepare draft click must visibly produce a draft; silence here
             # would strand the human after their Slack action.
+            save_state = (final_turn.get("work_result") or {}).get("draft_save") or {}
+            diagnostic = save_state.get("last_error") or {}
+            error_code = str(diagnostic.get("code") or "missing_draft")
+            error_message = (
+                f"{error_code}: attempt={diagnostic.get('attempt')} "
+                f"chars={diagnostic.get('actual_chars')}/{diagnostic.get('max_chars')} "
+                f"rewrite_exhausted={diagnostic.get('rewrite_exhausted')}"
+                if diagnostic else "persona run finished without saving a reply draft"
+            )
+            if diagnostic:
+                LOGGER.warning(
+                    "hermes_draft_save_failed turn_id=%s run_id=%s attempt=%s code=%s actual_chars=%s max_chars=%s rewrite_exhausted=%s",
+                    payload.turn_id, diagnostic.get("run_id"), diagnostic.get("attempt"), error_code,
+                    diagnostic.get("actual_chars"), diagnostic.get("max_chars"), diagnostic.get("rewrite_exhausted"),
+                )
             self.store.fail_hermes_agent_turn(
                 payload.turn_id,
-                status="failed",
-                error_code="missing_draft",
-                error_message="persona run finished without saving a reply draft",
+                status="outcome_unknown" if diagnostic.get("outcome_unknown") else "failed",
+                error_code=error_code,
+                error_message=error_message,
             )
             self._notify_draft_blocked(
                 payload,
                 final_turn,
-                {"reason": "missing_draft", "blockers": ["persona run finished without saving a reply draft"]},
+                {"reason": error_code, "blockers": [error_message]},
             )
             return {
                 "engine": "hermes",
                 "turn_id": payload.turn_id,
-                "status": "human_review",
-                "error_code": "missing_draft",
+                "status": "outcome_unknown" if diagnostic.get("outcome_unknown") else "human_review",
+                "error_code": error_code,
             }
         if str(publication.get("status")) == "awaiting_approval" and publication.get("draft_id"):
             if turn_direction == "investigation":
@@ -1818,6 +1833,19 @@ class HermesAgentTurnProcessor:
                     )
                 basis = json.dumps(basis_record, ensure_ascii=False, sort_keys=True)
                 input_text += f"\n\n--- REPLY BASIS FOR THIS TURN ---\n{basis}"
+                if turn.get("turn_kind") == "investigation_reply":
+                    instructions += (
+                        "\nPrepare a concise customer draft: conclusion, key evidence or limits, and next step. "
+                        "The complete saved text (server greeting, newlines and references included) must be at most 1200 characters. "
+                        "Use support_save_reply_draft. On a rejection with rewrite_allowed=true, rewrite once in this same run "
+                        "using the exact returned reason and submit again. The backend accepts at most two candidate validations. "
+                        "If rewrite_allowed=false, stop saving; do not start another run, investigate again, or escalate/route the case. "
+                        "An unknown save outcome requires readback via support_get_case_context before any further action."
+                    )
+                    input_text += "\n\n--- DRAFT SAVE BUDGET ---\n" + json.dumps({
+                        "max_complete_chars": 1200, "max_candidate_submissions": 2,
+                        "server_greeting": f"Hi {basis_record.get('greeting_name') or 'Customer'},\n\n",
+                    }, ensure_ascii=False, sort_keys=True)
                 # Restricted follow-up/message-action turns retain their
                 # semantic rendering projection (references/progress labels)
                 # in addition to the canonical basis.

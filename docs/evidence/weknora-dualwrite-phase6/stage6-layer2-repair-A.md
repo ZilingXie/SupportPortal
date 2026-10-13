@@ -17,7 +17,7 @@
 | F5 / C5 SHA-256（implementation / test-carrier） | 两个 Build 手写 padding 漏预留末尾 8 字节，UTF-8 长度余数 56-63 错误。未发布 candidate 改为 Math.ceil((l + 1 + 8) / 64) * 64；历史原文保持。 | 两个完整 Build 真实 jsCode 对 Node SHA-256 oracle 逐值比较，覆盖余数 55/56/63/0、ASCII、中文 emoji、多块和 100KB 输入；四个故障注入恢复漏 8 字节实现，原断言均能抓到错误。未证明线上 hash 已修复。 |
 | F6 / C6 快照身份（implementation / evidence-gap） | 后来版本 ID 混入旧节点图；本地修复又冒用旧远端 Draft 身份。六份历史文件恢复 Git 4ecea043 原始 bytes，修复内容迁到无远端版本 ID 的 local candidates；source base/manifest 分别登记。 | 六文件 byte equality；validator 对 source/manifest/存在的 inner versionId 与 activeVersionId 一致性校验；正向正确版本、12 个内部冲突、候选伪造身份/旧地址/metadata 冲突负向均通过。缺省历史字段不补造；线上版本需发布前另行刷新。 |
 
-F1-F4 保留独立验收证据；F5/F6 当前为执行方修复完成、待独立复验。没有新增产品选择、迁移、外部写入或重投。CSD candidate 的 captured_fields 已改成实际显式请求清单，未改变请求节点字段范围，也不再称完整 Jira 全字段。
+F1-F6 已由用户转交的独立验收关闭（F5/F6 复核 HEAD b9afa37c9f53023fab041ef7393b64c5a7275926）；本轮只处理 I1 集成阻断，仍待增量复验。没有新增产品选择、迁移、外部写入或重投。CSD candidate 的 captured_fields 已改成实际显式请求清单，未改变请求节点字段范围，也不再称完整 Jira 全字段。
 
 ## 验证与下一步
 
@@ -74,3 +74,28 @@ PR 包含原分支的历史 n8n 快照/URL 校验修正及 checkpoint/evidence �
 - 完整 Build 测试不提供 global crypto；标准库只用作 oracle。旧 padding 注入被同一 hash equality 断言捕获；校验器冲突注入证明结构通过不足以掩盖版本混合。
 - 最终 CLI validator：15 published / 4 divergent drafts / 56 redactions，另列 2 unpublished local candidates；29 LEGACY-EXPOSED 历史告警保留，不作为 live 状态证据。Overview --write/--check 与 git diff --check 通过。
 - 原 F1-F4 代码未变，不重跑隔离 PG 大回归。代码接受、部署成功、样本真实 AI/知识投递是三个独立阶段，本轮只申请 F5/F6 及完整 diff 的代码复验。
+
+## I1 最新 main 集成（2026-10-13，待增量复验）
+
+- 独立报告：HEAD b9afa37c9f53023fab041ef7393b64c5a7275926 的 F5/F6 关闭、F1-F4 保留关闭，唯一阻断为 Overview 生成元数据冲突。
+- 同一工作树/分支整合 `origin/main` = `0124173bbc6c818efd89f05de9127684f6133ac4`（PR #1491）。唯一冲突文件 docs/projectoverview-data.js；从双方完整任务源重生成，保留 p2-197、main 的 p2-200 及双方 Prompt 日志。未手改生成数据、未修改整合进来的行为代码。
+- 集成影响：main 新增 native Investigation 草稿保存提交预算/锁定/拒绝诊断及回复字段校验，涉及共享 store/API；知识 Summary/Review 独立执行门及两链候选不变。对新 native 路径、回复校验、知识生产/消费门做组合回归。
+- F1-F6 八个核心实现文件、n8n validator 与 workflows 目录对 b9afa37c 的 diff 为空，原独立证据保留，不重开 finding。
+- F5/F6 两套：76 passed / 0 failed，8.28s。
+- 集成八套：213 passed / 0 failed / 0 skipped，4 subtests，24.00s，4 个既有 FastAPI on_event 弃用告警。使用根区 Python3.13 与本机 PostgreSQL 独立随机 schema，不访问业务库，外部边界 mock。
+- Overview --write/--check、快照 validator 与 diff 检查通过；快照 15/4/56 + 2 unpublished candidates，29 历史告警未用于 live 结论。GitHub MERGEABLE 状态在推送后回读，写入 PR body；可合并状态本身不释放验收门。
+- 允许下一步：对新增整合差异做独立增量复验；本轮不 finalize/merge/deploy、不改在线 n8n、不重投样本。
+
+集成回归命令（任务 worktree，DSN 仅指本机测试库）：
+
+```bash
+rtk proxy env RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q \
+  backend/tests/test_native_hermes_draft_save.py \
+  backend/tests/test_hermes_customer_reply_basis.py \
+  backend/tests/test_hermes_zendesk_agent.py \
+  backend/tests/test_stage6_repair_contract.py \
+  backend/tests/test_hermes_knowledge_workflow.py \
+  backend/tests/test_hermes_knowledge_workflow_postgres.py \
+  backend/tests/test_knowledge_standalone_workflow.py \
+  backend/tests/test_standalone_knowledge_postgres.py
+```
