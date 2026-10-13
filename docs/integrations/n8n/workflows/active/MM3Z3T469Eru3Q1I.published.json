@@ -1169,9 +1169,7 @@
       "executionOrder": "v1"
     },
     "nodeGroups": [],
-    "tags": [],
-    "versionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
-    "activeVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345"
+    "tags": []
   },
   "restoreNotes": {
     "activeAtCapture": true,

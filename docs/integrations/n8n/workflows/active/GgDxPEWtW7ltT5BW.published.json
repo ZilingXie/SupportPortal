@@ -1083,9 +1083,7 @@
       "availableInMCP": true
     },
     "nodeGroups": [],
-    "tags": [],
-    "versionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
-    "activeVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36"
+    "tags": []
   },
   "restoreNotes": {
     "activeAtCapture": true,
