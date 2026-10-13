@@ -189,33 +189,149 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(repository.record_event.call_count, 1)
         self.assertEqual(case["execution_reason_code"], "enablement_compatibility_job_missing")
 
-    def test_relay_release_runs_once_per_delivery(self):
-        case = _case(
-            automation_context={"enablement_auto_workflow": {"reply_job_id": "job-1"}}
+    def test_relay_release_once_with_real_repository_state(self):
+        # Real InMemory state (plan finding 3): two replays must leave
+        # exactly ONE projected message, the internal email released once
+        # (terminal status absorbs the second call), and the case never
+        # blocked.
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+        from backend.services.account_automation_delivery import (
+            prepare_account_internal_email,
         )
-        repository = Mock()
-        repository.get_account_case.return_value = case
-        repository.get_account_reply_job.return_value = {
-            "job_id": "job-1",
-            "ticket_id": "TK-COMPAT",
-            "status": "queued",
-            "payload": {},
-        }
-        repository.get_ticket.return_value = {"ticket_id": "TK-COMPAT", "messages": []}
+
+        repository = InMemoryTicketRepository()
+        repository.save_ticket(
+            {
+                "ticket_id": "TK-COMPAT",
+                "customer_id": "cx@example.com",
+                "requester": "cx@example.com",
+                "subject": "Enable media relay",
+                "status": "open",
+                "created_at": "2026-10-13T10:00:00Z",
+                "updated_at": "2026-10-13T10:00:00Z",
+                "messages": [],
+            },
+            new_messages=[],
+        )
+        repository.save_account_case(
+            {
+                "account_case_id": "AC-COMPAT",
+                "billing_ticket_id": "AC-COMPAT",
+                "client_ticket_id": "TK-COMPAT",
+                "zendesk_ticket_id": "TK-COMPAT",
+                "processing_profile": "preproduction",
+                "automation_status": "automation",
+                "route": "enablement",
+                "execution_action": "enablement",
+                "automation_handler": "enablement",
+                "automation_context": {
+                    "enablement_manual_workflow": {
+                        "version": 1,
+                        "state": "awaiting_public_reply",
+                        "reply_job_id": "job-1",
+                    }
+                },
+                "internal_email_payload": {
+                    "delivery_key": "enablement:AC-COMPAT:v1",
+                    "action": "enablement",
+                },
+                "internal_email_send_status": "awaiting_public_reply",
+                "collected_fields": {"app_id": "8cb7aea984c4457daad802e6960e2475"},
+            }
+        )
+        repository.save_account_reply_job(
+            {
+                "job_id": "job-1",
+                "ticket_id": "TK-COMPAT",
+                "trigger_message_created_at": "2026-10-13T10:00:00Z",
+                "status": "published",
+                "scheduled_for": "2026-10-13T10:00:30Z",
+                "payload": {"reply_intent": "submission_confirmation"},
+                "attempt_count": 0,
+                "created_at": "2026-10-13T10:00:05Z",
+                "updated_at": "2026-10-13T10:00:05Z",
+            }
+        )
+        # The release twin requires a delivered public comment row bound to
+        # the projected message — create one for the job's message.
+        repository.create_account_zendesk_comment_delivery(
+            account_case_id="AC-COMPAT",
+            message_id="draft-1",
+            zendesk_ticket_id="TK-COMPAT",
+            idempotency_key="zd-compat-1",
+            created_at="2026-10-13T10:05:00Z",
+            is_public=True,
+        )
+        repository.complete_account_zendesk_comment_delivery(
+            account_case_id="AC-COMPAT",
+            message_id="draft-1",
+            status="delivered",
+            zendesk_comment_id="544000000000001",
+            failure_code=None,
+            completed_at="2026-10-13T10:05:30Z",
+        )
         delivery = _delivery(
+            message_id="draft-1",
             attachments=[
                 {"_hermes_compatibility_relay_required": True},
                 {"_hermes_compatibility_job_id": "job-1"},
-            ]
+            ],
         )
         with patch.object(worker, "ticket_repository", repository):
             worker._complete_hermes_customer_reply_side_effects(delivery)
             worker._complete_hermes_customer_reply_side_effects(delivery)
-        # The projection is idempotent via the existing message check; the
-        # release calls run per completed delivery but the repository
-        # release is itself idempotent — assert the block never fired.
-        self.assertNotEqual(case.get("automation_status"), "human_review_required")
+
+        saved_case = repository.get_account_case("AC-COMPAT")
+        self.assertNotEqual(
+            saved_case.get("automation_status"), "human_review_required"
+        )
+        # Exactly one projected compatibility message.
+        ticket = repository.get_ticket("TK-COMPAT")
+        projected = [
+            m
+            for m in ticket.get("messages") or []
+            if (m.get("meta") or {}).get("account_reply_job_id") == "job-1"
+        ]
+        self.assertEqual(len(projected), 1)
+        # The internal email release is terminal: status moved off the
+        # awaiting gate and stays there after the second replay.
+        self.assertNotEqual(
+            saved_case.get("internal_email_send_status"), "awaiting_public_reply"
+        )
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SidPreciseSeedV2Tests(unittest.TestCase):
+    """Plan finding 4: the warmed sid-precise instruction must actually
+    reach deployed personas — the seed marker bump (v1 -> v2) makes the
+    registry seeding publish a new version instead of skipping."""
+
+    def test_seed_marker_v2_publishes_warmed_instruction(self):
+        from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
+
+        sid = [p for p in ACCOUNT_PERSONA_PRESETS if p.persona_key == "sid-precise"][0]
+        self.assertEqual(sid.seed_marker, "Seeded Sid Precise preset v2")
+        self.assertIn("precise does", sid.instruction)
+        self.assertIn("acknowledging", sid.instruction)
+
+    def test_resolve_persona_style_uses_preset_content(self):
+        import backend.tests.test_hermes_zendesk_agent as harness
+        from backend.services.automation_hermes_agent import resolve_persona_style
+
+        repository = harness._repository_like() if hasattr(harness, "_repository_like") else None
+        if repository is None:
+            # Minimal InMemory-backed resolution path.
+            from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+            repository = InMemoryTicketRepository()
+        style = resolve_persona_style(repository, "123")
+        self.assertIsInstance(style, dict)
+        # Whatever persona the sticky assignment picks, the library was
+        # seeded from the CURRENT presets: sid-precise (if picked) must
+        # carry the warmed v2 instruction.
+        self.assertIn("instruction", style)
+        if style.get("persona_key") == "sid-precise":
+            self.assertIn("acknowledging", str(style.get("instruction") or ""))

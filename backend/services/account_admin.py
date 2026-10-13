@@ -74,7 +74,7 @@ ACCOUNT_PERSONA_PRESETS = (
             "supported by the provided facts. Stay courteous and human - precise does "
             "not mean cold or transactional."
         ),
-        seed_marker="Seeded Sid Precise preset v1",
+        seed_marker="Seeded Sid Precise preset v2",
     ),
     AccountPersonaPreset(
         persona_key="sid-bright",

@@ -1472,6 +1472,15 @@ class HermesAgentTurnProcessor:
                 "Zendesk ownership gate failed: "
                 f"{ownership_result.failure_detail or ownership_result.failure_code}"
             ),
+            # C7: the ownership gate failure is its own phase — the alert
+            # must carry the real gate failure code, never <unknown>.
+            failed_phase="ownership_gate",
+            failure_reason=(
+                str(ownership_result.failure_detail
+                    or ownership_result.failure_code
+                    or "")
+                or None
+            ),
         )
         return False
 

@@ -25,11 +25,13 @@ from backend.services.account_admin import DEFAULT_PERSONA_CONTENT
 from backend.services.automation_hermes_agent import phase_instructions
 
 
-def _system_prompt():
+def _system_prompt(direction: str = "automation", route: str = "enablement"):
+    # Per-sample real assembly: the route determines which contract section
+    # the model actually sees (plan finding 2).
     return phase_instructions(
         "persona",
-        direction="automation",
-        route="enablement",
+        direction=direction,
+        route=route,
         persona_style=DEFAULT_PERSONA_CONTENT,
         persona_key="default-support",
     )
@@ -229,11 +231,27 @@ def main():
     )
     from backend.services.llm_factory import invoke_responses_text
 
-    instructions, prompt_key = _system_prompt()
     profile = resolve_model_profile(ACCOUNT_EXTRACTOR_SCENARIO)
 
+    # The code snapshot carries the v6 manual/contract builders; without
+    # this the prompt layers silently resolve to empty fallbacks.
+    from backend.services.prompt_runtime import initialize_prompt_runtime
+
+    initialize_prompt_runtime()
+
     results = []
+    system_prompts = {}
     for sample in SAMPLES:
+        direction = (
+            "investigation" if sample["route"] == "investigation" else "automation"
+        )
+        instructions, prompt_key = _system_prompt(direction, sample["route"])
+        system_prompts[sample["sample_id"]] = {
+            "direction": direction,
+            "route": sample["route"],
+            "system_prompt": instructions,
+            "system_prompt_sha256": hashlib.sha256(instructions.encode()).hexdigest(),
+        }
         result = invoke_responses_text(
             profile=profile,
             system_prompt=instructions,
@@ -270,8 +288,7 @@ def main():
             "persona_manual_version": "hermes-persona-manual-v6",
             "reply_contract_version": "hermes-reply-contract-v6",
             "persona_style": "default-support",
-            "system_prompt": instructions,
-            "system_prompt_sha256": hashlib.sha256(instructions.encode()).hexdigest(),
+            "per_sample_system_prompts": system_prompts,
         },
         "samples": results,
         "summary": {

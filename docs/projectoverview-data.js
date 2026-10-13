@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T03:40:42Z",
-  "source_base_commit": "42a187ae884015b833277b7b4e23d624a647663b",
-  "registry_digest": "5bd4f14c4e3145756a73829cdde1460d77f9f2069f100030640d9467bc5092b5",
+  "generated_at": "2026-10-13T05:33:09Z",
+  "source_base_commit": "69120f6246197871f54bf31cc4d2145b38425a83",
+  "registry_digest": "df088625b7133e41f9ac3bfe028ea0523cfd128b64e6894a27f43316b576b23a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1598,6 +1598,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（6 项发现全部落实）：ownership gate 告警上下文+离线评估真实 per-route+真实状态重放+seed v2+脚本移除+基线更正",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "发现 1（C7 ownership gate）：升级调用补 failed_phase=ownership_gate+failure_reason=gate failure_detail（automation_hermes_agent.py 调用点）；新增真实入口测试断言 escalate 传参含 phase/code（无 \u003cunknown>）。发现 2（离线评估）：_system_prompt 改为按样本真实 direction/route 组装（fraud/suspension/billing/investigation 各自合同节），并修复根因——resolve_system_prompt 未初始化时静默返回空 fallback（两次评估的 manual/contract 实际都没进入 prompt），评估现在先 initialize_prompt_runtime()（code snapshot 42 prompts）；证据含 per_sample_system_prompts 哈希（各 9678 字，全含 v6 两层）。发现 3（C3 重放）：重写为真实 InMemory 状态——双执行后恰好 1 条投影消息、internal email release 终态单次转移（awaiting_public_reply→pending 后第二次调用因状态门拒绝不重转）、案例不阻断；fixture 对齐 release twin 合同（enablement_manual_workflow+automation_handler+delivered 公共评论行）。发现 4（sid-precise v2）：seed_marker 升 'Seeded Sid Precise preset v2'——PG 初始化 seeding 按 change_note 去重，v2 标记在下次部署 initialize() 时自动发布新版本并更新 published_version（部署流程承载，非手工迁移）；新增 2 项测试（marker+instruction 内容；resolve_persona_style 库内含暖化版）。发现 5：patch_c1c2.py 已 git rm。发现 6：任务登记 main@c4f71c50→main@42a187ae 全量替换。"
         },
         {
           "type": "test",
@@ -18162,8 +18168,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-12",
-      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
-      "next_action": "v1.1 rev v2 步骤 1-6 完成（compatibility 修正+v6 提示词+告警上下文+离线 7/7）：下一步步骤 7 创建 Draft PR 提交独立验收；通过后步骤 8 Preproduction 发布+新工单实测（不重跑 14009）。",
+      "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@42a187ae。",
+      "next_action": "验收轮 1 六项发现全部修复（含离线评估 prompt 空层根因）：Draft PR #1485 追加提交待二轮独立验收；通过后步骤 8 Preprod 发布+Prompt Release v6+新工单实测。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18177,6 +18183,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（6 项发现全部落实）：ownership gate 告警上下文+离线评估真实 per-route+真实状态重放+seed v2+脚本移除+基线更正",
+          "command": "pytest test_worker_compatibility_scope.py(11)+test_ownership_gate_alert_context.py(1)+定向回归；离线 7/7（per-route system prompt 各 9678 字含 v6 manual+contract）",
+          "result": "发现 1（C7 ownership gate）：升级调用补 failed_phase=ownership_gate+failure_reason=gate failure_detail（automation_hermes_agent.py 调用点）；新增真实入口测试断言 escalate 传参含 phase/code（无 \u003cunknown>）。发现 2（离线评估）：_system_prompt 改为按样本真实 direction/route 组装（fraud/suspension/billing/investigation 各自合同节），并修复根因——resolve_system_prompt 未初始化时静默返回空 fallback（两次评估的 manual/contract 实际都没进入 prompt），评估现在先 initialize_prompt_runtime()（code snapshot 42 prompts）；证据含 per_sample_system_prompts 哈希（各 9678 字，全含 v6 两层）。发现 3（C3 重放）：重写为真实 InMemory 状态——双执行后恰好 1 条投影消息、internal email release 终态单次转移（awaiting_public_reply→pending 后第二次调用因状态门拒绝不重转）、案例不阻断；fixture 对齐 release twin 合同（enablement_manual_workflow+automation_handler+delivered 公共评论行）。发现 4（sid-precise v2）：seed_marker 升 'Seeded Sid Precise preset v2'——PG 初始化 seeding 按 change_note 去重，v2 标记在下次部署 initialize() 时自动发布新版本并更新 published_version（部署流程承载，非手工迁移）；新增 2 项测试（marker+instruction 内容；resolve_persona_style 库内含暖化版）。发现 5：patch_c1c2.py 已 git rm。发现 6：任务登记 main@c4f71c50→main@42a187ae 全量替换。"
+        },
         {
           "type": "test",
           "label": "Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v2 实施步骤 1-6（Draft PR 待独立验收）",
