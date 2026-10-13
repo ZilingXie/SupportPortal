@@ -143,3 +143,7 @@ CSD 链首次真实执行（execution 191877）逐步暴露三个阶段二作者
 - 层 2b（r20261013-42a187a 第二发，mode=disabled）：全阶段 passed，worker:143 开关与 allowlist 逐字上线；但受控重投（202 already_exists）**未建任务**——根因=`knowledge_workflow_active()` 要求 HERMES_CASE_WORKFLOW_MODE=real+agent gateway（standalone drain 与建任务门共用该门），层 2b 镜像了当时线上 disabled 模式故门关。层 2b checkpoint 已归档 layer2-disarmed-state/。
 - 层 2c（第三发，mode=real+--hermes-agent-enabled+--bootstrap-account-schema，runbook 钉定的治理管线配对）：进行中。完成后受控重投两样本即应建 pending Summary 任务（worker 开关仍关=零 AI 执行）。
 - ★机制记录：同日同 SHA 的分层发布=每层归档前一 checkpoint（identity 含 knowledge_stage+mode）；重投回执 already_exists 仍会重跑建任务门（端点代码 560-600 行）。
+
+## 层 2c 失败记录（2026-10-13，已回滚）
+
+mode=real+agent+bootstrap 的层 2c 在部署后 Provider 探针任务失败：`CannotPullContainerError … supportportal/preproduction@sha256:dfce32bd…: not found`（ECR 无该 digest）。部署门禁按设计工作：Prompt 激活前失败→任务定义还原→无分裂状态。线上保持层 2b（master=1/intake=1/summary_review=1/allowlist 两样本/mode=disabled——建任务门因 mode 关仍无效，等层 2c 修复）。待诊断：探针任务引用的 digest 来源（本轮 codebuild 重建过镜像；探针可能引用了陈旧 digest 或本次 push 异常）。
