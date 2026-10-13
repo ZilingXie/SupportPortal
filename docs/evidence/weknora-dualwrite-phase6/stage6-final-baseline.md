@@ -136,3 +136,10 @@ CSD 链首次真实执行（execution 191877）逐步暴露三个阶段二作者
 - **结果：execution 191901 全链 SUCCESS**（17 秒）：JQL 21 条→逐条详情→完整性门→快照（纯 JS SHA-256）→投递 202→三态回执校验→Scan Complete。**20 条自然 csd_issue 来源落库（全 accepted）**；零 AI 不变量保持（summaries=36 不变）。
 - 版本：CSD active **6511c2e9**、Solved active **d4c50a10**；快照已同步刷新（validator 15+4+56 通过）。
 - 层 2 输入就绪：20 条自然到达来源可从中选定受控样本（+受控重投触发建任务机制已确认）。
+
+## 层 2 执行记录（2026-10-13）
+
+- 样本选定：**CSD-79923**（approve 候选，payload 40KB 最丰富）+ **CSD-79994**（reject 候选，V2V 双语详细调查）；层 2 config={master=1, intake=1, summary_review=1, allowlist=csd_issue:CSD-79923,csd_issue:CSD-79994}。
+- 层 2b（r20261013-42a187a 第二发，mode=disabled）：全阶段 passed，worker:143 开关与 allowlist 逐字上线；但受控重投（202 already_exists）**未建任务**——根因=`knowledge_workflow_active()` 要求 HERMES_CASE_WORKFLOW_MODE=real+agent gateway（standalone drain 与建任务门共用该门），层 2b 镜像了当时线上 disabled 模式故门关。层 2b checkpoint 已归档 layer2-disarmed-state/。
+- 层 2c（第三发，mode=real+--hermes-agent-enabled+--bootstrap-account-schema，runbook 钉定的治理管线配对）：进行中。完成后受控重投两样本即应建 pending Summary 任务（worker 开关仍关=零 AI 执行）。
+- ★机制记录：同日同 SHA 的分层发布=每层归档前一 checkpoint（identity 含 knowledge_stage+mode）；重投回执 already_exists 仍会重跑建任务门（端点代码 560-600 行）。
