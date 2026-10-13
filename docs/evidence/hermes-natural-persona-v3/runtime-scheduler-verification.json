@@ -13,7 +13,7 @@
     "backend/tests/test_hermes_compatibility_scheduler.py": "e4361a07b0eb4648901ad419688d29001de3f543a3447542137e70988eabf3f2",
     "backend/tests/test_hermes_native_enablement_regression.py": "a472c3901bdbd645f3fb5cd9004161e3041b5ad6b7685ce04ea59820bd6ef651",
     "backend/tests/test_worker.py": "64a253ac82e6a2d8baed65ee34e903fd3700be012a41c7a670364fc0d3b27ec2",
-    "backend/worker.py": "c51ad6538d98ee758fd81793e06c8029a1e2033b73198b2ea03a07ed1fb2eb75",
+    "backend/worker.py": "9247ca8591a55952d286e2bf0a9b31dd2f6110b0e28cf4a49806dd7e089d36d1",
     "scripts/testing/verify_hermes_repair_negative_controls.py": "a30c842322bfb31f69f811cd35529dd4965f19fe9f6bd0cb8fcf348ebecac41e"
   },
   "environment": {
@@ -22,10 +22,6 @@
     "external_boundaries": "Zendesk audit fetch/comment write mocked; actual parser, worker, InMemory/PG repository used"
   },
   "checks": [
-    {
-      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<isolated-test-dsn> SENTIMENT_PROVIDER=legacy <project-python> -m pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_worker_compatibility_scope.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_publication_postgres.py -q --tb=short",
-      "result": "265 passed, 48 subtests passed, no skips"
-    },
     {
       "command": "<project-python> -m pytest backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_enablement_auto_postgres.py -q --tb=short (isolated PG enabled)",
       "result": "20 passed, 15 subtests passed, no skips"
@@ -43,16 +39,8 @@
       "result": "branch/main: 101 passed, 6 failed, 7 subtests passed; same six legacy fixture failures"
     },
     {
-      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<isolated-test-dsn> SENTIMENT_PROVIDER=legacy <project-python> -m pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_worker_compatibility_scope.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_publication_postgres.py backend/tests/test_native_hermes_draft_save.py -q --tb=short",
-      "result": "After integrating main@0124173b (#1491): 308 passed, 48 subtests passed, no skips. Actual memory/PostgreSQL native Investigation draft API included."
-    },
-    {
       "command": "Candidate and git archive origin/main: <project-python> -m pytest backend/tests/test_worker.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short",
       "result": "Both latest main@0124173b and integrated candidate: 254 passed, 20 failed, 32 subtests passed; exact failure signatures equal (14 worker + 6 legacy intake); see runtime-scheduler-baseline.json"
-    },
-    {
-      "command": "RUN_POSTGRES_INTEGRATION=1 ... pytest focused Hermes/compatibility/PG/publication suite",
-      "result": "278 passed, 50 subtests passed, no skips; InMemory and isolated PostgreSQL transition-failure/publish-race CAS paths included"
     },
     {
       "command": "... pytest backend/tests/test_native_hermes_draft_save.py with integrated main@0124173b",
@@ -61,6 +49,10 @@
     {
       "command": "Candidate and origin/main expanded baseline comparison",
       "result": "Both: 254 passed, 20 failed, 32 subtests; exact failure signatures equal"
+    },
+    {
+      "command": "RUN_POSTGRES_INTEGRATION=1 ... focused Hermes/basis/native/compatibility/worker/PG suite",
+      "result": "278 passed, 50 subtests passed, no skips after integrating origin/main c9722399"
     }
   ],
   "baseline_failures": {
@@ -118,5 +110,7 @@
       "omit_human_review_ownership_cas",
       "omit_publish_ownership_cas"
     ]
-  }
+  },
+  "candidate_head": "4a1781d6",
+  "integrated_main": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
 }

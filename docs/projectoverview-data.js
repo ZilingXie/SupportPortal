@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T11:16:50Z",
-  "source_base_commit": "306bc2a34287396d9730e91ecc81bede133ca944",
-  "registry_digest": "1c761af0452627e3c6898399d103b32453a8a26277969c49db23fc70b3140479",
+  "generated_at": "2026-10-13T11:22:17Z",
+  "source_base_commit": "4a1781d66e2f211a9d89d16b8f2daa7743bcdfea",
+  "registry_digest": "f274fd3dedbc9b846f2ab0082e40ff4ecea698017403d3ed58027378640b212e",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -18294,8 +18294,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。 已集成最新 main@0124173b（#1491 Investigation draft-save），集成后308 passed + 48 subtests，无跳过；当前线上仍以最新发布回读单独判断。",
-      "next_action": "提交后续 Draft PR 完整 HEAD 独立验收 v3.2 运行修复；通过后按既有授权 finalize 并再次发布 Preproduction，用新工单验证完整 Enablement 链。当前不重新部署/回放 14037，不强制释放；真实 relay 保留人工审批，Production 未授权。",
+      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。 已集成最新 main@c9722399（#1491 Investigation draft-save），集成后308 passed + 48 subtests，无跳过；当前线上仍以最新发布回读单独判断。",
+      "next_action": "独立验收完整 HEAD（已集成最新 main@c9722399）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
