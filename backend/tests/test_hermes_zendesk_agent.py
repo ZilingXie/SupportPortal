@@ -2117,7 +2117,8 @@ class TestPersonaAssembly:
             assert "--- PHASE MANUAL (hermes-persona-manual) ---" in instructions
             assert "--- REPLY CONTRACT (hermes-reply-contract) ---" in instructions
             assert "allowed commitments" in instructions
-            assert "unsupported time promise" in instructions
+            assert "Expression principles" in instructions
+            assert "acknowledging what they asked" in instructions
             assert "VERBATIM" not in instructions
             assert "character-for-character" not in instructions
             assert instructions.index("PERSONA STYLE") < instructions.index("PHASE MANUAL")

@@ -683,6 +683,7 @@ class HermesAgentTurnProcessor:
                             payload,
                             account_case_for_park,
                             reason_code=park_reason,
+                            failed_phase="persona_publication",
                             detail=(
                                 "The work phase produced a business result that is "
                                 "not a publishable conclusion "
@@ -1141,6 +1142,7 @@ class HermesAgentTurnProcessor:
                     reason_code="followup_reply_work_failed",
                     detail="The reply-only work phase raised before any reply basis was recorded.",
                     notification="failure",
+                    failed_phase="work",
                 )
             try:
                 self.store.record_hermes_turn_work(

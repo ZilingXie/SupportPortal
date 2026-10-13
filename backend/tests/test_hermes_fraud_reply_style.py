@@ -114,8 +114,8 @@ class PromptAssemblyTests(unittest.TestCase):
     def test_persona_instructions_carry_v4_manual_and_contract(self):
         from backend.services.automation_hermes_agent import phase_instructions
 
-        self.assertEqual(HERMES_PERSONA_MANUAL_VERSION, "hermes-persona-manual-v5")
-        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v5")
+        self.assertEqual(HERMES_PERSONA_MANUAL_VERSION, "hermes-persona-manual-v6")
+        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v6")
 
         instructions, key = phase_instructions(
             "persona",
@@ -131,12 +131,12 @@ class PromptAssemblyTests(unittest.TestCase):
         self.assertIn("--- PERSONA STYLE (test-persona) ---", flat)
         # v5: server facts constrain a natural Persona draft.
         self.assertIn("server-built reply basis", flat)
-        self.assertIn("never re-ask", flat)
+        self.assertIn("not re-requested", flat)
         # v4 contract fraud section.
         self.assertIn("--- REPLY CONTRACT (hermes-reply-contract) ---", flat)
         self.assertIn("routes=fraud_account|detailed_invoice", flat)
-        self.assertIn("hermes_customer_reply_basis_v1", flat)
-        self.assertIn("natural English reply", flat)
+        self.assertIn("routing signal only", flat)
+        self.assertIn("acknowledge what the customer reported", flat)
         self.assertIn("allowed commitments", flat)
 
 

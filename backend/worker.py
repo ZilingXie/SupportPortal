@@ -2279,25 +2279,45 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
                 if isinstance(marker, dict) and marker.get("_hermes_compatibility_job_id"):
                     delivery_job_id = str(marker.get("_hermes_compatibility_job_id") or "").strip()
                     break
+        # C1/C2 (14009): the server-owned basis decides whether a relay
+        # release is actually pending for this delivery — the worker must
+        # not guess from the route name.  An ask/missing-fields turn ran no
+        # relay workflow, so there is no internal email to release and no
+        # compatibility job to demand; demanding one wrongly released
+        # Zendesk ownership to the human queue.  The flag travels on the
+        # delivery (work result -> basis -> delivery marker); legacy
+        # deliveries without the flag fall back to the workflow-context
+        # presence, which is equally a server decision (only the relay
+        # workflow writes it).
+        relay_required = None
+        for marker in delivery.get("attachments") or []:
+            if isinstance(marker, dict) and "_hermes_compatibility_relay_required" in marker:
+                relay_required = bool(marker.get("_hermes_compatibility_relay_required"))
+                break
+        if relay_required is None:
+            relay_required = bool(compatibility_job_id)
         job_error = None
-        if not delivery_job_id:
-            job_error = "enablement_compatibility_job_missing"
-        elif not compatibility_job_id or delivery_job_id != compatibility_job_id:
-            job_error = "enablement_compatibility_job_missing"
-        else:
-            try:
-                compatibility_job = ticket_repository.get_account_reply_job(delivery_job_id)
-            except Exception:
-                compatibility_job = None
-                job_error = "enablement_compatibility_job_lookup_failed"
-            if job_error is None and not isinstance(compatibility_job, dict):
-                job_error = "enablement_compatibility_job_not_found"
-            elif job_error is None:
-                job_ticket = str(compatibility_job.get("ticket_id") or compatibility_job.get("zendesk_ticket_id") or "")
-                if job_ticket != str(zendesk_ticket_id):
-                    job_error = "enablement_compatibility_job_ticket_mismatch"
-                elif not is_hermes_compatibility_job_active_status(compatibility_job.get("status")):
-                    job_error = "enablement_compatibility_job_terminal"
+        if relay_required:
+            # C2 fail-closed chain: a real relay workflow MUST present a
+            # valid, ticket-bound, active compatibility job.
+            if not delivery_job_id:
+                job_error = "enablement_compatibility_job_missing"
+            elif not compatibility_job_id or delivery_job_id != compatibility_job_id:
+                job_error = "enablement_compatibility_job_missing"
+            else:
+                try:
+                    compatibility_job = ticket_repository.get_account_reply_job(delivery_job_id)
+                except Exception:
+                    compatibility_job = None
+                    job_error = "enablement_compatibility_job_lookup_failed"
+                if job_error is None and not isinstance(compatibility_job, dict):
+                    job_error = "enablement_compatibility_job_not_found"
+                elif job_error is None:
+                    job_ticket = str(compatibility_job.get("ticket_id") or compatibility_job.get("zendesk_ticket_id") or "")
+                    if job_ticket != str(zendesk_ticket_id):
+                        job_error = "enablement_compatibility_job_ticket_mismatch"
+                    elif not is_hermes_compatibility_job_active_status(compatibility_job.get("status")):
+                        job_error = "enablement_compatibility_job_terminal"
         if job_error:
             already_blocked = (
                 str(account_case.get("automation_status") or "") == "human_review_required"
@@ -2321,71 +2341,74 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
                 except Exception:
                     LOGGER.exception("hermes_enablement_compatibility_block_event_failed account_case_id=%s", account_case_id)
             return
-        ticket_id = str(account_case.get("client_ticket_id") or zendesk_ticket_id or "").strip()
-        try:
-            ticket = ticket_repository.get_ticket(ticket_id) if ticket_id else None
-        except Exception:
-            ticket = None
-        if isinstance(ticket, dict):
-            messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
-            existing = next(
-                (
-                    item for item in messages
-                    if isinstance(item, dict)
-                    and str((item.get("meta") or {}).get("account_reply_job_id") or "") == compatibility_job_id
-                ),
-                None,
-            )
-            if existing is None:
-                projected = {
-                    "role": "assistant",
-                    "content": str(delivery.get("immutable_content") or "").strip(),
-                    "created_at": now_iso(),
-                    "content_format": "plaintext",
-                    "source": "account_ai",
-                    "message_id": message_id,
-                    "meta": {
-                        "account_reply_job_id": compatibility_job_id,
-                        "reply_intent": "submission_confirmation",
-                        "source": "hermes",
-                        "visibility": "account_only",
-                        "published_at": now_iso(),
-                    },
-                }
-                ticket.setdefault("messages", []).append(projected)
-                ticket["updated_at"] = projected["created_at"]
-                try:
-                    ticket_repository.save_ticket(ticket, new_messages=[projected])
-                except Exception:
-                    LOGGER.exception(
-                        "hermes_enablement_compatibility_message_persist_failed "
-                        "account_case_id=%s message_id=%s",
-                        account_case_id,
-                        message_id,
-                    )
-        try:
-            ticket_repository.release_account_internal_email_after_public_reply(
-                account_case_id,
-                released_at=now_iso(),
-            )
-        except Exception:
-            LOGGER.exception(
-                "hermes_enablement_public_reply_release_failed account_case_id=%s message_id=%s",
-                account_case_id,
-                message_id,
-            )
-        try:
-            ticket_repository.release_enablement_relay_requests_after_public_reply(
-                limit=10,
-                now=now_iso(),
-            )
-        except Exception:
-            LOGGER.exception(
-                "hermes_enablement_auto_public_reply_release_failed account_case_id=%s message_id=%s",
-                account_case_id,
-                message_id,
-            )
-
+        if relay_required:
+            # C1: projection + relay release belong only to real relay
+            # turns; ask turns have nothing pending and must fall
+            # through WITHOUT blocking or releasing anything.
+            ticket_id = str(account_case.get("client_ticket_id") or zendesk_ticket_id or "").strip()
+            try:
+                ticket = ticket_repository.get_ticket(ticket_id) if ticket_id else None
+            except Exception:
+                ticket = None
+            if isinstance(ticket, dict):
+                messages = ticket.get("messages") if isinstance(ticket.get("messages"), list) else []
+                existing = next(
+                    (
+                        item for item in messages
+                        if isinstance(item, dict)
+                        and str((item.get("meta") or {}).get("account_reply_job_id") or "") == compatibility_job_id
+                    ),
+                    None,
+                )
+                if existing is None:
+                    projected = {
+                        "role": "assistant",
+                        "content": str(delivery.get("immutable_content") or "").strip(),
+                        "created_at": now_iso(),
+                        "content_format": "plaintext",
+                        "source": "account_ai",
+                        "message_id": message_id,
+                        "meta": {
+                            "account_reply_job_id": compatibility_job_id,
+                            "reply_intent": "submission_confirmation",
+                            "source": "hermes",
+                            "visibility": "account_only",
+                            "published_at": now_iso(),
+                        },
+                    }
+                    ticket.setdefault("messages", []).append(projected)
+                    ticket["updated_at"] = projected["created_at"]
+                    try:
+                        ticket_repository.save_ticket(ticket, new_messages=[projected])
+                    except Exception:
+                        LOGGER.exception(
+                            "hermes_enablement_compatibility_message_persist_failed "
+                            "account_case_id=%s message_id=%s",
+                            account_case_id,
+                            message_id,
+                        )
+            try:
+                ticket_repository.release_account_internal_email_after_public_reply(
+                    account_case_id,
+                    released_at=now_iso(),
+                )
+            except Exception:
+                LOGGER.exception(
+                    "hermes_enablement_public_reply_release_failed account_case_id=%s message_id=%s",
+                    account_case_id,
+                    message_id,
+                )
+            try:
+                ticket_repository.release_enablement_relay_requests_after_public_reply(
+                    limit=10,
+                    now=now_iso(),
+                )
+            except Exception:
+                LOGGER.exception(
+                    "hermes_enablement_auto_public_reply_release_failed account_case_id=%s message_id=%s",
+                    account_case_id,
+                    message_id,
+                )
     reply_intent = str(delivery.get("reply_intent") or "").strip()
     missing_fields = account_case.get("missing_fields") if isinstance(account_case.get("missing_fields"), list) else []
     internal_email_status = str(account_case.get("internal_email_send_status") or "").strip().lower()

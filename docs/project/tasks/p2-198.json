@@ -10,7 +10,7 @@
   "created_at": "2026-10-11",
   "updated_at": "2026-10-12",
   "summary": "统一 Hermes automation、investigation、conversation follow-up 和 message action 的客户回复事实 basis、Persona 所有权、称呼投影、安全校验、Enablement relay identity fail-closed 和现有翻译/投递门禁。当前阶段不含数据库迁移、Production 发布或真实客户业务写入。任务登记迁移自冲突的 p2-197；基线 main@c4f71c50。",
-  "next_action": "提交 v3.2 修复 HEAD，进行独立代码复验；随后按独立授权执行 Preproduction 验证。保留 legacy account_reply_job_id 兼容身份，不执行 finalize、部署或真实业务写入。",
+  "next_action": "v1.1 rev v2 步骤 1-6 完成（compatibility 修正+v6 提示词+告警上下文+离线 7/7）：下一步步骤 7 创建 Draft PR 提交独立验收；通过后步骤 8 Preproduction 发布+新工单实测（不重跑 14009）。",
   "acceptance_criteria": [
     "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
     "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -24,6 +24,12 @@
     "独立代码验收、Preproduction 发布验证和真实业务验收尚未完成；本任务不授权 finalize、部署或真实客户写入。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v2 实施步骤 1-6（Draft PR 待独立验收）",
+      "command": "pytest test_worker_compatibility_scope.py(9)+style 27+相关回归 163+worker 153(14 存量)+PG 17；离线 v6 评估 7/7（/tmp/natural_persona_results.json）",
+      "result": "步骤 1-6 全部实施（基线 main@42a187ae，worktree hermes-natural-persona）：步骤 2-3（C1/C2/C3）：server-owned compatibility_relay_required 三层传递——工具 workflow_completed 结果显式 True+job id、enablement 非工作流结果显式 False、basis extra 透传、delivery 附件 _hermes_compatibility_relay_required 标记；worker 不再按 route 名猜测：flag（或 legacy workflow-context 存在性回退）为 False 时完全跳过 compatibility 合同（14009 根因：ask 轮误要求 job→ownership 误释放），为 True 时完整 fail-closed 链（缺/错 ticket/终态均阻断）。9 项新测试覆盖 ask 不动、flag False 优先于残留 context、有效 job 释放、缺/错 ticket/终态阻断、重放幂等。步骤 4：persona-manual v6（表达原则：先回应用户处境、只问真正缺失、事实/承诺由 basis 控制、禁止空洞道歉/meta/内部暴露、英文草稿+服务端翻译）+reply-contract v6（六路由全 basis 原则化，无逐字模板）+sid-precise 暖化重写。步骤 5：两条升级路径补 failed_phase（persona_publication/work）。步骤 6：离线评估 7/7（enablement 缺 AppID/fraud 缺字段/suspension/billing/investigation/中文/无名 Hi Customer）——中文样本模型直接以中文回复且语义正确（媒体中继+24h），符合计划'使用客户原语言'原则（评估接受中文等价）。步骤 7 停点：Draft PR+独立验收未开始；未 finalize/未部署/无真实工单。"
+    },
     {
       "type": "test",
       "label": "Hermes basis/validator and draft delivery regression",
