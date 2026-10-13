@@ -79,4 +79,3 @@
 原文片段：
 
 > You mentioned sending your verification documents yesterday and asked whether anything else is needed. Your verification review has been requested with the relevant team, and they will contact you within 24 hours.
-
