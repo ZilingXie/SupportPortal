@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T11:29:05Z",
-  "source_base_commit": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
-  "registry_digest": "99cddb9d1e2f226ea4231c9f60b1358b903dfbea47e21ffebc7a4b5ba15b5420",
+  "generated_at": "2026-10-13T14:22:57Z",
+  "source_base_commit": "8a7d3f919e745b00d6664294f71b2fcef890039b",
+  "registry_digest": "3993b3ac6d61f236ecaa989f0a774687b5fda11d08093d1736c20b1d1c8f3a0c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5216,7 +5216,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "R1.1终态缺失Account Case状态同步",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
-          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。r20261013-44b6d1e-status-r4 已通过完整 immutable Preproduction 门禁。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 Preproduction immutable release",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/preproduction-deploy/evidence.json",
+          "result": "r20261013-44b6d1e-status-r4 complete；source 44b6d1e6、Prompt pr-88298d4e0a3f；CodeBuild、preflight、Prompt sync/activation、三角色 rollout、heartbeat、provider probe、public health、CloudWatch、Terraform pre/post zero-drift、target health、digest 对账全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 independent runtime readback",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/independent-runtime-readback.json",
+          "result": "API :151、Route :148、Worker :151 均 PRIMARY/running=1/pending=0/COMPLETED；digest 与 manifest 一致；API/Worker knowledge master、source intake、summary review=1；公网 health/release status=ok 且 provenance 全匹配。"
+        },
+        {
+          "type": "test",
+          "label": "R1.2 isolated released-image probe",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
+          "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
         }
       ],
       "source_refs": [
@@ -5224,9 +5242,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 6,
-      "done_count": 5,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -18402,8 +18420,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "native Hermes Investigation 草稿保存修复",
       "summary": "R1.1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读；补齐终态状态同步的历史缺失 Account Case 门禁修复。关联p2-191与p2-199。",
-      "status": "active",
-      "next_action": "完成 R1.1 status-sync 回归并 finalize，重新走 ECS Preproduction 完整门禁；不操作 14031 或客户发送。",
+      "status": "done",
+      "next_action": "已完成代码合并与 ECS Preproduction 技术验收；r20261013-44b6d1e-status-r4 evidence=complete，真实业务样本仍未授权，不重放 14031、不发送客户或 Slack 消息、不发布 Production。",
       "owner": "codex",
       "created_at": "2026-10-13",
       "updated_at": "2026-10-13",
@@ -18422,12 +18440,37 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "R1.1终态缺失Account Case状态同步",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
-          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。r20261013-44b6d1e-status-r4 已通过完整 immutable Preproduction 门禁。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 Preproduction immutable release",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/preproduction-deploy/evidence.json",
+          "result": "r20261013-44b6d1e-status-r4 complete；source 44b6d1e6、Prompt pr-88298d4e0a3f；CodeBuild、preflight、Prompt sync/activation、三角色 rollout、heartbeat、provider probe、public health、CloudWatch、Terraform pre/post zero-drift、target health、digest 对账全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 independent runtime readback",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/independent-runtime-readback.json",
+          "result": "API :151、Route :148、Worker :151 均 PRIMARY/running=1/pending=0/COMPLETED；digest 与 manifest 一致；API/Worker knowledge master、source intake、summary review=1；公网 health/release status=ok 且 provenance 全匹配。"
+        },
+        {
+          "type": "test",
+          "label": "R1.2 isolated released-image probe",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
+          "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
         }
       ],
       "source_refs": [
         "docs/project/tasks/p2-191.json",
         "docs/project/tasks/p2-199.json"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13-r4",
+          "event": "completed",
+          "summary": "R1.1 status-sync 修复随 PR#1493 合入 main；r1/r2/r3 发布尝试原因保留，r4 以正确 SSM DSN 与 knowledge-stage-config 完成 immutable Preproduction evidence；独立运行回读和镜像隔离探针通过。"
+        }
       ]
     },
     {

@@ -90,3 +90,12 @@ Slack/Zendesk业务验收。正式 pipeline complete 后再运行，保留日志
 安全入口，不能改库、清空错误或重置 Prepare 绑定。涉及新迁移、route/审批语义、runtime 协议
 或门禁变更时暂停对应动作。当前结果统一维护在
 [native-hermes-draft-save-r1-evidence.json](native-hermes-draft-save-r1-evidence.json)。
+
+
+## R1.2 Preproduction 技术验收记录
+
+代码提交 `44b6d1e664d2fe99f1cd210ea054cdfdf511ccda` 已经合入 `main`。R1.1 的终态状态同步修复与 R1 草稿保存修复通过正式 ECS Preproduction immutable release `r20261013-44b6d1e-status-r4` 发布，Prompt Release 为 `pr-88298d4e0a3f`。此前 r1（Prompt 不存在）、r2（错误 migration DSN）和 r3（遗漏 knowledge-stage-config）尝试均保留在证据记录中，未被改写。
+
+最终 release evidence 为 `complete`：API/Route/Worker 分别为 task definition `:151/:148/:151`，三角色 runtime digest 与 publish manifest 一致；API/Worker 的 knowledge master、source intake、summary review 开关按批准配置回读为 `1`，其余阶段开关为 `0`；Prompt、`/automation/preproduction/health/release`、heartbeat、provider probe、CloudWatch、Terraform zero-drift、target health 均通过。发布后镜像隔离探针两条合成场景通过，未产生业务写入。
+
+本地官方栈按用户授权豁免，采用 ECS Preproduction 技术验收。真实 Ticket 14031、客户消息、Slack 业务消息和 Production 仍未执行。
