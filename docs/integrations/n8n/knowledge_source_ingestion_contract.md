@@ -33,7 +33,9 @@
 | source_type | source_id | payload 内容 | references |
 | --- | --- | --- | --- |
 | `zendesk_ticket` | Zendesk ticket ID | `{ ticket: 完整 ticket 对象, comments: 全部分页后的评论对象 }` | `{ zendesk_url }` |
-| `csd_issue` | Jira issue key（如 CSD-12345） | `{ issue: 完整 Jira issue 对象（fields=*,comment） }` | `{ jira_url }` |
+| `csd_issue` | Jira issue key（如 CSD-12345） | `{ issue: Jira issue 对象 }`；本地修复候选实际请求 `summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915` | `{ jira_url }` |
+
+2026-10-13 描述更正：上述显式清单是修复候选已有的请求范围，本轮未更改 Get_CSD_Detail 的字段选择；`references.captured_fields` 必须逐字声明实际请求，不能声称 `*,comment` 或全部 Jira 字段。历史 Draft 原文保留其版本当时的字段选择。评论 completeness gate 仍要求 numeric total 与实际完整评论数一致；本地候选未发布，当前线上范围需另行回读。
 
 CSD 快照以 `fields.comment.total` 对照 `comments.length` 判定完整性（Jira 单 issue 详情的 comment 字段超过 `maxResults` 时截断）；判定不完整即显式失败，不投递半份快照。
 

@@ -1,0 +1,292 @@
+{
+  "checks": {
+    "cloudwatch": "passed",
+    "ec2_backup": "passed",
+    "ecr": "passed",
+    "heartbeats": "passed",
+    "prompt_activation": "active",
+    "prompt_sync": "active",
+    "provider_probe": "passed",
+    "public_health": "passed",
+    "rollback": "not_started",
+    "schema_bootstrap": "not_requested",
+    "source_prompt": "passed",
+    "suspension_recipients": "passed",
+    "terraform_post_deploy_zero_drift": "passed",
+    "terraform_zero_drift": "passed"
+  },
+  "cloudwatch": {
+    "error_count": 0,
+    "roles": [
+      {
+        "blocking_reasons": [],
+        "cluster": "supportportal-preproduction",
+        "end_ms": 1791873496717,
+        "error_count": 0,
+        "events": [],
+        "excluded_counts": {
+          "non_service": 0,
+          "old_revision": 0
+        },
+        "log_group": "/ecs/supportportal/preproduction",
+        "role": "api",
+        "service": "supportportal-preproduction-api",
+        "start_ms": 1791872995000,
+        "status": "passed",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:143",
+        "tasks": [
+          {
+            "category": "release_service",
+            "containers": [
+              {
+                "exit_code": null,
+                "name": "api"
+              }
+            ],
+            "group": "service:supportportal-preproduction-api",
+            "last_status": "RUNNING",
+            "stop_code": null,
+            "stopped_at": null,
+            "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/5c713a6ae0104943810eadce7d8e6ea3",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:143",
+            "task_id": "5c713a6ae0104943810eadce7d8e6ea3"
+          }
+        ]
+      },
+      {
+        "blocking_reasons": [],
+        "cluster": "supportportal-preproduction",
+        "end_ms": 1791873509216,
+        "error_count": 0,
+        "events": [],
+        "excluded_counts": {
+          "non_service": 0,
+          "old_revision": 0
+        },
+        "log_group": "/ecs/supportportal/preproduction",
+        "role": "route",
+        "service": "supportportal-preproduction-route",
+        "start_ms": 1791872995000,
+        "status": "passed",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:141",
+        "tasks": [
+          {
+            "category": "release_service",
+            "containers": [
+              {
+                "exit_code": null,
+                "name": "route"
+              }
+            ],
+            "group": "service:supportportal-preproduction-route",
+            "last_status": "RUNNING",
+            "stop_code": null,
+            "stopped_at": null,
+            "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/765cd486ec92415ebb877dc87a2a2fb6",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:141",
+            "task_id": "765cd486ec92415ebb877dc87a2a2fb6"
+          }
+        ]
+      },
+      {
+        "blocking_reasons": [],
+        "cluster": "supportportal-preproduction",
+        "end_ms": 1791873518657,
+        "error_count": 0,
+        "events": [],
+        "excluded_counts": {
+          "non_service": 0,
+          "old_revision": 0
+        },
+        "log_group": "/ecs/supportportal/preproduction",
+        "role": "worker",
+        "service": "supportportal-preproduction-worker",
+        "start_ms": 1791872995000,
+        "status": "passed",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:143",
+        "tasks": [
+          {
+            "category": "release_service",
+            "containers": [
+              {
+                "exit_code": null,
+                "name": "worker"
+              }
+            ],
+            "group": "service:supportportal-preproduction-worker",
+            "last_status": "RUNNING",
+            "stop_code": null,
+            "stopped_at": null,
+            "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/7450c50551b64502bb5afa9466cdd67f",
+            "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:143",
+            "task_id": "7450c50551b64502bb5afa9466cdd67f"
+          }
+        ]
+      }
+    ]
+  },
+  "cluster": "supportportal-preproduction",
+  "components": {
+    "api": {
+      "expected_digest": "sha256:56697ed24b1b62365cd1704495ec3008d36cd827bc8189fd3a8cedc4127c9a40",
+      "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:143",
+      "observed_digest": "sha256:56697ed24b1b62365cd1704495ec3008d36cd827bc8189fd3a8cedc4127c9a40",
+      "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:142",
+      "runtime_verified": true
+    },
+    "route": {
+      "expected_digest": "sha256:e845e2ea7f7cae07a6ff2b671bf3d29aa73d3220658e5b51322d8acc211020b5",
+      "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:141",
+      "observed_digest": "sha256:e845e2ea7f7cae07a6ff2b671bf3d29aa73d3220658e5b51322d8acc211020b5",
+      "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:140",
+      "runtime_verified": true
+    },
+    "worker": {
+      "expected_digest": "sha256:dfce32bd5c5edc80e6d3b2025fa3781ced3eb18ad9ae535852ef696f1d05bed9",
+      "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:143",
+      "observed_digest": "sha256:dfce32bd5c5edc80e6d3b2025fa3781ced3eb18ad9ae535852ef696f1d05bed9",
+      "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:142",
+      "runtime_verified": true
+    }
+  },
+  "ec2_backup": {
+    "status": "passed"
+  },
+  "environment": "preproduction",
+  "generated_at": "2026-10-13T06:40:00Z",
+  "git_commit": "42a187ae884015b833277b7b4e23d624a647663b",
+  "heartbeats": {
+    "roles": [
+      "route",
+      "worker"
+    ],
+    "status": "ok"
+  },
+  "hermes": {
+    "persona_enabled": true
+  },
+  "hermes_case_workflow": {
+    "mode": "disabled",
+    "schema_bootstrap_task_arn": "",
+    "schema_bootstrap_task_definition": ""
+  },
+  "phase_timings": [
+    {
+      "duration_seconds": 167.024,
+      "finished_ms": 1791872255825,
+      "phase": "preflight",
+      "started_ms": 1791872088801,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 153.784,
+      "finished_ms": 1791872409687,
+      "phase": "prompt_schema",
+      "started_ms": 1791872255903,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 284.8,
+      "finished_ms": 1791873282712,
+      "phase": "route_worker_rollout",
+      "started_ms": 1791872997912,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 3.474,
+      "finished_ms": 1791873287944,
+      "phase": "heartbeat",
+      "started_ms": 1791873284470,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 201.318,
+      "finished_ms": 1791873489304,
+      "phase": "api_rollout",
+      "started_ms": 1791873287986,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 82.383,
+      "finished_ms": 1791873571818,
+      "phase": "collector",
+      "started_ms": 1791873489435,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 25.627,
+      "finished_ms": 1791873597501,
+      "phase": "activation",
+      "started_ms": 1791873571874,
+      "status": "passed"
+    },
+    {
+      "duration_seconds": 2.966,
+      "finished_ms": 1791873600510,
+      "phase": "release_note",
+      "started_ms": 1791873597544,
+      "status": "passed"
+    }
+  ],
+  "preflight_sha256": "sha256:0226bda53b8f04f61f6c3c5ba171fc4e8623627698136395cde00fe44200b034",
+  "prompt_release": {
+    "build_ref": "daa06ba8e1160480d14c9553f1b258b20b130265",
+    "content_fingerprint": "sha256:6194914430b0bf2cc91b656e2ee508b9cc04e7a372212bfeb7329300ef43b9d8",
+    "release_id": "pr-9737f67803f1"
+  },
+  "provider_probe": {
+    "graph_me_ok": true,
+    "rag_health_ok": true,
+    "recipients": {
+      "account_suspension": {
+        "cc_count": 1,
+        "to_count": 1,
+        "valid": true
+      },
+      "enablement": {
+        "cc_count": 1,
+        "to_count": 1,
+        "valid": true
+      },
+      "fraud_account": {
+        "cc_count": 1,
+        "to_count": 1,
+        "valid": true
+      }
+    },
+    "schema_version": "automation-provider-probe-v1",
+    "zendesk_identity_ok": true
+  },
+  "region": "us-east-1",
+  "registry": {
+    "id": "891612554546",
+    "repository": "supportportal/preproduction"
+  },
+  "release_id": "r20261013-42a187a",
+  "schema_version": "automation-ecs-deploy-evidence-v1",
+  "status": "complete",
+  "target_health": {
+    "blocking": 0,
+    "draining": 1,
+    "healthy": 1,
+    "target_id": "172.31.35.102",
+    "target_state": "healthy",
+    "total": 2
+  },
+  "terraform": {
+    "config_sha256": "sha256:32ba8ce27088a685edfb733452348da5d51e1ef89163be482c039c858902cd4b",
+    "lineage": "27098492-38a9-ed4c-93ef-a1e66a261049",
+    "serial": 10
+  },
+  "timing_summary": {
+    "controllable_seconds": 435.2579999999999,
+    "ecs_wait_seconds": 486.11800000000005,
+    "normal_release_slo_seconds": 900,
+    "slo_breach": true,
+    "target_range_seconds": {
+      "max": 900,
+      "min": 600
+    },
+    "total_seconds": 921.376
+  }
+}

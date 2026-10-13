@@ -61,7 +61,9 @@ def _snapshot(version: str) -> dict:
 
 
 def test_source_intake_is_versioned_and_queues_summary(monkeypatch) -> None:
-    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "real")
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "disabled")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
@@ -127,6 +129,7 @@ def test_native_case_source_runs_the_full_governance_pipeline(monkeypatch) -> No
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_INTAKE_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_AI_EXECUTION_ENABLED", "1")
     monkeypatch.setenv(
         "KNOWLEDGE_SOURCE_ALLOWLIST",
         "csd_issue:*,zendesk_ticket:*,article:*,case_binding:*",

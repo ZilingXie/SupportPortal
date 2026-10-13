@@ -28,15 +28,15 @@ from scripts.n8n.validate_workflow_snapshots import (  # noqa: E402
     _static_url_prefix,
 )
 
-DRAFTS = Path("docs/integrations/n8n/workflows/drafts")
-SOLVED = json.loads((DRAFTS / "MM3Z3T469Eru3Q1I.draft.json").read_text())
-CSD = json.loads((DRAFTS / "GgDxPEWtW7ltT5BW.draft.json").read_text())
+CANDIDATES = Path("docs/integrations/n8n/workflows/candidates")
+SOLVED = json.loads((CANDIDATES / "MM3Z3T469Eru3Q1I.candidate.json").read_text())
+CSD = json.loads((CANDIDATES / "GgDxPEWtW7ltT5BW.candidate.json").read_text())
 
 NODE_BIN = os.environ.get("NODE_BIN", "/usr/local/bin/node")
 
 SHIM = """
 const fs = require('fs');
-const crypto = require('crypto');
+Object.defineProperty(globalThis, 'crypto', { value: undefined });
 const input = JSON.parse(fs.readFileSync(process.argv[1], 'utf8'));
 const named = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
 const $input = {
@@ -60,7 +60,9 @@ def _run_js(code: str, payload: dict, named: dict | None = None) -> dict:
     program = (
         f"{SHIM}\n"
         "const __result = (function() {\n" + code + "\n})();\n"
-        "process.stdout.write(JSON.stringify(__result));\n"
+        "const canonical = __result[0]?.json?.payload ? JSON.stringify(__result[0].json.payload) : '';\n"
+        "process.stdout.write(JSON.stringify({items: __result, canonical_bytes: Buffer.byteLength(canonical, 'utf8'), "
+        "standard_hash: require('node:crypto').createHash('sha256').update(canonical).digest('hex')}));\n"
     )
     result = subprocess.run(
         [NODE_BIN, "-e", program, fixture_path, named_path],
@@ -70,8 +72,7 @@ def _run_js(code: str, payload: dict, named: dict | None = None) -> dict:
     os.unlink(named_path)
     if result.returncode != 0:
         return {"ok": False, "error": result.stderr.strip()}
-    items = json.loads(result.stdout or "[]")
-    return {"ok": True, "items": items}
+    return {"ok": True, **json.loads(result.stdout)}
 
 
 def _node_code(snapshot: dict, name: str) -> str:
@@ -345,13 +346,56 @@ def test_csd_missing_or_non_numeric_total_fails_closed(total, label) -> None:
 
 
 def test_csd_detail_requests_the_full_field_set() -> None:
-    """Review R1: the draft must request fields=*,comment (the complete Jira
-    snapshot the ingestion contract requires), not a fixed field list."""
+    """The candidate declares precisely the explicit fields it fetches."""
     node = next(
         n for n in CSD["workflow"]["nodes"] if n["name"] == "Get_CSD_Detail"
     )
     fields = (node["parameters"].get("queryParameters") or {}).get("parameters") or []
-    assert any(
-        p.get("name") == "fields" and p.get("value") == "*,comment" for p in fields
-    ), fields
+    actual = next(p["value"] for p in fields if p.get("name") == "fields")
+    assert set(actual.split(',')) == {
+        'summary', 'description', 'updated', 'created', 'status', 'resolution',
+        'comment', 'customfield_10700', 'customfield_13915',
+    }
+    built = _run_js(_node_code(CSD, "Build csd_issue Snapshot"), {"issue": _csd_issue(0, 0), "comment_total": 0})
+    assert built["ok"], built
+    assert built["items"][0]["json"]["references"]["captured_fields"] == f"issue.fields={actual}"
     assert node["parameters"].get("url") == "={{ $json.url }}"
+
+
+def _boundary_build(snapshot, node_name, residue, text, extra_blocks=0, *, broken=False):
+    if snapshot is CSD:
+        payload = {"issue": _csd_issue(0, 0), "comment_total": 0}
+        destination = payload["issue"]["fields"]
+        field = "description"
+    else:
+        payload = {"ticket": _solved_ticket(0)["ticket"], "comments": []}
+        destination = payload["ticket"]
+        field = "description"
+    destination[field] = text
+    code = _node_code(snapshot, node_name)
+    first = _run_js(code, payload)
+    assert first["ok"], first
+    destination[field] += "x" * ((residue - first["canonical_bytes"]) % 64 + extra_blocks * 64)
+    if broken:
+        assert "Math.ceil((l + 1 + 8) / 64) * 64" in code
+        code = code.replace("Math.ceil((l + 1 + 8) / 64) * 64", "Math.ceil((l + 1) / 64) * 64")
+    built = _run_js(code, payload)
+    assert built["ok"], built
+    assert built["canonical_bytes"] % 64 == residue
+    return built
+
+
+@pytest.mark.parametrize("snapshot,node_name", [(CSD, "Build csd_issue Snapshot"), (SOLVED, "Build knowledge-source-v1")], ids=["csd", "solved"])
+@pytest.mark.parametrize("residue", [55, 56, 63, 0])
+@pytest.mark.parametrize("text,extra_blocks", [("ascii", 0), ("中文😀", 1), ("x" * 100000, 0)])
+def test_complete_build_hash_matches_standard_sha256_at_byte_boundaries(snapshot, node_name, residue, text, extra_blocks):
+    built = _boundary_build(snapshot, node_name, residue, text, extra_blocks)
+    assert built["items"][0]["json"]["references"]["snapshot_hash"] == built["standard_hash"]
+
+
+@pytest.mark.parametrize("snapshot,node_name", [(CSD, "Build csd_issue Snapshot"), (SOLVED, "Build knowledge-source-v1")], ids=["csd", "solved"])
+@pytest.mark.parametrize("residue", [56, 63])
+def test_boundary_carrier_detects_original_padding_fault(snapshot, node_name, residue):
+    built = _boundary_build(snapshot, node_name, residue, "synthetic", broken=True)
+    with pytest.raises(AssertionError):
+        assert built["items"][0]["json"]["references"]["snapshot_hash"] == built["standard_hash"]

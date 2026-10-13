@@ -391,6 +391,7 @@ def test_render_task_definition_preproduction_injects_knowledge_config(
         "HERMES_KNOWLEDGE_WORKFLOW_ENABLED",
         "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
         "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+        "KNOWLEDGE_AI_EXECUTION_ENABLED",
         "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
         "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
         "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
@@ -2469,6 +2470,7 @@ def test_load_knowledge_stage_config_defaults_to_all_off() -> None:
     assert set(config["switches"]) == {
         "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
         "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+        "KNOWLEDGE_AI_EXECUTION_ENABLED",
         "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
         "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
         "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
@@ -2555,6 +2557,7 @@ def test_load_knowledge_stage_config_accepts_step9_dual_write_shape(tmp_path: Pa
             "switches": {
                 "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
                 "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+                "KNOWLEDGE_AI_EXECUTION_ENABLED": "1",
                 "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "1",
                 "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "1",
                 "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "1",
@@ -2584,6 +2587,7 @@ def test_render_task_definition_renders_knowledge_stage_config(
             "switches": {
                 "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
                 "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+                "KNOWLEDGE_AI_EXECUTION_ENABLED": "1",
             },
             "source_allowlist": "csd_issue:CSD-TEST-1",
         },

@@ -52,7 +52,6 @@ from backend.services.hermes_case_workflow import (
     WeKnoraPromotionCandidate,
     _SUMMARY_TEXT_FIELDS,
     _normalize_summary_text,
-    hermes_workflow_mode,
     review_report_content_hash,
     summary_packet_content_hash,
 )
@@ -127,7 +126,7 @@ HERMES_KNOWLEDGE_WORKFLOW_ENABLED_ENV = "HERMES_KNOWLEDGE_WORKFLOW_ENABLED"
 def knowledge_governance_enabled() -> bool:
     """Master switch: knowledge governance may produce or consume tasks at all.
 
-    Runtime readiness (real Hermes case workflow + configured gateway) never
+    Runtime readiness (Summary/Review production + configured gateway) never
     re-enables the pipeline on its own — governance is opt-in per deployment;
     Preproduction runs with the switch off (AgentMemory recovery plan).
     """
@@ -139,16 +138,21 @@ def knowledge_governance_enabled() -> bool:
 
 
 def knowledge_workflow_active() -> bool:
-    """The pipeline only runs against the real Hermes case workflow + gateway."""
+    """Task production readiness, independent of the retired typed Case mode."""
     if not knowledge_governance_enabled():
         return False
     from backend.services.knowledge_dual_write import knowledge_summary_review_enabled
 
     if not knowledge_summary_review_enabled():
         return False
-    if hermes_workflow_mode() != "real":
-        return False
     return HermesAgentSettings.from_env().configured()
+
+
+def knowledge_execution_active() -> bool:
+    """Consumption is a separate opt-in; ready producers may leave tasks pending."""
+    from backend.services.knowledge_dual_write import knowledge_ai_execution_enabled
+
+    return knowledge_workflow_active() and knowledge_ai_execution_enabled()
 
 
 def summary_task_id_for(engineer_case_id: str, episode: int) -> str:
@@ -260,7 +264,7 @@ def queue_hermes_summary_for_case(
     # The master switch gates queueing itself, not only consumption: every
     # caller — Zendesk solved/closed sync, local resolved, API-side triggers —
     # stops creating Summary rows while governance is disabled.
-    if not knowledge_governance_enabled() or hermes_workflow_mode() != "real":
+    if not knowledge_workflow_active():
         return None
     # Stage 6 plan A: case-bound Summaries are allowlisted per case binding
     # (test cases only until step 10); held cases keep their accepted source
@@ -1398,7 +1402,7 @@ def drain_hermes_knowledge_tasks(
     sleeper: Any = time.sleep,
 ) -> int:
     """Claim and run pending summary then review tasks; returns tasks processed."""
-    if not knowledge_workflow_active():
+    if not knowledge_execution_active():
         return 0
     hermes_client = client or HermesAgentClient()
     weknora = weknora_client if weknora_client is not None else HermesWeKnoraClient()

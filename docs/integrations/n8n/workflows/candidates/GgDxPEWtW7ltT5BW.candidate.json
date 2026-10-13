@@ -1,0 +1,451 @@
+{
+  "capturedAt": "2026-10-10T00:00:00Z",
+  "restoreNotes": {
+    "note": "source-only draft (p2-194 stage 2, review R1 fixes); NOT published; active version unchanged",
+    "redactedValues": [
+      {
+        "field": "=client_secret",
+        "nodeName": "get_access_token",
+        "path": "nodes.get_access_token.parameters.bodyParameters.parameters.2.value",
+        "reason": "secret_named_field"
+      },
+      {
+        "field": "username",
+        "nodeName": "get_access_token",
+        "path": "nodes.get_access_token.parameters.bodyParameters.parameters.3.value",
+        "reason": "secret_named_field"
+      },
+      {
+        "field": "password",
+        "nodeName": "get_access_token",
+        "path": "nodes.get_access_token.parameters.bodyParameters.parameters.4.value",
+        "reason": "secret_named_field"
+      }
+    ],
+    "publicationStatus": "unpublished_local_candidate"
+  },
+  "schemaVersion": 1,
+  "source": {
+    "snapshotKind": "local_candidate",
+    "sourceOnly": true,
+    "workflowId": "GgDxPEWtW7ltT5BW",
+    "workflowName": "[kb]Build|CSD",
+    "baseVersionId": "6fed47a6-0192-4356-af03-c8c5820b2cb9",
+    "baseSnapshotGitCommit": "4ecea0431f1b84490bab4bf51220faeef815e6b2"
+  },
+  "workflow": {
+    "connections": {
+      "Build csd_issue Snapshot": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Deliver Source Snapshot",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Deliver Source Snapshot": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Verify Receipt",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Get_CSD_Detail": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Validate CSD Snapshot",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Loop Over Items": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Scan Complete",
+              "type": "main"
+            }
+          ],
+          [
+            {
+              "index": 0,
+              "node": "Get_CSD_Detail",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Query_CSD_list": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Url_list",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "get_access_token",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Url_list": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Loop Over Items",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Validate CSD Snapshot": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Build csd_issue Snapshot",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "Verify Receipt": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Loop Over Items",
+              "type": "main"
+            }
+          ]
+        ]
+      },
+      "get_access_token": {
+        "main": [
+          [
+            {
+              "index": 0,
+              "node": "Query_CSD_list",
+              "type": "main"
+            }
+          ]
+        ]
+      }
+    },
+    "name": "[kb]Build|CSD",
+    "nodes": [
+      {
+        "id": "3632676f-7f3b-4a47-a2b9-8599159d0619",
+        "name": "get_access_token",
+        "parameters": {
+          "bodyParameters": {
+            "parameters": [
+              {
+                "name": "grant_type",
+                "value": "password"
+              },
+              {
+                "name": "client_id",
+                "value": "4k1O3js73PX7FjjN7mH9CGc7FIWlHTdc"
+              },
+              {
+                "name": "=client_secret",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "username",
+                "value": "__REDACTED__"
+              },
+              {
+                "name": "password",
+                "value": "__REDACTED__"
+              }
+            ]
+          },
+          "contentType": "form-urlencoded",
+          "method": "POST",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          },
+          "sendBody": true,
+          "url": "https://oauth.agoralab.co/oauth/token"
+        },
+        "position": [
+          -2192,
+          1232
+        ],
+        "retryOnFail": true,
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.3
+      },
+      {
+        "id": "f4e552ed-77d4-4e7a-9cd2-0fd8890a1297",
+        "name": "Loop Over Items",
+        "parameters": {
+          "batchSize": "={{ 1 }}",
+          "options": {
+            "reset": false
+          }
+        },
+        "position": [
+          -1520,
+          1232
+        ],
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3
+      },
+      {
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "9byFt3NhaDVn6IKb",
+            "name": "jira_zac"
+          }
+        },
+        "id": "b344fd9d-0d39-4ae9-b6de-452fd3d8fe70",
+        "name": "Query_CSD_list",
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "accessToken",
+                "value": "={{ $json.body.access_token }}"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "jql",
+                "value": "=project = CSD AND status = RESOLVED AND Updated > -24h AND created > -60d AND resolution != \"不做任何操作（Won't Do）\" AND resolution != \"重复（Duplicate）\" AND resolution !=  \"拒绝（Reject）\" AND type = Bug ORDER BY updated ASC"
+              },
+              {
+                "name": "fields",
+                "value": "description, assignee, customfield_10700, customfield_13915, comment"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "sendQuery": true,
+          "url": "https://jira.agoralab.co/rest/api/2/search"
+        },
+        "position": [
+          -1968,
+          1232
+        ],
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2
+      },
+      {
+        "id": "3a0d707f-27be-4f5e-a79b-79edd9a0963d",
+        "name": "Url_list",
+        "parameters": {
+          "jsCode": "// Access the issues array from the previous node\nconst issues = $input.first().json.issues || [];\n\n// Map the data into the standard n8n format: an array of objects\nreturn issues.map((item, index) => {\n  return {\n    json: {\n      index: index + 1,\n      url: item.self\n    }\n  };\n});"
+        },
+        "position": [
+          -1744,
+          1232
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "credentials": {
+          "httpBasicAuth": {
+            "id": "9byFt3NhaDVn6IKb",
+            "name": "jira_zac"
+          }
+        },
+        "id": "f3d13846-191a-4f01-b488-cf2747c4fd2c",
+        "name": "Get_CSD_Detail",
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBasicAuth",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "accessToken",
+                "value": "={{ $('get_access_token').item.json.body.access_token }}"
+              }
+            ]
+          },
+          "options": {
+            "redirect": {
+              "redirect": {}
+            }
+          },
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "fields",
+                "value": "summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915"
+              }
+            ]
+          },
+          "sendHeaders": true,
+          "sendQuery": true,
+          "url": "={{ $json.url }}"
+        },
+        "position": [
+          -1296,
+          1088
+        ],
+        "retryOnFail": true,
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "d4ba4cac-6268-4ac6-80c5-4acc53e03d09",
+        "name": "Schedule Trigger",
+        "parameters": {
+          "rule": {
+            "interval": [
+              {}
+            ]
+          }
+        },
+        "position": [
+          -2416,
+          1232
+        ],
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.3
+      },
+      {
+        "id": "8b7d8a8b-7edc-4ea0-bbeb-9bf639cc2efa",
+        "name": "When clicking ‘Execute workflow’",
+        "parameters": {},
+        "position": [
+          -2416,
+          672
+        ],
+        "type": "n8n-nodes-base.manualTrigger",
+        "typeVersion": 1
+      },
+      {
+        "id": "1aa74b6a-3789-41aa-b21f-3a8da1c9c4af",
+        "name": "Validate CSD Snapshot",
+        "parameters": {
+          "jsCode": "// Stage 2 source-only (p2-194, review R1 fix): CSD completeness gate —\n// fail-closed before any delivery. fields.comment object, comments array and\n// a NUMERIC total must ALL be present (ingestion contract): a missing or\n// non-numeric total refuses delivery instead of falling back to length.\nconst issue = $input.first().json;\nconst fields = issue && issue.fields;\nif (!issue || !issue.key || !fields) { throw new Error('CSD snapshot incomplete: issue key/fields missing'); }\nconst comment = fields.comment;\nif (!comment || !Array.isArray(comment.comments)) { throw new Error('CSD snapshot incomplete: fields.comment missing'); }\nif (typeof comment.total !== 'number') { throw new Error('CSD snapshot incomplete: fields.comment.total missing or non-numeric'); }\nif (comment.comments.length < comment.total) {\n  throw new Error('CSD snapshot incomplete: got ' + comment.comments.length + ' comments, total ' + comment.total);\n}\nreturn [{ json: { issue: issue, comment_total: comment.total } }];",
+          "mode": "runOnceForAllItems"
+        },
+        "position": [
+          -1076,
+          1088
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "89d12c34-d6b8-4337-990d-b8d02a1af17d",
+        "name": "Build csd_issue Snapshot",
+        "parameters": {
+          "jsCode": "// sandbox-safe SHA-256: the JS task runner exposes no `crypto` global\n// Padding reserves both the marker byte and the 64-bit length field.\nfunction sha256Hex(input) {\n  if (typeof input !== 'string') { throw new Error('sha256: string input required'); }\n  const enc = [];\n  for (let i = 0; i < input.length; i++) {\n    let c = input.codePointAt(i);\n    if (c > 0xffff) i++;\n    if (c < 0x80) enc.push(c);\n    else if (c < 0x800) enc.push(0xc0 | (c >> 6), 0x80 | (c & 63));\n    else if (c < 0x10000) enc.push(0xe0 | (c >> 12), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n    else enc.push(0xf0 | (c >> 18), 0x80 | ((c >> 12) & 63), 0x80 | ((c >> 6) & 63), 0x80 | (c & 63));\n  }\n  const bytes = Uint8Array.from(enc);\n  const K = [\n    0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,\n    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,\n    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,\n    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,\n    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,\n    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,\n    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,\n    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2\n  ];\n  const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];\n  const l = bytes.length;\n  const bitLenHi = Math.floor(l / 0x20000000);\n  const bitLenLo = (l << 3) >>> 0;\n  const totalLen = Math.ceil((l + 1 + 8) / 64) * 64;\n  const m = new Uint8Array(totalLen);\n  m.set(bytes);\n  m[l] = 0x80;\n  const dv = new DataView(m.buffer);\n  dv.setUint32(totalLen - 8, bitLenHi);\n  dv.setUint32(totalLen - 4, bitLenLo);\n  const w = new Int32Array(64);\n  const rr = (x, n) => (x >>> n) | (x << (32 - n));\n  for (let off = 0; off < totalLen; off += 64) {\n    for (let i = 0; i < 16; i++) w[i] = dv.getInt32(off + i * 4);\n    for (let i = 16; i < 64; i++) {\n      const s0 = rr(w[i-15],7) ^ rr(w[i-15],18) ^ (w[i-15] >>> 3);\n      const s1 = rr(w[i-2],17) ^ rr(w[i-2],19) ^ (w[i-2] >>> 10);\n      w[i] = (w[i-16] + s0 + w[i-7] + s1) | 0;\n    }\n    let [a,b,c,d,e,f,g,h] = H;\n    for (let i = 0; i < 64; i++) {\n      const S1 = rr(e,6) ^ rr(e,11) ^ rr(e,25);\n      const ch = (e & f) ^ (~e & g);\n      const t1 = (h + S1 + ch + K[i] + w[i]) | 0;\n      const S0 = rr(a,2) ^ rr(a,13) ^ rr(a,22);\n      const mj = (a & b) ^ (a & c) ^ (b & c);\n      const t2 = (S0 + mj) | 0;\n      h=g; g=f; f=e; e=(d+t1)|0; d=c; c=b; b=a; a=(t1+t2)|0;\n    }\n    H[0]=(H[0]+a)|0; H[1]=(H[1]+b)|0; H[2]=(H[2]+c)|0; H[3]=(H[3]+d)|0;\n    H[4]=(H[4]+e)|0; H[5]=(H[5]+f)|0; H[6]=(H[6]+g)|0; H[7]=(H[7]+h)|0;\n  }\n    return H.map(x => (x >>> 0).toString(16).padStart(8, '0')).join('');\n}\n\n// Stage 2 source-only (p2-194): build a csd_issue knowledge-source-v1 snapshot.\nconst source = $input.first().json;\nconst issue = source.issue;\nif (!issue || !issue.key || !issue.fields) { throw new Error('snapshot build: issue key/fields missing'); }\nconst payload = {\n  issue: issue,\n  comment_count: source.comment_total,\n};\nconst canonical = JSON.stringify(payload);\nconst snapshot_hash = sha256Hex(canonical);\nreturn [{ json: {\n  schema_version: 'knowledge-source-v1',\n  source_type: 'csd_issue',\n  source_id: String(issue.key),\n  source_updated_at: String(issue.fields.updated || issue.fields.created || ''),\n  payload: payload,\n  references: {\n    snapshot_hash: snapshot_hash,\n    snapshot_builder: 'n8n-csd-source-only',\n    captured_fields: 'issue.fields=summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915'\n  }\n}}];",
+          "mode": "runOnceForAllItems"
+        },
+        "position": [
+          -856,
+          1088
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "credentials": {
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
+          }
+        },
+        "id": "bf6d10b4-615c-408b-9d1c-f444a7585713",
+        "maxTries": 3,
+        "name": "Deliver Source Snapshot",
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpBearerAuth",
+          "jsonBody": "={{ JSON.stringify($json) }}",
+          "method": "POST",
+          "options": {
+            "timeout": 30000
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/knowledge/sources"
+        },
+        "position": [
+          -636,
+          1088
+        ],
+        "retryOnFail": true,
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "waitBetweenTries": 5000
+      },
+      {
+        "id": "7b1fce8a-b2e6-40e6-8975-e798f6e6a8d9",
+        "name": "Verify Receipt",
+        "parameters": {
+          "jsCode": "// Stage 2 source-only (p2-194): three-state receipt gate. Only accepted /\n// already_exists / stale_ignored with a non-empty task_id pass; anything else\n// throws so the workflow error path (ops alert) fires.\nconst body = $input.first().json;\nconst status = body ? body.status : null;\nconst taskId = body ? body.task_id : null;\nconst allowed = ['accepted', 'already_exists', 'stale_ignored'];\nif (!allowed.includes(status)) {\n  throw new Error('receipt check: unexpected status ' + JSON.stringify(status));\n}\nif (!taskId || !String(taskId).trim()) {\n  throw new Error('receipt check: empty task_id');\n}\nreturn [{ json: { delivered: true, status: String(status), task_id: String(taskId) } }];",
+          "mode": "runOnceForAllItems"
+        },
+        "position": [
+          -416,
+          1088
+        ],
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2
+      },
+      {
+        "id": "4338baa7-7b33-4e48-a639-15a181424efa",
+        "name": "Scan Complete",
+        "parameters": {},
+        "position": [
+          -1076,
+          1288
+        ],
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1
+      }
+    ],
+    "settings": {
+      "availableInMCP": true,
+      "binaryMode": "separate",
+      "callerPolicy": "workflowsFromSameOwner",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt",
+      "executionOrder": "v1",
+      "timeSavedMode": "fixed"
+    }
+  }
+}
