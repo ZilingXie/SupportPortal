@@ -5,16 +5,16 @@
   "baseline": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
   "scope": "Compatibility job creation ownership, legacy claim exclusion, active claim recovery and stale payload CAS; no migration, Prompt content change, terminal-job revival or live replay.",
   "source_files": {
-    "backend/repositories/ticket_repository.py": "af8db9db21827295dad99216538a4d318d9315b40732917b87f06df3d77a6c8a",
+    "backend/repositories/ticket_repository.py": "bcf174cf6329ede120d19b291edbaa9dff03deed51a7595c443cd22cd4661b9d",
     "backend/services/account_reply_jobs.py": "890f6ccb0e2b806231b188e0899fe97e4d5a32236488ee6b6ccfdfc69ffb8c39",
     "backend/services/automation_account_intake.py": "a6c26d5bb94dbb185d065cc4ff1a622f90aa54446b8a2fdc473922019eb97fae",
     "backend/services/automation_hermes_tools.py": "ee74ca1295b1c9b54c6dbd7161de4adf6ed327124741e001609266d7e44e7c27",
-    "backend/tests/test_enablement_auto_postgres.py": "e9b4aed1b93b288d76e354767f944e3b7eda47593aa6e16c43411387bd320257",
-    "backend/tests/test_hermes_compatibility_scheduler.py": "37953b51c470ff65338c1bc7aa0b0946a759644f385280a2e18557ca8c30d64f",
+    "backend/tests/test_enablement_auto_postgres.py": "4aa5b87e81636213ece19b763cfc0a9443acafc3550532abbb76e947458485ac",
+    "backend/tests/test_hermes_compatibility_scheduler.py": "e4361a07b0eb4648901ad419688d29001de3f543a3447542137e70988eabf3f2",
     "backend/tests/test_hermes_native_enablement_regression.py": "a472c3901bdbd645f3fb5cd9004161e3041b5ad6b7685ce04ea59820bd6ef651",
     "backend/tests/test_worker.py": "64a253ac82e6a2d8baed65ee34e903fd3700be012a41c7a670364fc0d3b27ec2",
     "backend/worker.py": "c51ad6538d98ee758fd81793e06c8029a1e2033b73198b2ea03a07ed1fb2eb75",
-    "scripts/testing/verify_hermes_repair_negative_controls.py": "87d1a4a52424b8122efa0357e1c954ba23c4a8e564ba8ca91902f84e1641a863"
+    "scripts/testing/verify_hermes_repair_negative_controls.py": "a30c842322bfb31f69f811cd35529dd4965f19fe9f6bd0cb8fcf348ebecac41e"
   },
   "environment": {
     "python": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python",
@@ -49,6 +49,18 @@
     {
       "command": "Candidate and git archive origin/main: <project-python> -m pytest backend/tests/test_worker.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short",
       "result": "Both latest main@0124173b and integrated candidate: 254 passed, 20 failed, 32 subtests passed; exact failure signatures equal (14 worker + 6 legacy intake); see runtime-scheduler-baseline.json"
+    },
+    {
+      "command": "RUN_POSTGRES_INTEGRATION=1 ... pytest focused Hermes/compatibility/PG/publication suite",
+      "result": "278 passed, 50 subtests passed, no skips; InMemory and isolated PostgreSQL transition-failure/publish-race CAS paths included"
+    },
+    {
+      "command": "... pytest backend/tests/test_native_hermes_draft_save.py with integrated main@0124173b",
+      "result": "308 passed, 48 subtests passed, no skips"
+    },
+    {
+      "command": "Candidate and origin/main expanded baseline comparison",
+      "result": "Both: 254 passed, 20 failed, 32 subtests; exact failure signatures equal"
     }
   ],
   "baseline_failures": {
@@ -93,5 +105,18 @@
   },
   "deployed_source": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
   "integration_baseline": "0124173bbc6c818efd89f05de9127684f6133ac4",
-  "integration_assessment": "Main #1491 changes shared draft-save entry and Investigation validator/turn JSON; does not alter compatibility scheduler/release code. Preserved both changes and reran shared/native entries. Prior model evidence belongs to the deployed 4ecea043 source; no new real model claim for integrated candidate."
+  "integration_assessment": "Main #1491 changes shared draft-save entry and Investigation validator/turn JSON; does not alter compatibility scheduler/release code. Preserved both changes and reran shared/native entries. Prior model evidence belongs to the deployed 4ecea043 source; no new real model claim for integrated candidate.",
+  "negative_controls": {
+    "count": 7,
+    "detected": 7,
+    "names": [
+      "omit_source_hermes_ownership",
+      "claim_hermes_compatibility_job",
+      "terminalize_claimed_hermes_identity",
+      "ignore_current_hermes_ownership",
+      "overwrite_hermes_ownership_from_stale_claim",
+      "omit_human_review_ownership_cas",
+      "omit_publish_ownership_cas"
+    ]
+  }
 }

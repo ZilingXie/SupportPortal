@@ -115,6 +115,67 @@ def assert_stale_claim_cannot_remove_ownership(repository):
     ) is not None
 
 
+def _claimed_stale_job(repository, *, status):
+    repository, _ = compatibility_fixture(auto=False, delivered=False, repository=repository)
+    job = repository.get_account_reply_job("job-1")
+    job["status"] = status
+    job["payload"]["reply_pipeline"] = "hermes_persona_v8"
+    repository.save_account_reply_job(job)
+    claimed = repository.claim_account_reply_jobs(
+        from_status=status,
+        to_status=status,
+        now_value="2026-10-13T10:01:00Z",
+        due_only=False,
+        limit=1,
+    )[0]
+    current = repository.get_account_reply_job("job-1")
+    current["payload"].update({"hermes_compatibility_only": True, "reply_owner": "hermes_persona"})
+    repository.save_account_reply_job(current)
+    return repository, claimed
+
+
+def assert_failed_transition_preserves_hermes_ownership(repository):
+    repository, stale = _claimed_stale_job(repository, status="persona_v8_preparing")
+    result = repository.transition_claimed_account_reply_to_human_review(
+        stale,
+        expected_status="persona_v8_preparing",
+        expected_claimed_at=stale["claimed_at"],
+        expected_attempt_count=stale["attempt_count"],
+        reason="persona_failed",
+        policy_decision="human_review",
+        transitioned_at="2026-10-13T10:02:00Z",
+    )
+    assert result is None
+    saved = repository.get_account_reply_job("job-1")
+    assert saved["status"] == "persona_v8_preparing"
+    assert saved["payload"]["hermes_compatibility_only"] is True
+    assert saved["payload"]["reply_owner"] == "hermes_persona"
+
+
+def assert_publish_race_preserves_hermes_ownership(repository):
+    repository, stale = _claimed_stale_job(repository, status="persona_v8_publishing")
+    with pytest.raises(KeyError):
+        repository.publish_account_reply(
+            stale,
+            content="Old worker reply",
+            payload={"reply_intent": "submission_confirmation"},
+            published_at="2026-10-13T10:02:00Z",
+            reply_execution={"execution_id": "stale-execution"},
+        )
+    saved = repository.get_account_reply_job("job-1")
+    assert saved["status"] == "persona_v8_publishing"
+    assert saved["payload"]["hermes_compatibility_only"] is True
+    assert repository.get_ticket("TK-COMPAT")["messages"] == []
+
+
+def test_failed_transition_preserves_hermes_ownership_inmemory():
+    assert_failed_transition_preserves_hermes_ownership(InMemoryTicketRepository())
+
+
+def test_publish_race_preserves_hermes_ownership_inmemory():
+    assert_publish_race_preserves_hermes_ownership(InMemoryTicketRepository())
+
+
 def test_scheduler_excludes_compatibility_without_starving_legacy():
     assert_scheduler_excludes_compatibility(InMemoryTicketRepository())
 

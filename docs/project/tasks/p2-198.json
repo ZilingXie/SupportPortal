@@ -29,7 +29,7 @@
       "type": "test",
       "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
       "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-      "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
+      "result": "265 passed + 48 subtests，无 PG skip；七项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
     },
     {
       "type": "test",

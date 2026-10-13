@@ -4942,6 +4942,11 @@ class InMemoryTicketRepository(
                 )
             ):
                 return None
+            if (
+                (current.get("payload") or {}).get("hermes_compatibility_only") is True
+                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True
+            ):
+                return None
 
             case_key = next(
                 (
@@ -5023,6 +5028,11 @@ class InMemoryTicketRepository(
                     expected_claimed_at=job.get("claimed_at"),
                     expected_attempt_count=int(job.get("attempt_count") or 0),
                 )
+            ):
+                raise KeyError(job_id)
+            if (
+                (current_job.get("payload") or {}).get("hermes_compatibility_only") is True
+                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True
             ):
                 raise KeyError(job_id)
             ticket = self._tickets.get(ticket_id)
@@ -18920,7 +18930,7 @@ class PostgresTicketRepository(
                     return None
                 cur.execute(
                     sql.SQL(
-                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count "
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count,payload "
                         "FROM {} WHERE job_id=%s FOR UPDATE"
                     ).format(self._table("support_account_reply_jobs")),
                     (job_id,),
@@ -18936,6 +18946,7 @@ class PostgresTicketRepository(
                             _to_iso(job_row[4]) if job_row[4] is not None else None
                         ),
                         "attempt_count": int(job_row[5] or 0),
+                        "payload": dict(job_row[6] or {}),
                     }
                     if job_row is not None
                     else None
@@ -18946,6 +18957,11 @@ class PostgresTicketRepository(
                     expected_status=expected_status,
                     expected_claimed_at=expected_claimed_at,
                     expected_attempt_count=expected_attempt_count,
+                ):
+                    return None
+                if (
+                    (current.get("payload") or {}).get("hermes_compatibility_only") is True
+                    and (job.get("payload") or {}).get("hermes_compatibility_only") is not True
                 ):
                     return None
 
@@ -19118,7 +19134,7 @@ class PostgresTicketRepository(
                 )
                 cur.execute(
                     sql.SQL(
-                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count "
+                        "SELECT job_id,ticket_id,trigger_message_created_at,status,claimed_at,attempt_count,payload "
                         "FROM {} WHERE job_id=%s FOR UPDATE"
                     ).format(self._table("support_account_reply_jobs")),
                     (job_id,),
@@ -19132,6 +19148,7 @@ class PostgresTicketRepository(
                         "status": str(job_row[3]),
                         "claimed_at": _to_iso(job_row[4]) if job_row[4] is not None else None,
                         "attempt_count": int(job_row[5] or 0),
+                        "payload": dict(job_row[6] or {}),
                     }
                     if job_row is not None
                     else None
@@ -19151,6 +19168,11 @@ class PostgresTicketRepository(
                         expected_claimed_at=job.get("claimed_at"),
                         expected_attempt_count=int(job.get("attempt_count") or 0),
                     )
+                ):
+                    raise KeyError(job_id)
+                if (
+                    (canonical_job.get("payload") or {}).get("hermes_compatibility_only") is True
+                    and (payload or {}).get("hermes_compatibility_only") is not True
                 ):
                     raise KeyError(job_id)
                 if account_case is not None and _account_case_requires_human_review(

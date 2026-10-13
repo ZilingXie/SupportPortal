@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T10:42:44Z",
-  "source_base_commit": "17ca6c91692b3efff254fd181d2c8b592b18e944",
-  "registry_digest": "59effdf2cda856299267b3843fa0d099f9c3e2a8379b0c976c201b19bde4e35a",
+  "generated_at": "2026-10-13T11:12:09Z",
+  "source_base_commit": "879bfccf5cb81ff5617917cab8432d87c1ff8670",
+  "registry_digest": "abbed8cc2ebaf957d353a458c0fabfda26321793f329511aa4039905556efc04",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1603,7 +1603,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
           "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
+          "result": "265 passed + 48 subtests，无 PG skip；七项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
         },
         {
           "type": "test",
@@ -18242,7 +18242,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
           "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
-          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
+          "result": "265 passed + 48 subtests，无 PG skip；七项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。 合入 main@0124173b 后共享/native Investigation API 与 PG 集成回归308 passed + 48 subtests，无跳过。 最新main与候选扩大回归均254 passed、20 failed、32 subtests，失败签名逐项一致（worker14+legacy intake6）。"
         },
         {
           "type": "test",

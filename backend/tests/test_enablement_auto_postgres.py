@@ -35,9 +35,13 @@ class EnablementRelayPostgresTests(unittest.TestCase):
             assert_scheduler_excludes_compatibility,
             assert_claimed_compatibility_survives_readback,
             assert_stale_claim_cannot_remove_ownership,
+            assert_failed_transition_preserves_hermes_ownership,
+            assert_publish_race_preserves_hermes_ownership,
         )
         checks = [("claim_filter", lambda repo: assert_scheduler_excludes_compatibility(repo)),
-                  ("stale_claim", lambda repo: assert_stale_claim_cannot_remove_ownership(repo))]
+                  ("stale_claim", lambda repo: assert_stale_claim_cannot_remove_ownership(repo)),
+                  ("failed_transition", lambda repo: assert_failed_transition_preserves_hermes_ownership(repo)),
+                  ("publish_race", lambda repo: assert_publish_race_preserves_hermes_ownership(repo))]
         for auto in (False, True):
             for stage in ("preparing", "publishing"):
                 for v8 in (False, True):

@@ -30,10 +30,11 @@
 
 - 最新 main@0124173b 集成：新增 #1491 native Investigation draft-save 测试，真实 memory/PG API 与共享保存入口回归 **308 passed + 48 subtests，无跳过**；五项运行修复负控在集成版本继续检出。原模型证据绑定已发布的 4ecea043，不声称新集成版本已重新执行真实模型。
 - 定向核心/native/compatibility/version/publication 回归：**265 passed + 48 subtests，无跳过**；包括本地 PostgreSQL 16 隔离 schema。新 scheduler tests **10 passed**；PG suite **6 passed + 15 subtests**（其中新增十个恢复/调度子场景，含 legacy/v8 状态）。
-- 五个负控：遗漏源头所有权、允许 scheduler claim、将恢复置为 manual_attention、忽略最新 payload、stale claim 清除所有权，全部被行为断言检出；不把 import/collection 失败当作检出。
+- 七个负控：遗漏源头所有权、允许 scheduler claim、将恢复置为 manual_attention、忽略最新 payload、stale claim 清除所有权，全部被行为断言检出；不把 import/collection 失败当作检出。
+- 本轮新增失败转人工与 publish 竞态：InMemory/隔离 PostgreSQL 均证明旧 payload 不会清除 Hermes marker，不进入 `manual_attention`，不写客户消息；七项负控全部检出。
 - 最新 main 集成后，真实候选与 `git archive origin/main@0124173b` 五套扩大回归均 **254 passed、20 failed、32 subtests**，逐项失败签名一致（14 worker + 6 legacy intake），见 [最新基线对比](../evidence/hermes-natural-persona-v3/runtime-scheduler-baseline.json)。
 - 完整 worker 分支与发布 main 均 **153 passed、14 failed、25 subtests**，14 个失败签名相同。补充 legacy intake/manual/auto/version 四套分支与 main 均 **101 passed、6 failed、7 subtests**；同六个旧 fixture 失败，未弱化断言。
-- 复现命令与文件 hash：[本轮验证](../evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json)、[五项负控](../evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json)。仅 synthetic PostgreSQL，监听 `127.0.0.1:55437`；没有使用远端数据库作为测试数据库，无 migration/新状态。
+- 复现命令与文件 hash：[本轮验证](../evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json)、[七项负控](../evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json)。仅 synthetic PostgreSQL，监听 `127.0.0.1:55437`；没有使用远端数据库作为测试数据库，无 migration/新状态。
 
 ### 已完成的发布与实际业务边界
 
