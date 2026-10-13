@@ -1698,7 +1698,11 @@ class TestInvestigationReviewGate:
                     "blockers": ["No draft customer reply provided."],
                 },
             ):
-                tool_save_reply_draft(store, None, turn_id=turn_id, content="Draft", basis={})
+                from backend.services.automation_hermes_tools import HermesToolError
+                with pytest.raises(HermesToolError) as rejected:
+                    tool_save_reply_draft(store, None, turn_id=turn_id, content="Draft", basis={})
+                assert rejected.value.code == "guardrail_blocked"
+                assert rejected.value.details["rewrite_allowed"]
 
         reply_client = FakeHermesClient(on_run_completed=on_reply_run_completed)
         reply_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker-2", lease_seconds=300)
@@ -1709,11 +1713,12 @@ class TestInvestigationReviewGate:
         ) as notify_blocked:
             outcome = self._processor(store, reply_client).process(reply_job)
         assert outcome["status"] == "human_review"
-        assert outcome["reason"] == "guardrail_blocked"
+        assert outcome["error_code"] == "guardrail_blocked"
         notify_blocked.assert_called_once()
         kwargs = notify_blocked.call_args.kwargs
         assert kwargs["reason"] == "guardrail_blocked"
-        assert "No draft customer reply provided." in kwargs["blockers"]
+        assert any("guardrail_blocked" in blocker for blocker in kwargs["blockers"])
+        assert not store.get_hermes_case_review("123")["drafts"]
 
     def test_missing_draft_reply_turn_fails_visibly(self) -> None:
         store = _store()
