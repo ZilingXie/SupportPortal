@@ -64,6 +64,12 @@ def standalone_workflow_active() -> bool:
     return knowledge_workflow_active()
 
 
+def standalone_execution_active() -> bool:
+    from backend.services.hermes_knowledge_workflow import knowledge_execution_active
+
+    return knowledge_execution_active()
+
+
 def standalone_summary_task_id_for(source_type: str, source_id: str, source_version: str) -> str:
     return f"knowledge-source-summary:{source_type}:{source_id}:{source_version}"
 
@@ -525,6 +531,8 @@ def drain_standalone_knowledge_tasks(
     limit: int = 5,
 ) -> dict[str, int]:
     """Claim and run pending/lease-expired standalone tasks (worker entry)."""
+    if not standalone_execution_active():
+        return {"executed": 0, "failed": 0}
     from datetime import datetime, timezone
 
     now = datetime.now(timezone.utc).isoformat()

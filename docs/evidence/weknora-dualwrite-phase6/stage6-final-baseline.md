@@ -141,9 +141,13 @@ CSD 链首次真实执行（execution 191877）逐步暴露三个阶段二作者
 
 - 样本选定：**CSD-79923**（approve 候选，payload 40KB 最丰富）+ **CSD-79994**（reject 候选，V2V 双语详细调查）；层 2 config={master=1, intake=1, summary_review=1, allowlist=csd_issue:CSD-79923,csd_issue:CSD-79994}。
 - 层 2b（r20261013-42a187a 第二发，mode=disabled）：全阶段 passed，worker:143 开关与 allowlist 逐字上线；但受控重投（202 already_exists）**未建任务**——根因=`knowledge_workflow_active()` 要求 HERMES_CASE_WORKFLOW_MODE=real+agent gateway（standalone drain 与建任务门共用该门），层 2b 镜像了当时线上 disabled 模式故门关。层 2b checkpoint 已归档 layer2-disarmed-state/。
-- 层 2c（第三发，mode=real+--hermes-agent-enabled+--bootstrap-account-schema，runbook 钉定的治理管线配对）：进行中。完成后受控重投两样本即应建 pending Summary 任务（worker 开关仍关=零 AI 执行）。
-- ★机制记录：同日同 SHA 的分层发布=每层归档前一 checkpoint（identity 含 knowledge_stage+mode）；重投回执 already_exists 仍会重跑建任务门（端点代码 560-600 行）。
+- 层 2c（第三发，mode=real+agent+bootstrap）随后失败并回滚。原记录“worker 关=零 AI”判断错误：双写 worker 开关不控制 Summary/Review 消费，不作为验收证据。
+- 当时曾归档前一 checkpoint 后使用同名 release；该做法不解除 ECR immutable tag 冲突，已停止采用。重投回执 already_exists 仍会重跑建任务门。
 
 ## 层 2c 失败记录（2026-10-13，已回滚）
 
-mode=real+agent+bootstrap 的层 2c 在部署后 Provider 探针任务失败：`CannotPullContainerError … supportportal/preproduction@sha256:dfce32bd…: not found`（ECR 无该 digest）。部署门禁按设计工作：Prompt 激活前失败→任务定义还原→无分裂状态。线上保持层 2b（master=1/intake=1/summary_review=1/allowlist 两样本/mode=disabled——建任务门因 mode 关仍无效，等层 2c 修复）。待诊断：探针任务引用的 digest 来源（本轮 codebuild 重建过镜像；探针可能引用了陈旧 digest 或本次 push 异常）。
+mode=real+agent+bootstrap 的层 2c 在 Provider 探针发生 `CannotPullContainerError / not found`，Prompt 激活前失败后回滚。后续独立回读证实 ECR 可查该 digest、回滚 Worker 正在运行它；探针 Worker :144 digest 与当次 manifest 一致。未确定拉取失败原因，不认定“ECR 无镜像”或“探针陈旧”。CodeBuild #190 三角色 buildx 因 immutable tag 失败却报告 SUCCEEDED，因此“本轮重建并发布了新镜像”不成立。
+
+独立复核：native r20261013-570aec2 的 Route :140=hermes 被层 2b r20261013-42a187a 的 Route :141=legacy 覆盖；层 2c 回滚只恢复 :141，没有恢复 native。调用者显式选择还是 CLI 默认补入仍无法区分。层 2 发布验收结论为未通过。
+
+2026-10-13 用户选择修复合同 A：native 保持 typed disabled，知识生产就绪解耦旧 mode，新增默认关闭的独立 AI 执行门，保留层 2 pending / 层 3 AI 边界。当前修复与可复验记录见 [stage6-layer2-repair-A.md](stage6-layer2-repair-A.md)。他线已在 main 合入 native 恢复及发布保护；其部署记录不是本轮知识修复的上线证据。

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T09:43:01Z",
-  "source_base_commit": "dbcae60a1144e7bec3189d48df36cec6995027c5",
-  "registry_digest": "a3c9e1757385e7f7aa6be6c3cea07fd99c87d68cffc47661eb0d3666cef84497",
+  "generated_at": "2026-10-13T10:01:44Z",
+  "source_base_commit": "4b8e222e9958f2e337ac9d8de9def965d836f1ba",
+  "registry_digest": "e12b2fe5571e506e1ebef5e1171e3df9c307e5898c7c76fe7c5267c448eda8e1",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5864,6 +5864,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "开启层 1：master+intake（r20261013-42a187a）",
           "command": "release pipeline --knowledge-stage-config（master=1+intake=1+其余 0+空 allowlist）+ 合成探针 POST+只读 DB 回读",
           "result": "全阶段 passed；worker:141 回读开关与配置逐字一致（步 2 双 verify 门部署日志两见）；探针 CSD-STAGE6-L1-PROBE 202 accepted+intakes 落库（102）+probe Summary 0+summaries/旧任务计数不变=受执与 AI 分离实证。旧全关部署 checkpoint/evidence/timings 归档于 docs/evidence/weknora-dualwrite-phase6/alloff-deploy-state/。"
+        },
+        {
+          "type": "document",
+          "label": "层 2 未通过与修复 A 合同",
+          "command": "用户复核报告 + 2026-10-13 选择 A + main native 恢复整合",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md；保留独立验收门。本轮未部署/未重投/未新增外部写入。"
+        },
+        {
+          "type": "test",
+          "label": "层 2 修复 A 自测（未释放独立验收门）",
+          "command": "23 知识/发布套件 RUN_POSTGRES_INTEGRATION=1（隔离 schema）+ 补充真实 renderer/worker CLI 专项；复现命令见修复记录",
+          "result": "497 passed / 0 failed / 0 skipped / 8 subtests；后补三角色 renderer 正向后专项 26 passed（与大回归重叠，不合并计数）。Bash syntax、diff、Overview passed；n8n 历史快照 validator exit 0，29 LEGACY-EXPOSED 未用于运行态结论。未部署/未重投。"
         }
       ],
       "source_refs": [
@@ -18131,8 +18143,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
       "updated_at": "2026-10-13",
-      "summary": "计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "v3-A 步 0-8 已完成（PR#1482=main 42a187ae；全关闭部署 r20261012-42a187a；n8n 三链 active 已切换；关闭态探针 503 零写入）；小范围开启层 1 完成（r20261013-42a187a：master+intake=1 其余 0 allowlist 空；worker:141；探针 202 受执落库+零 AI：summaries 36/旧任务 1 不变）。待自然到达来源：CSD 链 2026-10-13 12:00 北京（04:00 UTC）自然扫描投递+Solved webhook。层 2 计划=summary_review=1+选定 1-2 个到达来源进 allowlist（受控重投触发建任务）→层 3 worker→层 4 双 delivery→层 5 slack_notify→人工 Slack Review（人工停点：reject 零写入+approve 双写按 ID 回读，WeKnora 保持 draft）→观察窗口（≥48h 或≥10 候选）→仅提交证据，全量放开需用户单独确认。",
+      "summary": "当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
+      "next_action": "层 2 修复 A 完成自测后提交 Draft PR 独立验收；通过后刷新实时发布基线，保留 native/shared 配置，以新 immutable release ID 发布 Preproduction 并回读。层 2 两样本精确 allowlist、AI execution=0：受控重投建 pending且零AI；层 3单独开 AI execution，取得 Summary/Review 实际会话；后续 dualwrite worker/targets/Slack 按序推进。人工 Review、draft 和全量放开人工停点保留。不得将自测、他线 native 恢复或 #190 SUCCEEDED 计为本轮部署/业务通过。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18208,6 +18220,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "开启层 1：master+intake（r20261013-42a187a）",
           "command": "release pipeline --knowledge-stage-config（master=1+intake=1+其余 0+空 allowlist）+ 合成探针 POST+只读 DB 回读",
           "result": "全阶段 passed；worker:141 回读开关与配置逐字一致（步 2 双 verify 门部署日志两见）；探针 CSD-STAGE6-L1-PROBE 202 accepted+intakes 落库（102）+probe Summary 0+summaries/旧任务计数不变=受执与 AI 分离实证。旧全关部署 checkpoint/evidence/timings 归档于 docs/evidence/weknora-dualwrite-phase6/alloff-deploy-state/。"
+        },
+        {
+          "type": "document",
+          "label": "层 2 未通过与修复 A 合同",
+          "command": "用户复核报告 + 2026-10-13 选择 A + main native 恢复整合",
+          "result": "docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md；保留独立验收门。本轮未部署/未重投/未新增外部写入。"
+        },
+        {
+          "type": "test",
+          "label": "层 2 修复 A 自测（未释放独立验收门）",
+          "command": "23 知识/发布套件 RUN_POSTGRES_INTEGRATION=1（隔离 schema）+ 补充真实 renderer/worker CLI 专项；复现命令见修复记录",
+          "result": "497 passed / 0 failed / 0 skipped / 8 subtests；后补三角色 renderer 正向后专项 26 passed（与大回归重叠，不合并计数）。Bash syntax、diff、Overview passed；n8n 历史快照 validator exit 0，29 LEGACY-EXPOSED 未用于运行态结论。未部署/未重投。"
         }
       ]
     },

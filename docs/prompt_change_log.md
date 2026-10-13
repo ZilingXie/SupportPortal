@@ -5196,3 +5196,7 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 
 - Pure-text Hermes delivery readback now always carries its own created_at watermark; absent or invalid time evidence keeps the delivery gated. The audit parser checks time independently of attachments.
 - No Prompt/model, Persona, footer or profile change. Existing model evidence remains applicable; targeted real audit/worker tests and two negative controls are recorded in the [current repair plan](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md).
+
+## 2026-10-13 — p2-197 层 2 修复 A（待独立验收/部署）
+
+知识 Summary/Review 生产就绪不再依赖旧 typed Case real 模式；新增默认关闭的 `KNOWLEDGE_AI_EXECUTION_ENABLED` 作为独立消费门。层 2 只排队、层 3 才调用 AI；双写 worker 仍只控制 delivery。manual/model/toolset 未改。本轮尚未部署，合同与证据见 `docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md`。

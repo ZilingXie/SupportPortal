@@ -89,13 +89,13 @@ build_and_push_role() {
     --file "${PROJECT_ROOT}/backend/Dockerfile.automation" \
     --tag "${registry}/${REPOSITORY}:${tag}" \
     --push \
-    "${PROJECT_ROOT}" >&2
+    "${PROJECT_ROOT}" >&2 || fail "Build/push failed for ${role}; no existing tag may be reused"
   observed_digest="$(aws ecr describe-images \
     --region "${REGION}" \
     --repository-name "${REPOSITORY}" \
     --image-ids "imageTag=${tag}" \
     --query 'imageDetails[0].imageDigest' \
-    --output text)"
+    --output text)" || fail "ECR digest lookup failed for ${role}"
   [[ "${observed_digest}" =~ ^sha256:[0-9a-f]{64}$ ]] || fail "ECR returned an invalid ${role} image digest"
   printf '%s\n' "${observed_digest}"
 }

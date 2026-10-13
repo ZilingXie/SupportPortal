@@ -77,6 +77,29 @@ def _manifest(path: Path, commit: str) -> Path:
     return path
 
 
+def _published_release(release_dir: Path, commit: str, release_id: str) -> Path:
+    path = _manifest(release_dir / "release-manifest.json", commit)
+    manifest = json.loads(path.read_text())
+    manifest["schema_version"] = "automation-release-v2"
+    manifest["artifact_kind"] = "registry"
+    manifest["release_id"] = release_id
+    for role, item in manifest["components"].items():
+        item.pop("oci_layout")
+        item["tag"] = f"{role}-{release_id}"
+    path.write_text(json.dumps(manifest))
+    record = {
+        "schema_version": "automation-preproduction-publish-v1",
+        "release_id": release_id, "published_at": manifest["build_time"],
+        "source_git_commit": commit,
+        "codebuild_build_arn": "arn:aws:codebuild:us-east-1:123456789012:build/test:1",
+        "codebuild_build_number": 1, "registry_id": "123456789012", "region": "us-east-1",
+        "target_repository": "supportportal/preproduction", "evidence_object_version": "v1",
+        "components": {role: {"tag": item["tag"], "digest": item["digest"]} for role, item in manifest["components"].items()},
+    }
+    (release_dir / "publish-record.json").write_text(json.dumps(record))
+    return path
+
+
 def _repo(tmp_path: Path) -> tuple[Path, str]:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -239,12 +262,11 @@ def test_pipeline_runs_and_resumes_with_source_identity_at_every_stage(
         if name == "codebuild":
             release_dir = Path(command[command.index("--output-dir") + 1])
             release_dir.mkdir(parents=True)
-            manifest_path = _manifest(release_dir / "release-manifest.json", release)
+            manifest_path = _published_release(release_dir, release, state.path.name.removeprefix("ecs-pipeline-"))
             if hotfix_mode:
                 manifest = json.loads(manifest_path.read_text())
                 manifest["schema_revision"] = "automation-ecs-002"
                 manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
-            (release_dir / "publish-record.json").write_text("{}", encoding="utf-8")
         state.append({"stage": name, "status": "passed", "duration_seconds": 0})
 
     # Git, source validation, checkpoint creation, and resume run for real;
@@ -876,8 +898,7 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
         if name == "codebuild":
             release_dir = Path(command[command.index("--output-dir") + 1])
             release_dir.mkdir(parents=True)
-            _manifest(release_dir / "release-manifest.json", release)
-            (release_dir / "publish-record.json").write_text("{}", encoding="utf-8")
+            _published_release(release_dir, release, state.path.name.removeprefix("ecs-pipeline-"))
         state.append({"stage": name, "status": "passed", "duration_seconds": 0})
 
     monkeypatch.setattr(pipeline, "_run_stage", record_stage)
@@ -893,6 +914,7 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
         "switches": {
             "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
             "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0",
+            "KNOWLEDGE_AI_EXECUTION_ENABLED": "0",
             "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
             "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
             "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
@@ -920,5 +942,22 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
     stages.clear()
     args.resume = True
     with pytest.raises(ValueError, match="checkpoint identity"):
+        pipeline.run_pipeline(args)
+    assert stages == []
+
+    # A changed stage gets a NEW immutable image tag, not an archived checkpoint.
+    args.resume = False
+    args.release_id = state_dir.name.removeprefix("ecs-pipeline-") + "-layer3"
+    pipeline.run_pipeline(args)
+    assert stages[0][0] == "codebuild"
+    assert stages[0][1][stages[0][1].index("--release-id") + 1] == args.release_id
+    stages.clear()
+    with pytest.raises(ValueError, match="state already exists"):
+        pipeline.run_pipeline(args)
+    assert stages == []
+    args.resume = True
+    new_state = repo / ".deployments" / f"ecs-pipeline-{args.release_id}"
+    (new_state / "release/publish-record.json").write_text("{}")
+    with pytest.raises(ValueError):
         pipeline.run_pipeline(args)
     assert stages == []

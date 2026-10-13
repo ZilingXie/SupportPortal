@@ -5521,3 +5521,7 @@ For each new entry, record:
 - Affected files/config: `backend/scripts/automation_ecs_deploy.py`, `backend/tests/test_automation_ecs_deploy.py`; three new Preproduction String parameters under `/supportportal/preproduction/`, one Slack workspace String parameter, and reuse of the existing `hermes-wiki-core-user-key` SecureString.
 - Data impact: No source snapshot, candidate, Summary, Review, AgentMemory, WeKnora, or Slack business data was written. No ECS task definition was registered and no service was updated. All knowledge switches remain `0` and the allowlist remains empty.
 - Verification: Renderer/allowlist/AgentMemory suites passed (`114 passed`); live API/Worker 135 render preview showed all required switch values and SSM references without exposing secret values. Follow-up on `a7e218b7`: legacy governance/PG fixtures now set the stage-6 allowlist and AgentMemory read contract explicitly; the current 21-suite command with a disposable local PostgreSQL 14.19 completed `540 passed / 0 failed` (8 subtests), with no external business writes.
+
+## 2026-10-13 — p2-197 知识治理执行门修复 A（待验收）
+
+Summary/Review 创建与消费分离，native 保持 typed disabled；两个服务 drain 和正式 worker 检查独立执行门，缺省零 claim/零 AI。allowlist、双目标写合同、人工 Review、draft 与全量停点不变。本轮未重投或发布；见 `docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md`。

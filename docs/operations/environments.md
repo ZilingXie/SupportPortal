@@ -65,3 +65,7 @@ Production 直发仅适用于 [AGENTS.md](../../AGENTS.md) 明确规定的紧急
 操作前记录目标环境、主机/服务、源码或 release、配置来源与授权范围；操作后按 [测试导航](./testing.md) 记录实际验证结果。服务 revision、digest、Prompt active 状态和健康结果应从该次 evidence 或运行服务读取，并附时间，不在本表中维护一份易过期的“当前版本”。
 
 [返回运维索引](./README.md)
+
+### p2-197 修复 A 的知识门（2026-10-13，代码待独立验收/部署）
+
+当前修复将知识生产就绪改为 master + `KNOWLEDGE_SUMMARY_REVIEW_ENABLED` + 已配置 gateway，解耦旧 typed Case mode，native 保持 `disabled`。独立 `KNOWLEDGE_AI_EXECUTION_ENABLED` 缺省关闭；层 2 只排队、层 3 才消费，`KNOWLEDGE_DUALWRITE_WORKER_ENABLED` 仅控制 delivery。历史 p2-186 的 real 依赖不再是此修复的启用合同。该记录不是运行态证据；发布流程、共享配置门与新 release ID 规则见 [发布 runbook](../deploy_automation_ecs_release.md#knowledge-治理分阶段开关2026-10-12-p2-197-阶段六步-2-起)。

@@ -159,7 +159,7 @@ from backend.services.hermes_case_workflow import (
 from backend.services.hermes_knowledge_workflow import (
     drain_hermes_knowledge_tasks,
     knowledge_governance_enabled,
-    knowledge_workflow_active,
+    knowledge_execution_active,
 )
 from backend.services.hermes_agent_runtime import HermesAgentClient
 from backend.services.hermes_weknora import HermesWeKnoraClient
@@ -3446,7 +3446,7 @@ def _notify_knowledge_review(claimed: dict) -> None:
 
 
 def _drain_hermes_knowledge_tasks(*, limit: int = 5) -> int:
-    if not knowledge_workflow_active():
+    if not knowledge_execution_active():
         return 0
     try:
         from backend.services.agent_memory_delivery import AgentMemoryWikiClient
@@ -3478,10 +3478,10 @@ def _drain_standalone_knowledge_tasks(*, limit: int = 5) -> int:
     by the normal worker instead of relying on tests calling the drain."""
     from backend.services.knowledge_standalone_workflow import (
         drain_standalone_knowledge_tasks,
-        standalone_workflow_active,
+        standalone_execution_active,
     )
 
-    if not standalone_workflow_active():
+    if not standalone_execution_active():
         return 0
     try:
         from backend.services.agent_memory_delivery import AgentMemoryWikiClient
