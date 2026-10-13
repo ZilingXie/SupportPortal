@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T08:57:51Z",
-  "source_base_commit": "c95277e87ccc062a18d7bafc739a10bb49ef6881",
-  "registry_digest": "84e3b96fd63a42307cc3a382c305fb5dc349b079d9a7bcf565d7fda9e40048cd",
+  "generated_at": "2026-10-13T09:22:43Z",
+  "source_base_commit": "6f285d2bfac018216cb44f0e557cf0c5a1ce2c04",
+  "registry_digest": "128ec7c9a0a7ac976d6da80a588b2094a74a8ea3c17d9154b6565b6169fdbd62",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1655,6 +1655,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "正式Preproduction发布与独立回读",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "r20261013-ef52d04 complete；api145/route143/worker145 runtime digest逐一匹配；公网provenance一致；Route engine=hermes。"
+        },
+        {
+          "type": "test",
+          "label": "新票14031真实native首轮审核停车",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1761,7 +1773,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 47,
-      "done_count": 23,
+      "done_count": 24,
       "blocked_count": 1
     },
     {
@@ -18252,12 +18264,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Preproduction native Hermes 配置恢复与发布防回退",
-      "status": "active",
+      "status": "done",
       "owner": "codex",
       "created_at": "2026-10-13",
       "updated_at": "2026-10-13",
       "summary": "R2：fixed_task Investigation 接入调查审核与 Prepare draft；Preproduction 发布显式 engine、防未授权降级；保留其他配置，正式发布后新测试票停在人工审批前。",
-      "next_action": "代码定向验证完成；正式finalize、Preproduction完整发布门禁和新调查票验证待执行。",
+      "next_action": "本轮R2完成；新测试票14031保留在Slack调查审核，等待工程师检查并按Prepare draft。未执行客户发送或Production。",
       "acceptance_criteria": [
         "fixed_task Investigation Work 后停车，Persona 调用为0；Prepare draft唯一续接，revision与并发限制保留。",
         "Preproduction遗漏engine或Hermes缺agent在构建前拒绝；未授权Hermes到legacy降级在pipeline和deploy均被拒绝。",
@@ -18271,6 +18283,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "fixed_task审核与发布防回退",
           "result": "隔离PostgreSQL p2199_native_review_test：fixed_task review、agent、route、pipeline、deploy定向回归249 passed；旧行为反向验证在Persona提交断言处失败。",
           "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2199_native_review_test pytest backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py -q"
+        },
+        {
+          "type": "test",
+          "label": "正式Preproduction发布与独立回读",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "r20261013-ef52d04 complete；api145/route143/worker145 runtime digest逐一匹配；公网provenance一致；Route engine=hermes。"
+        },
+        {
+          "type": "test",
+          "label": "新票14031真实native首轮审核停车",
+          "path": "docs/plans/native-hermes-review-release-evidence.json",
+          "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         }
       ]
     },
