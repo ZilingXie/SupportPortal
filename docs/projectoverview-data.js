@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T11:48:17Z",
-  "source_base_commit": "7ba634465395626390a56f6d1f6fffb6ed769dc9",
-  "registry_digest": "28933a5bda4dbc97918340cdec306e225befebc312b53dd8d4dab35b649eb857",
+  "generated_at": "2026-10-13T11:59:22Z",
+  "source_base_commit": "0915d8cea2b0e13e3921292c97ac0be55ca5d9cd",
+  "registry_digest": "5c67ee67f848f8e007db7c3c5e4c9e3cc4241d3362507c6429dc5a115c4c7a04",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5918,6 +5918,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "全关闭release构建通过但来源门禁停止",
           "command": "正式release pipeline，release r20261013-c972239-stage6-alloff，CodeBuild #194",
           "result": "codebuild passed/124.905s；manifest与publish-record三digest一致；main新增44b6d1e6 Worker运行代码后source gate拒绝，pipeline exit1。ECS仍146/146/144健康；没有部署、n8n发布或样本重放。fresh n8n scoped快照validator=3/0/2。见stage6-resume-20261013.md。"
+        },
+        {
+          "type": "test",
+          "label": "获批44b主线新增Worker集成核验",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_worker.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_automation_ecs_release_pipeline.py",
+          "result": "72 passed；真实processor/worker路径验证terminal missing Account Case可审计ignored、active missing仍失败、有Case正常同步。获批44b与c972的Terraform文件无差异，原F1-F6实现不变。"
+        },
+        {
+          "command": "正式release pipeline；CodeBuild #195回读；ECR三角色digest回读；停止后ECS/SSM/知识队列只读冻结",
+          "result": "codebuild passed/120.32s，ECR三digest与manifest一致；preflight期间检测并行status-r2，停止本任务exit143。四服务健康且仍旧TD，64历史指纹不变，未改n8n/未重投。详见docs/evidence/weknora-dualwrite-phase6/stage6-44b6d1e-release-20261013.md。",
+          "type": "deployment",
+          "label": "获批44b全关闭构建通过，并行发布停点"
         }
       ],
       "source_refs": [
@@ -18185,8 +18197,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
       "updated_at": "2026-10-13",
-      "summary": "阶段6暂停在新release来源门禁：Terraform1.9.8实时带锁plan exit0/No changes，用户授权保留64条历史且不清理不重放，完整队列/lease/Slack已补查。c9722399全关闭新release的CodeBuild #194与发布材料校验通过；构建期间main推进44b6d1e6，新增Worker行为导致正式source gate拒绝部署。未注册task definition/未切ECS/未改n8n/未重投。用户已允许接管并保留历史64条human_review，不清理不重放。Terraform 1.9.8 Linux实时带锁plan exit 0/No changes；完整队列补查无pending/running/有效lease，delivery与Slack claim/message/decision均0。新全关闭release r20261013-c972239-stage6-alloff的CodeBuild #194已启动，ECS激活与各层真实验证未完成。合并后 Preproduction 第 1 步只读冻结已执行并因实时配置漂移/历史队列/样本状态与 Terraform 工具缺失停止；未生成 release、未部署、未改 n8n、未重投。详见 stage6-postmerge-baseline-20261013。I1 集成修复完成待增量复验：独立报告已关闭 F1-F6；同步 main 0124173b，唯一 Overview 冲突由合并源重生成，双方登记/Prompt 日志保留；76 项 F5/F6 + 213 项含隔离 PG 集成回归通过。未部署/未在线写入。F5/F6 本地修复完成，待同 Draft PR #1490 独立复验：前轮 HEAD 266e7209 验收未通过，F1-F4 核心证据保留；修复两链 SHA padding 与完整 Build 边界回归，六历史快照恢复原文，新增无远端版本 ID 的未发布候选及内部身份校验。未在线发布/未重投。当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "需要用户确认是否将固定发布来源从c9722399更新为44b6d1e664d2fe99f1cd210ea054cdfdf511ccda；确认前保持ECS146/146/144与历史64条不变。允许更新后核验新增Worker行为，重新冻结并创建新的immutable release/checkpoint；不绕过source gate。",
+      "summary": "阶段6发布来源已获批更新为44b6d1e完整SHA；72项定向测试与Terraform1.9.8带锁plan通过。新alloff release的CodeBuild #195及三角色ECR digest回读通过，正式preflight期间检测到同环境并行status-r2发布，按既定规则停止本任务（exit143）。停止后ECS仍146/146/144、Hermes45健康，64历史记录指纹不变；未激活新release、未改n8n、未重投。代码验收保持通过，运行与业务验收未完成。历史过程保留在evidence记录。",
+      "next_action": "等待明确并行status-r2发布的先后及环境所有权；该发布停止或完成后重新冻结全部实时基线，再按获批44b6d1e来源及严格release identity继续全关闭门禁，之后执行n8n与受控分层验证。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18202,10 +18214,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C11 全量期无重复写入/旧版本覆盖/审计缺失"
       ],
       "blockers": [
-        {
-          "id": "S6-SOURCE-PIN",
-          "description": "origin/main已新增Worker行为，正式来源门禁拒绝已指定c9722399；需要用户明确批准更新发布来源。"
-        }
+        "同一Preproduction存在另一条运行中的r20261013-44b6d1e-status-r2发布，Prompt不同；本任务停止等待明确发布先后与环境所有权。"
       ],
       "evidence": [
         {
@@ -18309,6 +18318,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "全关闭release构建通过但来源门禁停止",
           "command": "正式release pipeline，release r20261013-c972239-stage6-alloff，CodeBuild #194",
           "result": "codebuild passed/124.905s；manifest与publish-record三digest一致；main新增44b6d1e6 Worker运行代码后source gate拒绝，pipeline exit1。ECS仍146/146/144健康；没有部署、n8n发布或样本重放。fresh n8n scoped快照validator=3/0/2。见stage6-resume-20261013.md。"
+        },
+        {
+          "type": "test",
+          "label": "获批44b主线新增Worker集成核验",
+          "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_ecs_worker.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_automation_ecs_release_pipeline.py",
+          "result": "72 passed；真实processor/worker路径验证terminal missing Account Case可审计ignored、active missing仍失败、有Case正常同步。获批44b与c972的Terraform文件无差异，原F1-F6实现不变。"
+        },
+        {
+          "command": "正式release pipeline；CodeBuild #195回读；ECR三角色digest回读；停止后ECS/SSM/知识队列只读冻结",
+          "result": "codebuild passed/120.32s，ECR三digest与manifest一致；preflight期间检测并行status-r2，停止本任务exit143。四服务健康且仍旧TD，64历史指纹不变，未改n8n/未重投。详见docs/evidence/weknora-dualwrite-phase6/stage6-44b6d1e-release-20261013.md。",
+          "type": "deployment",
+          "label": "获批44b全关闭构建通过，并行发布停点"
         }
       ]
     },

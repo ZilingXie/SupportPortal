@@ -1,0 +1,11 @@
+{
+  "captured_at": "2026-10-13T11:51:32.078523+00:00",
+  "version": "1.9.8",
+  "platform": "linux_amd64",
+  "source_commit": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda",
+  "config_unchanged_since_c9722399": true,
+  "plan_exit": 0,
+  "no_changes": true,
+  "lock_timeout_seconds": 60,
+  "apply": false
+}
