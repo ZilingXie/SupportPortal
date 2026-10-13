@@ -1971,7 +1971,7 @@ def resolve_awaiting_investigation_turn(
     for turn in review.get("turns") or []:
         result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
         if (
-            str(turn.get("turn_kind") or "") in {"normal", "investigation_feedback"}
+            str(turn.get("turn_kind") or "") in {"normal", "fixed_task", "investigation_feedback"}
             and str(turn.get("direction") or "") == "investigation"
             and str(turn.get("status") or "") == "completed"
             and str(result.get("status") or "") == "awaiting_investigation_review"
@@ -2012,7 +2012,7 @@ def continue_hermes_investigation(
         for turn in review.get("turns") or []:
             result = turn.get("result") if isinstance(turn.get("result"), dict) else {}
             if (
-                str(turn.get("turn_kind") or "") in {"normal", "investigation_feedback"}
+                str(turn.get("turn_kind") or "") in {"normal", "fixed_task", "investigation_feedback"}
                 and str(result.get("status") or "") == "awaiting_investigation_review"
                 and result.get("continued_turn_id")
             ):

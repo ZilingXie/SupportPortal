@@ -216,7 +216,7 @@ def test_pipeline_runs_and_resumes_with_source_identity_at_every_stage(
     if not hotfix_mode:
         _run(repo, "update-ref", "refs/heads/origin/main", release)
     arguments = [
-        "run", "--project-root", str(repo), "--release-commit", release,
+        "run", "--automation-case-engine", "legacy", "--project-root", str(repo), "--release-commit", release,
         "--prompt-release-id", "prompt-test", "--through", "production",
         "--codebuild-direct-production", "--keep-release-worktree",
     ]
@@ -231,6 +231,7 @@ def test_pipeline_runs_and_resumes_with_source_identity_at_every_stage(
     }
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: dict(environment))
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     stages = []
 
     def stage(state, name, command, *, env, **kwargs):
@@ -294,7 +295,7 @@ def test_pipeline_rejects_hotfix_authorization_before_creating_state(
 ) -> None:
     repo, baseline, release = _hotfix_repo(tmp_path)
     args = pipeline.build_parser().parse_args([
-        "run", "--project-root", str(repo), "--release-commit", release,
+        "run", "--automation-case-engine", "legacy", "--project-root", str(repo), "--release-commit", release,
         "--prompt-release-id", "prompt-test", "--through", "production",
         "--codebuild-direct-production", "--hotfix-baseline", baseline,
     ])
@@ -304,6 +305,7 @@ def test_pipeline_rejects_hotfix_authorization_before_creating_state(
         monkeypatch.setenv("AUTOMATION_RELEASE_HOTFIX_AUTHORIZED", authorized)
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     with pytest.raises(ValueError, match="must equal the reviewed hotfix SHA"):
         pipeline.run_pipeline(args)
     assert not (repo / ".deployments").exists()
@@ -623,7 +625,7 @@ def test_pipeline_rejects_production_persona_before_release_work(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, direct_production: bool, message: str
 ) -> None:
     arguments = [
-        "run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
+        "run", "--automation-case-engine", "legacy", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
         "--through", "production", "--hermes-persona-enabled",
     ]
     if direct_production:
@@ -631,6 +633,7 @@ def test_pipeline_rejects_production_persona_before_release_work(
     args = pipeline.build_parser().parse_args(arguments)
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     git = MagicMock(side_effect=AssertionError("release source must not be resolved"))
     state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
     command = MagicMock(side_effect=AssertionError("release command must not run"))
@@ -659,10 +662,11 @@ def test_pipeline_preserves_allowed_persona_and_mock_modes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode_arguments: list[str]
 ) -> None:
     args = pipeline.build_parser().parse_args(
-        ["run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1", *mode_arguments]
+        ["run", "--automation-case-engine", "legacy", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1", *mode_arguments]
     )
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     git = MagicMock(side_effect=RuntimeError("release source reached"))
     monkeypatch.setattr(pipeline, "_git", git)
 
@@ -702,6 +706,7 @@ def test_pipeline_summary_records_release_slo_and_breach(tmp_path: Path) -> None
 def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> None:
     args = argparse.Namespace(
         bootstrap_account_schema=True,
+        automation_case_engine="legacy",
         hermes_case_workflow_mode="mock",
         hermes_persona_enabled=True,
     )
@@ -790,12 +795,13 @@ def test_pipeline_rejects_knowledge_stage_config_for_production(
     stage = _knowledge_stage_config_file(tmp_path, {"master": "0"})
     args = pipeline.build_parser().parse_args(
         [
-            "run", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
+            "run", "--automation-case-engine", "legacy", "--project-root", str(tmp_path), "--prompt-release-id", "prompt-1",
             "--through", "production", "--knowledge-stage-config", str(stage),
         ]
     )
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     git = MagicMock(side_effect=AssertionError("release source must not be resolved"))
     state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
     monkeypatch.setattr(pipeline, "_git", git)
@@ -820,12 +826,13 @@ def test_pipeline_rejects_invalid_knowledge_stage_config_before_state(
     )
     args = pipeline.build_parser().parse_args(
         [
-            "run", "--project-root", str(repo), "--release-commit", release,
+            "run", "--automation-case-engine", "legacy", "--project-root", str(repo), "--release-commit", release,
             "--prompt-release-id", "prompt-1", "--knowledge-stage-config", str(stage),
         ]
     )
     monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: {})
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     state = MagicMock(side_effect=AssertionError("checkpoint must not be created"))
     monkeypatch.setattr(pipeline, "PipelineState", state)
 
@@ -851,7 +858,7 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
         },
     )
     arguments = [
-        "run", "--project-root", str(repo), "--release-commit", release,
+        "run", "--automation-case-engine", "legacy", "--project-root", str(repo), "--release-commit", release,
         "--prompt-release-id", "prompt-test", "--through", "preproduction",
         "--knowledge-stage-config", str(stage), "--keep-release-worktree",
     ]
@@ -861,6 +868,7 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
         lambda: {"PROMPT_RELEASE_TARGET_DSN": "isolated-test-target"},
     )
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     stages = []
 
     def record_stage(state, name, command, *, env, **kwargs):

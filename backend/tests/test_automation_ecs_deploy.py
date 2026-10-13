@@ -2088,7 +2088,7 @@ def test_formal_deploy_script_has_strict_preproduction_record_and_approval_bound
         [
             "bash",
             "-c",
-            'source "$1"; parse_args --environment preproduction --publish-record record.json; '
+            'source "$1"; parse_args --environment preproduction --automation-case-engine legacy --publish-record record.json; '
             'printf "%s|%s|%s|%s|%s" "$CLUSTER" "$API_SERVICE" "$BASE_URL" '
             '"$TERRAFORM_DIR" "$PROMPT_TARGET_SCHEMA"',
             "bash",
