@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T05:33:09Z",
-  "source_base_commit": "69120f6246197871f54bf31cc4d2145b38425a83",
-  "registry_digest": "df088625b7133e41f9ac3bfe028ea0523cfd128b64e6894a27f43316b576b23a",
+  "generated_at": "2026-10-13T08:29:15Z",
+  "source_base_commit": "6a26d3419ea5d793f2cfda5c4d817b2695873db9",
+  "registry_digest": "676d1b8c18f08c43e984e93ca3d546903ea0b5eef471eabecda7da77c2b8f2b8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1643,6 +1643,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "fixed_task审核与发布防回退",
+          "result": "隔离PostgreSQL p2199_native_review_test：fixed_task review、agent、route、pipeline、deploy定向回归249 passed；旧行为反向验证在Persona提交断言处失败。",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2199_native_review_test pytest backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py -q"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1748,7 +1754,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 46,
+      "task_count": 47,
       "done_count": 23,
       "blocked_count": 1
     },
@@ -18224,6 +18230,35 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Project registry and diff checks",
           "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
           "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-199",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Preproduction native Hermes 配置恢复与发布防回退",
+      "status": "active",
+      "owner": "codex",
+      "created_at": "2026-10-13",
+      "updated_at": "2026-10-13",
+      "summary": "R2：fixed_task Investigation 接入调查审核与 Prepare draft；Preproduction 发布显式 engine、防未授权降级；保留其他配置，正式发布后新测试票停在人工审批前。",
+      "next_action": "代码定向验证完成；正式finalize、Preproduction完整发布门禁和新调查票验证待执行。",
+      "acceptance_criteria": [
+        "fixed_task Investigation Work 后停车，Persona 调用为0；Prepare draft唯一续接，revision与并发限制保留。",
+        "Preproduction遗漏engine或Hermes缺agent在构建前拒绝；未授权Hermes到legacy降级在pipeline和deploy均被拒绝。",
+        "checkpoint/preflight/evidence绑定明确engine与agent配置。",
+        "正式Preproduction完整发布门禁通过，运行engine=hermes；新票调查停在review，无客户投递。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "fixed_task审核与发布防回退",
+          "result": "隔离PostgreSQL p2199_native_review_test：fixed_task review、agent、route、pipeline、deploy定向回归249 passed；旧行为反向验证在Persona提交断言处失败。",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2199_native_review_test pytest backend/tests/test_native_hermes_fixed_task_review.py backend/tests/test_native_hermes_release_guard.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_automation_ecs_route_worker.py backend/tests/test_automation_ecs_release_pipeline.py backend/tests/test_automation_ecs_deploy.py -q"
         }
       ]
     },

@@ -5178,3 +5178,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - Enablement compatibility job identity is fail-closed at workflow, Hermes
   tool, and delivered-readback boundaries; missing or mismatched identity parks
   the case for human review without releasing internal email or relay.
+
+## 2026-10-13 - Native fixed-task Investigation review gate (p2-199)
+
+- No Prompt content/model change. First fixed_task Investigation now parks after Work at awaiting_investigation_review, matching normal and feedback turns.
+- Prepare draft recognizes fixed_task and reuses existing source-turn/revision/concurrency guards and continued_turn_id. Automation fixed-task behavior is unchanged.
+- Verification: real intake/RouteWorker/processor/continue entries with fake external Hermes and Slack, isolated PostgreSQL, old-code reverse check catches unintended Persona execution. Deployment/business evidence is tracked separately in native-hermes-review-release-fix.md.

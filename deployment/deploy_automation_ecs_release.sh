@@ -24,7 +24,7 @@ RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
 HERMES_PERSONA_ENABLED=0
-AUTOMATION_CASE_ENGINE="legacy"
+AUTOMATION_CASE_ENGINE=""
 HERMES_AGENT_ENABLED=0
 ENABLEMENT_WORKFLOW_MODE="manual"
 KNOWLEDGE_STAGE_CONFIG=""
@@ -222,6 +222,15 @@ parse_args() {
     esac
   done
   configure_environment_defaults
+  if [[ "${ENVIRONMENT}" = "preproduction" ]]; then
+    [[ -n "${AUTOMATION_CASE_ENGINE}" ]] || fail "Preproduction requires explicit --automation-case-engine"
+  else
+    AUTOMATION_CASE_ENGINE="${AUTOMATION_CASE_ENGINE:-legacy}"
+  fi
+  [[ "${AUTOMATION_CASE_ENGINE}" = "legacy" || "${AUTOMATION_CASE_ENGINE}" = "hermes" ]] \
+    || fail "--automation-case-engine must be legacy or hermes"
+  [[ "${AUTOMATION_CASE_ENGINE}" != "hermes" || "${HERMES_AGENT_ENABLED}" = "1" ]] \
+    || fail "Hermes case engine requires --hermes-agent-enabled"
   [[ "${CHECK_ONLY}" = "0" || "${RESUME}" = "0" ]] || fail "--check-only and --resume are mutually exclusive"
   [[ "${CHECK_ONLY}" = "0" || -z "${PREFLIGHT_EVIDENCE}" ]] || fail "--check-only cannot reuse Preflight Evidence"
   [[ "${CHECK_ONLY}" = "1" || -z "${PREFLIGHT_EVIDENCE_OUT}" ]] || fail "--preflight-evidence-out requires --check-only"
@@ -403,6 +412,9 @@ write_preflight_context() {
     --arg route_service "${ROUTE_SERVICE}" --arg worker_service "${WORKER_SERVICE}" \
     --arg schema_bootstrap "${BOOTSTRAP_ACCOUNT_SCHEMA}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
+    --arg case_engine "${AUTOMATION_CASE_ENGINE}" \
+    --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
+    --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" --arg prompt_build_ref "${prompt_build_ref}" \
     --arg prompt_fingerprint "${prompt_fingerprint}" --arg prompt_schema "${PROMPT_TARGET_SCHEMA}" \
@@ -410,7 +422,7 @@ write_preflight_context() {
     --slurpfile terraform "${TEMP_DIR}/terraform-identity.json" \
     --slurpfile secrets "${TEMP_DIR}/secret-metadata.json" \
     --slurpfile target "${TEMP_DIR}/prompt-target-identity.json" \
-    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
+    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
     >"${TEMP_DIR}/preflight-context.json"
 }
 
@@ -434,8 +446,11 @@ checkpoint_identity() {
     --arg worker_service "${WORKER_SERVICE}" \
     --arg schema_bootstrap "${BOOTSTRAP_ACCOUNT_SCHEMA}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
+    --arg case_engine "${AUTOMATION_CASE_ENGINE}" \
+    --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
+    --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
 }
 
 prepare_deploy_workspace() {
@@ -574,6 +589,9 @@ write_evidence() {
     --arg schema_task_arn "${schema_task_arn}" \
     --arg schema_task_definition "${schema_task_definition}" \
     --arg hermes_mode "${HERMES_CASE_WORKFLOW_MODE}" \
+    --arg case_engine "${AUTOMATION_CASE_ENGINE}" \
+    --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
+    --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
     --arg preflight_sha256 "${PREFLIGHT_HASH}" \
     --argjson phase_timings "${phase_timings}" \
@@ -584,7 +602,7 @@ write_evidence() {
     --argjson provider_probe "${provider_probe}" \
     --slurpfile cloudwatch_reports "${cloudwatch_summary}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{case_engine:$case_engine,agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
   mkdir -p -- "${STATE_DIR}/evidence-attempts"
@@ -1544,6 +1562,11 @@ main() {
     printf '%s\n' "${current_arn}" >"${TEMP_DIR}/${role}.observed-arn"
     aws ecs describe-task-definition --region "${REGION}" --task-definition "${current_arn}" \
       --include TAGS >"${TEMP_DIR}/${role}.observed.json"
+    if [[ "${ENVIRONMENT}" = "preproduction" && "${role}" = "route" ]]; then
+      "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
+        validate-case-engine-transition --task-definition "${TEMP_DIR}/${role}.observed.json" \
+        --target-engine "${AUTOMATION_CASE_ENGINE}" >/dev/null
+    fi
     if [[ "${RESUME}" = "1" && -f "${TEMP_DIR}/${role}.old-arn" ]]; then
       baseline_arn="$(<"${TEMP_DIR}/${role}.old-arn")"
       if [[ -f "${TEMP_DIR}/${role}.new-arn" ]]; then
