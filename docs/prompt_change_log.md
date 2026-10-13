@@ -1,4 +1,11 @@
 # Prompt Change Log
+
+## 2026-10-13 - Investigation 文件工具与 Skill（p2-192，R2，待验收未部署）
+
+- 绑定 Investigation Work 新增 supportportal_files 五工具与 support-case-files Skill；私有运行 metadata注入可信case/turn/session/request，工具参数不接受切换case或URL。Automation、Route、adhoc不可列举或直接加载此Skill。
+- 读取返回Map/管理名称/行与ZIP成员位置，超限或不支持格式明确提示下载/专用工具；发布稳定operation与未知结果先回读。Persona仅可显式选择Map快照，内部报告未经选择与审批不交付客户。
+- 云端 gateway/plugin/profile 配套源码交付在 deployment/hermes-case-files，非仅Skill文本；本地补丁与入口验证不代表live安装。无managed Prompt catalog修改。
+- 合同、验证与外部等待：[R2](plans/investigation-case-files-r2.md)。
 ## 2026-10-13 - native Investigation Persona 草稿保存（p2-200，R1）
 
 - 仅 native investigation_reply：输入声明完整 1200 字符预算（含 greeting、换行及既有引用），只保留结论、关键证据/限制与下一步。保存拒绝且 rewrite_allowed=true 时只在当前 run 改写一次；耗尽停止保存，未知结果先回读。

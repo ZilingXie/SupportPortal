@@ -5,17 +5,21 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
+  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；实现完成待独立代码验收，尚未部署。",
   "status": "blocked",
-  "next_action": "用户已授权 F-R1-DEPLOY-01 窄发布门禁修复；修复完成，等待 Draft PR 完整 HEAD 的独立复审。通过后 finalize 并重跑正式 ECS Preproduction pipeline。附件代码既有验收保留，Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
+  "next_action": "先由聊天 01a1349a-c8e9-7183-829d-6b158e735eb5 独立验收 Investigation 附件统一管理（Slack）R2 Draft PR完整HEAD与云端补丁包。通过后按正式Preproduction流程回读Hermes镜像/profile、部署并验证C1-C7。原F-R1-DEPLOY-01和真实业务门禁继续保留；Zac实际获取协议waiting-for-evidence；Production另需授权。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-11",
+  "updated_at": "2026-10-13",
   "acceptance_criteria": [
-    "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。"
+    "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
+    "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
   ],
   "blockers": [
-    "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。"
+    "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
+    "R2-CODE-REVIEW：实现完成，指定聊天独立代码验收未执行；验收前不得finalize/merge/deploy。",
+    "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
   ],
   "evidence": [
     {
@@ -67,6 +71,11 @@
       "type": "document",
       "url": "docs/plans/investigation-cloudwatch-gate-repair-evidence.json",
       "label": "F-R1-DEPLOY-01 已授权修复：实际 shell/CLI 回归与反向检出，等待独立复审，不代表部署或业务验收。"
+    },
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-case-files-r2.md",
+      "label": "R2当前合同、云端补丁与本地隔离入口证据；待独立验收"
     }
   ]
 }
