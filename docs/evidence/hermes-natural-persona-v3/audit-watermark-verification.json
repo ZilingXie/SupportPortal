@@ -1,0 +1,28 @@
+{
+  "repair_base": "6f285d2bfac018216cb44f0e557cf0c5a1ce2c04",
+  "integrated_main": "9418f7f1aa2d3a474f0ef12a3596d6a0afda5ac1",
+  "source_files_sha256": {
+    "backend/worker.py": "a06eaf45dcb1f7d98447735d18b969e8fe1c8699a2dc9ed15d08f2a18c652418",
+    "backend/services/zendesk_comments.py": "d99d8c866ba1e60141f60932b0ea29ea9e16adcdb323ac34ac9e897c428ea680",
+    "backend/tests/test_worker_compatibility_scope.py": "520a4ac2b6848e2855f6b25568e5efd8bfbcfc256e94c6d74654a5cefa33bc94",
+    "scripts/testing/verify_hermes_repair_negative_controls.py": "4a45932761d1b8d78c2b30953244a496c7b27abded7d319cdb547e5eb61b7304"
+  },
+  "command": "project .venv/bin/python -m pytest backend/tests/test_worker_compatibility_scope.py backend/tests/test_zendesk_comments.py backend/tests/test_zendesk_public_comment.py backend/tests/test_investigation_attachments.py backend/tests/test_hermes_native_enablement_regression.py -q",
+  "result": "62 passed, 9 skipped, 33 subtests passed",
+  "worker_delivery_matrix": "4 passed, 156 deselected, 4 subtests passed",
+  "negative_controls": "2/2 behavior assertion detections; see audit-watermark-negative-controls.json",
+  "limits": [
+    "9 skipped: existing investigation attachment/notification tests require disposable PostgreSQL / NATIVE_NOTIFICATION_TEST_DSN",
+    "PG not rerun; previous identity/concurrency evidence retained",
+    "model not rerun; Prompt/basis source unchanged",
+    "independent acceptance pending",
+    "no deployment or real business writes"
+  ],
+  "checks": [
+    "py_compile passed",
+    "JSON parsed and source hashes verified",
+    "Project Overview --check passed",
+    "git diff --check passed",
+    "merge-tree with main@9418f7f1 passed"
+  ]
+}

@@ -2823,12 +2823,15 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         if isinstance(ref, dict) and "_hermes_compatibility_job_id" not in ref
         and "_hermes_compatibility_relay_required" not in ref
     ]
+    if not delivery.get("created_at"):
+        return
     try:
         result, _solved_seen = read_ticket_comment_audit(
             ticket_id=zendesk_ticket_id,
             body=content,
             public=True,
-            **({"attachments": audit_attachments, "not_before": delivery.get("created_at")}
+            not_before=delivery["created_at"],
+            **({"attachments": audit_attachments}
                if audit_attachments else {}),
         )
     except ZendeskCommentError:

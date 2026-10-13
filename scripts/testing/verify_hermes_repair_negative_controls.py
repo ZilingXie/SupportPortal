@@ -12,6 +12,12 @@ import tempfile
 
 
 CONTROLS = [
+    ("omit_plain_text_delivery_watermark", "backend/worker.py",
+     [('not_before=delivery["created_at"],', 'not_before=None,')],
+     "backend/tests/test_worker_compatibility_scope.py::WorkerReadbackTests::test_real_audit_watermark_gates_plain_text_release_and_replay"),
+    ("check_audit_time_only_with_attachments", "backend/services/zendesk_comments.py",
+     [("if not_before is not None or attachments:", "if attachments:")],
+     "backend/tests/test_worker_compatibility_scope.py::WorkerReadbackTests::test_real_audit_watermark_gates_plain_text_release_and_replay"),
     ("omit_delivery_scope_flag", "backend/services/automation_hermes_delivery.py",
      [("if relay_required_flag is not None:", "if False:")],
      "backend/tests/test_hermes_native_enablement_regression.py"),
@@ -41,16 +47,22 @@ CONTROLS = [
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True)
+    parser.add_argument("--control", action="append", help="Run only the named controls")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     archive = subprocess.check_output(["git", "archive", "HEAD"], cwd=root)
     results = []
     for name, filename, substitutions, target in CONTROLS:
+        if args.control and name not in args.control:
+            continue
         with tempfile.TemporaryDirectory(prefix="hermes-repair-negative-") as temporary:
             copied = Path(temporary)
             with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
                 tar.extractall(copied, filter="data")
-            for rel in {filename, target.split("::")[0]}:
+            carrier_files = {filename, target.split("::")[0]}
+            if name in {"omit_plain_text_delivery_watermark", "check_audit_time_only_with_attachments"}:
+                carrier_files.update({"backend/worker.py", "backend/services/zendesk_comments.py"})
+            for rel in carrier_files:
                 (copied / rel).write_bytes((root / rel).read_bytes())
             path = copied / filename
             text = path.read_text()

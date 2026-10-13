@@ -5191,3 +5191,8 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - Offline evaluation uses the real `build_case_snapshot`, canonical basis resolver and shared complete v6 manual/contract. sid-precise v2 and the target Persona model/medium effort are pinned; untouched raw replies are validated before greeting projection and actual translation/safety processing.
 - Operational rerun approval catalog `persona-instruction-opener-v2` pins the approved hashes and rejects historical catalog drift without resuming case POSTs or rewriting signed manifests.
 - Evidence: [current repair plan](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md), [model request/raw/final output](evidence/hermes-natural-persona-v3/model-evaluation.json). This is offline code/model evidence; no deployed Prompt Release or real-customer delivery is claimed.
+
+## 2026-10-13 — Hermes delivery audit watermark repair (p2-198 / PR #1485)
+
+- Pure-text Hermes delivery readback now always carries its own created_at watermark; absent or invalid time evidence keeps the delivery gated. The audit parser checks time independently of attachments.
+- No Prompt/model, Persona, footer or profile change. Existing model evidence remains applicable; targeted real audit/worker tests and two negative controls are recorded in the [current repair plan](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md).

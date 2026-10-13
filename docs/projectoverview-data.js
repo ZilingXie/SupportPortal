@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T09:22:43Z",
-  "source_base_commit": "6f285d2bfac018216cb44f0e557cf0c5a1ce2c04",
-  "registry_digest": "128ec7c9a0a7ac976d6da80a588b2094a74a8ea3c17d9154b6565b6169fdbd62",
+  "generated_at": "2026-10-13T09:24:39Z",
+  "source_base_commit": "164859fe0d2200a563103810de6705916527f73b",
+  "registry_digest": "e1d6c6ec000e6b2d27d2ce15884ec411a86bddb34dd37c9eda2815e68a97dd4b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1598,6 +1598,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
         },
         {
           "type": "test",
@@ -18192,8 +18198,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@ef52d04e。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
-      "next_action": "PR #1485 保持 Draft：对 rev v3 完整 HEAD 和真实入口/PG/模型证据进行独立验收。匹配通过前不 finalize、合并、部署或写入真实客户系统。",
+      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
+      "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18207,6 +18213,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
+          "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
+          "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
+        },
         {
           "type": "test",
           "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",

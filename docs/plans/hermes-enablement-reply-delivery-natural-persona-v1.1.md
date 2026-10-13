@@ -1,17 +1,29 @@
 # Hermes Enablement Reply Delivery and Natural Persona v1.1
 
-当前修订：**v3，二轮验收汇总修复**。任务 `p2-198`，Draft PR [#1485](https://github.com/ZilingXie/SupportPortal/pull/1485)。
+当前修订：**v3.1，R2-F1 投递时间水位修复**。任务 `p2-198`，Draft PR [#1485](https://github.com/ZilingXie/SupportPortal/pull/1485)。
 
 ## 版本与门禁
 
 - 原基线：`42a187ae884015b833277b7b4e23d624a647663b`。
 - 修复起点：`378cc6fb6fd716c858777b4f13f6a7338626bb36`。
-- 集成 main：`ef52d04ef0a24149f74bf209ddaf2102f9a0e95d`；保留其 fixed-task Investigation 人工复核门禁、发布保护和 `p2-199`。
+- 集成 main：`9418f7f1aa2d3a474f0ef12a3596d6a0afda5ac1`；保留其 fixed-task Investigation 人工复核门禁、发布保护和 `p2-199`。
 - 分支/worktree：`codex/hermes-natural-persona` / `.worktrees/hermes-natural-persona`；完整最终 HEAD 以 PR 描述和交接消息为准。
 - 状态：实现与执行者验证完成，**独立验收待执行**。不 finalize、不合并、不部署，不重放/重开 14009 或 14027，不向真实 Slack/Zendesk/relay 发送。
 - Zendesk footer、签名、营销内容和 Agent profile 保持原边界。
 
-## 当前合同与证据
+## 本轮 R2-F1 投递确认修复（v3.1）
+
+独立验收在 `6f285d2bfac018216cb44f0e557cf0c5a1ce2c04` 发现：内部附件标记剔除后，纯文本 worker 回读未携带时间水位；audit 解析器也仅在存在附件时检查时间。10:00 创建的 delivery 可错误绑定 09:00 相同正文历史评论，未发送本轮回复就释放 relay。分类：implementation / test-carrier。其他已关闭 finding 与模型自然度非阻断观察保留。
+
+- Hermes 回读始终传入当前 delivery.created_at；缺失时直接保持门禁，不自动重发。
+- audit 在提供 not_before 时独立执行时间检查；旧评论、缺失/无法解析/无时区时间不确认。附件 ID/name/size 校验与 Zendesk footer 匹配保持。
+- 真实 worker + audit 解析器 + InMemory ledger/request，仅 mock 外部 audit 获取与客户写入边界：manual/auto 两流程 × 九种时间组合；旧评论零写入、ledger outcome_unknown、邮件 awaiting_public_reply、request gated；有效当轮评论绑定正确 ID、单次释放、重放单条投影。
+- 反向验证分别撤回调用水位和解析时间门：两项均由行为断言检出，见 [本轮负控](../evidence/hermes-natural-persona-v3/audit-watermark-negative-controls.json)。
+- 当前 main 新增仅为 p2-199 发布证据/登记，已集成；Overview 冲突仅通过生成器解决。没有新增运行行为。
+- 本轮相关回归 **62 passed、9 skipped、33 subtests**；worker Hermes delivery 矩阵 **4 passed + 4 subtests**。9 skips 是既有附件/通知的隔离 PostgreSQL 场景，完整结果/复现命令见 [水位验证](../evidence/hermes-natural-persona-v3/audit-watermark-verification.json)。本轮不复跑 PG 或真实模型，保留前轮未受影响证据。
+- 额外宽泛 worker 回归仍检出原有 14 项 ownership eligibility 失败（186 passed、9 skipped、25 subtests，含其他测试）；不把它作为全绿。独立验收仍待执行。
+
+## 前轮合同与证据（v3，未受影响证据保留）
 
 | Finding | 机制与真实入口 | 本轮证据 | 执行者状态 |
 | --- | --- | --- | --- |

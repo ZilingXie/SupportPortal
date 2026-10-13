@@ -298,6 +298,68 @@ def compatibility_fixture(*, auto, delivered=True, repository=None):
 
 
 class WorkerReadbackTests(unittest.TestCase):
+    def test_real_audit_watermark_gates_plain_text_release_and_replay(self):
+        from backend.services import zendesk_comments
+
+        watermark = "2026-10-13T10:00:00Z"
+        for auto in (False, True):
+            for audit_time, delivery_time, confirmed in (
+                ("2026-10-13T09:00:00Z", watermark, False),
+                (None, watermark, False),
+                ("invalid", watermark, False),
+                ("2026-10-13T10:00:00", watermark, False),
+                (watermark, None, False),
+                (watermark, "invalid", False),
+                (watermark, "2026-10-13T10:00:00", False),
+                (watermark, watermark, True),
+                ("2026-10-13T18:01:00+08:00", watermark, True),
+            ):
+                with self.subTest(auto=auto, audit_time=audit_time, delivery_time=delivery_time):
+                    repository, delivery = compatibility_fixture(auto=auto, delivered=False)
+                    delivery.update(status="outcome_unknown", created_at=delivery_time)
+                    repository.complete_account_zendesk_comment_delivery(
+                        account_case_id="AC-COMPAT", message_id="draft-1", status="outcome_unknown",
+                        zendesk_comment_id=None, failure_code="timeout", completed_at=watermark,
+                    )
+                    audits = [{"created_at": audit_time, "events": [{
+                        "type": "Comment", "public": True, "id": "audit-comment",
+                        # Preserve the existing Zendesk-appended footer match.
+                        "body": delivery["immutable_content"] + "\n\nZendesk agent footer",
+                    }]}]
+                    winners = []
+                    actual_release = repository.release_enablement_relay_requests_after_public_reply
+
+                    def release(**kwargs):
+                        result = actual_release(**kwargs)
+                        winners.extend(item["request_id"] for item in result)
+                        return result
+
+                    with patch.object(worker, "ticket_repository", repository), patch.object(
+                        zendesk_comments, "_fetch_ticket_audits", return_value=(200, audits),
+                    ), patch.object(worker, "add_ticket_comment") as send, patch.object(
+                        repository, "release_enablement_relay_requests_after_public_reply", side_effect=release,
+                    ), patch.object(repository, "complete_account_zendesk_comment_delivery",
+                                    wraps=repository.complete_account_zendesk_comment_delivery) as complete:
+                        worker._deliver_hermes_zendesk_comment(delivery)
+                        worker._deliver_hermes_zendesk_comment(delivery)
+                    send.assert_not_called()
+                    self.assertEqual(len(projected_messages(repository)), int(confirmed))
+                    self.assertEqual(winners, ["request-1"] if auto and confirmed else [])
+                    case = repository.get_account_case("AC-COMPAT")
+                    self.assertEqual(case["internal_email_send_status"],
+                                     ("not_applicable" if auto else "pending") if confirmed else "awaiting_public_reply")
+                    self.assertEqual(case["automation_status"], "automation")
+                    if auto:
+                        self.assertEqual(repository.get_enablement_relay_request("request-1")["status"],
+                                         "dispatch_pending" if confirmed else "gated")
+                    if confirmed:
+                        self.assertEqual(complete.call_args.kwargs["zendesk_comment_id"], "audit-comment")
+                    else:
+                        complete.assert_not_called()
+                    ledger = repository.list_account_zendesk_comment_deliveries_for_case("AC-COMPAT")[0]
+                    self.assertEqual(ledger["status"], "delivered" if confirmed else "outcome_unknown")
+                    self.assertEqual(ledger.get("zendesk_comment_id"), "audit-comment" if confirmed else None)
+
     def test_confirmed_readback_releases_real_request_once(self):
         from types import SimpleNamespace
         for auto in (False, True):
