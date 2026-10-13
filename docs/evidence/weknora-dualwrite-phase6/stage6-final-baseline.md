@@ -128,3 +128,11 @@ CSD 链首次真实执行（execution 191877）逐步暴露三个阶段二作者
 | D3 | n8n 凭据 `preprodcution`（id wk9Nn0OELBE6MOb7）的 intake token 无效（SP 401 invalid intake token；SSM token 从未轮转过 v1，凭据系作者期即错） | **未修复——阻断在 n8n owner 侧**：需在 n8n UI 更新凭据（Header Auth：Name=Authorization，Value=Bearer <SSM automation-intake-shared-token 现值>）或提供 n8n API key。Public API（X-N8N-API-KEY）与内部 REST 及浏览器会话（无登录）三条自动路径均已试不通 | 待用户 |
 
 修复后验证：D1+D2 修复实弹执行推进到投递节点（execution 191883：JQL 21 条→逐条详情→完整性门→快照（哈希 93f998cc…64 位正确）→投递 401=D3）。快照已按新版本刷新（validator 通过 15+4+56，URL allowlist 更新至正确主机并注释原因）。凭据修复后：受控重跑 CSD 即完成自然到达投递（21 条 RESOLVED CSD 满足 JQL 窗口），层 2 样本从中选定。
+
+## D3/D4 修复与 CSD 全链 SUCCESS（2026-10-13 05:23 UTC）
+
+- **D3（凭据）已修**：用户提示下经 n8n MCP `setNodeCredential` 将两链 Deliver 节点切换至 `automation_production`（httpBearerAuth，`toE81efBqb60KXsy`）——旧 case 链每天用它在同一 SP `/v1/*` token 中间件下成功投递的凭据；原 `preprodcution` 凭据从未被该校验（FT 旧链的消费者走 `/api/` 路径不经中间件）。
+- **D4（字段清单）已修**：source-only 重写把详情节点 `fields` 从旧链显式清单改成 `*,comment`，Jira 解析为仅返回 comment → `source_updated_at` 空 → SP 422。已恢复显式清单（summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915）。
+- **结果：execution 191901 全链 SUCCESS**（17 秒）：JQL 21 条→逐条详情→完整性门→快照（纯 JS SHA-256）→投递 202→三态回执校验→Scan Complete。**20 条自然 csd_issue 来源落库（全 accepted）**；零 AI 不变量保持（summaries=36 不变）。
+- 版本：CSD active **6511c2e9**、Solved active **d4c50a10**；快照已同步刷新（validator 15+4+56 通过）。
+- 层 2 输入就绪：20 条自然到达来源可从中选定受控样本（+受控重投触发建任务机制已确认）。

@@ -308,7 +308,7 @@
             "parameters": [
               {
                 "name": "fields",
-                "value": "*,comment"
+                "value": "summary,description,updated,created,status,resolution,comment,customfield_10700,customfield_13915"
               }
             ]
           },
@@ -383,9 +383,9 @@
       },
       {
         "credentials": {
-          "httpHeaderAuth": {
-            "id": "wk9Nn0OELBE6MOb7",
-            "name": "preprodcution"
+          "httpBearerAuth": {
+            "id": "toE81efBqb60KXsy",
+            "name": "automation_production"
           }
         },
         "id": "bf6d10b4-615c-408b-9d1c-f444a7585713",
@@ -393,7 +393,7 @@
         "name": "Deliver Source Snapshot",
         "parameters": {
           "authentication": "genericCredentialType",
-          "genericAuthType": "httpHeaderAuth",
+          "genericAuthType": "httpBearerAuth",
           "jsonBody": "={{ JSON.stringify($json) }}",
           "method": "POST",
           "options": {
@@ -446,7 +446,7 @@
       "executionOrder": "v1",
       "timeSavedMode": "fixed"
     },
-    "versionId": "85bbcb0c-fbbc-4b89-bd53-5e503b2ba3df",
-    "activeVersionId": "85bbcb0c-fbbc-4b89-bd53-5e503b2ba3df"
+    "versionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
+    "activeVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36"
   }
 }
