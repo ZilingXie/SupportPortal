@@ -24,6 +24,7 @@ RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
 HERMES_PERSONA_ENABLED=0
+INVESTIGATION_CASE_FILES_SWITCH="preserve"
 AUTOMATION_CASE_ENGINE=""
 HERMES_AGENT_ENABLED=0
 ENABLEMENT_WORKFLOW_MODE="manual"
@@ -141,6 +142,7 @@ Optional activation gates:
   --bootstrap-account-schema
   --hermes-case-workflow-mode <disabled|mock|real>
   --hermes-persona-enabled
+  --investigation-case-files-enabled / --investigation-case-files-disabled (Preproduction)
 
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
 requires the environment-specific approval variable and PROMPT_RELEASE_TARGET_DSN.
@@ -209,6 +211,8 @@ parse_args() {
       --bootstrap-account-schema) BOOTSTRAP_ACCOUNT_SCHEMA=1; shift ;;
       --hermes-case-workflow-mode) [[ $# -ge 2 ]] || fail "--hermes-case-workflow-mode requires a value"; HERMES_CASE_WORKFLOW_MODE="$2"; shift 2 ;;
       --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; shift ;;
+      --investigation-case-files-enabled) INVESTIGATION_CASE_FILES_SWITCH="enabled"; shift ;;
+      --investigation-case-files-disabled) INVESTIGATION_CASE_FILES_SWITCH="disabled"; shift ;;
       --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
       --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
       --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; shift 2 ;;
@@ -449,8 +453,9 @@ checkpoint_identity() {
     --arg case_engine "${AUTOMATION_CASE_ENGINE}" \
     --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
+    --arg case_files_switch "${INVESTIGATION_CASE_FILES_SWITCH}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,investigation_case_files_switch:$case_files_switch,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
 }
 
 prepare_deploy_workspace() {
@@ -817,6 +822,12 @@ render_role_task_definition() {
   fi
   if [[ "${ENVIRONMENT}" = "production" && "${AUTOMATION_CASE_ENGINE}" != "legacy" ]]; then
     fail "the hermes case engine is not allowed in Production"
+  fi
+  if [[ "${INVESTIGATION_CASE_FILES_SWITCH}" = "enabled" ]]; then
+    [[ "${ENVIRONMENT}" = "preproduction" ]] || fail "Investigation case files may only be enabled in Preproduction"
+    args+=(--investigation-case-files-enabled)
+  elif [[ "${INVESTIGATION_CASE_FILES_SWITCH}" = "disabled" ]]; then
+    args+=(--investigation-case-files-disabled)
   fi
   args+=(--automation-case-engine "${AUTOMATION_CASE_ENGINE}")
   if [[ "${HERMES_AGENT_ENABLED}" = "1" ]]; then

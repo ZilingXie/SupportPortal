@@ -1071,6 +1071,7 @@ def render_task_definition(
     repository: str = "supportportal/production",
     hermes_case_workflow_mode: str | None = None,
     hermes_persona_enabled: bool | None = None,
+    investigation_case_files_enabled: bool | None = None,
     automation_case_engine: str | None = None,
     hermes_agent_enabled: bool | None = None,
     enablement_workflow_mode: str | None = None,
@@ -1080,6 +1081,8 @@ def render_task_definition(
     knowledge_source_allowlist: str | None = None,
     knowledge_stage_config: str | None = None,
 ) -> dict[str, Any]:
+    if investigation_case_files_enabled is True and environment != "preproduction":
+        raise ValueError("Investigation case files may only be enabled in Preproduction")
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
     if environment not in {"preproduction", "production"}:
@@ -1174,6 +1177,11 @@ def render_task_definition(
         name = str(item.get("name") or "")
         if name in replacements:
             item["value"] = replacements[name]
+    if role in {"api", "worker"}:
+        if investigation_case_files_enabled is not None:
+            _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "1" if investigation_case_files_enabled else "0")
+        elif "INVESTIGATION_CASE_FILES_ENABLED" not in existing_names:
+            _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "0")
     if role in {"api", "worker"} and (
         hermes_case_workflow_mode is not None or hermes_persona_enabled is not None
     ):
@@ -1638,6 +1646,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--hermes-case-workflow-mode",
         choices=sorted(HERMES_CASE_WORKFLOW_MODES),
     )
+    file_switch = render.add_mutually_exclusive_group()
+    file_switch.add_argument("--investigation-case-files-enabled", dest="investigation_case_files_enabled", action="store_const", const=True, default=None)
+    file_switch.add_argument("--investigation-case-files-disabled", dest="investigation_case_files_enabled", action="store_const", const=False)
     render.add_argument(
         "--hermes-persona-enabled",
         action="store_const",
@@ -1753,6 +1764,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             repository=args.repository,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
             hermes_persona_enabled=args.hermes_persona_enabled,
+            investigation_case_files_enabled=args.investigation_case_files_enabled,
             automation_case_engine=args.automation_case_engine,
             hermes_agent_enabled=args.hermes_agent_enabled,
             enablement_workflow_mode=args.enablement_workflow_mode,

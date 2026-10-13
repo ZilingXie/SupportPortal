@@ -95,7 +95,7 @@ def test_zendesk_cdn_redirect_strips_credentials_and_rejects_foreign_host():
     response = Mock()
     response.__enter__ = Mock(return_value=response)
     response.__exit__ = Mock(return_value=False)
-    response.read.return_value = b"png"
+    response.read.side_effect = [b"png", b""]
     opener = Mock()
     opener.open.side_effect = [urllib.error.HTTPError("https://agoraio.zendesk.com/file", 302, "redirect", {"Location": "https://p.zdusercontent.com/signed"}, None), response]
     with patch("backend.services.investigation_attachments.urllib.request.build_opener", return_value=opener):
