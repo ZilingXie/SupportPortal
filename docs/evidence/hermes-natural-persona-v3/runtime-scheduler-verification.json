@@ -1,0 +1,86 @@
+{
+  "plan": "Hermes Enablement Reply Delivery and Natural Persona v1.1",
+  "revision": "v3.2",
+  "finding": "R2-F1-runtime-14037",
+  "baseline": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+  "scope": "Compatibility job creation ownership, legacy claim exclusion, active claim recovery and stale payload CAS; no migration, Prompt content change, terminal-job revival or live replay.",
+  "source_files": {
+    "backend/repositories/ticket_repository.py": "af8db9db21827295dad99216538a4d318d9315b40732917b87f06df3d77a6c8a",
+    "backend/services/account_reply_jobs.py": "890f6ccb0e2b806231b188e0899fe97e4d5a32236488ee6b6ccfdfc69ffb8c39",
+    "backend/services/automation_account_intake.py": "a6c26d5bb94dbb185d065cc4ff1a622f90aa54446b8a2fdc473922019eb97fae",
+    "backend/services/automation_hermes_tools.py": "fbe39edff9356a67fb3c8ebb9e9fbb65479632325200d0f4ab6995d77315dfbe",
+    "backend/tests/test_enablement_auto_postgres.py": "e9b4aed1b93b288d76e354767f944e3b7eda47593aa6e16c43411387bd320257",
+    "backend/tests/test_hermes_compatibility_scheduler.py": "37953b51c470ff65338c1bc7aa0b0946a759644f385280a2e18557ca8c30d64f",
+    "backend/tests/test_hermes_native_enablement_regression.py": "a472c3901bdbd645f3fb5cd9004161e3041b5ad6b7685ce04ea59820bd6ef651",
+    "backend/tests/test_worker.py": "64a253ac82e6a2d8baed65ee34e903fd3700be012a41c7a670364fc0d3b27ec2",
+    "backend/worker.py": "c51ad6538d98ee758fd81793e06c8029a1e2033b73198b2ea03a07ed1fb2eb75",
+    "scripts/testing/verify_hermes_repair_negative_controls.py": "87d1a4a52424b8122efa0357e1c954ba23c4a8e564ba8ca91902f84e1641a863"
+  },
+  "environment": {
+    "python": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python",
+    "postgres": "PostgreSQL 16 task-local Podman, 127.0.0.1:55437, synthetic DSN, per-test schemas removed",
+    "external_boundaries": "Zendesk audit fetch/comment write mocked; actual parser, worker, InMemory/PG repository used"
+  },
+  "checks": [
+    {
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=<isolated-test-dsn> SENTIMENT_PROVIDER=legacy <project-python> -m pytest backend/tests/test_hermes_customer_reply_basis.py backend/tests/test_hermes_zendesk_agent_tools.py backend/tests/test_hermes_fraud_reply_style.py backend/tests/test_hermes_email_execution.py backend/tests/test_hermes_tool_failure_handoff.py backend/tests/test_hermes_zendesk_agent.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_worker_compatibility_scope.py backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_version_fence.py backend/tests/test_account_reply_publication_postgres.py -q --tb=short",
+      "result": "265 passed, 48 subtests passed, no skips"
+    },
+    {
+      "command": "<project-python> -m pytest backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_enablement_auto_postgres.py -q --tb=short (isolated PG enabled)",
+      "result": "20 passed, 15 subtests passed, no skips"
+    },
+    {
+      "command": "<project-python> scripts/testing/verify_hermes_repair_negative_controls.py --control omit_source_hermes_ownership --control claim_hermes_compatibility_job --control terminalize_claimed_hermes_identity --control ignore_current_hermes_ownership --control overwrite_hermes_ownership_from_stale_claim --output <output-json>",
+      "result": "5/5 detected via behavior assertions; collection/import errors excluded"
+    },
+    {
+      "command": "<project-python> -m pytest backend/tests/test_worker.py -q --tb=short",
+      "result": "branch/main: 153 passed, 14 failed, 25 subtests passed; same 14 failure signatures"
+    },
+    {
+      "command": "<project-python> -m pytest backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short",
+      "result": "branch/main: 101 passed, 6 failed, 7 subtests passed; same six legacy fixture failures"
+    }
+  ],
+  "baseline_failures": {
+    "worker": [
+      "SUBFAILED(status='new') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='open') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='pending') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='hold') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+      "SUBFAILED(status='') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status=None) backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status='unexpected') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued"
+    ],
+    "legacy_intake": [
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_invalid_appid_asks_again_without_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_mode_gates_confirmation_and_creates_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_superseded_appid_bumps_request_version",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_default_mode_creates_no_relay_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_invalid_appid_format_asks_again_without_email",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_review_creates_reply_first_and_gates_email"
+    ]
+  },
+  "gates": {
+    "executor_verification": "passed with disclosed unchanged baseline failures",
+    "independent_acceptance": "pending",
+    "repair_deployed": false,
+    "business_acceptance": "incomplete",
+    "production_changed": false,
+    "relay_executed": false
+  },
+  "static_checks": {
+    "compile": "all changed Python files compile in memory",
+    "json": "task and evidence parse",
+    "overview": "generated and checked",
+    "diff_check": "passed"
+  }
+}

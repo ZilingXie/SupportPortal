@@ -30,6 +30,29 @@ from backend.repositories.ticket_repository import PostgresTicketRepository
     "set RUN_POSTGRES_INTEGRATION=1 to run PostgreSQL enablement relay contracts",
 )
 class EnablementRelayPostgresTests(unittest.TestCase):
+    def test_hermes_compatibility_scheduler_and_claim_recovery(self):
+        from backend.tests.test_hermes_compatibility_scheduler import (
+            assert_scheduler_excludes_compatibility,
+            assert_claimed_compatibility_survives_readback,
+            assert_stale_claim_cannot_remove_ownership,
+        )
+        checks = [("claim_filter", lambda repo: assert_scheduler_excludes_compatibility(repo)),
+                  ("stale_claim", lambda repo: assert_stale_claim_cannot_remove_ownership(repo))]
+        for auto in (False, True):
+            for stage in ("preparing", "publishing"):
+                for v8 in (False, True):
+                    checks.append((f"{auto}:{stage}:v8={v8}", lambda repo, auto=auto, stage=stage, v8=v8:
+                        assert_claimed_compatibility_survives_readback(repo, auto=auto, stage=stage, v8=v8)))
+        for name, check in checks:
+            with self.subTest(check=name):
+                schema, repository = self._temporary_repository()
+                try:
+                    repository.initialize()
+                    check(repository)
+                finally:
+                    repository.close()
+                    self._drop_schema(str(os.getenv("TICKET_DB_DSN")), schema)
+
     def test_manual_hermes_readback_releases_email_once(self):
         from types import SimpleNamespace
         from unittest.mock import patch

@@ -1,0 +1,166 @@
+{
+  "observed_at": "2026-10-13T10:29:57.715065+00:00",
+  "release": "r20261013-4ecea04",
+  "samples": [
+    {
+      "ticket_id": "14037",
+      "case_found": true,
+      "case": {
+        "execution_action": "enablement",
+        "automation_status": "closed",
+        "internal_email_send_status": "awaiting_public_reply",
+        "zendesk_ticket_status": "solved"
+      },
+      "workflow": {
+        "enablement_manual_workflow": {
+          "state": "awaiting_public_reply",
+          "reply_job_id": "account-reply-ebe758b460b84869a200c75f63dcd204"
+        }
+      },
+      "compatibility_job": [
+        {
+          "job_id": "account-reply-ebe758b460b84869a200c75f63dcd204",
+          "status": "manual_attention",
+          "hermes_compatibility_only": "true"
+        }
+      ],
+      "drafts": [
+        {
+          "draft_id": "draft-6731cadf293c4fbaa8760bcebb315a36",
+          "turn_id": "turn-b1805bb0fd364aa79da5c124b03c75b0",
+          "draft_status": "queued",
+          "content": "Hi <Test Name>,\n\nI understand you’d like to enable Media Relay for your live events. Please share the App ID for the project where you’d like it enabled.",
+          "delivery_status": "delivered",
+          "zendesk_comment_id": "54537710191508"
+        },
+        {
+          "draft_id": "draft-7e40255c92714171b26f2fe13b87957d",
+          "turn_id": "turn-6dda8d548b334175af2bf64b2571727f",
+          "draft_status": "queued",
+          "content": "Hi <Test Name>,\n\nThank you for sharing the App ID. Your request to enable Media Relay is under review with our internal team.",
+          "delivery_status": "delivered",
+          "zendesk_comment_id": "54537744468756"
+        }
+      ],
+      "events": [
+        {
+          "event_type": "hermes_enablement_compatibility_release_blocked",
+          "created_at": "2026-10-13 10:10:12.653567+00:00",
+          "reason_code": "enablement_compatibility_job_terminal"
+        }
+      ]
+    },
+    {
+      "ticket_id": "14038",
+      "case_found": true,
+      "case": {
+        "execution_action": "fraud_account",
+        "automation_status": "closed",
+        "internal_email_send_status": "sent",
+        "zendesk_ticket_status": "solved"
+      },
+      "workflow": {},
+      "drafts": [
+        {
+          "draft_id": "draft-7f467fe221e44862aa37ea353a7c12cb",
+          "turn_id": "turn-0d31955b80164c30ae0d70e092ad4a75",
+          "draft_status": "queued",
+          "content": "Hi <Test Name>,\n\nI understand you believe your account was blocked by mistake and would like a fraud review. To proceed with your request, please share your account type, name, office address, official contact number, official contact email, a description of your use case, and your last known console configuration.",
+          "delivery_status": "delivered",
+          "zendesk_comment_id": "54537877087252"
+        },
+        {
+          "draft_id": "draft-28c93ab611754e59a6204e0aef9ec8ba",
+          "turn_id": "turn-a620dd102f65455983c310a7f74a7062",
+          "draft_status": "queued",
+          "content": "Hi <Test Name>,\n\nThank you for sharing your Enterprise account type, the name Zac Tester, and the contact email <test-email>. I’ve forwarded your fraud review request and the information you provided to the relevant team. They will contact you within 24 hours.",
+          "delivery_status": "delivered",
+          "zendesk_comment_id": "54537971987732"
+        }
+      ],
+      "events": []
+    },
+    {
+      "ticket_id": "14039",
+      "case_found": true,
+      "case": {
+        "execution_action": "account_suspension",
+        "automation_status": "closed",
+        "internal_email_send_status": "sent",
+        "zendesk_ticket_status": "solved"
+      },
+      "workflow": {},
+      "drafts": [
+        {
+          "draft_id": "draft-9afeb4c2b919495687ac0262ebb28b53",
+          "turn_id": "turn-f036d000221f4a599967581c54d0d471",
+          "draft_status": "queued",
+          "content": "Hi <Test Name>,\n\nI understand that your account is suspended and your production service remains blocked, even after you topped up the balance. I’ve forwarded your account suspension review request to the relevant internal team.",
+          "delivery_status": "delivered",
+          "zendesk_comment_id": "54537867313940"
+        }
+      ],
+      "events": []
+    },
+    {
+      "ticket_id": "14040",
+      "case_found": true,
+      "case": {
+        "execution_action": null,
+        "automation_status": "automation",
+        "internal_email_send_status": "not_applicable",
+        "zendesk_ticket_status": "open"
+      },
+      "workflow": {},
+      "drafts": [],
+      "events": [],
+      "bindings": [
+        {
+          "status": "active",
+          "direction": "pending",
+          "investigation": {
+            "recorded_turn_id": "turn-c197d90c4aef4bffa6e7a3a39fc23a68"
+          }
+        }
+      ]
+    }
+  ],
+  "real_relay_executed": false,
+  "forced_recovery": false,
+  "boundaries": {
+    "14037": "Both customer turns delivered; compatibility job became manual_attention; email remains awaiting_public_reply. Later case observed solved/closed; closure origin not proven by this readback. No forced recovery.",
+    "14038": "Fraud first ask, partial-information response, review email sent and human_review_required observed by native matrix; later solved/closed snapshot.",
+    "14039": "Suspension reply delivered, review email sent and case solved/closed observed. Matrix expectation human_review_required is inconsistent with handoff-and-close intent; full reviewer assignment readback remains unverified.",
+    "14040": "Completed Investigation Work and recorded report; zero customer drafts. Independent review/continuation not performed.",
+    "invoice_verification": "SMTP submissions accepted; case linking timed out within six minutes. No retry submissions."
+  },
+  "naturalness": "Live bodies retained with greeting identity redacted; readable but formal intent restatements persist as nonblocking observation. Investigation Persona not tested.",
+  "matrix_observations": [
+    {
+      "sample": "fraud",
+      "ticket_id": "14038",
+      "delivery_confirmed": true,
+      "delivery_status": "delivered",
+      "zendesk_comment_id": "54537877087252"
+    },
+    {
+      "sample": "suspension",
+      "ticket_id": "14039",
+      "delivery_confirmed": true,
+      "failure": "Suspension transferred to reviewer failed: timed out waiting for automation_status=human_review_required; condition never met; current automation_status='closed'",
+      "delivery_status": "delivered",
+      "zendesk_comment_id": "54537867313940"
+    },
+    {
+      "sample": "invoice",
+      "delivery_confirmed": false,
+      "failure": "timed out waiting for preproduction case creation (n8n intake); condition never met"
+    },
+    {
+      "sample": "verification",
+      "delivery_confirmed": false,
+      "failure": "timed out waiting for preproduction case creation (n8n intake); condition never met"
+    }
+  ],
+  "matrix_overall_passed": false
+}

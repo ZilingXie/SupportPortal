@@ -1114,6 +1114,7 @@ async def tool_execute_automation_action(
                 try:
                     account_case, compatibility_reply_job, workflow_outcome = (
                         await _run_enablement_workflow(
+                            hermes_compatibility_only=True,
                             repository=repository,
                             account_case=account_case,
                             ticket_id=ticket_id,
@@ -1142,12 +1143,8 @@ async def tool_execute_automation_action(
                 )
                 internal_email_status = str(account_case.get("internal_email_send_status") or "")
                 internal_email_reason = str(account_case.get("internal_email_send_reason") or "")
-                # The enablement workflow created the customer-facing reply
-                # job (submission confirmation or appid-invalid ask) in the
-                # legacy pipeline — that job is the SOLE customer reply.
-                # Persona must not draft a second one (review #3), and the
-                # relay gate binds to exactly that job's delivered public
-                # reply.
+                # The job preserves relay identity; Hermes owns the customer
+                # text and its confirmed public delivery releases that identity.
                 compatibility_job_id = str(
                     (compatibility_reply_job or {}).get("job_id")
                     if isinstance(compatibility_reply_job, dict)

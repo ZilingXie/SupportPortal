@@ -4901,6 +4901,11 @@ class InMemoryTicketRepository(
                 expected_attempt_count=expected_attempt_count,
             ):
                 return None
+            if (
+                (current.get("payload") or {}).get("hermes_compatibility_only") is True
+                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True
+            ):
+                return None
             saved = copy.deepcopy(job)
             saved["created_at"] = saved.get("created_at") or current.get("created_at") or _utc_now()
             saved["updated_at"] = saved.get("updated_at") or saved["created_at"]
@@ -5352,6 +5357,8 @@ class InMemoryTicketRepository(
                 if len(claimed) >= max(1, int(limit)):
                     break
                 if str(job.get("status") or "") != from_status:
+                    continue
+                if (job.get("payload") or {}).get("hermes_compatibility_only") is True:
                     continue
                 if due_only and str(job.get("scheduled_for") or "") > now_value:
                     continue
@@ -18861,6 +18868,8 @@ class PostgresTicketRepository(
                         "WHERE job_id=%s AND ticket_id=%s AND trigger_message_created_at=%s "
                         "AND status=%s AND claimed_at IS NOT DISTINCT FROM %s "
                         "AND attempt_count=%s "
+                        "AND (COALESCE(payload->'hermes_compatibility_only', 'false'::jsonb) <> 'true'::jsonb "
+                        "OR %s) "
                         "RETURNING job_id,ticket_id,trigger_message_created_at,status,scheduled_for,"
                         "payload,attempt_count,claimed_at,published_at,created_at,updated_at"
                     ).format(self._table("support_account_reply_jobs")),
@@ -18878,6 +18887,7 @@ class PostgresTicketRepository(
                         expected_status,
                         expected_claimed_at,
                         int(expected_attempt_count),
+                        payload.get("hermes_compatibility_only") is True,
                     ),
                 )
                 row = cur.fetchone()
@@ -19518,7 +19528,9 @@ class PostgresTicketRepository(
                         """
                         WITH candidates AS (
                             SELECT job_id FROM {}
-                            WHERE status=%s {} ORDER BY scheduled_for, created_at
+                            WHERE status=%s {}
+                              AND COALESCE(payload->'hermes_compatibility_only', 'false'::jsonb) <> 'true'::jsonb
+                            ORDER BY scheduled_for, created_at
                             FOR UPDATE SKIP LOCKED LIMIT %s
                         )
                         UPDATE {} AS jobs

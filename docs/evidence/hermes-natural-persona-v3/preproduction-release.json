@@ -1,0 +1,141 @@
+{
+  "generated_at": "2026-10-13T10:04:53Z",
+  "environment": "preproduction",
+  "release_id": "r20261013-4ecea04",
+  "git_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+  "status": "complete",
+  "checks": {
+    "cloudwatch": "passed",
+    "ec2_backup": "passed",
+    "ecr": "passed",
+    "heartbeats": "passed",
+    "prompt_activation": "active",
+    "prompt_sync": "active",
+    "provider_probe": "passed",
+    "public_health": "passed",
+    "rollback": "not_started",
+    "schema_bootstrap": "not_requested",
+    "source_prompt": "passed",
+    "suspension_recipients": "passed",
+    "terraform_post_deploy_zero_drift": "passed",
+    "terraform_zero_drift": "passed"
+  },
+  "prompt_release": {
+    "build_ref": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+    "content_fingerprint": "sha256:b77b588d3d0f2a6ecdce39cdb8119c303673313611564afea8a77a1208fbe271",
+    "release_id": "pr-78386473bd08"
+  },
+  "hermes": {
+    "agent_enabled": true,
+    "case_engine": "hermes",
+    "case_engine_downgrade_approved": false,
+    "persona_enabled": true
+  },
+  "hermes_case_workflow": {
+    "mode": "disabled",
+    "schema_bootstrap_task_arn": "",
+    "schema_bootstrap_task_definition": ""
+  },
+  "components": {
+    "api": {
+      "task_definition": "supportportal-preproduction-api:146",
+      "expected_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+      "observed_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+      "runtime_verified": true
+    },
+    "route": {
+      "task_definition": "supportportal-preproduction-route:144",
+      "expected_digest": "sha256:d7d3b117c147c61df4cf0f2fa87dfbf8c4bd8ebd44e330b5135e0e3befed3118",
+      "observed_digest": "sha256:d7d3b117c147c61df4cf0f2fa87dfbf8c4bd8ebd44e330b5135e0e3befed3118",
+      "runtime_verified": true
+    },
+    "worker": {
+      "task_definition": "supportportal-preproduction-worker:146",
+      "expected_digest": "sha256:9587425beadc871b6b49d92f2f832b407b8cc83e070bbbfdb3107c99f36a8b48",
+      "observed_digest": "sha256:9587425beadc871b6b49d92f2f832b407b8cc83e070bbbfdb3107c99f36a8b48",
+      "runtime_verified": true
+    }
+  },
+  "target_health": {
+    "blocking": 0,
+    "draining": 1,
+    "healthy": 1,
+    "total": 2
+  },
+  "pipeline_timings": {
+    "total_seconds": 1431.914,
+    "normal_release_slo_seconds": 900,
+    "slo_breach": true
+  },
+  "preproduction_stage_timings": {
+    "controllable_seconds": 373.56600000000003,
+    "ecs_wait_seconds": 437.145,
+    "normal_release_slo_seconds": 900,
+    "slo_breach": false,
+    "target_range_seconds": {
+      "max": 900,
+      "min": 600
+    },
+    "total_seconds": 810.711
+  },
+  "prompt_preparation": {
+    "source_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+    "previous_release_id": "pr-9737f67803f1",
+    "prompt_release_id": "pr-78386473bd08",
+    "changes": [
+      {
+        "key": "hermes-reply-contract",
+        "previous_version": 3,
+        "version": 6,
+        "sha256": "c8732a9584bb51d704a8c720705e367e8bc4089ab584a0c39282db6140b58c3f"
+      },
+      {
+        "key": "hermes-persona-manual",
+        "previous_version": 3,
+        "version": 6,
+        "sha256": "5845d350e1d22eeb840982d3e82bd964352882006f707305388432616bfb2faa"
+      }
+    ],
+    "validation": {
+      "release_id": "pr-78386473bd08",
+      "prompt_count": 42,
+      "status": "loaded",
+      "source": "release"
+    }
+  },
+  "persona_readback": {
+    "persona": "sid-precise",
+    "previous_version": 1,
+    "published_version": 2,
+    "seed_marker": "Seeded Sid Precise preset v2",
+    "sha256": "95484cc143251546c13bc5c323d9ba07203a2e97d29ccb8b5f8a4c291fa29de1",
+    "status": "published",
+    "footer_changed": false,
+    "profile_changed": false
+  },
+  "public_readback": {
+    "live": {
+      "status": "ok"
+    },
+    "ready": {
+      "status": "ok"
+    },
+    "release": {
+      "environment": "preproduction",
+      "release_id": "r20261013-4ecea04",
+      "git_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+      "prompt_release_id": "pr-78386473bd08",
+      "image_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+      "db_schema": "supportportal_preproduction"
+    },
+    "typed_workflow": "disabled"
+  },
+  "enablement_mode": "manual",
+  "agent_model": "gpt-6.1-sol",
+  "schema_migration_requested": false,
+  "production_deployed": false,
+  "codegraph_sync": "completed by finalize",
+  "codesight_refresh": "completed from root main",
+  "source_evidence": ".deployments/ecs-pipeline-r20261013-4ecea04/preproduction-deploy/evidence.json",
+  "business_acceptance": "incomplete; runtime compatibility scheduler defect on 14037"
+}

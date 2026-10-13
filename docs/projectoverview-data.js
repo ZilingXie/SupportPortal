@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T09:24:39Z",
-  "source_base_commit": "164859fe0d2200a563103810de6705916527f73b",
-  "registry_digest": "e1d6c6ec000e6b2d27d2ce15884ec411a86bddb34dd37c9eda2815e68a97dd4b",
+  "generated_at": "2026-10-13T10:38:07Z",
+  "source_base_commit": "70c9e720657d0b8f0d42176efd0ec1b87fa277ff",
+  "registry_digest": "85da35f2c318c80de0df8a0adc48b615986da7ad7419e086c2b85b95935c7626",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1598,6 +1598,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
+          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction immutable release and Prompt/Persona readback",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-release.json",
+          "result": "r20261013-4ecea04 / main@4ecea043 / pr-78386473bd08 v6；sid-precise published v2；ECS API146/Route144/Worker146、健康、镜像、Prompt、Terraform等正式门禁通过。全 pipeline 1431.914s 超过900s SLO，未放宽门禁；Production未发布。"
+        },
+        {
+          "type": "test",
+          "label": "New-ticket real business observation (not overall acceptance)",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-business-readback.json",
+          "result": "14037 两轮已投递但兼容终态阻断内部邮件；14038 Fraud部分补资料→回复→审核邮件sent→human_review_required已观测；14039回复/审核邮件sent/closed solved已观测但完整分派待证据；14040仅Work report零draft；Invoice/Verification intake超时，未重发或执行真实relay。"
         },
         {
           "type": "test",
@@ -18198,8 +18216,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
-      "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
+      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；等待独立验收。",
+      "next_action": "提交后续 Draft PR 完整 HEAD 独立验收 v3.2 运行修复；通过后按既有授权 finalize 并再次发布 Preproduction，用新工单验证完整 Enablement 链。当前不重新部署/回放 14037，不强制释放；真实 relay 保留人工审批，Production 未授权。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18210,9 +18228,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
       ],
       "blockers": [
-        "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
+        "14037 实际业务链未完成：已发布代码将 Hermes 兼容身份终态化，内部邮件仍 awaiting_public_reply；本地修复待独立验收且未部署。",
+        "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "rev v3.2 runtime compatibility scheduler repair (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json",
+          "result": "265 passed + 48 subtests，无 PG skip；五项负控检出。真实 tool 首次 save 前 ownership；真实 worker scheduler/prepare/publish→audit parser→InMemory/PG→单次释放。完整 worker 与 main 相同14失败，补充 legacy intake 与 main 相同6失败。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction immutable release and Prompt/Persona readback",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-release.json",
+          "result": "r20261013-4ecea04 / main@4ecea043 / pr-78386473bd08 v6；sid-precise published v2；ECS API146/Route144/Worker146、健康、镜像、Prompt、Terraform等正式门禁通过。全 pipeline 1431.914s 超过900s SLO，未放宽门禁；Production未发布。"
+        },
+        {
+          "type": "test",
+          "label": "New-ticket real business observation (not overall acceptance)",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-business-readback.json",
+          "result": "14037 两轮已投递但兼容终态阻断内部邮件；14038 Fraud部分补资料→回复→审核邮件sent→human_review_required已观测；14039回复/审核邮件sent/closed solved已观测但完整分派待证据；14040仅Work report零draft；Invoice/Verification intake超时，未重发或执行真实relay。"
+        },
         {
           "type": "test",
           "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
