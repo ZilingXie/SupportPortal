@@ -1094,6 +1094,30 @@ class AutomatedAccountCaseRerunTests(unittest.TestCase):
                     self._apply(operation_dir, request_json=request)
                 self.assertFalse(any(call["method"] == "POST" for call in request.calls))
 
+    def test_old_precise_seed_and_signature_schema_are_not_approved(self) -> None:
+        payload = _personas()
+        precise = next(p for p in payload["personas"] if p["persona_key"] == "sid-precise")
+        precise["versions"][0]["change_note"] = "Seeded Sid Precise preset v1"
+        precise["versions"][0]["content"]["signature"] = "Historical signature"
+        request = _persona_gate_request(payload)
+        with tempfile.TemporaryDirectory() as temporary:
+            with self.assertRaises(runner.OperationError):
+                runner.create_dry_run(base_url="http://127.0.0.1:8000", operations_root=Path(temporary),
+                    request_json=request, access_token=TEST_ACCESS_TOKEN, signing_secret=TEST_SIGNING_SECRET)
+        self.assertFalse(any(c["method"] == "POST" for c in request.calls))
+
+    def test_historical_signed_catalog_pin_stays_frozen_and_blocks_posts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.object(runner, "PERSONA_APPROVAL_VERSION", "historical-signature-v1"):
+                operation_dir, _ = self._dry_run(Path(temporary), case_ids=("AC-1",))
+            frozen = {p.name: p.read_bytes() for p in operation_dir.iterdir() if p.is_file()}
+            request = _persona_gate_request(_personas())
+            with self.assertRaises(runner.OperationError):
+                self._apply(operation_dir, request_json=request)
+            self.assertFalse(any(c["method"] == "POST" for c in request.calls))
+            for name in ("baseline.json", "manifest.json", "current.json"):
+                self.assertEqual((operation_dir / name).read_bytes(), frozen[name])
+
     def test_published_persona_version_drift_blocks_apply_with_approved_content(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             dry_run_request = _persona_gate_request(_personas_with_warm_upgrade())

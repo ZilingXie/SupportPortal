@@ -189,115 +189,150 @@ class ReplayTests(unittest.TestCase):
         self.assertEqual(repository.record_event.call_count, 1)
         self.assertEqual(case["execution_reason_code"], "enablement_compatibility_job_missing")
 
+    def test_manual_email_release_once_with_real_repository_state(self):
+        repository, delivery = compatibility_fixture(auto=False)
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            repository, "release_account_internal_email_after_public_reply",
+            wraps=repository.release_account_internal_email_after_public_reply,
+        ) as release:
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+        case = repository.get_account_case("AC-COMPAT")
+        self.assertEqual(case["internal_email_send_status"], "pending")
+        self.assertEqual(case["automation_context"]["enablement_manual_workflow"]["state"], "email_released")
+        self.assertEqual(release.call_count, 2)
+        self.assertEqual(len(projected_messages(repository)), 1)
+
     def test_relay_release_once_with_real_repository_state(self):
-        # Real InMemory state (plan finding 3): two replays must leave
-        # exactly ONE projected message, the internal email released once
-        # (terminal status absorbs the second call), and the case never
-        # blocked.
-        from backend.repositories.ticket_repository import InMemoryTicketRepository
-        from backend.services.account_automation_delivery import (
-            prepare_account_internal_email,
-        )
+        repository, delivery = compatibility_fixture(auto=True)
+        winners = []
+        actual = repository.release_enablement_relay_requests_after_public_reply
+        def release(**kwargs):
+            result = actual(**kwargs)
+            winners.append([item["request_id"] for item in result])
+            return result
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            repository, "release_enablement_relay_requests_after_public_reply", side_effect=release,
+        ):
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+            worker._complete_hermes_customer_reply_side_effects(delivery)
+        self.assertEqual(winners, [["request-1"], []])
+        self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "dispatch_pending")
+        case = repository.get_account_case("AC-COMPAT")
+        self.assertEqual(case["automation_context"]["enablement_auto_workflow"]["state"], "dispatch_pending")
+        self.assertEqual(case["internal_email_send_status"], "not_applicable")
+        self.assertEqual(case["automation_status"], "automation")
+        self.assertEqual(len(projected_messages(repository)), 1)
+        self.assertEqual(len(repository.list_account_zendesk_comment_deliveries_for_case("AC-COMPAT")), 1)
 
-        repository = InMemoryTicketRepository()
-        repository.save_ticket(
-            {
-                "ticket_id": "TK-COMPAT",
-                "customer_id": "cx@example.com",
-                "requester": "cx@example.com",
-                "subject": "Enable media relay",
-                "status": "open",
-                "created_at": "2026-10-13T10:00:00Z",
-                "updated_at": "2026-10-13T10:00:00Z",
-                "messages": [],
-            },
-            new_messages=[],
+    def test_relay_rejects_unconfirmed_or_mismatched_identity(self):
+        for mismatch in ("not_delivered", "message", "job", "ticket", "workflow", "request"):
+            with self.subTest(mismatch=mismatch):
+                repository, delivery = compatibility_fixture(auto=True, delivered=mismatch != "not_delivered")
+                if mismatch == "message":
+                    delivery["message_id"] = "another-draft"
+                elif mismatch in {"job", "ticket"}:
+                    request = repository._enablement_relay_requests["request-1"]
+                    request["reply_job_id" if mismatch == "job" else "ticket_id"] = "wrong"
+                elif mismatch in {"workflow", "request"}:
+                    case = repository.get_account_case("AC-COMPAT")
+                    case["automation_context"]["enablement_auto_workflow"][
+                        "reply_job_id" if mismatch == "workflow" else "request_id"
+                    ] = "wrong"
+                    repository.save_account_case(case)
+                with patch.object(worker, "ticket_repository", repository):
+                    worker._complete_hermes_customer_reply_side_effects(delivery)
+                self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+
+
+def projected_messages(repository):
+    return [m for m in repository.get_ticket("TK-COMPAT")["messages"]
+            if (m.get("meta") or m).get("account_reply_job_id") == "job-1"]
+
+
+def compatibility_fixture(*, auto, delivered=True, repository=None):
+    from backend.repositories.ticket_repository import InMemoryTicketRepository
+    repository = repository if repository is not None else InMemoryTicketRepository()
+    timestamp = "2026-10-13T10:00:00Z"
+    repository.save_ticket({
+        "ticket_id": "TK-COMPAT", "customer_id": "cx@example.com", "requester": "cx@example.com",
+        "subject": "Enable Media Relay", "status": "open", "created_at": timestamp,
+        "updated_at": timestamp, "messages": [],
+    }, new_messages=[])
+    workflow_key = "enablement_auto_workflow" if auto else "enablement_manual_workflow"
+    repository.save_account_case(_case(
+        billing_ticket_id="AC-COMPAT", processing_profile="preproduction", route="enablement",
+        automation_handler="enablement", route_family="automated",
+        internal_email_send_status="awaiting_public_reply", updated_at=timestamp,
+        automation_context={workflow_key: {"state": "awaiting_public_reply", "reply_job_id": "job-1",
+                                          **({"request_id": "request-1"} if auto else {})}},
+    ))
+    repository.save_account_reply_job({
+        "job_id": "job-1", "ticket_id": "TK-COMPAT", "status": "published",
+        "payload": {"reply_intent": "submission_confirmation"}, "attempt_count": 0,
+        "trigger_message_created_at": timestamp, "scheduled_for": timestamp,
+        "created_at": timestamp, "updated_at": timestamp,
+    })
+    if auto:
+        request = repository.create_enablement_relay_request(
+            request_id="request-1", account_case_id="AC-COMPAT", ticket_id="TK-COMPAT",
+            zendesk_ticket_id="TK-COMPAT", customer_email="cx@example.com", app_id="a" * 32,
+            reply_job_id="job-1", workflow_mode="archer", request_version=1,
+            relay_task_expires_at="2026-10-14T10:00:00Z", now=timestamp,
         )
-        repository.save_account_case(
-            {
-                "account_case_id": "AC-COMPAT",
-                "billing_ticket_id": "AC-COMPAT",
-                "client_ticket_id": "TK-COMPAT",
-                "zendesk_ticket_id": "TK-COMPAT",
-                "processing_profile": "preproduction",
-                "automation_status": "automation",
-                "route": "enablement",
-                "execution_action": "enablement",
-                "automation_handler": "enablement",
-                "automation_context": {
-                    "enablement_manual_workflow": {
-                        "version": 1,
-                        "state": "awaiting_public_reply",
-                        "reply_job_id": "job-1",
-                    }
-                },
-                "internal_email_payload": {
-                    "delivery_key": "enablement:AC-COMPAT:v1",
-                    "action": "enablement",
-                },
-                "internal_email_send_status": "awaiting_public_reply",
-                "collected_fields": {"app_id": "8cb7aea984c4457daad802e6960e2475"},
-            }
-        )
-        repository.save_account_reply_job(
-            {
-                "job_id": "job-1",
-                "ticket_id": "TK-COMPAT",
-                "trigger_message_created_at": "2026-10-13T10:00:00Z",
-                "status": "published",
-                "scheduled_for": "2026-10-13T10:00:30Z",
-                "payload": {"reply_intent": "submission_confirmation"},
-                "attempt_count": 0,
-                "created_at": "2026-10-13T10:00:05Z",
-                "updated_at": "2026-10-13T10:00:05Z",
-            }
-        )
-        # The release twin requires a delivered public comment row bound to
-        # the projected message — create one for the job's message.
-        repository.create_account_zendesk_comment_delivery(
-            account_case_id="AC-COMPAT",
-            message_id="draft-1",
-            zendesk_ticket_id="TK-COMPAT",
-            idempotency_key="zd-compat-1",
-            created_at="2026-10-13T10:05:00Z",
-            is_public=True,
-        )
+        assert request["status"] == "gated"
+    delivery = repository.create_account_zendesk_comment_delivery(
+        account_case_id="AC-COMPAT", message_id="draft-1", zendesk_ticket_id="TK-COMPAT",
+        source="hermes", immutable_content="Hi Customer,\n\nYour request has been submitted for review.",
+        draft_version=1, comments_revision="revision-1",
+        idempotency_key="hermes-draft:draft-1", created_at=timestamp, is_public=True,
+        attachments=[{"_hermes_compatibility_relay_required": True}, {"_hermes_compatibility_job_id": "job-1"}],
+    )
+    if delivered:
         repository.complete_account_zendesk_comment_delivery(
-            account_case_id="AC-COMPAT",
-            message_id="draft-1",
-            status="delivered",
-            zendesk_comment_id="544000000000001",
-            failure_code=None,
-            completed_at="2026-10-13T10:05:30Z",
+            account_case_id="AC-COMPAT", message_id="draft-1", status="delivered",
+            zendesk_comment_id="comment-1", failure_code=None, completed_at=timestamp,
         )
-        delivery = _delivery(
-            message_id="draft-1",
-            attachments=[
-                {"_hermes_compatibility_relay_required": True},
-                {"_hermes_compatibility_job_id": "job-1"},
-            ],
-        )
-        with patch.object(worker, "ticket_repository", repository):
-            worker._complete_hermes_customer_reply_side_effects(delivery)
-            worker._complete_hermes_customer_reply_side_effects(delivery)
+        delivery["status"] = "delivered"
+    return repository, delivery
 
-        saved_case = repository.get_account_case("AC-COMPAT")
-        self.assertNotEqual(
-            saved_case.get("automation_status"), "human_review_required"
-        )
-        # Exactly one projected compatibility message.
-        ticket = repository.get_ticket("TK-COMPAT")
-        projected = [
-            m
-            for m in ticket.get("messages") or []
-            if (m.get("meta") or {}).get("account_reply_job_id") == "job-1"
-        ]
-        self.assertEqual(len(projected), 1)
-        # The internal email release is terminal: status moved off the
-        # awaiting gate and stays there after the second replay.
-        self.assertNotEqual(
-            saved_case.get("internal_email_send_status"), "awaiting_public_reply"
-        )
+
+class WorkerReadbackTests(unittest.TestCase):
+    def test_confirmed_readback_releases_real_request_once(self):
+        from types import SimpleNamespace
+        for auto in (False, True):
+            with self.subTest(auto=auto):
+                repository, delivery = compatibility_fixture(auto=auto, delivered=False)
+                delivery["status"] = "outcome_unknown"
+                winners = []
+                actual = repository.release_enablement_relay_requests_after_public_reply
+                def release(**kwargs):
+                    result = actual(**kwargs)
+                    winners.extend(item["request_id"] for item in result)
+                    return result
+                with patch.object(worker, "ticket_repository", repository), patch.object(
+                    worker, "read_ticket_comment_audit", return_value=(SimpleNamespace(comment_id="confirmed"), set()),
+                ) as audit, patch.object(worker, "add_ticket_comment") as send, patch.object(
+                    repository, "release_enablement_relay_requests_after_public_reply", side_effect=release,
+                ):
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                    worker._deliver_hermes_zendesk_comment(delivery)
+                send.assert_not_called()
+                self.assertNotIn("attachments", audit.call_args.kwargs)
+                self.assertEqual(winners, ["request-1"] if auto else [])
+                self.assertEqual(len(projected_messages(repository)), 1)
+                self.assertEqual(repository.get_account_case("AC-COMPAT")["internal_email_send_status"],
+                                 "not_applicable" if auto else "pending")
+
+    def test_unconfirmed_readback_keeps_real_request_gated(self):
+        repository, delivery = compatibility_fixture(auto=True, delivered=False)
+        delivery["status"] = "outcome_unknown"
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "read_ticket_comment_audit", return_value=(None, set()),
+        ):
+            worker._deliver_hermes_zendesk_comment(delivery)
+        self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+        self.assertEqual(projected_messages(repository), [])
 
 
 if __name__ == "__main__":

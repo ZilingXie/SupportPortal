@@ -1475,6 +1475,7 @@ class HermesAgentTurnProcessor:
             # C7: the ownership gate failure is its own phase — the alert
             # must carry the real gate failure code, never <unknown>.
             failed_phase="ownership_gate",
+            run_id=str(turn.get("run_id") or "").strip() or "not_started",
             failure_reason=(
                 str(ownership_result.failure_detail
                     or ownership_result.failure_code

@@ -2356,7 +2356,7 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
                     (
                         item for item in messages
                         if isinstance(item, dict)
-                        and str((item.get("meta") or {}).get("account_reply_job_id") or "") == compatibility_job_id
+                        and str((item.get("meta") or item).get("account_reply_job_id") or "") == compatibility_job_id
                     ),
                     None,
                 )
@@ -2370,6 +2370,7 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
                         "message_id": message_id,
                         "meta": {
                             "account_reply_job_id": compatibility_job_id,
+                            "hermes_delivery_message_id": message_id,
                             "reply_intent": "submission_confirmation",
                             "source": "hermes",
                             "visibility": "account_only",
@@ -2744,7 +2745,9 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         attachments = [
             dict(ref)
             for ref in delivery.get("attachments") or []
-            if isinstance(ref, dict) and not ref.get("_hermes_compatibility_job_id")
+            if isinstance(ref, dict)
+            and "_hermes_compatibility_job_id" not in ref
+            and "_hermes_compatibility_relay_required" not in ref
         ]
         submitted = False
         try:
@@ -2815,12 +2818,18 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
         _complete_hermes_customer_reply_side_effects(delivery)
         return
 
+    audit_attachments = [
+        ref for ref in delivery.get("attachments") or []
+        if isinstance(ref, dict) and "_hermes_compatibility_job_id" not in ref
+        and "_hermes_compatibility_relay_required" not in ref
+    ]
     try:
         result, _solved_seen = read_ticket_comment_audit(
             ticket_id=zendesk_ticket_id,
             body=content,
             public=True,
-            **({"attachments": delivery["attachments"], "not_before": delivery.get("created_at")} if delivery.get("attachments") else {}),
+            **({"attachments": audit_attachments, "not_before": delivery.get("created_at")}
+               if audit_attachments else {}),
         )
     except ZendeskCommentError:
         return
