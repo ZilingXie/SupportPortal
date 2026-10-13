@@ -1,0 +1,528 @@
+{
+  "captured_at": "2026-10-13T11:13:48.489210+00:00",
+  "source_commit": "c9722399daa347a7a24e0f15fafb8fddaedebe39",
+  "account": "891612554546",
+  "region": "us-east-1",
+  "services": [
+    {
+      "service": "supportportal-preproduction-api",
+      "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:146",
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "taskDefinition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:146",
+          "desired": 1,
+          "running": 1,
+          "pending": 0,
+          "rolloutState": "COMPLETED"
+        }
+      ],
+      "task_definition_selected_env": {
+        "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "AUTOMATION_RELEASE_ID": "r20261013-4ecea04",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+        "APP_BUILD_TIME": "2026-10-13T09:41:50Z",
+        "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+        "HERMES_CASE_WORKFLOW_MODE": "disabled",
+        "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
+        "KNOWLEDGE_SOURCE_ALLOWLIST": "csd_issue:CSD-79923,csd_issue:CSD-79994",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+        "APP_BUILD_REF": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+        "AUTOMATION_IMAGE_DIGEST": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+        "PROMPT_RELEASE_ID": "pr-78386473bd08"
+      },
+      "secret_names": [
+        "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "AGENT_MEMORY_WIKI_BASE_URL",
+        "AGENT_MEMORY_WIKI_SERVICE_ID",
+        "AGENT_MEMORY_WIKI_TEAM_ID",
+        "AGENT_MEMORY_WIKI_USER_KEY",
+        "AUTOMATION_DASHBOARD_SESSION_SECRET",
+        "AUTOMATION_DB_DSN",
+        "AUTOMATION_INTAKE_SHARED_TOKEN",
+        "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET",
+        "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+        "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+        "ENGINEER_SLACK_ACCESS_TOKEN",
+        "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "HERMES_AGENT_API_TOKEN",
+        "HERMES_AGENT_BASE_URL",
+        "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN",
+        "OPENAI_API_KEY",
+        "TICKET_DB_DSN",
+        "ZENDESK_AI_ASSIGNEE_EMAIL",
+        "n8n_request_token",
+        "zendesk_basic_auth"
+      ]
+    },
+    {
+      "service": "supportportal-preproduction-worker",
+      "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:146",
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "taskDefinition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:146",
+          "desired": 1,
+          "running": 1,
+          "pending": 0,
+          "rolloutState": "COMPLETED"
+        }
+      ],
+      "task_definition_selected_env": {
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+        "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+        "HERMES_CASE_WORKFLOW_MODE": "disabled",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+        "WEKNORA_PROMOTION_ENABLED": "0",
+        "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+        "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+        "AUTOMATION_RELEASE_ID": "r20261013-4ecea04",
+        "APP_BUILD_TIME": "2026-10-13T09:41:50Z",
+        "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
+        "KNOWLEDGE_SOURCE_ALLOWLIST": "csd_issue:CSD-79923,csd_issue:CSD-79994",
+        "APP_BUILD_REF": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+        "AUTOMATION_IMAGE_DIGEST": "sha256:9587425beadc871b6b49d92f2f832b407b8cc83e070bbbfdb3107c99f36a8b48",
+        "PROMPT_RELEASE_ID": "pr-78386473bd08"
+      },
+      "secret_names": [
+        "ACCOUNT_SLACK_N8N_STATUS_URL",
+        "ACCOUNT_SLACK_N8N_WEBHOOK_URL",
+        "ACCOUNT_SUSPENSION_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "AGENTRELAY_AGENT_ID",
+        "AGENTRELAY_BASE_URL",
+        "AGENTRELAY_TOKEN",
+        "AGENTRELAY_USERNAME",
+        "AGENT_MEMORY_WIKI_BASE_URL",
+        "AGENT_MEMORY_WIKI_SERVICE_ID",
+        "AGENT_MEMORY_WIKI_TEAM_ID",
+        "AGENT_MEMORY_WIKI_USER_KEY",
+        "AUTOMATION_DB_DSN",
+        "BILLING_AUTOMATION_GRAPH_CLIENT_SECRET",
+        "ENABLEMENT_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "ENGINEER_INVESTIGATION_REPLY_API_KEY",
+        "ENGINEER_INVESTIGATION_REPLY_BASE_URL",
+        "ENGINEER_SLACK_ACCESS_TOKEN",
+        "FRAUD_AUTOMATION_INTERNAL_EMAIL_RECIPIENTS_JSON",
+        "HERMES_AGENT_API_TOKEN",
+        "HERMES_AGENT_BASE_URL",
+        "HERMES_WEKNORA_API_TOKEN",
+        "HERMES_WEKNORA_BASE_URL",
+        "HERMES_WEKNORA_KNOWLEDGE_BASE_ID",
+        "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN",
+        "OPENAI_API_KEY",
+        "RAGFLOW_API_KEY",
+        "RAGFLOW_BASE_URL",
+        "TICKET_DB_DSN",
+        "WEKNORA_API_CONTRACT_JSON",
+        "WEKNORA_API_TOKEN",
+        "WEKNORA_BASE_URL",
+        "WEKNORA_KNOWLEDGE_BASE_ID",
+        "ZENDESK_AI_ASSIGNEE_EMAIL",
+        "ZENDESK_FRAUD_REVIEW_ASSIGNEE_ID",
+        "n8n_request_token",
+        "zendesk_basic_auth"
+      ]
+    },
+    {
+      "service": "supportportal-preproduction-route",
+      "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:144",
+      "desired": 1,
+      "running": 1,
+      "pending": 0,
+      "deployments": [
+        {
+          "status": "PRIMARY",
+          "taskDefinition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:144",
+          "desired": 1,
+          "running": 1,
+          "pending": 0,
+          "rolloutState": "COMPLETED"
+        }
+      ],
+      "task_definition_selected_env": {
+        "AUTOMATION_CASE_ENGINE": "hermes",
+        "APP_BUILD_REF": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+        "AUTOMATION_RELEASE_ID": "r20261013-4ecea04",
+        "APP_BUILD_TIME": "2026-10-13T09:41:50Z",
+        "AUTOMATION_IMAGE_DIGEST": "sha256:d7d3b117c147c61df4cf0f2fa87dfbf8c4bd8ebd44e330b5135e0e3befed3118",
+        "PROMPT_RELEASE_ID": "pr-78386473bd08"
+      },
+      "secret_names": [
+        "AUTOMATION_DB_DSN",
+        "OPENAI_API_KEY",
+        "TICKET_DB_DSN"
+      ]
+    }
+  ],
+  "health": {
+    "live": {
+      "status": "ok",
+      "service": "automation-api",
+      "environment": "preproduction"
+    },
+    "release": {
+      "status": "ok",
+      "provenance": {
+        "environment": "preproduction",
+        "service_role": "api",
+        "runtime_identity": "ip-172-31-41-123.ec2.internal",
+        "release_id": "r20261013-4ecea04",
+        "git_commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
+        "image_digest": "sha256:8bbebbce46f8872d01508712745af4e4766ed51d76fe691a7939d7963511fead",
+        "build_time": "2026-10-13T09:41:50Z",
+        "schema_revision": "automation-ecs-015",
+        "prompt_release_id": "pr-78386473bd08",
+        "db_resource_id": "supportportal-preproduction",
+        "db_schema": "supportportal_preproduction",
+        "job_namespace": "supportportal-preproduction",
+        "contracts": {
+          "intake": "automation-intake-v1",
+          "route": "automation-route-v1",
+          "processing": "automation-processing-v1",
+          "execution": "automation-execution-v1",
+          "heartbeat": "automation-heartbeat-v1"
+        }
+      },
+      "hermes_case_workflow": {
+        "mode": "disabled",
+        "turn_contract_version": "v1",
+        "output_contract_version": "v1",
+        "producer_contract_version": null
+      }
+    },
+    "ready": {
+      "status": "ok",
+      "missing_roles": null,
+      "active_workers": null,
+      "api": null
+    }
+  },
+  "promotions": {
+    "human_review": {
+      "count": 64,
+      "source_ids": [
+        "knowledge-source-summary:csd_issue:CSD-79994:2026-10-05T00:00:19.079000+00:00:None",
+        "knowledge-source-summary:csd_issue:CSD-79994:2026-10-06T00:00:01.539000+00:00:None"
+      ]
+    },
+    "queued": {
+      "count": 0,
+      "source_ids": []
+    },
+    "active": {
+      "count": 0,
+      "source_ids": []
+    },
+    "accepted": {
+      "count": 0,
+      "source_ids": []
+    },
+    "failed": {
+      "count": 0,
+      "source_ids": []
+    },
+    "outcome_unknown": {
+      "count": 0,
+      "source_ids": []
+    },
+    "invalidated": {
+      "count": 0,
+      "source_ids": []
+    },
+    "rejected": {
+      "count": 0,
+      "source_ids": []
+    }
+  },
+  "ssm_metadata": [
+    {
+      "Name": "/supportportal/preproduction/account-suspension-internal-email-recipients",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-22T18:03:43.895000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agent-model",
+      "Type": "String",
+      "Version": 2,
+      "LastModifiedDate": "2026-10-11T11:32:38.694000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agentrelay-agent-id",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-16T13:54:25.442000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agentrelay-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-16T13:52:08.165000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-base-url",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:43.999000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-supportportal-api-base-url",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-08T18:20:34.236000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-tdai-admin-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T12:16:09.974000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/n8n-request-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:39.435000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/weknora-api-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-12T11:35:08.370000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/zendesk-fraud-review-assignee-id",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:22.110000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agent-memory-wiki-base-url",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-11T21:36:33.839000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agent-memory-wiki-service-id",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-11T21:36:35.634000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agentrelay-username",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-16T13:54:27.070000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/automation-db-dsn",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:45.612000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/dashboard-session-secret",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:37.973000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-agent-base-url",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-08T19:18:00.674000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-api-server-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:40.870000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-argus-api-key",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-14T16:54:53.287000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-dashboard-password",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-14T10:22:40.693000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/weknora-api-contract-json",
+      "Type": "String",
+      "Version": 4,
+      "LastModifiedDate": "2026-10-12T11:57:22.837000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/account-slack-n8n-status-url",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:25.281000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agent-memory-wiki-team-id",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-11T21:36:37.451000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/archer-oauth-cookie",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-09T17:46:36.243000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/billing-graph-client-secret",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:28.406000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/engineer-slack-access-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:26.736000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/fraud-internal-email-recipients",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-22T18:03:41.964000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-openai-api-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:10.535000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/weknora-base-url",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-12T11:35:06.429000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/zac-agent-rest-token",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-10-12T18:54:49.427000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/zendesk-ai-assignee-email",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:20.398000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/account-slack-n8n-webhook-url",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:23.618000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/agentrelay-base-url",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-16T13:54:23.925000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/automation-db-migration-dsn",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:47.164000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/automation-intake-shared-token",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-08T14:38:50.332000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/enablement-internal-email-recipients",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-09-22T18:03:45.579000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-callback-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:42.381000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-memory-embedding-api-key-v2",
+      "Type": "SecureString",
+      "Version": 2,
+      "LastModifiedDate": "2026-10-07T22:15:48.121000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-wiki-core-user-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-28T12:13:12.699000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/rag-service-url",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:17.020000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/weknora-knowledge-base-id",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-12T11:35:10.064000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-memory-embedding-api-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:13.775000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/hermes-memory-llm-api-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:12.234000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/knowledge-slack-workspace-domain",
+      "Type": "String",
+      "Version": 1,
+      "LastModifiedDate": "2026-10-11T21:36:39.296000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/openai-api-key",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:08.888000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/rag-service-shared-token",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:18.703000+08:00"
+    },
+    {
+      "Name": "/supportportal/preproduction/zendesk-basic-auth",
+      "Type": "SecureString",
+      "Version": 1,
+      "LastModifiedDate": "2026-09-06T06:32:15.315000+08:00"
+    }
+  ],
+  "terraform_probe": {
+    "terraform_found": false,
+    "note": "terraform executable not found on PATH; zero-drift plan not run"
+  }
+}
