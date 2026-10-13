@@ -888,6 +888,15 @@ verify_knowledge_stage_config_rendered() {
   # definition never proceeds.
   [[ "${ENVIRONMENT}" = "preproduction" ]] || return 0
   local role
+  if [[ -n "${KNOWLEDGE_STAGE_CONFIG}" ]]; then
+    for role in api route worker; do
+      "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
+        verify-knowledge-shared-configuration \
+        --current "${TEMP_DIR}/${role}.current.json" \
+        --rendered "${TEMP_DIR}/${role}.register.json" --role "${role}" >/dev/null \
+        || fail "Knowledge release would change shared ${role} configuration"
+    done
+  fi
   for role in api worker; do
     [[ -f "${TEMP_DIR}/${role}.register.json" ]] || continue
     "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \

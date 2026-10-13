@@ -86,6 +86,7 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_AI_EXECUTION_ENABLED", "1")
     # Stage 6 plan A: these suites exercise the governance pipeline itself;
     # the per-source allowlist is monkeypatched to a pass-through so the
     # pre-existing contracts run unchanged (its own fail-closed behaviour is
@@ -705,14 +706,20 @@ def test_summary_still_fails_closed_on_structural_output_contracts(monkeypatch) 
     assert repository.list_hermes_review_tasks() == []
 
 
-def test_summary_task_is_not_created_outside_real_mode(monkeypatch) -> None:
-    monkeypatch.delenv("HERMES_CASE_WORKFLOW_MODE", raising=False)
+def test_disabled_case_mode_can_queue_but_default_execution_does_not_claim(monkeypatch) -> None:
+    _enable_real_mode(monkeypatch)
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "disabled")
+    monkeypatch.delenv("KNOWLEDGE_AI_EXECUTION_ENABLED", raising=False)
     repository = _repository()
     _start(repository)
 
-    assert queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved") is None
-    assert repository.list_hermes_summary_tasks() == []
-    assert knowledge_workflow_active() is False
+    assert queue_hermes_summary_for_case(repository, engineer_case_id="123-1", trigger="solved")["status"] == "pending"
+    assert knowledge_workflow_active() is True
+    from unittest.mock import MagicMock
+    client = MagicMock()
+    assert drain_hermes_knowledge_tasks(repository, client=client) == 0
+    assert repository.list_hermes_summary_tasks()[0]["status"] == "pending"
+    client.start_run.assert_not_called()
 
 
 def test_master_switch_off_stops_queueing_even_in_real_mode(monkeypatch) -> None:

@@ -197,6 +197,7 @@ RETIRED_WORKER_SECRET_NAMES = {"ARCHER_OAUTH_COOKIE"}
 KNOWLEDGE_GOVERNANCE_SWITCHES = (
     "KNOWLEDGE_SOURCE_INTAKE_ENABLED",
     "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
+    "KNOWLEDGE_AI_EXECUTION_ENABLED",
     "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
     "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED",
     "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED",
@@ -218,15 +219,48 @@ KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS = "300"
 KNOWLEDGE_MASTER_SWITCH_ENV = "HERMES_KNOWLEDGE_WORKFLOW_ENABLED"
 KNOWLEDGE_STAGE_CONFIG_KEYS = frozenset({"master", "switches", "source_allowlist"})
 # A switch may only be on when its prerequisite is on. The layering comes
-# from the runtime contracts (knowledge_dual_write: the six switches are
+# from the runtime contracts (knowledge_dual_write: the seven switches are
 # layered under the master; delivery rows are processed only by the
 # dual-write worker; Slack notifications are sent by the same worker) — a
 # configuration that violates it would queue work nothing consumes.
 KNOWLEDGE_STAGE_SWITCH_DEPENDENCIES = {
+    "KNOWLEDGE_AI_EXECUTION_ENABLED": "KNOWLEDGE_SUMMARY_REVIEW_ENABLED",
     "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
     "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
     "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "KNOWLEDGE_DUALWRITE_WORKER_ENABLED",
 }
+
+
+def verify_knowledge_shared_configuration(current_path: str, rendered_path: str, role: str) -> dict[str, Any]:
+    """Knowledge-only releases may change knowledge config and image provenance."""
+    def configuration(path: str) -> dict[tuple[str, str], str]:
+        definition = json.loads(Path(path).read_text())
+        definition = definition.get("taskDefinition", definition)
+        containers = [c for c in definition.get("containerDefinitions", []) if c.get("name") == role]
+        if len(containers) != 1:
+            raise ValueError(f"{role} must have exactly one container")
+        result = {}
+        owned = set(KNOWLEDGE_GOVERNANCE_SWITCHES) | PROVENANCE_ENV_NAMES | {
+            KNOWLEDGE_MASTER_SWITCH_ENV, "KNOWLEDGE_SOURCE_ALLOWLIST",
+            "KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS", "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN",
+        }
+        for field, value_key in (("environment", "value"), ("secrets", "valueFrom")):
+            for item in containers[0].get(field, []):
+                name = item["name"]
+                if name in owned or name.startswith(("WEKNORA_", "HERMES_WEKNORA_", "AGENT_MEMORY_WIKI_")):
+                    continue
+                key = (field, name)
+                if key in result:
+                    raise ValueError(f"Duplicate shared configuration name: {name}")
+                result[key] = item[value_key]
+        return result
+
+    before, after = configuration(current_path), configuration(rendered_path)
+    changed = sorted({key[1] for key in before.keys() | after.keys() if before.get(key) != after.get(key)})
+    if changed:
+        # Values may contain secrets; only configuration names enter diagnostics.
+        raise ValueError(f"Knowledge release would change shared {role} configuration: {', '.join(changed)}")
+    return {"status": "ok", "role": role, "shared_configuration": "unchanged"}
 
 
 def default_knowledge_stage_config() -> dict[str, Any]:
@@ -241,7 +275,7 @@ def default_knowledge_stage_config() -> dict[str, Any]:
 def load_knowledge_stage_config(source: str | None) -> dict[str, Any]:
     """Load and validate a knowledge stage config from a JSON file path.
 
-    Returns the normalized config: master and all six switches as "0"/"1"
+    Returns the normalized config: master and all seven switches as "0"/"1"
     plus the source allowlist string. Defaults (no source) are all-off with
     an empty allowlist. Invalid files, unknown keys, non-"0"/"1" values,
     dead allowlist entries, and dependency violations are hard errors —
@@ -301,8 +335,7 @@ def load_knowledge_stage_config(source: str | None) -> dict[str, Any]:
         if config["switches"][name] == "1" and config["switches"][prerequisite] != "1":
             raise ValueError(
                 f"knowledge stage config {name}=\"1\" requires {prerequisite}=\"1\" "
-                "(delivery rows and Slack notifications are processed only by the "
-                "dual-write worker)"
+                "(task execution and delivery must have their producer/worker enabled)"
             )
     return config
 REGISTER_TASK_DEFINITION_FIELDS = {
@@ -1722,6 +1755,10 @@ def build_parser() -> argparse.ArgumentParser:
     verify_knowledge.add_argument(
         "--environment", choices=("preproduction",), default="preproduction"
     )
+    verify_shared = subparsers.add_parser("verify-knowledge-shared-configuration")
+    verify_shared.add_argument("--current", required=True)
+    verify_shared.add_argument("--rendered", required=True)
+    verify_shared.add_argument("--role", choices=("api", "route", "worker"), required=True)
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
     bootstrap.add_argument("--manifest", required=True)
@@ -1817,6 +1854,8 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             encoding="utf-8",
         )
         return {"status": "ok", "output": args.output}
+    if args.command == "verify-knowledge-shared-configuration":
+        return verify_knowledge_shared_configuration(args.current, args.rendered, args.role)
     if args.command == "verify-knowledge-stage-config":
         return verify_knowledge_stage_config(
             task_definition_path=args.task_definition,

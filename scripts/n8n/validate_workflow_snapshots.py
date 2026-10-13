@@ -11,6 +11,9 @@ Two enforcement classes (dual-write phase 2, stage 2):
   contract is enforced as errors — every connection endpoint must close, only
   allowlisted node types may appear, every static URL prefix must match the
   source-only allowlist, and any knowledge-base write endpoint is fatal.
+
+Unpublished local candidates are validated separately and cannot carry remote
+version IDs. Historical snapshots retain their original content and URLs.
 """
 
 from __future__ import annotations
@@ -65,9 +68,16 @@ SOURCE_ONLY_URL_ALLOW = (
     re.compile(r"^https://agoraio\.zendesk\.com/api/v2/"),
     re.compile(r"^https://jira\.agoralab\.co/"),
     re.compile(r"^https://oauth\.agoralab\.co/"),
+    # The live Preproduction API host. The chains were originally authored
+    # against support.stellarix.space, which answers nginx 410 Gone for this
+    # path (fixed 2026-10-13, p2-197 stage 6).
     re.compile(
-        r"^https://support\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"
+        r"^https://supportcenter\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"
     ),
+)
+# Immutable pre-repair drafts retain the URL they actually contained.
+HISTORICAL_SOURCE_ONLY_URL_ALLOW = SOURCE_ONLY_URL_ALLOW + (
+    re.compile(r"^https://support\.stellarix\.space/automation/preproduction/v1/knowledge/sources$"),
 )
 DIRECT_WRITE_URL_PATTERNS = (
     ("agentmemory-wiki-api", re.compile(r"/api/v1/knowledge/wiki/", re.IGNORECASE)),
@@ -125,7 +135,8 @@ def _static_url_prefix(url: str) -> str:
 
 
 def _validate_source_only_contract(
-    workflow: dict[str, Any], path: Path, *, source_only: bool, warnings: list[str]
+    workflow: dict[str, Any], path: Path, *, source_only: bool, warnings: list[str],
+    historical: bool = False,
 ) -> None:
     nodes = workflow.get("nodes") or []
     connections = workflow.get("connections") or {}
@@ -174,7 +185,8 @@ def _validate_source_only_contract(
             url_key = parts[-1] if parts else ""
             if source_only and url_key in {"url", "endpoint", "host"}:
                 prefix = _static_url_prefix(value)
-                if prefix and not any(p.search(prefix) for p in SOURCE_ONLY_URL_ALLOW):
+                allowed = HISTORICAL_SOURCE_ONLY_URL_ALLOW if historical else SOURCE_ONLY_URL_ALLOW
+                if prefix and not any(p.search(prefix) for p in allowed):
                     raise ValueError(
                         f"{path}: source-only node {name!r} URL prefix {prefix!r} is not "
                         f"in the source-only allowlist"
@@ -185,8 +197,10 @@ def _validate_snapshot(
     path: Path,
     *,
     workflow_id: str,
-    version_id: str,
+    version_id: str | None,
     snapshot_kind: str,
+    published_version_id: str | None = None,
+    base_version_id: str | None = None,
     source_only: bool = False,
     warnings: list[str] | None = None,
 ) -> int:
@@ -206,6 +220,29 @@ def _validate_snapshot(
     workflow = payload.get("workflow")
     if not isinstance(workflow, dict):
         raise ValueError(f"{path}: workflow object is missing")
+    if "id" in workflow and workflow["id"] != workflow_id:
+        raise ValueError(f"{path}: workflow.id does not match manifest")
+    if snapshot_kind == "local_candidate":
+        if not base_version_id or source.get("baseVersionId") != base_version_id:
+            raise ValueError(f"{path}: local candidate baseVersionId does not match manifest")
+        if any(key in source for key in ("versionId", "publishedVersionId", "draftVersionId")):
+            raise ValueError(f"{path}: local candidate must not claim a remote version")
+        if any(key in workflow for key in ("versionId", "activeVersionId")):
+            raise ValueError(f"{path}: local candidate workflow must not claim a remote version")
+        if (payload.get("restoreNotes") or {}).get("publicationStatus") != "unpublished_local_candidate":
+            raise ValueError(f"{path}: local candidate must declare unpublished status")
+        if source.get("sourceOnly", False) != source_only:
+            raise ValueError(f"{path}: local candidate sourceOnly does not match manifest")
+    else:
+        if "versionId" in workflow and workflow["versionId"] != version_id:
+            raise ValueError(f"{path}: workflow.versionId does not match source/manifest")
+        active_version = published_version_id or (version_id if snapshot_kind == "published" else None)
+        if "activeVersionId" in workflow and workflow["activeVersionId"] != active_version:
+            raise ValueError(f"{path}: workflow.activeVersionId does not match published version")
+        if "publishedVersionId" in source and source["publishedVersionId"] != active_version:
+            raise ValueError(f"{path}: source.publishedVersionId does not match manifest")
+        if snapshot_kind == "draft" and "draftVersionId" in source and source["draftVersionId"] != version_id:
+            raise ValueError(f"{path}: source.draftVersionId does not match manifest")
     nodes = workflow.get("nodes")
     connections = workflow.get("connections")
     if not isinstance(nodes, list) or not isinstance(connections, dict):
@@ -214,7 +251,8 @@ def _validate_snapshot(
         raise ValueError(f"{path}: workflow name mismatch")
     _validate_no_sensitive_values(workflow, path)
     _validate_source_only_contract(
-        workflow, path, source_only=source_only, warnings=warnings
+        workflow, path, source_only=source_only, warnings=warnings,
+        historical=snapshot_kind != "local_candidate",
     )
     redactions = (payload.get("restoreNotes") or {}).get("redactedValues")
     if not isinstance(redactions, list):
@@ -233,7 +271,7 @@ def validate(root: Path) -> tuple[int, int, int]:
 
     warnings: list[str] = []
     expected_files = {manifest_path.resolve()}
-    published_count = draft_count = redaction_count = 0
+    published_count = draft_count = redaction_count = candidate_count = 0
     workflow_ids: set[str] = set()
     for item in workflows:
         workflow_id = item["workflowId"]
@@ -252,6 +290,9 @@ def validate(root: Path) -> tuple[int, int, int]:
         )
         if redactions != item["publishedRedactionCount"]:
             raise ValueError(f"{published_path}: redaction count is stale")
+        published = json.loads(published_path.read_text(encoding="utf-8"))
+        if item.get("nodeCount") != len(published["workflow"]["nodes"]):
+            raise ValueError(f"{published_path}: published nodeCount does not match manifest")
         published_count += 1
         redaction_count += redactions
 
@@ -266,6 +307,7 @@ def validate(root: Path) -> tuple[int, int, int]:
                 workflow_id=workflow_id,
                 version_id=item["draftVersionId"],
                 snapshot_kind="draft",
+                published_version_id=item["publishedVersionId"],
                 source_only=bool(item.get("draftSourceOnly")),
                 warnings=warnings,
             )
@@ -274,9 +316,22 @@ def validate(root: Path) -> tuple[int, int, int]:
             draft_count += 1
             redaction_count += redactions
 
+        candidate_file = item.get("candidateFile")
+        if candidate_file:
+            if item.get("candidateBaseVersionId") != item["draftVersionId"]:
+                raise ValueError(f"{workflow_id}: candidate base must match recorded draft version")
+            candidate_path = root / candidate_file
+            expected_files.add(candidate_path.resolve())
+            _validate_snapshot(
+                candidate_path, workflow_id=workflow_id, version_id=None,
+                snapshot_kind="local_candidate", base_version_id=item["candidateBaseVersionId"],
+                source_only=bool(item.get("candidateSourceOnly")), warnings=warnings,
+            )
+            candidate_count += 1
+
     actual_files = {
         path.resolve()
-        for pattern in ("active/*.json", "drafts/*.json")
+        for pattern in ("active/*.json", "drafts/*.json", "candidates/*.json")
         for path in root.glob(pattern)
     }
     if actual_files != expected_files - {manifest_path.resolve()}:
@@ -288,6 +343,8 @@ def validate(root: Path) -> tuple[int, int, int]:
             f"NOTE: {len(warnings)} LEGACY-EXPOSED finding(s) above belong to "
             "historical published chains; source-only drafts are enforced strictly."
         )
+    if candidate_count:
+        print(f"Validated {candidate_count} unpublished local candidates (not published/draft versions).")
     return published_count, draft_count, redaction_count
 
 

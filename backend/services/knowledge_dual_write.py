@@ -7,12 +7,13 @@ only the failed target.  The first auto-write happens ONLY for a ``new``
 decision that passes the full gate below — everything else parks at human
 review, and ``no_change`` writes nothing.
 
-Six independent switches (all default OFF, fail-closed, and layered UNDER
+Seven independent switches (all default OFF, fail-closed, and layered UNDER
 the existing ``HERMES_KNOWLEDGE_WORKFLOW_ENABLED`` master switch):
 
 - ``KNOWLEDGE_SOURCE_INTAKE_ENABLED``    — the n8n source-snapshot endpoint
 - ``KNOWLEDGE_SUMMARY_REVIEW_ENABLED``   — Summary/Review task production
   (checked inside ``hermes_knowledge_workflow.knowledge_workflow_active``)
+- ``KNOWLEDGE_AI_EXECUTION_ENABLED``    — Summary/Review consumption
 - ``KNOWLEDGE_DUALWRITE_WORKER_ENABLED`` — the dual-target delivery worker
 - ``KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED`` — the AgentMemory target
 - ``KNOWLEDGE_WEKNORA_DELIVERY_ENABLED`` — the WeKnora target
@@ -33,6 +34,7 @@ LOGGER = logging.getLogger(__name__)
 
 KNOWLEDGE_SOURCE_INTAKE_ENABLED_ENV = "KNOWLEDGE_SOURCE_INTAKE_ENABLED"
 KNOWLEDGE_SUMMARY_REVIEW_ENABLED_ENV = "KNOWLEDGE_SUMMARY_REVIEW_ENABLED"
+KNOWLEDGE_AI_EXECUTION_ENABLED_ENV = "KNOWLEDGE_AI_EXECUTION_ENABLED"
 KNOWLEDGE_DUALWRITE_WORKER_ENABLED_ENV = "KNOWLEDGE_DUALWRITE_WORKER_ENABLED"
 KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED_ENV = "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED"
 KNOWLEDGE_WEKNORA_DELIVERY_ENABLED_ENV = "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED"
@@ -59,6 +61,10 @@ def knowledge_source_intake_enabled() -> bool:
 
 def knowledge_summary_review_enabled() -> bool:
     return _switch(KNOWLEDGE_SUMMARY_REVIEW_ENABLED_ENV)
+
+
+def knowledge_ai_execution_enabled() -> bool:
+    return _switch(KNOWLEDGE_AI_EXECUTION_ENABLED_ENV)
 
 
 def knowledge_dualwrite_worker_enabled() -> bool:
@@ -687,6 +693,7 @@ def _find_promotion(repository: Any, promotion_id: str) -> dict[str, Any] | None
 __all__ = [
     "KNOWLEDGE_SOURCE_INTAKE_ENABLED_ENV",
     "KNOWLEDGE_SUMMARY_REVIEW_ENABLED_ENV",
+    "KNOWLEDGE_AI_EXECUTION_ENABLED_ENV",
     "KNOWLEDGE_DUALWRITE_WORKER_ENABLED_ENV",
     "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED_ENV",
     "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED_ENV",
@@ -703,6 +710,7 @@ __all__ = [
     "knowledge_slack_notify_enabled",
     "knowledge_source_intake_enabled",
     "knowledge_summary_review_enabled",
+    "knowledge_ai_execution_enabled",
     "knowledge_weknora_delivery_enabled",
     "resolve_knowledge_candidate",
 ]

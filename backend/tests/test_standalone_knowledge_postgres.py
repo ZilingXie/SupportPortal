@@ -69,6 +69,25 @@ def _fail_row(repository: PostgresTicketRepository, task_id: str) -> None:
     )
 
 
+def test_ai_execution_gate_preserves_postgres_pending_lease(repository, monkeypatch):
+    from unittest.mock import MagicMock
+    from backend.services.knowledge_standalone_workflow import drain_standalone_knowledge_tasks
+
+    monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
+    monkeypatch.setenv("HERMES_CASE_WORKFLOW_MODE", "disabled")
+    monkeypatch.delenv("KNOWLEDGE_AI_EXECUTION_ENABLED", raising=False)
+    monkeypatch.setenv("KNOWLEDGE_DUALWRITE_WORKER_ENABLED", "1")
+    task_id = _seed_summary(repository)
+    before = repository.get_standalone_summary_task(task_id)
+    client = MagicMock()
+    assert drain_standalone_knowledge_tasks(repository, client=client) == {"executed": 0, "failed": 0}
+    assert repository.get_standalone_summary_task(task_id) == before
+    client.start_run.assert_not_called()
+
+
 def test_requeue_revives_failed_with_attempt_suffix(repository: PostgresTicketRepository) -> None:
     task_id = _seed_summary(repository)
     _fail_row(repository, task_id)

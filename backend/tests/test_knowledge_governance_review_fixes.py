@@ -122,6 +122,7 @@ def _enable_real_mode(monkeypatch) -> None:
     monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
     monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_AI_EXECUTION_ENABLED", "1")
     # Stage 6 plan A: this legacy governance suite exercises the pipeline
     # itself; source admission is covered separately by the allowlist suite.
     monkeypatch.setenv(

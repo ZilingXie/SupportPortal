@@ -31,6 +31,9 @@ def _stage6_case_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the legacy case-bound queue test explicit under stage-6 gating."""
 
     monkeypatch.setenv("HERMES_KNOWLEDGE_WORKFLOW_ENABLED", "1")
+    monkeypatch.setenv("KNOWLEDGE_SUMMARY_REVIEW_ENABLED", "1")
+    monkeypatch.setenv("HERMES_AGENT_BASE_URL", "http://hermes.test")
+    monkeypatch.setenv("HERMES_AGENT_API_TOKEN", "test-token")
     monkeypatch.setenv("KNOWLEDGE_SOURCE_ALLOWLIST", "case_binding:*")
 
 

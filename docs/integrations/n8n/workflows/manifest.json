@@ -69,7 +69,10 @@
       "draftFile": "drafts/GgDxPEWtW7ltT5BW.draft.json",
       "publishedRedactionCount": 3,
       "draftRedactionCount": 3,
-      "draftSourceOnly": true
+      "draftSourceOnly": true,
+      "candidateFile": "candidates/GgDxPEWtW7ltT5BW.candidate.json",
+      "candidateBaseVersionId": "6fed47a6-0192-4356-af03-c8c5820b2cb9",
+      "candidateSourceOnly": true
     },
     {
       "workflowId": "MM3Z3T469Eru3Q1I",
@@ -85,7 +88,10 @@
       "draftFile": "drafts/MM3Z3T469Eru3Q1I.draft.json",
       "publishedRedactionCount": 1,
       "draftRedactionCount": 0,
-      "draftSourceOnly": true
+      "draftSourceOnly": true,
+      "candidateFile": "candidates/MM3Z3T469Eru3Q1I.candidate.json",
+      "candidateBaseVersionId": "6a262f9a-c6bc-4173-88a3-c96d60025a6f",
+      "candidateSourceOnly": true
     },
     {
       "workflowId": "dV5vNA6l1MbDMHZt",
@@ -186,7 +192,7 @@
       "publishedVersionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
       "draftVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
       "draftMatchesPublished": false,
-      "nodeCount": 10,
+      "nodeCount": 13,
       "publishedFile": "active/r1HIW8UNuCabiOPn.published.json",
       "draftFile": "drafts/r1HIW8UNuCabiOPn.draft.json",
       "publishedRedactionCount": 0,

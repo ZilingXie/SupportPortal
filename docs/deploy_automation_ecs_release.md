@@ -370,6 +370,7 @@ WeKnora 并行双写链的知识治理开关只有**一个正式入口**：发�
   "switches": {
     "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "0|1",
     "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0|1",
+    "KNOWLEDGE_AI_EXECUTION_ENABLED": "0|1",
     "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0|1",
     "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0|1",
     "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0|1",
@@ -382,10 +383,34 @@ WeKnora 并行双写链的知识治理开关只有**一个正式入口**：发�
 渲染时（`backend/scripts/automation_ecs_deploy.py`
 `load_knowledge_stage_config`）拒绝：未知键、非 `"0"/"1"` 字符串值、
 `parse_allowlist` 会静默丢弃的死 allowlist 条目、master 关闭时任一分开关
-开启（六开关在 `knowledge_dual_write` 合同下分层于
+开启（七开关在 `knowledge_dual_write` 合同下分层于
 `HERMES_KNOWLEDGE_WORKFLOW_ENABLED`）、delivery/Slack 开启而 dual-write
 worker 关闭（投递行与 Slack 通知只由该 worker 消费）。allowlist 条目校验
 复用 `backend/services/knowledge_source_allowlist.py::validate_allowlist`。
+
+2026-10-13 修复合同 A：`KNOWLEDGE_SUMMARY_REVIEW_ENABLED` 仅允许创建任务；
+`KNOWLEDGE_AI_EXECUTION_ENABLED` 缺省为 `0`，仅在 Summary/Review 开启时允许设为 `1`。
+两个知识 drain（Case 与 standalone）以及正式 worker 消费入口都检查独立执行门。
+知识就绪条件为 master、Summary/Review 和已配置的 Hermes gateway，不再依赖旧 typed
+`HERMES_CASE_WORKFLOW_MODE=real`；native Hermes 保持 `AUTOMATION_CASE_ENGINE=hermes`
+及 `HERMES_CASE_WORKFLOW_MODE=disabled`，并显式启用 agent/persona。
+
+层 2：master/intake/summary_review 开、两样本精确 allowlist、AI execution 与双写 worker 关，
+重投只建 pending；层 3：只开启 AI execution，Summary/Review 开始真实调用 AI，delivery 仍关；
+后续开启双写 worker 和目标投递开关、Slack 通知按原顺序推进。人工 Review 和全量人工停点保留。
+
+携带 `--knowledge-stage-config` 的发布在渲染后及激活前，对三角色调用
+`verify-knowledge-shared-configuration`：除知识配置与镜像/Prompt provenance 外，
+其他 environment 和 secret 引用必须与发布前定义一致，否则注册/激活被阻断。
+错误只报告配置名称，不输出值。资源、schema、Prompt、digest 继续走既有发布门禁。
+
+新阶段或部分构建失败后需要新 immutable release：使用
+`--release-id rYYYYMMDD-<commit7>-<stage>`（例如 `-layer2` / `-layer3`）生成独立 tag 和 checkpoint。
+不指定则保留原日期+SHA 命名；同名已存在仍拒绝。只有配置身份完全不变的已验证发布可用
+`--resume --release-id <原 ID>` 复用，其 manifest/publish-record 会重新校验；部署再校验 ECR digest。
+多 checkpoint 时必须指定 ID。不得删除或归档 checkpoint 后以同名重新构建；immutable tag 不会因此解除。
+CodeBuild 任一角色 build/push 或 digest 查询失败立即停止，不会查询失败角色旧 tag 来宣称成功，
+也不会继续生成或上传 manifest/publish-record。构建仅部分成功且无完整证据时保留失败记录并选择新 ID。
 
 配置流转：管线启动即校验并把规范化内容写入 checkpoint
 `identity.mode.knowledge_stage`（`automation_ecs_release_pipeline.py`；

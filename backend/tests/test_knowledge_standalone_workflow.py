@@ -36,6 +36,7 @@ def _enable_real_mode(env: dict) -> None:
         "HERMES_AGENT_API_TOKEN": "test-token",
         "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
         "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+        "KNOWLEDGE_AI_EXECUTION_ENABLED": "1",
         # Stage 6 plan A: pipeline-contract suites run with a permissive
         # allowlist via the REAL env surface (the fail-closed default is
         # covered by the stage-6 allowlist tests).
@@ -190,6 +191,10 @@ class StandaloneWorkflowTests(unittest.TestCase):
         self.assertEqual(len(self.repository.list_standalone_summary_tasks()), 2)
 
     def test_end_to_end_summary_review_promotion(self) -> None:
+        import os
+        from unittest.mock import patch
+
+        os.environ["HERMES_CASE_WORKFLOW_MODE"] = "disabled"
         task = queue_standalone_summary_for_source(
             self.repository, intake=dict(self.intake), now_value="2026-10-02T00:01:00+00:00"
         )
@@ -197,6 +202,12 @@ class StandaloneWorkflowTests(unittest.TestCase):
                          standalone_summary_task_id_for("csd_issue", "CSD-77", CSD_INTAKE["source_updated_at"]))
 
         client = _ScriptedHermes(SUMMARY_OUTPUT, REVIEW_OUTPUT)
+        # Layer 2: real task remains pending; neither drain claims it nor calls AI.
+        with patch.dict(os.environ, {"KNOWLEDGE_AI_EXECUTION_ENABLED": "0", "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "1"}):
+            self.assertEqual(drain_standalone_knowledge_tasks(self.repository, client=client), {"executed": 0, "failed": 0})
+            self.assertEqual(self.repository.list_standalone_summary_tasks()[0]["status"], "pending")
+            self.assertEqual(client.runs, [])
+        # Layer 3: independent AI switch is on, typed Case remains disabled.
         result = drain_standalone_knowledge_tasks(
             self.repository,
             client=client,

@@ -71,6 +71,10 @@ def _install_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
             if args[:2] == ["login", "--username"]:
                 sys.stdin.read()
             elif args[:2] == ["buildx", "build"]:
+                role = args[args.index("--tag") + 1].rsplit(":", 1)[1].split("-", 1)[0]
+                if os.environ.get("CODEBUILD_TEST_FAIL_ROLE") == role:
+                    print("image tag already exists and is immutable", file=sys.stderr)
+                    raise SystemExit(17)
                 print("noisy docker stdout after build")
             elif args[:2] in (["buildx", "create"], ["buildx", "use"], ["buildx", "inspect"]):
                 pass
@@ -130,8 +134,9 @@ def _install_fake_tools(tmp_path: Path) -> tuple[Path, Path]:
 
 
 @pytest.mark.parametrize("hotfix_mode", [False, True])
+@pytest.mark.parametrize("failure_role", [None, "api", "route", "worker"])
 def test_codebuild_build_emits_registry_manifest_and_publish_record(
-    tmp_path: Path, hotfix_mode: bool
+    tmp_path: Path, hotfix_mode: bool, failure_role: str | None
 ) -> None:
     repo, commit = _prepare_repo(tmp_path)
     fake_bin, state = _install_fake_tools(tmp_path)
@@ -155,6 +160,8 @@ def test_codebuild_build_emits_registry_manifest_and_publish_record(
     if hotfix_mode:
         environment["AUTOMATION_RELEASE_HOTFIX_BASELINE"] = "a" * 40
         environment["AUTOMATION_RELEASE_HOTFIX_AUTHORIZED"] = commit
+    if failure_role:
+        environment["CODEBUILD_TEST_FAIL_ROLE"] = failure_role
     result = subprocess.run(
         [str(repo / "deployment/codebuild_build_automation_release.sh")],
         cwd=repo,
@@ -162,8 +169,21 @@ def test_codebuild_build_emits_registry_manifest_and_publish_record(
         text=True,
         capture_output=True,
     )
-    assert result.returncode == 0, result.stdout + result.stderr
     output = state / "release-evidence"
+    if failure_role:
+        assert result.returncode != 0
+        assert f"Build/push failed for {failure_role}" in result.stderr
+        aws_calls = [json.loads(line) for line in (state / "aws.jsonl").read_text().splitlines()]
+        assert not any(call[:2] == ["s3api", "put-object"] for call in aws_calls)
+        assert not any(call[:2] == ["ecr", "describe-images"] and f"imageTag={failure_role}-release-42" in call for call in aws_calls)
+        assert not (output / "release-manifest.json").exists()
+        assert not (output / "publish-record.json").exists()
+        docker_calls = [json.loads(line) for line in (state / "docker.jsonl").read_text().splitlines()]
+        builds = [call for call in docker_calls if call[:2] == ["buildx", "build"]]
+        assert len(builds) == ["api", "route", "worker"].index(failure_role) + 1
+        assert not any(call[0] == "run" for call in docker_calls)
+        return
+    assert result.returncode == 0, result.stdout + result.stderr
     manifest = json.loads((output / "release-manifest.json").read_text(encoding="utf-8"))
     record = json.loads((output / "publish-record.json").read_text(encoding="utf-8"))
     assert manifest["schema_version"] == "automation-release-v2"
