@@ -31,5 +31,5 @@
   "deployment": "not performed",
   "business": "not performed; no real customer writes",
   "zac": "synthetic acquisition seam only; actual protocol waiting-for-evidence",
-  "review": "independent acceptance pending"
+  "review": "independent code acceptance passed at reviewed_full_head; documentation status synchronized in follow-up commit"
 }

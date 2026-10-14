@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T03:13:31Z",
-  "source_base_commit": "32830f375170d0e3f7bc52b19e749dbc686716b6",
-  "registry_digest": "ca312ccd64c611bcb3dcf1abcd530104a8b07ebef8653241759e6f7106c40d0c",
+  "generated_at": "2026-10-14T03:23:44Z",
+  "source_base_commit": "a5c172c5897540bd205b021f8f0a7c0770ef90d3",
+  "registry_digest": "1e98a33d9f26ea83393aff3cd1f6712bd3924de890f9341d7ab30af70c6b696a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -17784,9 +17784,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；实现完成待独立代码验收，尚未部署。",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过，尚未部署。",
       "status": "blocked",
-      "next_action": "先由聊天 01a1349a-c8e9-7183-829d-6b158e735eb5 独立验收 Investigation 附件统一管理（Slack）R2 Draft PR完整HEAD与云端补丁包。通过后按正式Preproduction流程回读Hermes镜像/profile、部署并验证C1-C7。原F-R1-DEPLOY-01和真实业务门禁继续保留；Zac实际获取协议waiting-for-evidence；Production另需授权。",
+      "next_action": "按正式Preproduction流程回读Hermes镜像/profile、部署并验证C1-C7；代码合并门禁已由独立验收释放。原F-R1-DEPLOY-01和真实业务门禁继续保留；Zac实际获取协议waiting-for-evidence；Production另需授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-14",
