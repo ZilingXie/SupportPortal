@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T09:23:51Z",
-  "source_base_commit": "ee6b8e94659a36218b1d90b0a90149db42c519fa",
-  "registry_digest": "bca483d966e94543bdfeac13316482d4ece6a976f761688144aa680fb2f7458a",
+  "generated_at": "2026-10-14T10:15:30Z",
+  "source_base_commit": "d421581bd45aef33c3fdd57a7cb97e95fe36a538",
+  "registry_digest": "8229bc2e0afa7f426f78586519d92ccd4c80bc8f1a384a94ba08095c914dc078",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1719,6 +1719,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
         },
         {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1500",
+          "label": "显式 Enablement 模式发布修正；main@48bca0c9"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/evidence/enablement-archer-mode-switch/evidence.json",
+          "label": "r20261014-48bca0c9-e3-archer 部署与独立回读通过；E3 第三轮失败即停"
+        },
+        {
           "type": "document",
           "url": "docs/plans/enablement-archer-mode-switch.md",
           "label": "当前 v1 合同、执行顺序和证据边界"
@@ -1837,7 +1847,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "status": "active",
       "task_count": 49,
       "done_count": 25,
-      "blocked_count": 1
+      "blocked_count": 2
     },
     {
       "schema_version": 2,
@@ -18613,8 +18623,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "title": "Enablement 显式 Archer 模式切换与 E3 复测",
       "summary": "保留现行 Knowledge 与文件关闭配置，修正正式发布共享配置检查对显式 Enablement 模式切换的拦截，再发布 Preproduction 并运行完整 E3。",
-      "status": "active",
-      "next_action": "完成真实 renderer/CLI/shell 验证及 PR 合并；新 immutable release 切换 Archer，运行新 E3 工单；业务失败立即停止。",
+      "status": "blocked",
+      "next_action": "Archer 切换及 Preproduction 发布已完成；E3 14061 第三轮因等待 published job 超时，已按失败即停收口。另行对齐测试载具与当前回合 Hermes 投递凭据后，才安排新工单完整复测。",
       "owner": "codex",
       "created_at": "2026-10-14",
       "updated_at": "2026-10-14",
@@ -18623,8 +18633,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Preflight 和部署 checkpoint 绑定 Enablement mode，正式发布后读回 archer 与所有保留配置。",
         "E3 用新 Preproduction 工单运行；遇业务失败立即停止；本地真实审批和独立回读不绕过。"
       ],
-      "blockers": [],
+      "blockers": [
+        "E3-F1：第三轮实际 Persona 回复已 delivered，但兼容 job 为 persona_v8_queued；E3 只等 published，完整业务链未验证。"
+      ],
       "evidence": [
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1500",
+          "label": "显式 Enablement 模式发布修正；main@48bca0c9"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/evidence/enablement-archer-mode-switch/evidence.json",
+          "label": "r20261014-48bca0c9-e3-archer 部署与独立回读通过；E3 第三轮失败即停"
+        },
         {
           "type": "document",
           "url": "docs/plans/enablement-archer-mode-switch.md",
