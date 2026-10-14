@@ -7,7 +7,7 @@
   "title": "Investigation 主动调查与能力收敛 v1",
   "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
   "status": "active",
-  "next_action": "Draft PR #1502 (SupportPortal @ c7c03c4119c5a2e2a3449c22dd6ca5facdeed151) 与 linked Hermes deploy Draft PR #34 (@ fcad33db9ee60cf1050be1687c764c81bff57f2b) 已推送；已交 codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e 独立复审。复审通过前不合并、不部署、不发真实业务消息。",
+  "next_action": "代码已合入 main；Preproduction release r20261014-8c15123 evidence=complete。现交指定线程 codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e 独立验收；真实 Argus/Zac/Slack/Zendesk/客户业务验证仍未授权。",
   "owner": "codex",
   "created_at": "2026-10-14",
   "updated_at": "2026-10-14",
@@ -44,13 +44,26 @@
     {
       "type": "pr",
       "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
-      "label": "SupportPortal Draft PR #1502 @ c7c03c4119c5a2e2a3449c22dd6ca5facdeed151；Hermes linked Draft PR #34 @ fcad33db9ee60cf1050be1687c764c81bff57f2b；已发送独立复审线程"
+      "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+    },
+    {
+      "type": "deployment",
+      "label": "ECS Preproduction 正式发布",
+      "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+      "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction 只读健康与发布对账",
+      "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+      "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
     }
   ],
   "source_refs": [
     "docs/plans/investigation-proactive-v1.md",
     "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1",
-    "SupportPortal HEAD c7c03c4119c5a2e2a3449c22dd6ca5facdeed151",
-    "Hermes deploy HEAD fcad33db9ee60cf1050be1687c764c81bff57f2b"
+    "SupportPortal merged main 8c151238f83e866fdb28680d5f8e476c858b1187",
+    "Hermes deploy merged main 17284d3e69726008028dc9ca9b35455b5f13ad0",
+    ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json"
   ]
 }
