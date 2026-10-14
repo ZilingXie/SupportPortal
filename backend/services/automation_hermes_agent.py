@@ -135,7 +135,8 @@ def toolsets_for_phase(
     if phase == HermesTurnPhase.WORK.value and direction == "investigation":
         if str(session_kind or "case") == "adhoc":
             return ADHOC_WORK_TOOLSETS
-        return INVESTIGATION_WORK_TOOLSETS
+        from backend.services.investigation_case_files import enabled
+        return INVESTIGATION_WORK_TOOLSETS + (["supportportal_files"] if enabled() else [])
     return PHASE_TOOLSETS.get(phase)
 
 
@@ -1862,8 +1863,11 @@ class HermesAgentTurnProcessor:
             # it), so live env/config changes must not leak into the retry.
             pinned_model = str(turn_run.get("agent_model") or "").strip()
             pinned_effort = str(turn_run.get("reasoning_effort") or "").strip()
+            from backend.services.investigation_case_files import run_scope
+            file_scope = run_scope(self.store, turn, binding, str(turn_run["request_id"]), phase)
             try:
                 started = self.client.start_run(
+                    **({"supportportal_file_scope": file_scope} if file_scope else {}),
                     session_id=str(binding.get("hermes_session_id") or ""),
                     instructions=instructions,
                     input_text=input_text,
@@ -2211,6 +2215,7 @@ class HermesAgentTurnProcessor:
             "event_id": payload.event.event_id, "execution_id": payload.execution_id,
             "comment_id": trigger.id, "turn_id": payload.turn_id,
             "body": trigger.body, "author_type": trigger.author.role or "customer",
+            "author_id": trigger.author.id,
             "attachments": [item.model_dump(mode="json") for item in trigger.attachments],
             "source_updated_at": trigger.created_at.isoformat(),
             "channel_id": binding.get("slack_channel_id"), "thread_ts": binding.get("slack_thread_ts"),
@@ -2221,7 +2226,7 @@ class HermesAgentTurnProcessor:
                 raise HermesTurnStateError(payload.turn_id, "customer notification turn lost fence")
             if before_external is not None:
                 before_external()
-        outcome = deliver_native_notification(self.repository, scope=scope, key=key,
+        outcome = deliver_native_notification(self.repository, scope=scope, key=key, store=self.store,
             claim_token=str((getattr(self, "_active_job_info", {}) or {}).get("claim_token") or payload.turn_id), before_external=fence)
         self.store.append_execution_event(payload.execution_id, "native.customer_comment_notification", {"turn_id": payload.turn_id, "comment_id": trigger.id, "key": key, **outcome})
         if outcome.get("status") == "failed" and outcome.get("failure_code") not in {"native_thread_binding_missing", "native_thread_channel_mismatch", "native_slack_outbound_disabled"}:

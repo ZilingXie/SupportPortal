@@ -2762,8 +2762,18 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
                 if not current_draft or current_draft.get("status") != "queued":
                     raise ZendeskCommentError("permanent", error_code="attachment_draft_stale")
                 for ref in attachments:
-                    data = download_slack_attachment(ref)
-                    receipt = upload_ticket_attachment(filename=ref["file_name"], data=data, content_type=ref["content_type"], return_receipt=True)
+                    if ref.get("map_id"):
+                        import tempfile
+                        from backend.services.investigation_case_files import download, reference
+                        row = coordination.get_case_file(zendesk_ticket_id, ref["map_id"])
+                        if not row or any(reference(row).get(k) != ref.get(k) for k in ("map_version", "slack_file_id", "managed_filename", "slack_filename", "size_bytes", "case_id", "content_type", "original_filename", "channel_id", "thread_ts", "source_message_ts", "actor_id", "source_event_id", "source_system")):
+                            raise ZendeskCommentError("permanent", error_code="attachment_snapshot_changed")
+                        with tempfile.TemporaryFile() as data:
+                            download(coordination, row, output=data)
+                            receipt = upload_ticket_attachment(filename=ref["managed_filename"], data=data, content_type=ref["content_type"], return_receipt=True)
+                    else:
+                        data = download_slack_attachment(ref)
+                        receipt = upload_ticket_attachment(filename=ref["file_name"], data=data, content_type=ref["content_type"], return_receipt=True)
                     uploads.append(receipt["token"])
                     ref["zendesk_attachment_id"] = receipt["attachment_id"]
                 if not ticket_repository.checkpoint_zendesk_delivery_attachments(account_case_id=account_case_id, message_id=message_id, attachments=attachments):

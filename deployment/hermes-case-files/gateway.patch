@@ -1,0 +1,109 @@
+--- a/hermes-agent/gateway/platforms/api_server_runs.py
++++ b/hermes-agent/gateway/platforms/api_server_runs.py
+@@ -838,7 +838,8 @@
+                 approval_token = None
+                 session_tokens = []
+                 room_policy_token = None
+-                with self._profile_scope(request_profile):
++                from supportportal_file_context import bind_file_scope
++                with self._profile_scope(request_profile), bind_file_scope(body.get("supportportal_file_scope"), session_id, workspace_dir):
+                     try:
+                         # Bind approval/session identity for this API run via
+                         # contextvars so concurrent runs do not share process
+--- a/hermes-agent/tools/skills_tool.py
++++ b/hermes-agent/tools/skills_tool.py
+@@ -736,7 +736,8 @@
+         # Per-call shallow copies: callers mutate the returned dicts
+         # (e.g. web_server annotates s["enabled"]/s["usage"]) — handing
+         # out the cached objects would poison the cache for everyone else.
+-        return [dict(s) for s in cached[2]]
++        from supportportal_file_context import skill_allowed
++        return [dict(s) for s in cached[2] if skill_allowed(s["name"])]
+
+     skills = []
+     seen_names: set = set()
+@@ -807,7 +808,8 @@
+     # re-scans rather than serving the torn result past the TTL). Same
+     # shallow-copy contract as the hit path — the caller may mutate.
+     _SKILLS_CACHE[cache_key] = (signature, now, skills)
+-    return [dict(s) for s in skills]
++    from supportportal_file_context import skill_allowed
++    return [dict(s) for s in skills if skill_allowed(s["name"])]
+
+
+ def _sort_skills(skills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+@@ -850,6 +852,8 @@
+         except Exception:
+             logger.debug("Plugin skill listing failed", exc_info=True)
+
++        from supportportal_file_context import skill_allowed
++        all_skills = [s for s in all_skills if skill_allowed(s["name"])]
+         if not all_skills:
+             return json.dumps(
+                 {
+@@ -1109,6 +1113,9 @@
+         # path (e.g. C:\skills\foo) can't be reinterpreted as a plugin
+         # namespace, and so a traversal/absolute name never reaches the
+         # search-dir join that builds direct_path below.
++        from supportportal_file_context import skill_allowed
++        if not skill_allowed(name):
++            return json.dumps({"success": False, "error": "case_file_scope_required"})
+         lookup_error = _skill_lookup_path_error(name)
+         if lookup_error:
+             return json.dumps(
+--- a/deploy-ecs/supportportal_agent_tools/__init__.py
++++ b/deploy-ecs/supportportal_agent_tools/__init__.py
+@@ -98,6 +98,7 @@
+                 "turn_id": {"type": "string"},
+                 "content": {"type": "string", "description": "The full customer reply text."},
+                 "basis": {"type": "object", "description": "What the reply is based on (facts, tool results)."},
++                "selected_file_ids": {"type": "array", "items": {"type": "integer"}, "description": "Explicit Map IDs for the approved Investigation reply, [] for none."},
+             },
+             "required": ["turn_id", "content"],
+         },
+@@ -178,6 +179,8 @@
+
+
+ def register(ctx) -> None:
++    from .case_files_bridge import register as register_files
++    register_files(ctx)
+     for name, toolset, schema, emoji in _TOOLS:
+         ctx.register_tool(
+             name=name,
+--- a/deploy-ecs/supportportal_agent_tools/plugin.yaml
++++ b/deploy-ecs/supportportal_agent_tools/plugin.yaml
+@@ -14,3 +14,8 @@
+   - support_save_reply_draft
+   - support_request_publish
+   - support_escalate_human
++  - support_case_files_list
++  - support_case_files_download
++  - support_case_files_read
++  - support_case_files_search
++  - support_case_files_publish
+--- a/deploy-ecs/supportportal_agent_tools/__init__.py
++++ b/deploy-ecs/supportportal_agent_tools/__init__.py
+@@ -28,6 +28,8 @@
+     ],
+     "supportportal_persona": ["support_get_case_context", "support_save_reply_draft", "support_escalate_human"],
+ }
++
++TOOLSETS["supportportal_files"] = ["support_case_files_" + action for action in ("list", "download", "read", "search", "publish")]
+
+ _TOOLS: tuple[tuple[str, dict[str, Any], str, str], ...] = (
+     (
+--- a/deploy-ecs/supportportal_agent_tools/__init__.py
++++ b/deploy-ecs/supportportal_agent_tools/__init__.py
+@@ -146,6 +146,12 @@
+         if not turn_id:
+             return json.dumps({"error": "turn_id is required"})
+         body = dict(args)
++        if tool_name == "save_reply_draft" and args.get("selected_file_ids"):
++            from supportportal_file_context import current_scope
++            scope = current_scope()
++            if not scope or scope.get("phase") != "persona" or turn_id != scope["turn_id"]:
++                return json.dumps({"ok": False, "code": "file_scope_invalid"})
++            body["file_scope"] = scope["capability"]
+         # Authenticated by the SupportPortal intake Bearer middleware; the
+         # token is the shared intake secret (see p2-148 security note).
+         request = urllib.request.Request(

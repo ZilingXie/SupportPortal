@@ -226,8 +226,14 @@ def handle_slack_hermes_message(
         attachments = validate_slack_files(payload.get("files", []), channel_id=channel_id,
             thread_ts=thread_ts, message_ts=message_ts, actor=actor, source_event_id=source_event_id)
         from backend.services.investigation_attachments import download_slack_attachment
+        from backend.services.investigation_case_files import enabled as file_management_enabled
         for ref in attachments:
-            download_slack_attachment(ref)  # Availability check only; bytes are not retained or read by the model.
+            if file_management_enabled():
+                import tempfile
+                with tempfile.TemporaryFile() as temporary:
+                    download_slack_attachment(ref, output=temporary)
+            else:
+                download_slack_attachment(ref)  # Legacy availability check.
     except (ValueError, OSError, EngineerSlackDeliveryError) as exc:
         if repository is not None and source_event_id and actor and message_ts:
             from backend.services.automation_native_notifications import deliver_native_notification, now
@@ -242,6 +248,9 @@ def handle_slack_hermes_message(
         binding = store.get_hermes_case_binding(ticket_id) or {}
         if binding.get("session_kind", "case") != "case":
             return _invalid("attachments require a bound Investigation case")
+    from backend.services.investigation_case_files import enabled as case_files_enabled, register_engineer
+    if attachments and case_files_enabled():
+        attachments = register_engineer(store, ticket_id, attachments, team_id)
     if close_requested and (not source_event_id or not actor or not message_ts):
         return _invalid("close requires the authenticated Slack source event, actor, and message timestamp")
     if close_requested and (not expected_team_id or not expected_channel_id):
@@ -298,6 +307,11 @@ def handle_slack_hermes_message(
         return _already("busy", "a turn is already running for this case")
     except HermesTurnStateError as exc:
         return _invalid(str(exc))
+    if attachments and case_files_enabled():
+        for ref in attachments:
+            row = store.get_case_file(ticket_id, ref["map_id"])
+            if not row["provenance"].get("turn_id"):
+                store.update_case_file(ticket_id, row["id"], provenance={**row["provenance"], "turn_id": created["turn_id"]})
     LOGGER.info(
         "hermes_slack_feedback ticket_id=%s feedback_turn_id=%s", ticket_id, created["turn_id"]
     )
