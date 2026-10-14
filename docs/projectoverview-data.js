@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T08:37:40Z",
-  "source_base_commit": "e237d5366a6792318d4a054238acd11c7c6112b2",
-  "registry_digest": "de9870180f06412212c2d732ec0449f206e7224babc616d3a865c419c4658305",
+  "generated_at": "2026-10-14T09:23:51Z",
+  "source_base_commit": "ee6b8e94659a36218b1d90b0a90149db42c519fa",
+  "registry_digest": "bca483d966e94543bdfeac13316482d4ece6a976f761688144aa680fb2f7458a",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1719,6 +1719,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
         },
         {
+          "type": "document",
+          "url": "docs/plans/enablement-archer-mode-switch.md",
+          "label": "当前 v1 合同、执行顺序和证据边界"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_enablement_mode_release_guard.py",
+          "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1825,7 +1835,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 48,
+      "task_count": 49,
       "done_count": 25,
       "blocked_count": 1
     },
@@ -18592,6 +18602,38 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
           "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-202",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Enablement 显式 Archer 模式切换与 E3 复测",
+      "summary": "保留现行 Knowledge 与文件关闭配置，修正正式发布共享配置检查对显式 Enablement 模式切换的拦截，再发布 Preproduction 并运行完整 E3。",
+      "status": "active",
+      "next_action": "完成真实 renderer/CLI/shell 验证及 PR 合并；新 immutable release 切换 Archer，运行新 E3 工单；业务失败立即停止。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "仅显式请求且渲染精确匹配的 api/worker Enablement mode 差异被允许，其他共享配置保持严格校验。",
+        "Preflight 和部署 checkpoint 绑定 Enablement mode，正式发布后读回 archer 与所有保留配置。",
+        "E3 用新 Preproduction 工单运行；遇业务失败立即停止；本地真实审批和独立回读不绕过。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "document",
+          "url": "docs/plans/enablement-archer-mode-switch.md",
+          "label": "当前 v1 合同、执行顺序和证据边界"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_enablement_mode_release_guard.py",
+          "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
         }
       ]
     },

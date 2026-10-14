@@ -28,6 +28,7 @@ INVESTIGATION_CASE_FILES_SWITCH="preserve"
 AUTOMATION_CASE_ENGINE=""
 HERMES_AGENT_ENABLED=0
 ENABLEMENT_WORKFLOW_MODE="manual"
+ENABLEMENT_WORKFLOW_MODE_EXPLICIT=0
 KNOWLEDGE_STAGE_CONFIG=""
 AGENT_MODEL_VALUE=""
 AGENT_MODEL_VERSION=""
@@ -215,7 +216,7 @@ parse_args() {
       --investigation-case-files-disabled) INVESTIGATION_CASE_FILES_SWITCH="disabled"; shift ;;
       --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
       --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
-      --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; shift 2 ;;
+      --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; ENABLEMENT_WORKFLOW_MODE_EXPLICIT=1; shift 2 ;;
       --knowledge-stage-config) [[ $# -ge 2 ]] || fail "--knowledge-stage-config requires a value"; KNOWLEDGE_STAGE_CONFIG="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
       --resume) RESUME=1; shift ;;
@@ -420,13 +421,14 @@ write_preflight_context() {
     --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
+    --arg enablement_mode "${ENABLEMENT_WORKFLOW_MODE}" \
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" --arg prompt_build_ref "${prompt_build_ref}" \
     --arg prompt_fingerprint "${prompt_fingerprint}" --arg prompt_schema "${PROMPT_TARGET_SCHEMA}" \
     --argjson target_configured "${target_configured}" --argjson components "${components}" \
     --slurpfile terraform "${TEMP_DIR}/terraform-identity.json" \
     --slurpfile secrets "${TEMP_DIR}/secret-metadata.json" \
     --slurpfile target "${TEMP_DIR}/prompt-target-identity.json" \
-    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1")},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
+    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
     >"${TEMP_DIR}/preflight-context.json"
 }
 
@@ -455,7 +457,8 @@ checkpoint_identity() {
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg case_files_switch "${INVESTIGATION_CASE_FILES_SWITCH}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,investigation_case_files_switch:$case_files_switch,hermes_persona_enabled:($hermes_persona_enabled == "1")}'
+    --arg enablement_mode "${ENABLEMENT_WORKFLOW_MODE}" \
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,investigation_case_files_switch:$case_files_switch,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode}'
 }
 
 prepare_deploy_workspace() {
@@ -888,12 +891,16 @@ verify_knowledge_stage_config_rendered() {
   # definition never proceeds.
   [[ "${ENVIRONMENT}" = "preproduction" ]] || return 0
   local role
+  local -a shared_args
   if [[ -n "${KNOWLEDGE_STAGE_CONFIG}" ]]; then
     for role in api route worker; do
+      shared_args=(--current "${TEMP_DIR}/${role}.current.json"
+        --rendered "${TEMP_DIR}/${role}.register.json" --role "${role}")
+      if [[ "${ENABLEMENT_WORKFLOW_MODE_EXPLICIT}" = "1" ]]; then
+        shared_args+=(--expected-enablement-workflow-mode "${ENABLEMENT_WORKFLOW_MODE}")
+      fi
       "${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy \
-        verify-knowledge-shared-configuration \
-        --current "${TEMP_DIR}/${role}.current.json" \
-        --rendered "${TEMP_DIR}/${role}.register.json" --role "${role}" >/dev/null \
+        verify-knowledge-shared-configuration "${shared_args[@]}" >/dev/null \
         || fail "Knowledge release would change shared ${role} configuration"
     done
   fi
