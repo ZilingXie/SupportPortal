@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T08:16:44Z",
-  "source_base_commit": "7800b8eeb573ac97196413b880a4d44cf38a150e",
-  "registry_digest": "324e111daec030076f317ee2a6c4ab22138bccf876b1434b527967de8d0c7e5e",
+  "generated_at": "2026-10-14T08:37:40Z",
+  "source_base_commit": "e237d5366a6792318d4a054238acd11c7c6112b2",
+  "registry_digest": "de9870180f06412212c2d732ec0449f206e7224babc616d3a865c419c4658305",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1585,7 +1585,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
-          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；待独立部署验收"
+          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
         },
         {
           "type": "document",
@@ -17808,9 +17808,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 执行验证通过、待独立部署验收。启用文件链路尚未部署。",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。",
       "status": "blocked",
-      "next_action": "独立验收关闭状态 Preproduction v2 发布与 synthetic 14057 的 C1-C6 证据；文件保持关闭。另阶段处理 Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7、Zac 协议；原 R1 发布复审/真实业务门禁保留，Production 另需授权。",
+      "next_action": "关闭状态 Preproduction v2 发布与 synthetic 14057 C1-C6 独立验收已通过，文件保持关闭。后续单独处理原 R1 发布复审/真实业务门禁、Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7 和 Zac 协议；开启文件与 Production 各自需要单独授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-14",
@@ -17821,8 +17821,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
         "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。",
-        "PP-CLOSED-ACCEPTANCE：门禁修复独立验收通过且 #1498 已合并；新 release r20261014-7800b8ee-files-closed、schema 016、关闭入口与 synthetic 14057 执行验证完成，等待本次发布/业务证据独立验收。SLO 1040.742s 超时如实保留。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
       ],
       "evidence": [
         {
@@ -17888,7 +17887,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
-          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；待独立部署验收"
+          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
         }
       ]
     },

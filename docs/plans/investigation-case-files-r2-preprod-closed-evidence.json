@@ -308,12 +308,12 @@
     ]
   },
   "contracts": {
-    "C1": "executor verification passed; independent deployment acceptance pending",
-    "C2": "executor verification passed; independent deployment acceptance pending",
-    "C3": "executor verification passed; independent deployment acceptance pending",
-    "C4": "executor verification passed; independent deployment acceptance pending",
-    "C5": "executor verification passed; independent deployment acceptance pending",
-    "C6": "executor verification passed; independent deployment acceptance pending"
+    "C1": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C2": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C3": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C4": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C5": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C6": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)"
   },
   "limits": [
     "Release exceeded 900s SLO: 1040.742s; hard gates retained.",
@@ -323,5 +323,17 @@
   ],
   "local_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/investigation-case-files-r2-preprod-closed-v2",
   "formal_deploy_evidence": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/ecs-deploy-preproduction-r20261014-7800b8ee-files-closed-disabled-persona-hermes/evidence.json",
-  "reproducibility": "Sanitized selected observations committed here. Full immutable release, logs and operation scripts retained in local artifacts for same-host independent review; not claimed as remotely reproducible without access."
+  "reproducibility": "Sanitized selected observations committed here. Full immutable release, logs and operation scripts retained in local artifacts for same-host independent review; not claimed as remotely reproducible without access.",
+  "independent_acceptance": {
+    "result": "通过",
+    "scope": "关闭状态发布与无附件 synthetic C1-C6",
+    "reviewed_document_head": "e237d5366a6792318d4a054238acd11c7c6112b2",
+    "runtime_source_head": "7800b8eeb573ac97196413b880a4d44cf38a150e",
+    "release_id": "r20261014-7800b8ee-files-closed",
+    "review_thread": "codex://threads/01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "report_source": "用户转交的独立验收结论",
+    "closed_gate": "PP-CLOSED-ACCEPTANCE",
+    "limits_retained": true,
+    "finalization_delta": "验收后仅登记结论、关闭对应 blocker 并生成 Overview；不修改运行代码、合同、观测值或开放门禁。"
+  }
 }

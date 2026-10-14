@@ -2,7 +2,7 @@
 
 计划名称：`investigation-case-files-r2-preprod-closed`；修订：v2（修复 PP-CLOSED-GATE-01）。
 
-状态：PP-CLOSED-GATE-01 完整提交独立代码验收通过，PR #1498 已合并；Preproduction schema 016 与三角色发布完成，关闭状态及无附件 synthetic workflow 执行验证通过。部署/业务证据已提交独立验收；不宣称整体文件功能或原 R1 门禁通过。
+状态：PP-CLOSED-GATE-01 完整提交独立代码验收通过，PR #1498 已合并；Preproduction schema 016 与三角色发布完成，关闭状态及无附件 synthetic workflow 执行验证通过。关闭状态发布与无附件 synthetic C1-C6 独立验收通过（文档 HEAD `e237d5366a6792318d4a054238acd11c7c6112b2`）；不宣称整体文件功能或原 R1 门禁通过。
 
 ## 本轮边界与后续执行
 
@@ -28,7 +28,7 @@
 
 旧 release `r20261014-85e02d44-files-closed` 已构建成功，CodeBuild `4e183115-5541-498a-aa9d-b8da272a67f2`。三角色 manifest/publish record 对账通过；check-only 在上述配置门禁失败。该旧 release 的迁移和 ECS 更新未执行；新提交另建 release 后已迁移和发布，见下文。旧 manifest、digest、checkpoint 保留，不能改写成新提交。
 
-下表“通过”均指执行验证结果，部署/业务独立验收仍待接收方复核。
+下表执行验证结果已通过独立验收，范围仅为关闭状态发布与无附件 synthetic C1-C6。
 
 | 合同 | 必须证明的结果 | 当前状态 |
 | --- | --- | --- |
@@ -61,4 +61,6 @@ python scripts/verify_feature_list.py
 
 正式部署总耗时 1040.742 秒、超过 900 秒 SLO；硬门禁均通过，rollback 为 not_started，未演练回滚。首次网络故障发生于迁移前，同一新 release 核对 checkpoint 后 resume 成功；失败证据保留。旧 release 的 manifest/digest/checkpoint 没有改写。
 
-下一步：对本次关闭状态发布和 synthetic C1-C6 证据独立验收。原 R1 发布复审/真实业务、启用文件链路及 Zac 文件协议仍等待各自证据；本轮不启用文件、不扩大业务写入或 Production 范围。
+本轮已完成独立验收，关闭 `PP-CLOSED-ACCEPTANCE` 门禁；下一步仅收口文档 PR 和任务工作区。原 R1 发布复审/真实业务、启用文件链路及 Zac 文件协议仍等待各自证据；本轮不启用文件、不扩大业务写入或 Production 范围。
+
+验收后收口差异仅登记用户转交的独立结论和对应门禁状态，运行证据、合同及剩余门禁保持原样；原文档验收绑定上述完整 HEAD，后续状态登记提交不冒称已经被独立重审。
