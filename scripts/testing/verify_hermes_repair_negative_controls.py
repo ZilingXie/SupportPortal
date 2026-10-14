@@ -1,6 +1,7 @@
 """Run repair mutations in disposable source copies; never edit the task tree."""
 from __future__ import annotations
 import argparse
+import hashlib
 import io
 import json
 import os
@@ -12,6 +13,27 @@ import tempfile
 
 
 CONTROLS = [
+    ("omit_source_hermes_ownership", "backend/services/automation_hermes_tools.py",
+     [("hermes_compatibility_only=True,", "hermes_compatibility_only=False,")],
+     "backend/tests/test_hermes_native_enablement_regression.py"),
+    ("claim_hermes_compatibility_job", "backend/repositories/ticket_repository.py",
+     [('                if (job.get("payload") or {}).get("hermes_compatibility_only") is True:\n                    continue\n', '')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_scheduler_excludes_compatibility_without_starving_legacy"),
+    ("terminalize_claimed_hermes_identity", "backend/worker.py",
+     [('job["status"] = account_reply_persona_status_for_stage(job, "queued")', 'job["status"] = "manual_attention"')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_claimed_compatibility_survives_readback"),
+    ("ignore_current_hermes_ownership", "backend/worker.py",
+     [('job["payload"] = dict(current_job.get("payload") or {})', 'job["payload"] = dict(job.get("payload") or {})')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_claimed_compatibility_survives_readback"),
+    ("overwrite_hermes_ownership_from_stale_claim", "backend/repositories/ticket_repository.py",
+     [('            if (\n                (current.get("payload") or {}).get("hermes_compatibility_only") is True\n                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True\n            ):\n                return None\n            saved = copy.deepcopy(job)', '            if False:\n                return None\n            saved = copy.deepcopy(job)')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_stale_claim_cannot_remove_ownership"),
+    ("omit_human_review_ownership_cas", "backend/repositories/ticket_repository.py",
+     [('            if (\n                (current.get("payload") or {}).get("hermes_compatibility_only") is True\n                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True\n            ):\n                return None\n\n            case_key =', '            if False:\n                return None\n\n            case_key =')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_failed_transition_preserves_hermes_ownership_inmemory"),
+    ("omit_publish_ownership_cas", "backend/repositories/ticket_repository.py",
+     [('            if (\n                (current_job.get("payload") or {}).get("hermes_compatibility_only") is True\n                and (job.get("payload") or {}).get("hermes_compatibility_only") is not True\n            ):\n                raise KeyError(job_id)\n            ticket =', '            if False:\n                raise KeyError(job_id)\n            ticket =')],
+     "backend/tests/test_hermes_compatibility_scheduler.py::test_publish_race_preserves_hermes_ownership_inmemory"),
     ("omit_plain_text_delivery_watermark", "backend/worker.py",
      [('not_before=delivery["created_at"],', 'not_before=None,')],
      "backend/tests/test_worker_compatibility_scope.py::WorkerReadbackTests::test_real_audit_watermark_gates_plain_text_release_and_replay"),
@@ -60,10 +82,18 @@ def main():
             with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
                 tar.extractall(copied, filter="data")
             carrier_files = {filename, target.split("::")[0]}
+            carrier_files.update({
+                "backend/repositories/ticket_repository.py", "backend/services/account_reply_jobs.py",
+                "backend/services/automation_account_intake.py", "backend/services/automation_hermes_tools.py",
+                "backend/worker.py", "backend/tests/test_hermes_compatibility_scheduler.py",
+                "backend/tests/test_hermes_native_enablement_regression.py",
+            })
             if name in {"omit_plain_text_delivery_watermark", "check_audit_time_only_with_attachments"}:
                 carrier_files.update({"backend/worker.py", "backend/services/zendesk_comments.py"})
             for rel in carrier_files:
                 (copied / rel).write_bytes((root / rel).read_bytes())
+            carrier_hashes = {rel: hashlib.sha256((root / rel).read_bytes()).hexdigest()
+                              for rel in sorted(carrier_files)}
             path = copied / filename
             text = path.read_text()
             for old, new in substitutions:
@@ -79,7 +109,8 @@ def main():
                         and ("FAILED " in outcome.stdout or "SUBFAILED(" in outcome.stdout)
                         and "ERROR collecting" not in outcome.stdout)
             results.append({"control": name, "detected": detected, "exit_code": outcome.returncode,
-                            "test": target, "output": outcome.stdout + outcome.stderr})
+                            "test": target, "unmutated_carrier_sha256": carrier_hashes,
+                            "output": outcome.stdout + outcome.stderr})
             print(name, "detected" if detected else "NOT DETECTED", flush=True)
     Path(args.output).write_text(json.dumps({"source_head": subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(), "controls": results}, indent=2))

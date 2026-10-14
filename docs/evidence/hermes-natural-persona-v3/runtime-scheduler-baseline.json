@@ -1,0 +1,58 @@
+{
+  "candidate": {
+    "exit_code": 1,
+    "summary": "20 failed, 254 passed, 32 subtests passed in 1.88s",
+    "failures": [
+      "SUBFAILED(status='new') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='open') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='pending') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='hold') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+      "SUBFAILED(status='') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status=None) backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status='unexpected') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_invalid_appid_asks_again_without_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_mode_gates_confirmation_and_creates_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_superseded_appid_bumps_request_version",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_default_mode_creates_no_relay_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_invalid_appid_format_asks_again_without_email",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_review_creates_reply_first_and_gates_email"
+    ]
+  },
+  "main": {
+    "exit_code": 1,
+    "summary": "20 failed, 254 passed, 32 subtests passed in 3.22s",
+    "failures": [
+      "SUBFAILED(status='new') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='open') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='pending') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "SUBFAILED(status='hold') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_delivery_sends_for_each_actionable_status",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_duplicate_processing_writes_once",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_local_revision_solved_reads_live_and_cancels",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_real_entry_open_ticket_sends",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_revision_query_failure_keeps_queued",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_stale_draft_revision_fails_without_send",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_supplementary_read_failure_and_recovery",
+      "FAILED backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_recovers_via_real_drain",
+      "SUBFAILED(status='') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status=None) backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "SUBFAILED(status='unexpected') backend/tests/test_worker.py::WorkerResilienceTests::test_investigation_unconfirmed_status_keeps_queued",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_invalid_appid_asks_again_without_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_mode_gates_confirmation_and_creates_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_auto_superseded_appid_bumps_request_version",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_default_mode_creates_no_relay_request",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_invalid_appid_format_asks_again_without_email",
+      "FAILED backend/tests/test_automation_account_intake.py::AutomationAccountIntakeTest::test_enablement_manual_review_creates_reply_first_and_gates_email"
+    ]
+  },
+  "same_failure_signatures": true,
+  "main_head": "0124173bbc6c818efd89f05de9127684f6133ac4",
+  "candidate_code_head": "17ca6c91692b3efff254fd181d2c8b592b18e944",
+  "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_worker.py backend/tests/test_enablement_manual_review_flow.py backend/tests/test_enablement_auto_relay.py backend/tests/test_automation_account_intake.py backend/tests/test_account_reply_version_fence.py -q --tb=short"
+}

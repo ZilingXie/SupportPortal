@@ -9,8 +9,8 @@
   "function_id": "automation-execution-loop",
   "created_at": "2026-10-11",
   "updated_at": "2026-10-13",
-  "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
-  "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
+  "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
+  "next_action": "独立验收 reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3（base c9722399daa347a7a24e0f15fafb8fddaedebe39）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
   "acceptance_criteria": [
     "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
     "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -21,9 +21,28 @@
     "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
   ],
   "blockers": [
-    "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
+    "14037 实际业务链未完成：已发布代码将 Hermes 兼容身份终态化，内部邮件仍 awaiting_public_reply；本地修复待独立验收且未部署。",
+    "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",
+      "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json; docs/evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json",
+      "result": "reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 / base c9722399daa347a7a24e0f15fafb8fddaedebe39；278 passed、50 subtests，无跳过；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。旧 32be4faa、265 passed + 48 subtests、七项负控数字均标为历史结果。"
+    },
+    {
+      "type": "test",
+      "label": "Preproduction immutable release and Prompt/Persona readback",
+      "command": "docs/evidence/hermes-natural-persona-v3/preproduction-release.json",
+      "result": "r20261013-4ecea04 / main@4ecea043 / pr-78386473bd08 v6；sid-precise published v2；ECS API146/Route144/Worker146、健康、镜像、Prompt、Terraform等正式门禁通过。全 pipeline 1431.914s 超过900s SLO，未放宽门禁；Production未发布。"
+    },
+    {
+      "type": "test",
+      "label": "New-ticket real business observation (not overall acceptance)",
+      "command": "docs/evidence/hermes-natural-persona-v3/preproduction-business-readback.json",
+      "result": "14037 两轮已投递但兼容终态阻断内部邮件；14038 Fraud部分补资料→回复→审核邮件sent→human_review_required已观测；14039回复/审核邮件sent/closed solved已观测但完整分派待证据；14040仅Work report零draft；Invoice/Verification intake超时，未重发或执行真实relay。"
+    },
     {
       "type": "test",
       "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
@@ -32,7 +51,7 @@
     },
     {
       "type": "test",
-      "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+      "label": "历史结果（不作为 reviewed HEAD 证据）：rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
       "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
       "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
     },
@@ -78,5 +97,7 @@
       "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
       "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
     }
-  ]
+  ],
+  "reviewed_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+  "reviewed_base": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
 }

@@ -1,4 +1,11 @@
 # Prompt Change Log
+
+## 2026-10-13 - Hermes v6 Preproduction 发布与兼容身份 scheduler 运行修复（p2-198）
+
+- 原 #1485 独立代码验收通过并合并为 `4ecea0431f1b84490bab4bf51220faeef815e6b2`；Preproduction `r20261013-4ecea04` / Prompt `pr-78386473bd08` 已发布 v6 contract/manual，sid-precise published v2。
+- 新工单 14037 发现 legacy worker 将 Hermes compatibility-only job 置为 manual_attention，阻断已确认回复后的内部邮件释放。本轮源头持久化所有权、claim 排除与旧 claim 恢复/CAS 修复不改 Prompt 文本、basis、footer 或发布策略。
+- 当前修复待独立代码验收，未再次部署；技术发布通过与业务未完成分别记录。见 [当前计划与证据](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md)。
+
 ## 2026-10-13 - native Investigation Persona 草稿保存（p2-200，R1）
 
 - 仅 native investigation_reply：输入声明完整 1200 字符预算（含 greeting、换行及既有引用），只保留结论、关键证据/限制与下一步。保存拒绝且 rewrite_allowed=true 时只在当前 run 改写一次；耗尽停止保存，未知结果先回读。
