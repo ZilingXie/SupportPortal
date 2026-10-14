@@ -1,6 +1,8 @@
 # Investigation 主动调查与能力收敛 v1
 
-修订：R1。状态：实现完成，等待独立验收。
+修订：R1。状态：实现完成，等待独立复审。
+
+当前待复审版本：SupportPortal `c7c03c4119c5a2e2a3449c22dd6ca5facdeed151`；Hermes deploy `fcad33db9ee60cf1050be1687c764c81bff57f2b`。
 
 代码 HEAD、Hermes deploy HEAD 和证据文件必须在独立验收前保持可复现；不合并、不部署、不发送真实 Slack/Zendesk/Argus/Zac 请求。
 
@@ -13,8 +15,8 @@
 
 ## 证据
 
-专项 5 passed；固定 Investigation 回归 4 passed、PG 4 skipped（无 DSN）；Hermes 相关 focused run 159 passed，另有一项既存 follow-up handoff 测试基线失败，未归因本改动。Hermes :45 新鲜源码提取后的 overlay `patch_apply/profile/compile` 均 passed。
+SupportPortal 专项 7 passed；组合定向回归 24 passed、55 deselected；PG 专项未执行（无 DSN），记录为 waiting-for-evidence。Hermes fresh source 验证命令为 `python3 build/investigation-proactive-v1/verify.py <fresh-source>`，输出 `patch_apply=passed profile=passed compile=passed`，并得到 `ARGUS_RESULTS [True, True, True, 'argus_channel_search_budget_exhausted']`。验收基线 source HEAD 为 `a49f64b47d4b547c584e5c776f1f6180ff696dd6`。
 
 ## 未覆盖
 
-未调用真实 Argus/Zac，未发送客户或 Slack 消息，未部署 Preproduction，等待独立验收线程复审。
+未调用真实 Argus/Zac，未发送客户或 Slack 消息，未部署 Preproduction；PG 未执行，真实业务验证未授权，等待独立复审线程。
