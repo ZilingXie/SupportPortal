@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-14T02:23:18.474Z",
+  "projectId": "sbTCwK2d5D7GOKQb",
+  "workflowCount": 3,
+  "source": "Fresh read while awaiting Hermes release; not a publication",
+  "workflows": [
+    {
+      "workflowId": "GgDxPEWtW7ltT5BW",
+      "name": "[kb]Build|CSD",
+      "updatedAt": "2026-10-13T05:22:47.851Z",
+      "publishedVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
+      "draftVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
+      "draftMatchesPublished": true,
+      "nodeCount": 12,
+      "publishedFile": "active/GgDxPEWtW7ltT5BW.published.json",
+      "draftFile": null,
+      "publishedRedactionCount": 2,
+      "draftRedactionCount": 0
+    },
+    {
+      "workflowId": "MM3Z3T469Eru3Q1I",
+      "name": "[kb]Build|Solved Cases",
+      "updatedAt": "2026-10-13T05:18:15.005Z",
+      "publishedVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+      "draftVersionId": "d4c50a10-a379-485f-a5cd-72e19ec31345",
+      "draftMatchesPublished": true,
+      "nodeCount": 8,
+      "publishedFile": "active/MM3Z3T469Eru3Q1I.published.json",
+      "draftFile": null,
+      "publishedRedactionCount": 0,
+      "draftRedactionCount": 0
+    },
+    {
+      "workflowId": "r1HIW8UNuCabiOPn",
+      "name": "[slack]Forward Thread|Prod+Preprod",
+      "updatedAt": "2026-10-13T03:25:31.323Z",
+      "publishedVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
+      "draftVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
+      "draftMatchesPublished": true,
+      "nodeCount": 13,
+      "publishedFile": "active/r1HIW8UNuCabiOPn.published.json",
+      "draftFile": null,
+      "publishedRedactionCount": 0,
+      "draftRedactionCount": 0
+    }
+  ]
+}

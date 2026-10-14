@@ -9,8 +9,8 @@
   "function_id": "weknora-dualwrite-governance",
   "created_at": "2026-10-12",
   "updated_at": "2026-10-13",
-  "summary": "阶段6发布来源已获批更新为44b6d1e完整SHA；72项定向测试与Terraform1.9.8带锁plan通过。新alloff release的CodeBuild #195及三角色ECR digest回读通过，正式preflight期间检测到同环境并行status-r2发布，按既定规则停止本任务（exit143）。停止后ECS仍146/146/144、Hermes45健康，64历史记录指纹不变；未激活新release、未改n8n、未重投。代码验收保持通过，运行与业务验收未完成。历史过程保留在evidence记录。",
-  "next_action": "等待明确并行status-r2发布的先后及环境所有权；该发布停止或完成后重新冻结全部实时基线，再按获批44b6d1e来源及严格release identity继续全关闭门禁，之后执行n8n与受控分层验证。",
+  "summary": "阶段6继续获授权；用户明确同意Hermes v3.2先完成，随后基于fce24b4f完整SHA继续并保留共享配置。新增scheduler/ownership与native/release定向70 passed；知识门与standalone真实入口73 passed，4 subtests passed。已整合获批main，Overview从登记源重生成。等待并行r20261014-fce24b4-hermes-v32完成，未启动第二发布、未修改在线n8n、未重投；64历史不清理不重放，运行和业务验收未完成。",
+  "next_action": "Hermes v3.2发布完成后，重新冻结ECS/Prompt/SSM/Terraform1.9.8/n8n/知识队列；确认无并行发布与未知claim后，从获批fce24b4f生成全关闭新immutable release，再按原十步完成受控验证。",
   "acceptance_criteria": [
     "C0 发布源/digest/n8n version/SSM 引用可追溯",
     "C1 关闭态 fail-closed 零候选零写入",
@@ -26,7 +26,7 @@
     "C11 全量期无重复写入/旧版本覆盖/审计缺失"
   ],
   "blockers": [
-    "同一Preproduction存在另一条运行中的r20261013-44b6d1e-status-r2发布，Prompt不同；本任务停止等待明确发布先后与环境所有权。"
+    "等待同环境r20261014-fce24b4-hermes-v32完成；发布先后及新来源已由用户确认，无待决产品选择。"
   ],
   "evidence": [
     {
@@ -142,6 +142,12 @@
       "result": "codebuild passed/120.32s，ECR三digest与manifest一致；preflight期间检测并行status-r2，停止本任务exit143。四服务健康且仍旧TD，64历史指纹不变，未改n8n/未重投。详见docs/evidence/weknora-dualwrite-phase6/stage6-44b6d1e-release-20261013.md。",
       "type": "deployment",
       "label": "获批44b全关闭构建通过，并行发布停点"
+    },
+    {
+      "type": "test",
+      "label": "获批fce24b4集成与等待期实时n8n回读",
+      "command": "Hermes compatibility/native/release四套；知识workflow/standalone/stage6三套；n8n get_workflow_details + scoped snapshot validator",
+      "result": "70 passed；另73 passed及4 subtests passed，未运行PG大回归。fresh snapshot 3 published/0 divergent drafts/2 redactions；仅本地保存，线上未变。见stage6-20261014-resume.json。"
     }
   ]
 }

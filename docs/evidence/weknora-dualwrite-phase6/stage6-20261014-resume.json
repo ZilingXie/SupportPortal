@@ -1,0 +1,28 @@
+{
+  "captured_at": "2026-10-14T02:25:36.085735+00:00",
+  "plan": "r4-stage6-repair-A",
+  "approved_source": "fce24b4fda64372acd6253221ed64e6faf4741cb",
+  "authorization": "User explicitly agreed Hermes v3.2 release completes first; stage6 then continues from fce24b4f preserving shared configuration.",
+  "waiting_release": "r20261014-fce24b4-hermes-v32",
+  "waiting_release_observation": {
+    "codebuild": "passed",
+    "preflight": "passed",
+    "deploy": "not_yet_completed"
+  },
+  "integration_verification": {
+    "targeted_tests": "70 passed",
+    "knowledge_and_release_and_preproduction_terraform_diff": "unchanged relative to 44b6d1e",
+    "knowledge_entry_tests": "73 passed; 4 subtests passed"
+  },
+  "n8n_capture": "docs/integrations/n8n/workflows/captures/stage6-20261014-wait-hermes",
+  "n8n_validation": "3 published / 0 divergent drafts / 2 redactions",
+  "own_release_started": false,
+  "n8n_modified": false,
+  "samples_replayed": false,
+  "resume_conditions": [
+    "Hermes release exits and environment is stable with no parallel publisher",
+    "Refreeze service exact task definitions, running digests, Prompt, SSM metadata, Terraform 1.9.8, n8n and knowledge queues",
+    "Preserve historical 64-row fingerprint; stop unknown claims or unauthorized tasks",
+    "Use new immutable release identity and keep original staged gates"
+  ]
+}
