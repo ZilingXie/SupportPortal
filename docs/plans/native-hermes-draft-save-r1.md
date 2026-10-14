@@ -1,6 +1,23 @@
 # native Hermes Investigation 草稿保存修复
 
-修订：R1。任务：p2-200，Function：engineer-investigation-reply；关联 p2-191、p2-199。
+修订：R1.1。任务：p2-200，Function：engineer-investigation-reply；关联 p2-191、p2-199。
+
+## R1.1 发布门禁修复：终态状态同步的历史缺失 Case
+
+上一轮 Preproduction 发布 `r20261013-0124173` 的 worker CloudWatch 门禁发现两条
+`Account Case not found`。对账确认它们来自已解决的历史测试票 `14041` 的旧
+`ticket.updated` processing job：Zendesk 状态已经是终态，本地 Account Case 已被清理，
+新 worker 只是重试既有 `outcome_unknown` 工作；没有证据显示 R1 草稿保存代码导致该错误。
+
+R1.1 只修复这个已确认的恢复边界：`ticket.updated` 且状态为 `solved`/`closed` 时，若
+本地 Account Case 缺失，worker 返回可审计的 `ignored/account_case_missing` 结果并完成
+processing job，不调用外部边界、不生成 Slack 通知，也不伪造状态同步成功。`new/open/
+pending/hold` 等活跃状态仍沿用原 `Account Case not found` 失败语义，防止把真实数据缺失
+静默吞掉。状态同步 API、评论入口和正常存在 Case 的路径不变。
+
+回归必须覆盖：终态缺失 Case 的真实 worker 入口最终 `completed` 且 outcome 带原因；活跃
+状态缺失 Case 仍 fail-closed；正常 status sync 仍传递真实状态与 `updated_at`。发布门禁
+需重新以包含 R1 与 R1.1 的 immutable release 执行，不能以 steady 代替 complete evidence。
 
 ## 基线、授权与边界
 
@@ -73,3 +90,12 @@ Slack/Zendesk业务验收。正式 pipeline complete 后再运行，保留日志
 安全入口，不能改库、清空错误或重置 Prepare 绑定。涉及新迁移、route/审批语义、runtime 协议
 或门禁变更时暂停对应动作。当前结果统一维护在
 [native-hermes-draft-save-r1-evidence.json](native-hermes-draft-save-r1-evidence.json)。
+
+
+## R1.2 Preproduction 技术验收记录
+
+代码提交 `44b6d1e664d2fe99f1cd210ea054cdfdf511ccda` 已经合入 `main`。R1.1 的终态状态同步修复与 R1 草稿保存修复通过正式 ECS Preproduction immutable release `r20261013-44b6d1e-status-r4` 发布，Prompt Release 为 `pr-88298d4e0a3f`。此前 r1（Prompt 不存在）、r2（错误 migration DSN）和 r3（遗漏 knowledge-stage-config）尝试均保留在证据记录中，未被改写。
+
+最终 release evidence 为 `complete`：API/Route/Worker 分别为 task definition `:151/:148/:151`，三角色 runtime digest 与 publish manifest 一致；API/Worker 的 knowledge master、source intake、summary review 开关按批准配置回读为 `1`，其余阶段开关为 `0`；Prompt、`/automation/preproduction/health/release`、heartbeat、provider probe、CloudWatch、Terraform zero-drift、target health 均通过。发布后镜像隔离探针两条合成场景通过，未产生业务写入。
+
+本地官方栈按用户授权豁免，采用 ECS Preproduction 技术验收。真实 Ticket 14031、客户消息、Slack 业务消息和 Production 仍未执行。

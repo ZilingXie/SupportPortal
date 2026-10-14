@@ -14,6 +14,7 @@ from backend.automation_ecs_worker import (
     run_automation_worker,
 )
 from backend.services.account_internal_email_recipients import AccountInternalEmailRecipientError
+from backend.services.automation_account_reply_sync import ReplySyncError
 from backend.services.automation_ecs_contracts import JobKind
 from backend.services.automation_ecs_contracts import ExecutionStatus
 from backend.services.automation_ecs_contracts import (
@@ -101,6 +102,10 @@ def _status_event() -> AutomationIntakeEvent:
 
 def test_ticket_updated_uses_zendesk_status_and_real_updated_at() -> None:
     repository = Mock()
+    repository.get_account_case_by_ticket_id.return_value = {
+        "account_case_id": "AC-123",
+        "processing_profile": "production",
+    }
     processor = AccountBusinessProcessor(repository, environment="production")
     before_external = Mock()
     payload = ProcessingJobPayload(
@@ -130,6 +135,81 @@ def test_ticket_updated_uses_zendesk_status_and_real_updated_at() -> None:
         source_updated_at="2026-09-04T10:04:00+00:00",
     )
     assert result == {"status": "updated"}
+
+
+def test_terminal_ticket_without_account_case_is_auditable_noop() -> None:
+    repository = Mock()
+    repository.get_account_case_by_ticket_id.return_value = None
+    processor = AccountBusinessProcessor(repository, environment="production")
+    before_external = Mock()
+    payload = ProcessingJobPayload(
+        execution_id="exec-status-missing-terminal-1",
+        event=_status_event(),
+        route={
+            "route_family": "system",
+            "execution_action": "ticket_status_sync",
+            "reason": "ticket_updated",
+        },
+        persona=None,
+        prompt_snapshots={},
+    )
+
+    result = asyncio.run(processor.process(payload, before_external=before_external))
+
+    assert result["status"] == "ignored"
+    assert result["reason"] == "account_case_missing"
+    assert result["zendesk_status"] == "solved"
+    before_external.assert_not_called()
+    repository.update_account_case_zendesk_status.assert_not_called()
+
+
+def test_active_ticket_without_account_case_still_fails_closed() -> None:
+    repository = Mock()
+    repository.get_account_case_by_ticket_id.return_value = None
+    processor = AccountBusinessProcessor(repository, environment="production")
+    event = _status_event().model_copy(
+        update={"ticket": _status_event().ticket.model_copy(update={"status": "pending"})}
+    )
+    payload = ProcessingJobPayload(
+        execution_id="exec-status-missing-active-1",
+        event=event,
+        route={"route_family": "system", "execution_action": "ticket_status_sync"},
+        persona=None,
+        prompt_snapshots={},
+    )
+
+    with pytest.raises(ReplySyncError, match="Account Case not found"):
+        asyncio.run(processor.process(payload, before_external=Mock()))
+
+
+def test_worker_completes_terminal_missing_case_without_release_error() -> None:
+    settings = _settings("worker")
+    store = InMemoryAutomationEcsStore(settings)
+    store.migrate()
+    receipt = store.accept_intake(_status_event(), _settings("api").provenance())
+    route_job = store.claim_job(JobKind.ROUTE, worker_id="route-1", lease_seconds=30)
+    assert route_job is not None
+    store.complete_route(
+        route_job,
+        route={"route_family": "system", "execution_action": "ticket_status_sync"},
+        persona=None,
+        prompt_snapshots={},
+        provenance=_settings("route").provenance(),
+    )
+    repository = Mock()
+    repository.get_account_case_by_ticket_id.return_value = None
+    worker = AutomationWorker(
+        settings,
+        store,
+        processor=AccountBusinessProcessor(repository, environment="production"),
+    )
+
+    assert worker.process_once() is True
+
+    execution = store.get_execution(receipt.execution_id)
+    assert execution is not None
+    assert execution["status"] == "completed"
+    assert execution["outcome"]["reason"] == "account_case_missing"
 
 
 def test_comment_processing_passes_route_pinned_persona_verbatim() -> None:
