@@ -10,7 +10,7 @@
   "created_at": "2026-10-12",
   "updated_at": "2026-10-13",
   "summary": "阶段6继续获授权；用户明确同意Hermes v3.2先完成，随后基于fce24b4f完整SHA继续并保留共享配置。新增scheduler/ownership与native/release定向70 passed；知识门与standalone真实入口73 passed，4 subtests passed。已整合获批main，Overview从登记源重生成。等待并行r20261014-fce24b4-hermes-v32完成，未启动第二发布、未修改在线n8n、未重投；64历史不清理不重放，运行和业务验收未完成。",
-  "next_action": "Hermes v3.2发布完成后，重新冻结ECS/Prompt/SSM/Terraform1.9.8/n8n/知识队列；确认无并行发布与未知claim后，从获批fce24b4f生成全关闭新immutable release，再按原十步完成受控验证。",
+  "next_action": "Hermes并行发布rollout失败且仍在收尾；等待负责人完成回滚/对账与AWS登录限流处置，确认环境稳定后重新冻结基线再续接。自动续接暂停，不盲重试。",
   "acceptance_criteria": [
     "C0 发布源/digest/n8n version/SSM 引用可追溯",
     "C1 关闭态 fail-closed 零候选零写入",
@@ -26,7 +26,7 @@
     "C11 全量期无重复写入/旧版本覆盖/审计缺失"
   ],
   "blockers": [
-    "等待同环境r20261014-fce24b4-hermes-v32完成；发布先后及新来源已由用户确认，无待决产品选择。"
+    "Hermes v3.2 route_worker_rollout记录failed，Worker日志AWS CreateOAuth2Token 429 Rate exceeded；整体退出/回滚结论未形成，Worker仍两个deployment。"
   ],
   "evidence": [
     {
@@ -148,6 +148,12 @@
       "label": "获批fce24b4集成与等待期实时n8n回读",
       "command": "Hermes compatibility/native/release四套；知识workflow/standalone/stage6三套；n8n get_workflow_details + scoped snapshot validator",
       "result": "70 passed；另73 passed及4 subtests passed，未运行PG大回归。fresh snapshot 3 published/0 divergent drafts/2 redactions；仅本地保存，线上未变。见stage6-20261014-resume.json。"
+    },
+    {
+      "type": "deployment",
+      "label": "Hermes并行发布失败停点（非最终回滚结论）",
+      "command": "只读phase-attempts/worker-rollout.log、进程与ECS describe-services",
+      "result": "route_worker_rollout failed/259.789s；Worker AWS登录令牌429限流；pipeline仍在运行，当前Worker151/running2，Route149/COMPLETED。阶段6未启动，自动续接暂停。见stage6-20261014-hermes-failure-stop.json。"
     }
   ]
 }

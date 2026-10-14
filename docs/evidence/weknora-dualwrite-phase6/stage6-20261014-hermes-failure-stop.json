@@ -1,0 +1,47 @@
+{
+  "captured_at": "2026-10-14T02:44:48.842036+00:00",
+  "release": "r20261014-fce24b4-hermes-v32",
+  "phases": [
+    {
+      "phase": "preflight",
+      "status": "passed",
+      "started_ms": 1791944607377,
+      "finished_ms": 1791944767122,
+      "duration_seconds": 159.745
+    },
+    {
+      "phase": "prompt_schema",
+      "status": "passed",
+      "started_ms": 1791944767158,
+      "finished_ms": 1791944889992,
+      "duration_seconds": 122.834
+    },
+    {
+      "phase": "route_worker_rollout",
+      "status": "failed",
+      "started_ms": 1791945529756,
+      "finished_ms": 1791945789545,
+      "duration_seconds": 259.789
+    }
+  ],
+  "worker_log_error": "AWS CreateOAuth2Token HTTP429 Rate exceeded",
+  "pipeline_final_status": "not_yet_available; release process still running",
+  "ecs_observation": {
+    "api_td": 151,
+    "worker_td": 151,
+    "worker_running": 2,
+    "worker_pending": 0,
+    "worker_deployments": [
+      "PRIMARY IN_PROGRESS",
+      "ACTIVE COMPLETED"
+    ],
+    "route_td": 149,
+    "route_running": 1,
+    "route_rollout": "COMPLETED",
+    "hermes_td": 45
+  },
+  "own_release_started": false,
+  "n8n_mutated": false,
+  "samples_replayed": false,
+  "next_action": "Wait for owner to complete failure/rollback reconciliation; fresh exact-service runtime freeze required before stage6. Do not blindly retry."
+}
