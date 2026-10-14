@@ -641,9 +641,11 @@ def _create_reply_job(
     close_after_publish: bool = False,
     reply_intent: str | None = None,
     processing_profile: str = "production",
+    hermes_compatibility_only: bool = False,
 ) -> dict[str, Any]:
     return create_account_reply_job(
         repository,
+        hermes_compatibility_only=hermes_compatibility_only,
         ticket_id=ticket_id,
         trigger_message_created_at=trigger_message_created_at,
         created_at=_now_iso(),
@@ -720,6 +722,7 @@ def _start_enablement_manual_review(
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
+    hermes_compatibility_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     """Run the manual enablement review flow (p2-149, Archer revert).
 
@@ -761,6 +764,7 @@ def _start_enablement_manual_review(
             customer_name=str(account_case.get("customer_name") or "") or None,
         )
         reply_job = _create_reply_job(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             ticket_id=ticket_id,
             trigger_message_created_at=trigger_message_created_at,
@@ -851,6 +855,7 @@ def _start_enablement_manual_review(
     reply_job = repository.get_account_reply_job(existing_job_id) if existing_job_id else None
     if not isinstance(reply_job, dict):
         reply_job = _create_reply_job(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             ticket_id=ticket_id,
             trigger_message_created_at=trigger_message_created_at,
@@ -915,12 +920,14 @@ async def _run_enablement_manual_workflow(
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
+    hermes_compatibility_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     import asyncio
 
     return await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: _start_enablement_manual_review(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             account_case=account_case,
             ticket_id=ticket_id,
@@ -944,6 +951,7 @@ def _start_enablement_auto_dispatch(
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
+    hermes_compatibility_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     """Gate-first auto (archer-mode) dispatch (p2-163).
 
@@ -987,6 +995,7 @@ def _start_enablement_auto_dispatch(
             customer_name=str(account_case.get("customer_name") or "") or None,
         )
         reply_job = _create_reply_job(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             ticket_id=ticket_id,
             trigger_message_created_at=trigger_message_created_at,
@@ -1078,6 +1087,7 @@ def _start_enablement_auto_dispatch(
     reply_job = repository.get_account_reply_job(existing_job_id) if existing_job_id else None
     if not isinstance(reply_job, dict):
         reply_job = _create_reply_job(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             ticket_id=ticket_id,
             trigger_message_created_at=trigger_message_created_at,
@@ -1158,12 +1168,14 @@ async def _run_enablement_auto_workflow(
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
+    hermes_compatibility_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     import asyncio
 
     return await asyncio.get_running_loop().run_in_executor(
         None,
         lambda: _start_enablement_auto_dispatch(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             account_case=account_case,
             ticket_id=ticket_id,
@@ -1189,6 +1201,7 @@ async def _run_enablement_workflow(
     persona_assignment: dict[str, Any] | None,
     processing_profile: str,
     trigger_message_created_at: str,
+    hermes_compatibility_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None, str]:
     """Single enablement dispatch point selected by ``ENABLEMENT_WORKFLOW_MODE``.
 
@@ -1199,6 +1212,7 @@ async def _run_enablement_workflow(
     """
     if enablement_workflow_mode() == "archer":
         return await _run_enablement_auto_workflow(
+            hermes_compatibility_only=hermes_compatibility_only,
             repository=repository,
             account_case=account_case,
             ticket_id=ticket_id,
@@ -1208,6 +1222,7 @@ async def _run_enablement_workflow(
             trigger_message_created_at=trigger_message_created_at,
         )
     account_case, reply_job, outcome = await _run_enablement_manual_workflow(
+        hermes_compatibility_only=hermes_compatibility_only,
         repository=repository,
         account_case=account_case,
         ticket_id=ticket_id,

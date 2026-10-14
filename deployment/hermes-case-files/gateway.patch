@@ -19,7 +19,7 @@
 -        return [dict(s) for s in cached[2]]
 +        from supportportal_file_context import skill_allowed
 +        return [dict(s) for s in cached[2] if skill_allowed(s["name"])]
- 
+
      skills = []
      seen_names: set = set()
 @@ -807,7 +808,8 @@
@@ -29,13 +29,13 @@
 -    return [dict(s) for s in skills]
 +    from supportportal_file_context import skill_allowed
 +    return [dict(s) for s in skills if skill_allowed(s["name"])]
- 
- 
+
+
  def _sort_skills(skills: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 @@ -850,6 +852,8 @@
          except Exception:
              logger.debug("Plugin skill listing failed", exc_info=True)
- 
+
 +        from supportportal_file_context import skill_allowed
 +        all_skills = [s for s in all_skills if skill_allowed(s["name"])]
          if not all_skills:
@@ -62,8 +62,8 @@
              "required": ["turn_id", "content"],
          },
 @@ -178,6 +179,8 @@
- 
- 
+
+
  def register(ctx) -> None:
 +    from .case_files_bridge import register as register_files
 +    register_files(ctx)
@@ -89,7 +89,7 @@
  }
 +
 +TOOLSETS["supportportal_files"] = ["support_case_files_" + action for action in ("list", "download", "read", "search", "publish")]
- 
+
  _TOOLS: tuple[tuple[str, dict[str, Any], str, str], ...] = (
      (
 --- a/deploy-ecs/supportportal_agent_tools/__init__.py

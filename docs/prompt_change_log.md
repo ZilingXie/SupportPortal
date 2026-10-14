@@ -1,11 +1,18 @@
 # Prompt Change Log
 
-## 2026-10-13 - Investigation 文件工具与 Skill（p2-192，R2，待验收未部署）
+## 2026-10-14 - Investigation 文件工具与 Skill（p2-192，R2，待验收未部署）
 
-- 绑定 Investigation Work 新增 supportportal_files 五工具与 support-case-files Skill；私有运行 metadata注入可信case/turn/session/request，工具参数不接受切换case或URL。Automation、Route、adhoc不可列举或直接加载此Skill。
-- 读取返回Map/管理名称/行与ZIP成员位置，超限或不支持格式明确提示下载/专用工具；发布稳定operation与未知结果先回读。Persona仅可显式选择Map快照，内部报告未经选择与审批不交付客户。
-- 云端 gateway/plugin/profile 配套源码交付在 deployment/hermes-case-files，非仅Skill文本；本地补丁与入口验证不代表live安装。无managed Prompt catalog修改。
+- 绑定 Investigation Work 新增 `supportportal_files` 五工具与 `support-case-files` Skill；私有运行 metadata 注入可信 case/turn/session/request，工具参数不接受切换 case 或 URL。Automation、Route、adhoc 不可列举或直接加载此 Skill。
+- 读取返回 Map/管理名称/行与 ZIP 成员位置，超限或不支持格式明确提示下载/专用工具；发布使用稳定 operation，未知结果先回读。Persona 仅可显式选择 Map 快照，内部报告未经选择与审批不交付客户。
+- 云端 gateway/plugin/profile 配套源码交付在 `deployment/hermes-case-files`，非仅 Skill 文本；本地补丁与入口验证不代表 live 安装。无 managed Prompt catalog 修改。
 - 合同、验证与外部等待：[R2](plans/investigation-case-files-r2.md)。
+
+## 2026-10-13 - Hermes v6 Preproduction 发布与兼容身份 scheduler 运行修复（p2-198）
+
+- 原 #1485 独立代码验收通过并合并为 `4ecea0431f1b84490bab4bf51220faeef815e6b2`；Preproduction `r20261013-4ecea04` / Prompt `pr-78386473bd08` 已发布 v6 contract/manual，sid-precise published v2。
+- 新工单 14037 发现 legacy worker 将 Hermes compatibility-only job 置为 manual_attention，阻断已确认回复后的内部邮件释放。本轮源头持久化所有权、claim 排除与旧 claim 恢复/CAS 修复不改 Prompt 文本、basis、footer 或发布策略。
+- 当前修复待独立代码验收，未再次部署；技术发布通过与业务未完成分别记录。见 [当前计划与证据](plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md)。
+
 ## 2026-10-13 - native Investigation Persona 草稿保存（p2-200，R1）
 
 - 仅 native investigation_reply：输入声明完整 1200 字符预算（含 greeting、换行及既有引用），只保留结论、关键证据/限制与下一步。保存拒绝且 rewrite_allowed=true 时只在当前 run 改写一次；耗尽停止保存，未知结果先回读。

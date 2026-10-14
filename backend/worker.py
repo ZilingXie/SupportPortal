@@ -1086,23 +1086,26 @@ def _prepare_account_reply_job_impl(job: dict[str, Any]) -> None:
     job_id = str(job.get("job_id") or "").strip()
     ticket_id = str(job.get("ticket_id") or "").strip()
     claimed_status = str(job.get("status") or "")
+    current_job = ticket_repository.get_account_reply_job(job_id)
     if not _account_reply_claim_is_current(
         job,
-        ticket_repository.get_account_reply_job(job_id),
+        current_job,
         expected_status=claimed_status,
     ):
         return
     ticket = ticket_repository.get_ticket(ticket_id)
     if not job_id or ticket is None:
         raise RuntimeError("account reply job is missing its linked ticket")
-    payload = dict(job.get("payload") or {})
+    # Ownership can change after the legacy scheduler acquired its claim.
+    job["payload"] = dict(current_job.get("payload") or {})
+    payload = dict(job["payload"])
     if payload.get("hermes_compatibility_only") is True:
         # Enablement keeps this legacy job id for relay readback identity, but
         # Hermes owns the actual customer text and Zendesk delivery.  Park the
         # compatibility job before any persona rendering can occur.
         payload["persona_render_status"] = "hermes_compatibility_only"
         job["payload"] = payload
-        job["status"] = "manual_attention"
+        job["status"] = account_reply_persona_status_for_stage(job, "queued")
         job["updated_at"] = now_iso()
         _update_claimed_account_reply_job(job, expected_status=claimed_status)
         return
@@ -1359,7 +1362,7 @@ def _publish_account_reply_job(job: dict[str, Any]) -> None:
         # legacy persona rendering can produce a second customer reply.
         payload["persona_render_status"] = "hermes_compatibility_only"
         current_job["payload"] = payload
-        current_job["status"] = "manual_attention"
+        current_job["status"] = account_reply_persona_status_for_stage(current_job, "queued")
         current_job["updated_at"] = now_iso()
         _update_claimed_account_reply_job(current_job, expected_status=claimed_status)
         return

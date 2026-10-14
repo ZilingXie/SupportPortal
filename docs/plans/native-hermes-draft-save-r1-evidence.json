@@ -1,17 +1,26 @@
 {
   "plan_name": "native Hermes Investigation 草稿保存修复",
-  "revision": "R1.1",
+  "revision": "R1.2",
   "task_id": "p2-200",
   "baseline": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
   "code": {
     "status": "verified_locally",
     "isolated_postgresql": "p2200_native_draft_test; UUID schema per fixture",
-    "targeted": {"passed": 303, "subtests_passed": 92, "skipped": 0},
+    "targeted": {
+      "passed": 303,
+      "subtests_passed": 92,
+      "skipped": 0
+    },
     "reverse": {
       "old_field_rules": "detected: unauthorized_field_request on channel name positive test",
       "candidate_cap_removed": "detected: third valid candidate returned 200, expected 422"
     },
-    "expanded_initial": {"passed": 397, "failed": 9, "skipped": 44, "subtests_passed": 94},
+    "expanded_initial": {
+      "passed": 397,
+      "failed": 9,
+      "skipped": 44,
+      "subtests_passed": 94
+    },
     "baseline_comparison": {
       "commit": "4ecea0431f1b84490bab4bf51220faeef815e6b2",
       "passed": 134,
@@ -35,15 +44,71 @@
     "terminal_behavior": "completed with outcome status=ignored, reason=account_case_missing; no external boundary",
     "active_behavior": "pending/open/hold/new missing Account Case still raises Account Case not found",
     "tests": {
-      "targeted": "4 passed",
+      "targeted": "4 passed; r20261013-44b6d1e-status-r4 complete evidence closes the prior release gate",
       "worker_and_native_status": "25 passed, 21 skipped",
       "compileall": "passed",
       "diff_check": "passed"
     },
     "previous_release_evidence": ".deployments/ecs-pipeline-r20261013-0124173/preproduction-deploy/worker.cloudwatch-count.json"
   },
-  "deployment": {"status": "blocked_by_previous_release_service_errors", "failed_release": "r20261013-0124173", "failed_evidence": ".deployments/ecs-pipeline-r20261013-0124173/preproduction-deploy/worker.cloudwatch-count.json", "repair": "terminal ticket.updated with missing Account Case completes as ignored/account_case_missing; active status remains fail-closed", "next": "rerun immutable Preproduction release after code review"},
-  "business": {"status": "not_authorized", "ticket_14031_replayed": false, "customer_sends": 0, "real_slack_test_messages": 0},
+  "deployment": {
+    "status": "verified_preproduction",
+    "release_id": "r20261013-44b6d1e-status-r4",
+    "source_commit": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda",
+    "prompt_release_id": "pr-88298d4e0a3f",
+    "evidence_path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/preproduction-deploy/evidence.json",
+    "manifest_path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/release/release-manifest.json",
+    "publish_record_path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/release/publish-record.json",
+    "knowledge_stage_config": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/knowledge-stage-config.json",
+    "knowledge_stage_result": {
+      "master": "1",
+      "source_allowlist": "csd_issue:CSD-79923,csd_issue:CSD-79994",
+      "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+      "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "1",
+      "other_switches": "0"
+    },
+    "attempts": [
+      {
+        "release": "r20261013-44b6d1e-status-r1",
+        "result": "preflight_failed",
+        "reason": "source Prompt pr-78386473bd08 not found"
+      },
+      {
+        "release": "r20261013-44b6d1e-status-r2",
+        "result": "rolled_back",
+        "reason": "wrong root migration DSN synchronized Prompt to the wrong database; services could not load target Prompt"
+      },
+      {
+        "release": "r20261013-44b6d1e-status-r3",
+        "result": "complete_but_not_final",
+        "reason": "knowledge-stage-config omitted; runtime knowledge switches were all 0"
+      },
+      {
+        "release": "r20261013-44b6d1e-status-r4",
+        "result": "complete",
+        "reason": "correct SSM migration DSN and knowledge-stage-config; all formal gates passed"
+      }
+    ],
+    "formal_gates": "complete",
+    "slo": {
+      "pipeline_total_seconds": 1297.557,
+      "deploy_stage_seconds": 747.353,
+      "normal_release_slo_seconds": 900,
+      "pipeline_slo_breach": true,
+      "deploy_stage_slo_breach": false
+    },
+    "runtime_readback": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/independent-runtime-readback.json",
+    "image_probe": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
+    "business_writes": 0,
+    "local_official_stack": "waived_by_user_ecs_preproduction_acceptance",
+    "production": "not_authorized"
+  },
+  "business": {
+    "status": "not_authorized",
+    "ticket_14031_replayed": false,
+    "customer_sends": 0,
+    "real_slack_test_messages": 0
+  },
   "local_official_stack": "user exemption; ECS Preproduction technical acceptance",
   "production": "not_authorized"
 }

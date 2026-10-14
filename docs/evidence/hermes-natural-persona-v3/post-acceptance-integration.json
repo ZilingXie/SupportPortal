@@ -1,0 +1,10 @@
+{
+  "accepted_head": "0160e171d6dba6662ebc5bc61ce28792f68d760f",
+  "integrated_main": "4b6c1ddd22e39654ed985b4fb9e843789b57eb63",
+  "assessment": "New main only adds terminal missing-case status-sync noop and p2-200 release documentation. No edits to compatibility ownership CAS, scheduler, publication or readback release. Overview conflict regenerated. Prior independent code acceptance retained for unchanged repair.",
+  "command": "../../.venv/bin/python -m pytest backend/tests/test_automation_ecs_worker.py backend/tests/test_hermes_compatibility_scheduler.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_worker_compatibility_scope.py -q --tb=short",
+  "result": "51 passed, 33 subtests passed; no skips",
+  "current_preproduction_source": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda",
+  "current_prompt": "pr-88298d4e0a3f",
+  "scope": "Preserve current native Hermes, manual Enablement, typed workflow disabled, knowledge stage config; Preproduction only."
+}
