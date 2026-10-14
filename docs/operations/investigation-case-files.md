@@ -1,6 +1,6 @@
 # Investigation Slack 文件管理 R2 运维
 
-核验日期：2026-10-13。仅本地代码/隔离数据库/补丁构建检查；尚未验证云端部署。[合同](../plans/investigation-case-files-r2.md)。
+核验日期：2026-10-14。文件启用链路仍仅有本地代码/隔离数据库/补丁构建检查；关闭状态 Preproduction 已部署并完成执行验证、待独立部署验收。[合同](../plans/investigation-case-files-r2.md)。
 
 2026-10-14 关闭状态发布门禁修复：[发布计划与证据](../plans/investigation-case-files-r2-preprod-closed.md)。配置保留检查只将缺失文件开关与显式 `0` 视为等价；涉及 `1` 的状态改变、模型、凭据引用及其他配置改变仍拒绝。真实 renderer/CLI 回归与旧逻辑逆向验证见该计划；补丁验收不等于 schema 016 或线上发布已通过。
 
@@ -27,3 +27,5 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 关闭功能并恢复上一版运行产物/profile；保留新增表、Map、交付账本与已上传Slack文件，不降schema或删除记录。新功能测试不得替代p2-192既有发布与真实业务门禁，Production单独授权。
 
 源码：[Map](../../backend/services/investigation_case_file_store.py)、[管理层](../../backend/services/investigation_case_files.py)、[工具 API](../../backend/automation_ecs_api.py)、[运行编排](../../backend/services/automation_hermes_agent.py)、[云端补丁](../../deployment/hermes-case-files/gateway.patch)、[发布脚本](../../deployment/deploy_automation_ecs_release.sh)、[部署入口测试](../../backend/tests/test_investigation_case_files_deploy.py)。
+
+2026-10-14 关闭状态运行证据：release `r20261014-7800b8ee-files-closed`，schema 016，API/Worker 显式 `0`、Route 缺省 `0`；Hermes 镜像/profile 保留且无文件 Skill/toolset。synthetic 14057 无附件审批投递、intake 幂等和 solved→closed 同步均有实际回读。[证据](../plans/investigation-case-files-r2-preprod-closed-evidence.json)。本轮未安装 overlay、未修改 n8n、未启用文件或 Zac；原 R1 门禁保留。
