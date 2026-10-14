@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T03:37:50Z",
-  "source_base_commit": "5662804f8ecafe45a01888ff17c88d0c300a4cc6",
-  "registry_digest": "a046f62d55afc842f28185e65c29c733c358ab8ac557174744d9ab7fbe3b2497",
+  "generated_at": "2026-10-14T06:59:57Z",
+  "source_base_commit": "85e02d44ed8ddce946d2022803efe2aa10784ad6",
+  "registry_digest": "6cf93e7cb8c17af2f4a79d43240a0faae7108f7f48c369dffc7927c77a225190",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1576,6 +1576,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-case-files-r2.md",
           "label": "R2当前合同、云端补丁与本地隔离入口证据；待独立验收"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed.md",
+          "label": "关闭状态 Preproduction v2：配置保留门禁修复与分层验收；旧 release 证据保留"
         },
         {
           "type": "document",
@@ -17800,7 +17805,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过，尚未部署。",
       "status": "blocked",
-      "next_action": "按正式Preproduction流程回读Hermes镜像/profile、部署并验证C1-C7；代码合并门禁已由独立验收释放。原F-R1-DEPLOY-01和真实业务门禁继续保留；Zac实际获取协议waiting-for-evidence；Production另需授权。",
+      "next_action": "先独立验收 PP-CLOSED-GATE-01 完整提交，再合并并从新提交重建 Preproduction immutable release；正式 deploy 显式关闭文件功能，迁移 schema 016，验证既有无附件能力。Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7、Zac 协议另阶段处理；原 R1 发布/真实业务门禁保留，Production 另需授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-14",
@@ -17811,7 +17816,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
         "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。",
+        "PP-CLOSED-GATE-01：旧定义缺失文件开关补齐0被配置保留门禁误判；拟议补丁审查通过，完整提交独立验收及新发布未完成。旧 release r20261014-85e02d44-files-closed check-only失败，尚未迁移或更新服务。"
       ],
       "evidence": [
         {
@@ -17868,6 +17874,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-case-files-r2.md",
           "label": "R2当前合同、云端补丁与本地隔离入口证据；待独立验收"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed.md",
+          "label": "关闭状态 Preproduction v2：配置保留门禁修复与分层验收；旧 release 证据保留"
         }
       ]
     },

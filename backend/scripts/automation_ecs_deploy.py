@@ -253,6 +253,9 @@ def verify_knowledge_shared_configuration(current_path: str, rendered_path: str,
                 if key in result:
                     raise ValueError(f"Duplicate shared configuration name: {name}")
                 result[key] = item[value_key]
+        # An absent file switch is the same fail-closed value as explicit zero.
+        # Enabling or changing an existing enabled switch still requires review.
+        result.setdefault(("environment", "INVESTIGATION_CASE_FILES_ENABLED"), "0")
         return result
 
     before, after = configuration(current_path), configuration(rendered_path)
