@@ -34,6 +34,57 @@ def test_zac_stream_done_without_completed_is_unknown():
     assert result["state"] == "outcome_unknown"
 
 
+def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
+    seen = []
+
+    class Response:
+        status = 200
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def __iter__(self):
+            return iter([
+                b"event: response.completed\n",
+                b'data: {"response":{"metadata":{"conversation_id":"c1"},"output":[]}}\n',
+                b"\n",
+            ])
+
+    def opener(request, timeout):
+        seen.append((request, timeout))
+        return Response()
+
+    client = ZacClient(ZacSettings("https://zac.example", "token", "team-agent"), opener=opener, clock=lambda: 0)
+    result = client.consult({
+        "request_body": '{"model":"team-agent","input":"sanitized","stream":true}',
+        "user_id": "user-opaque",
+        "idempotency_key": "idem-1",
+    })
+    assert result["state"] == "completed"
+    request, _ = seen[0]
+    assert request.full_url == "https://zac.example/v1/responses"
+    assert request.get_header("Authorization") == "Bearer token"
+    assert request.get_header("X-api-user-id") == "user-opaque"
+    assert request.get_header("Idempotency-key") == "idem-1"
+    assert json.loads(request.data) == {"model": "team-agent", "input": "sanitized", "stream": True}
+
+
+def test_zac_client_retries_transport_with_same_key_and_body_then_unknown():
+    seen = []
+
+    def opener(request, timeout):
+        seen.append((request.full_url, request.get_header("Idempotency-key"), request.data))
+        raise TimeoutError("断流")
+
+    clock_values = iter([0, 1, 2, 3, 4])
+    client = ZacClient(ZacSettings("https://zac.example", "token", "team-agent"), opener=opener, clock=lambda: next(clock_values, 4))
+    result = client.consult({
+        "request_body": '{"model":"team-agent","input":"sanitized","stream":true}',
+        "user_id": "user-opaque",
+        "idempotency_key": "idem-1",
+    })
+    assert result["state"] == "outcome_unknown" and result["attempts"] == 2
+    assert len(seen) == 2 and seen[0] == seen[1]
+
+
 def test_zac_transition_is_idempotent_and_preserves_opaque_request():
     turn = {"turn_id": "t1", "status": "running", "phase": "work", "direction": "investigation", "case_revision": 2, "work_result": {}}
     binding = {"direction": "investigation", "case_task": {"direction": "investigation"}}
