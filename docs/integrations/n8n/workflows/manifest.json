@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-14T03:31:25.861Z",
+  "generatedAt": "2026-10-14T03:36:18.864Z",
   "projectId": "sbTCwK2d5D7GOKQb",
   "workflowCount": 15,
   "source": "n8n MCP get_workflow_details sanitized payload",
@@ -43,11 +43,11 @@
     {
       "workflowId": "03B6AvcrOgRkWlUc",
       "name": "[case]Sync Status",
-      "description": "监听 Zendesk 状态变化，保留旧 EC2 归属分支；仅对已有 ECS Preproduction Case 发送使用真实源时间及稳定身份的 ticket.updated，由 SP 同步到原 Hermes Slack thread。",
+      "description": "监听 Zendesk 状态变化，仅对已有 ECS Preproduction Case 投递 ticket.updated。2026-10-14 按用户确认退役两条旧 EC2 状态同步分支；历史节点保留为禁用且与入口断开，不再维护旧工单。",
       "parentFolderId": "m6g0McsPdron3eH9",
-      "updatedAt": "2026-10-13T03:25:28.177Z",
-      "publishedVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
-      "draftVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
+      "updatedAt": "2026-10-14T03:32:26.990Z",
+      "publishedVersionId": "416d2b54-4f90-4be0-be95-4bad7a9a8be8",
+      "draftVersionId": "416d2b54-4f90-4be0-be95-4bad7a9a8be8",
       "draftMatchesPublished": true,
       "nodeCount": 13,
       "publishedFile": "active/03B6AvcrOgRkWlUc.published.json",

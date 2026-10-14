@@ -197,12 +197,13 @@
 
 **n8n description**
 
-> 监听 Zendesk 状态变化，获取工单并按 Case 归属把状态同步到旧主栈与旧 Production（仅旧 EC2 环境）。原 ECS 分支调用的 /api/integrations 端点在 ECS 上不存在、从未成功，已于 2026-09-16 移除；ECS 由 /v1/intake 事件驱动，不做状态联动。属于 SupportPortal 状态联动流程。
+> 监听 Zendesk 状态变化，仅对已有 ECS Preproduction Case 投递 ticket.updated。2026-10-14 按用户确认退役两条旧 EC2 状态同步分支；历史节点保留为禁用且与入口断开，不再维护旧工单。
 
-- **入口与主路径**：Zendesk 状态变化触发 → 读取工单 → 查询 Case 归属 → 旧根 API 与旧 `/production/api` 分支分别 PUT 状态。
+- **入口与主路径（2026-10-14 回读）**：Zendesk 状态变化触发 → 读取工单 → Execution Data → ECS Preproduction membership → 已有 Case 才 POST `ticket.updated` 到 `/automation/preproduction/v1/intake`。
+- **旧 EC2 退役**：用户确认旧工单不再维护。两条旧分支与 Execution Data 的连接已删除，六个旧节点全部禁用；图保留用于历史恢复。当前发布与草稿均为 `416d2b54-4f90-4be0-be95-4bad7a9a8be8`。见[退役证据](./retire-ec2-status-sync.md)。
 - **ECS 分支移除记录（2026-09-16）**：原 ECS 分支的归属检查 GET `supportcenter.stellarix.space/automation/production/api/integrations/zendesk/account-cases/{id}/comment-sync-target` 持续 404——线上该前缀由 `automation_ecs_api` 应答，没有 `/api/integrations/*` 路由，未匹配请求落到 UI 静态兜底（GET 404 / PUT 405，无凭据探测与仓库源码双重确认）。保留执行历史 1138 次全部失败、无成功记录；下游 `Get_Case_Comment3`、`Build complete comment snapshot2`、`Sync comments to automation production` 三处还各自引用本流程不存在的 `Zen_New_Comment_Webhook`，因 404 发生在上游而从未被执行到。已删除整条 ECS 分支（5 个节点）并发布版本 `6cfb5781`。
-- **与项目的关系**：旧 EC2 双环境状态联动；ECS 侧不经此流程。ECS 的 `ticket.updated` intake 事件目前也仅留痕（route 阶段标记 `ticket_updated_no_turn` 忽略），如需 ECS 状态联动须先在 ECS 侧实现消费逻辑。
-- **排错边界**：移除已回读确认（9 节点、仅两条旧栈分支、激活版本与草稿一致）；后续以真实 Zendesk 状态变化产生的成功 execution 为准。
+- **与项目的关系**：ECS Preproduction 状态 intake/通知路径于 p2-190 接入；旧 EC2 分支已退役。当前没有 ECS Production 状态分支，不能把 Preproduction 发布视为 Production 上线。
+- **排错边界**：当前 13 节点，两个旧分支仅保留禁用图，触发器可达路径只含 Preproduction 分支。配置发布与回读已确认；未重放真实工单或发送业务测试请求。
 
 <a id="w-3zJvu5KQFZIoOoqu"></a>
 

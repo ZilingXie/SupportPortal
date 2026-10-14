@@ -1,20 +1,20 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-14T03:31:25.861Z",
+  "capturedAt": "2026-10-14T03:36:18.864Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "03B6AvcrOgRkWlUc",
     "workflowName": "[case]Sync Status",
     "snapshotKind": "published",
-    "versionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
-    "draftVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
-    "publishedVersionId": "80985a3f-fefd-420b-90e5-5ea25a21bde7",
-    "updatedAt": "2026-10-13T03:25:28.177Z",
+    "versionId": "416d2b54-4f90-4be0-be95-4bad7a9a8be8",
+    "draftVersionId": "416d2b54-4f90-4be0-be95-4bad7a9a8be8",
+    "publishedVersionId": "416d2b54-4f90-4be0-be95-4bad7a9a8be8",
+    "updatedAt": "2026-10-14T03:32:26.990Z",
     "parentFolderId": "m6g0McsPdron3eH9"
   },
   "workflow": {
     "name": "[case]Sync Status",
-    "description": "监听 Zendesk 状态变化，保留旧 EC2 归属分支；仅对已有 ECS Preproduction Case 发送使用真实源时间及稳定身份的 ticket.updated，由 SP 同步到原 Hermes Slack thread。",
+    "description": "监听 Zendesk 状态变化，仅对已有 ECS Preproduction Case 投递 ticket.updated。2026-10-14 按用户确认退役两条旧 EC2 状态同步分支；历史节点保留为禁用且与入口断开，不再维护旧工单。",
     "nodes": [
       {
         "parameters": {
@@ -64,6 +64,7 @@
           672,
           -96
         ],
+        "disabled": true,
         "credentials": {
           "httpHeaderAuth": {
             "id": "QpzesdEzLCm98H1C",
@@ -102,7 +103,8 @@
         "position": [
           896,
           -96
-        ]
+        ],
+        "disabled": true
       },
       {
         "parameters": {
@@ -145,6 +147,7 @@
           672,
           96
         ],
+        "disabled": true,
         "credentials": {
           "httpHeaderAuth": {
             "id": "QpzesdEzLCm98H1C",
@@ -183,7 +186,8 @@
         "position": [
           896,
           96
-        ]
+        ],
+        "disabled": true
       },
       {
         "parameters": {
@@ -220,6 +224,7 @@
         ],
         "id": "a68e636e-f56c-4cf8-adf1-185344215877",
         "name": "HTTP Request1",
+        "disabled": true,
         "credentials": {
           "httpHeaderAuth": {
             "id": "QpzesdEzLCm98H1C",
@@ -289,6 +294,7 @@
         ],
         "id": "6f919293-eb12-4568-a743-5b27d1cf70a0",
         "name": "HTTP Request2",
+        "disabled": true,
         "credentials": {
           "httpHeaderAuth": {
             "id": "QpzesdEzLCm98H1C",
@@ -417,16 +423,6 @@
       "Execution Data": {
         "main": [
           [
-            {
-              "node": "Account Case membership check",
-              "type": "main",
-              "index": 0
-            },
-            {
-              "node": "prodCase membership check",
-              "type": "main",
-              "index": 0
-            },
             {
               "node": "ECS Preproduction status membership",
               "type": "main",

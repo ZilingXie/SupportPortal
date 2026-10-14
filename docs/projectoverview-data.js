@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T02:12:50Z",
-  "source_base_commit": "0160e171d6dba6662ebc5bc61ce28792f68d760f",
-  "registry_digest": "f28b53f14c31cc1a0654e374687ac9c9150dab2d23a62226135902439b59e70b",
+  "generated_at": "2026-10-14T03:36:45Z",
+  "source_base_commit": "ca76213f412c5e6544190ad6b2182ef93b0c150b",
+  "registry_digest": "2bc5cca87799b39385413ada8fc2450602fbf4b4adc10c9986b46b005805b392",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1690,6 +1690,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         },
         {
+          "type": "decision",
+          "label": "用户确认停用 EC2 状态同步分支，并写 note 关闭本次 execution 191922；不修旧工单。"
+        },
+        {
+          "type": "document",
+          "url": "docs/operations/n8n/retire-ec2-status-sync.md",
+          "label": "发布图、范围比较及处理台账回读证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
+          "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1796,8 +1810,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 47,
-      "done_count": 24,
+      "task_count": 48,
+      "done_count": 25,
       "blocked_count": 1
     },
     {
@@ -18509,6 +18523,42 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-13-r4",
           "event": "completed",
           "summary": "R1.1 status-sync 修复随 PR#1493 合入 main；r1/r2/r3 发布尝试原因保留，r4 以正确 SSM DSN 与 knowledge-stage-config 完成 immutable Preproduction evidence；独立运行回读和镜像隔离探针通过。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-201",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "退役 n8n 旧 EC2 状态同步分支",
+      "summary": "按用户确认停用 [case]Sync Status 的两个旧 EC2 分支；保留 ECS Preproduction 状态分支，并为 execution 191922 写入退役处理说明。",
+      "status": "done",
+      "next_action": "两条旧 EC2 状态分支已退役并发布回读；execution 191922 已登记处理原因，未处理清单为 0。ECS Production 状态同步另行评估，本任务不激活。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "发布图中 Zendesk Trigger 无法到达两个旧 EC2 状态分支，六个旧节点 disabled=true。",
+        "ECS Preproduction 分支的节点、凭据和内部连接与修改前一致，workflow 保持 active。",
+        "使用最新 incidentId/sourceInstance/executionId 写入用户认可的退役原因；未处理清单不再包含 execution 191922。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "用户确认停用 EC2 状态同步分支，并写 note 关闭本次 execution 191922；不修旧工单。"
+        },
+        {
+          "type": "document",
+          "url": "docs/operations/n8n/retire-ec2-status-sync.md",
+          "label": "发布图、范围比较及处理台账回读证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
+          "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
         }
       ]
     },
