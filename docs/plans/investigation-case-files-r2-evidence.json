@@ -3,6 +3,7 @@
   "revision": "R2",
   "date": "2026-10-14",
   "tested_source_commit": "37b54f7ddb252caca2beb348ff5238c16b286460",
+  "reviewed_full_head": "4d710932aa91fc88c22cfb38693d3ce8cfe65e03",
   "integrated_main": "fce24b4fda64372acd6253221ed64e6faf4741cb",
   "environment": "local task worktree; disposable PostgreSQL p2192_case_files_test; Slack/Zendesk/Zac boundaries mocked",
   "checks": [

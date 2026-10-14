@@ -1,11 +1,11 @@
 # Investigation 附件统一管理（Slack）
 
-修订：R2；执行日期：2026-10-13。状态：实现完成，未 finalize，等待独立代码验收。
+修订：R2；执行日期：2026-10-14。状态：独立代码验收通过，未 finalize；等待 Preproduction 授权与验证。
 
 ## 版本与授权
 
 - 原始源码基线：`0124173bbc6c818efd89f05de9127684f6133ac4`。
-- 已整合主干：`44b6d1e664d2fe99f1cd210ea054cdfdf511ccda`。知识执行与状态同步修改已合入本分支，重叠的 worker/部署入口纳入回归。
+- 已整合主干：`fce24b4fda64372acd6253221ed64e6faf4741cb`。知识执行与状态同步修改已合入本分支，重叠的 worker/部署入口纳入回归。
 - 分支：`codex/investigation-case-files`；工作区：`.worktrees/investigation-case-files`；完整最终 HEAD 由 Draft PR 与验收交接消息提供。
 - 用户授权实施后交给聊天 `01a1349a-c8e9-7183-829d-6b158e735eb5` 独立验收。通过前不得 finalize、merge、deploy；通过后沿用正式 Preproduction 发布门禁。Production、新真实业务写入另需授权。
 - 未改外部 agent-infra、未安装或调用 `hermes-zac-engineering-handoff`、未修改 n8n、未重放历史工单。
