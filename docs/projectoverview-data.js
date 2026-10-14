@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T10:48:49Z",
-  "source_base_commit": "4a84c891be8072bf6183a489eb246fae9af98fba",
-  "registry_digest": "eea05388a3055f5ddc72a590abf31686d8d22b62d998e69e7a2ce7c7e44aa85c",
+  "generated_at": "2026-10-14T10:58:11Z",
+  "source_base_commit": "c9cd88e91ea0447aa085b53bdb652771d3132c7c",
+  "registry_digest": "183d31704013ce9b7da9f9387f68ac8da4e95ef4aec94a32f2b340a35400f386",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5307,7 +5307,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "主动调查专项与固定任务回归",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN."
+          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN.",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
         },
         {
           "type": "test",
@@ -5320,6 +5321,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Hermes :45 source-bound overlay check",
           "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
           "result": "patch_apply=passed profile=passed compile=passed against freshly extracted :45 sources."
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal Draft PR @ c9cd88e9；Hermes linked Draft PR #34 @ b355683；已发送独立验收线程"
         }
       ],
       "source_refs": [
@@ -18686,7 +18692,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 主动调查与能力收敛 v1",
       "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
       "status": "active",
-      "next_action": "代码与跨仓 Draft PR 完成后交指定线程独立验收；验收通过前不合并、不部署、不发真实业务消息。",
+      "next_action": "Draft PR #1502 (SupportPortal @ c9cd88e9) 与 linked Hermes deploy Draft PR #34 (@ b355683) 已推送；已交 codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e 独立验收。验收通过前不合并、不部署、不发真实业务消息。",
       "owner": "codex",
       "created_at": "2026-10-14",
       "updated_at": "2026-10-14",
@@ -18705,7 +18711,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "主动调查专项与固定任务回归",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN."
+          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN.",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
         },
         {
           "type": "test",
@@ -18718,6 +18725,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Hermes :45 source-bound overlay check",
           "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
           "result": "patch_apply=passed profile=passed compile=passed against freshly extracted :45 sources."
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal Draft PR @ c9cd88e9；Hermes linked Draft PR #34 @ b355683；已发送独立验收线程"
         }
       ],
       "source_refs": [
