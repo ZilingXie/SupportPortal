@@ -231,8 +231,20 @@ KNOWLEDGE_STAGE_SWITCH_DEPENDENCIES = {
 }
 
 
-def verify_knowledge_shared_configuration(current_path: str, rendered_path: str, role: str) -> dict[str, Any]:
-    """Knowledge-only releases may change knowledge config and image provenance."""
+def verify_knowledge_shared_configuration(
+    current_path: str,
+    rendered_path: str,
+    role: str,
+    *,
+    expected_enablement_workflow_mode: str | None = None,
+) -> dict[str, Any]:
+    """Preserve shared config, allowing only an explicitly requested mode change."""
+    if (
+        expected_enablement_workflow_mode is not None
+        and expected_enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES
+    ):
+        raise ValueError("Expected Enablement workflow mode must be manual or archer")
+
     def configuration(path: str) -> dict[tuple[str, str], str]:
         definition = json.loads(Path(path).read_text())
         definition = definition.get("taskDefinition", definition)
@@ -259,11 +271,27 @@ def verify_knowledge_shared_configuration(current_path: str, rendered_path: str,
         return result
 
     before, after = configuration(current_path), configuration(rendered_path)
+    allowed_changes = []
+    if expected_enablement_workflow_mode is not None and role in {"api", "worker"}:
+        mode_key = ("environment", "ENABLEMENT_WORKFLOW_MODE")
+        if after.get(mode_key) != expected_enablement_workflow_mode:
+            raise ValueError(f"{role} ENABLEMENT_WORKFLOW_MODE does not match the requested mode")
+        if before.get(mode_key, "manual") not in ENABLEMENT_WORKFLOW_MODES:
+            raise ValueError(f"{role} current ENABLEMENT_WORKFLOW_MODE is invalid")
+        if before.get(mode_key) != after[mode_key]:
+            allowed_changes.append(mode_key[1])
+        # The rendered value was checked against the operator's exact target.
+        # Model, credentials, file switches and every other shared key stay guarded.
+        before[mode_key] = after[mode_key]
     changed = sorted({key[1] for key in before.keys() | after.keys() if before.get(key) != after.get(key)})
     if changed:
         # Values may contain secrets; only configuration names enter diagnostics.
         raise ValueError(f"Knowledge release would change shared {role} configuration: {', '.join(changed)}")
-    return {"status": "ok", "role": role, "shared_configuration": "unchanged"}
+    return {
+        "status": "ok", "role": role,
+        "shared_configuration": "unchanged_except_requested_mode" if allowed_changes else "unchanged",
+        "allowed_changes": allowed_changes,
+    }
 
 
 def default_knowledge_stage_config() -> dict[str, Any]:
@@ -1762,6 +1790,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify_shared.add_argument("--current", required=True)
     verify_shared.add_argument("--rendered", required=True)
     verify_shared.add_argument("--role", choices=("api", "route", "worker"), required=True)
+    verify_shared.add_argument(
+        "--expected-enablement-workflow-mode", choices=sorted(ENABLEMENT_WORKFLOW_MODES),
+    )
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
     bootstrap.add_argument("--manifest", required=True)
@@ -1858,7 +1889,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         )
         return {"status": "ok", "output": args.output}
     if args.command == "verify-knowledge-shared-configuration":
-        return verify_knowledge_shared_configuration(args.current, args.rendered, args.role)
+        return verify_knowledge_shared_configuration(
+            args.current, args.rendered, args.role,
+            expected_enablement_workflow_mode=args.expected_enablement_workflow_mode,
+        )
     if args.command == "verify-knowledge-stage-config":
         return verify_knowledge_stage_config(
             task_definition_path=args.task_definition,
