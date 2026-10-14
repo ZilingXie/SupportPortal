@@ -104,10 +104,10 @@ INVESTIGATION_WORK_REASONING_EFFORT = "xhigh"
 # enum lookup tables (quit states, error codes, counter ids) that turn raw
 # Argus telemetry into conclusions (case 13582/13591: quitState=1 was
 # unresolvable by the model while its mapping sat in an unreadable skill).
-INVESTIGATION_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
+INVESTIGATION_WORK_TOOLSETS = ["supportportal_investigation", "common", "memory", "skills"]
 
 # An ad-hoc work run gets the same surface.
-ADHOC_WORK_TOOLSETS = ["supportportal_work", "common", "memory", "skills"]
+ADHOC_WORK_TOOLSETS = ["supportportal_investigation", "common", "memory", "skills"]
 
 # Knowledge-governance role surfaces (hermes_knowledge_workflow). The Summary
 # role reuses the case's own session and sees only the read-only case context
@@ -127,6 +127,7 @@ def toolsets_for_phase(
     direction: str | None,
     session_kind: str | None = None,
     turn_kind: str | None = None,
+    allow_close: bool = False,
 ) -> list[str] | None:
     if phase == HermesTurnPhase.MESSAGE_ACTION.value:
         # Classification is a pure Hermes response contract.  Business tools
@@ -134,9 +135,12 @@ def toolsets_for_phase(
         return []
     if phase == HermesTurnPhase.WORK.value and direction == "investigation":
         if str(session_kind or "case") == "adhoc":
-            return ADHOC_WORK_TOOLSETS
+            return ADHOC_WORK_TOOLSETS + (["supportportal_work"] if allow_close else [])
         from backend.services.investigation_case_files import enabled
-        return INVESTIGATION_WORK_TOOLSETS + (["supportportal_files"] if enabled() else [])
+        toolsets = list(INVESTIGATION_WORK_TOOLSETS)
+        if allow_close:
+            toolsets.append("supportportal_work")
+        return toolsets + (["supportportal_files"] if enabled() else [])
     return PHASE_TOOLSETS.get(phase)
 
 
@@ -1780,7 +1784,11 @@ class HermesAgentTurnProcessor:
         if not run_id:
             if before_external is not None:
                 before_external()
+            from backend.services.investigation_runtime_policy import investigation_policy
+            policy = investigation_policy(turn, binding)
             input_text = render_snapshot_for_run(snapshot)
+            if policy:
+                input_text += "\n\n--- SERVER INVESTIGATION POLICY ---\n" + json.dumps(policy, sort_keys=True)
             reviewer_feedback = str(
                 ((turn.get("work_result") or {}).get("reviewer_feedback")) or ""
             ).strip()
@@ -1868,6 +1876,7 @@ class HermesAgentTurnProcessor:
             try:
                 started = self.client.start_run(
                     **({"supportportal_file_scope": file_scope} if file_scope else {}),
+                    **({"supportportal_skill_profile": {"id": policy["skill_profile"], "allow_close": policy["allow_close"], "turn_id": turn_id, "request_id": str(turn_run["request_id"])}} if policy and phase == HermesTurnPhase.WORK.value else {}),
                     session_id=str(binding.get("hermes_session_id") or ""),
                     instructions=instructions,
                     input_text=input_text,
@@ -1878,6 +1887,7 @@ class HermesAgentTurnProcessor:
                         direction=turn.get("direction"),
                         session_kind=session_kind,
                         turn_kind=turn.get("turn_kind"),
+                        allow_close=bool(policy and policy.get("allow_close")),
                     ),
                     model=pinned_model or None,
                     model_options=(

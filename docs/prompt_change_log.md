@@ -5221,3 +5221,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 ## 2026-10-13 — p2-197 层 2 修复 A（待独立验收/部署）
 
 知识 Summary/Review 生产就绪不再依赖旧 typed Case real 模式；新增默认关闭的 `KNOWLEDGE_AI_EXECUTION_ENABLED` 作为独立消费门。层 2 只排队、层 3 才调用 AI；双写 worker 仍只控制 delivery。manual/model/toolset 未改。本轮尚未部署，合同与证据见 `docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md`。
+
+## 2026-10-14 — Investigation 主动调查与能力收敛 v1（p2-203，待独立验收）
+
+- `hermes-investigation-manual-v4` → `v5`：先执行只读调查；频道仅有名称时使用服务端固定前30天初查窗口；区分空结果、错误、截断；限制三次搜索；偏色结论明确证据边界。
+- 新增按回合绑定的 `supportportal-investigation-v1` Skill profile 与专用 `support_zac_consult` 工具；不改变 Automation/Cron 默认技能。
+- 代码、跨仓 overlay、Prompt 仅待独立验收；未激活 Prompt Release、未部署、未触达真实业务。

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T10:17:31Z",
-  "source_base_commit": "54acf0e3f9db8e8f08a3065c68a9cd70ae443911",
-  "registry_digest": "8229bc2e0afa7f426f78586519d92ccd4c80bc8f1a384a94ba08095c914dc078",
+  "generated_at": "2026-10-14T10:48:49Z",
+  "source_base_commit": "4a84c891be8072bf6183a489eb246fae9af98fba",
+  "registry_digest": "eea05388a3055f5ddc72a590abf31686d8d22b62d998e69e7a2ce7c7e44aa85c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5302,6 +5302,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1.2 isolated released-image probe",
           "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
           "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
+        },
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN."
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "159 passed in focused run; 1 existing follow-up handoff baseline failure unrelated to this diff; updated toolset contract assertions."
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "patch_apply=passed profile=passed compile=passed against freshly extracted :45 sources."
         }
       ],
       "source_refs": [
@@ -5309,8 +5327,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 6,
+      "status": "active",
+      "task_count": 7,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -18657,6 +18675,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "url": "backend/tests/test_enablement_mode_release_guard.py",
           "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-203",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 主动调查与能力收敛 v1",
+      "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
+      "status": "active",
+      "next_action": "代码与跨仓 Draft PR 完成后交指定线程独立验收；验收通过前不合并、不部署、不发真实业务消息。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "C1 Skill profile 按实例/回合隔离，非白名单和 Automation/Cron 不可加载；关闭仅在可信工程师授权时开放。",
+        "C2 Investigation 有线索先查；频道缺时间使用固定前30天，空结果/错误/截断分别表达，最多三次搜索。",
+        "C3 Zac 只经专用后端工具，HTTP 200不等于完成，SSE完成/断流/重复/重启/过期写回符合合同。",
+        "C4 原固定路由、多轮、人工审核、英文Slack、长度限制保持不变。"
+      ],
+      "blockers": [
+        "真实 Argus/Zac/Slack/客户业务样本未授权，发布与真实业务验证等待独立验收及后续明确授权。",
+        "PostgreSQL专项需使用隔离 DSN；本机当前仅能运行 skipped 条件，未宣称通过。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "5 passed；固定 Investigation 4 passed，4 PostgreSQL rows skipped due DSN."
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "159 passed in focused run; 1 existing follow-up handoff baseline failure unrelated to this diff; updated toolset contract assertions."
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "patch_apply=passed profile=passed compile=passed against freshly extracted :45 sources."
+        }
+      ],
+      "source_refs": [
+        "docs/plans/investigation-proactive-v1.md",
+        "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1"
       ]
     },
     {
