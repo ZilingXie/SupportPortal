@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T02:33:59Z",
-  "source_base_commit": "1c0f1eba1a9bdd0c356eb7bc97ed861e0b397719",
-  "registry_digest": "7fa17e219f2422d38891ad11e65f62c32c7985f8f9f3436234294fefc40cf7de",
+  "generated_at": "2026-10-14T03:13:31Z",
+  "source_base_commit": "32830f375170d0e3f7bc52b19e749dbc686716b6",
+  "registry_digest": "ca312ccd64c611bcb3dcf1abcd530104a8b07ebef8653241759e6f7106c40d0c",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -17789,14 +17789,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "next_action": "先由聊天 01a1349a-c8e9-7183-829d-6b158e735eb5 独立验收 Investigation 附件统一管理（Slack）R2 Draft PR完整HEAD与云端补丁包。通过后按正式Preproduction流程回读Hermes镜像/profile、部署并验证C1-C7。原F-R1-DEPLOY-01和真实业务门禁继续保留；Zac实际获取协议waiting-for-evidence；Production另需授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-14",
       "acceptance_criteria": [
         "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
         "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
       ],
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-        "R2-CODE-REVIEW：实现完成，指定聊天独立代码验收未执行；验收前不得finalize/merge/deploy。",
         "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
         "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
       ],

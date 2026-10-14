@@ -40,9 +40,9 @@ Hermes Work 的私有运行 metadata 持有签名 capability，后端验证 name
 
 ## 等待与下一步
 
-- R2-CODE-REVIEW：独立验收尚未执行；验收范围为 SupportPortal diff、云端补丁/构建包与本地入口证据。执行者自测不释放门禁。
+- R2-CODE-REVIEW：独立代码验收已通过，绑定完整 HEAD `4d710932aa91fc88c22cfb38693d3ce8cfe65e03`；代码合并门禁已释放。验收范围为 SupportPortal diff、云端补丁/构建包与本地入口证据。
 - R2-PP：等待代码验收后，回读真实 Hermes immutable image、实际 overlay 与 profile；保留既有 close/其他能力，构建输入 drift 不可覆盖。按[运维步骤](../operations/investigation-case-files.md)执行正式 PP 发布并记录 SP/Hermes 版本、Map、Slack IDs、Zendesk回执。
 - R2-ZAC：真实鉴权文件获取协议/样本缺失。提供实际下载入口后再接 adapter 并验证；合成 acquire 通过不能关闭此等待。
 - R1-EXISTING：p2-192 原 F-R1-DEPLOY-01 发布复审/正式 pipeline、真实业务闭环门禁保留；本轮测试不替代既有证据。历史详情见 [v1](investigation-attachments-v1.md)。
 
-没有未决产品选择；当前允许的下一步仅是指定聊天独立代码验收。工作区保留用于修复，验收前不清理。
+没有未决产品选择；当前允许的下一步是按正式门禁进行 Preproduction 镜像/profile 回读与部署验证。工作区保留用于后续发布或修复。
