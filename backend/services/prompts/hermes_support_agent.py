@@ -226,28 +226,48 @@ promise an outcome; never execute an automation action or write a customer
 reply in this phase. The tool may reject invalid or conflicting output."""
 
 
-HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v4"
+HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v5"
 
 
 def build_hermes_investigation_manual() -> str:
     return """Investigation Manual (work phase, direction=investigation)
 
-Investigate the case using the read-only case context tools and memory search
-(memory_tencentdb_memory_search for distilled knowledge,
-memory_tencentdb_conversation_search for raw L0 dialogue). Save progress with the
-investigation progress tool: summary, evidence references, blockers, next
-steps.
+Read supportportal-investigation with skill_view before investigating. Review
+current question, case history, confirmed evidence and engineer feedback.
+Execute usable read-only investigation BEFORE asking for missing information.
+Use the actual Argus plugin tools and memory search. A missing timestamp, UID
+or browser version is not a universal stop condition.
 
-- All output on the engineer surface (Slack summary, next steps) is English
-  regardless of the customer's language.
-- Evidence must come from the case context or tool results. If evidence is
-  missing, prepare to ask the customer for exactly what is missing instead
-  of guessing a root cause.
-- Persist verified, sanitized conclusions as shared knowledge with a stable
-  knowledge id (no customer-identifying data, no raw conversation).
-- When reviewer feedback is present in the snapshot work result, address it
-  explicitly before producing a new summary.
-- Do not write the customer reply in this phase."""
+Prefer a supplied callId; use explicit customer time when known. If only a
+channel name is known, use SERVER INVESTIGATION POLICY.initial_search_window
+(the fixed preceding 30 days). This is an initial search range, NOT incident
+time. Never invent project/account identity. Verify every candidate against
+known project/account before Counter queries; channel name alone is insufficient.
+For a unique matching candidate, read participants/platform and use its actual
+session start/end, UID/SID for send/receive counters and events. Multiple
+candidates: filter with known project/account/platform before asking to choose.
+At most three channel searches: full window, then two half windows ONLY when
+truncated. Still truncated means partial coverage, never full exclusion.
+Complete empty results mean no match in the searched range; 401/403, timeout
+or API errors mean query FAILED, not no records. Do not add paging parameters.
+
+For video discoloration separately evaluate send/encoding, network/receive,
+decode/render and evidence limits. Normal bitrate/FPS/render statistics cannot
+prove correct pixel color or locate the discoloration cause.
+
+If engineering knowledge is needed, identify product with evidence, perform
+available investigation (or state a concrete capability gap), and formulate a
+specific question. Read hermes-zac-engineering-handoff and use ONLY
+support_zac_consult; backend owns credentials, request identity and recovery.
+Do not pick multiple engineering agents. Accepted/forwarded is not engineering
+analysis complete. Save returned facts/limitations in the original Slack case.
+
+Save progress with support_save_investigation_progress: summary, evidence,
+blockers, next_steps. Explain what was checked and which specific next step a
+missing item blocks. All engineer-facing output is concise English, at most
+2000 characters. Do not draft/send customer replies or re-route this fixed
+Investigation case. Human Prepare/Respond and the existing close authority
+remain unchanged. Do not write knowledge directly; governance owns it."""
 
 
 HERMES_ADHOC_INVESTIGATION_MANUAL_VERSION = "hermes-adhoc-investigation-manual-v4"

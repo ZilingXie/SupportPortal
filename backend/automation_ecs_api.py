@@ -1520,6 +1520,13 @@ def create_app(    *,
                         environment=runtime.environment,
                         zendesk_side_effects_enabled=side_effects,
                     )
+                if tool_name == "zac_consult":
+                    from backend.services.automation_hermes_tools import tool_zac_consult
+                    if set(body) != {"turn_id", "run_id", "consultation"}:
+                        raise HermesToolError("zac_request_invalid", "unexpected consultation parameters")
+                    return await asyncio.to_thread(tool_zac_consult, coordination_store, repository,
+                        turn_id=turn_id, run_id=str(body.get("run_id") or ""),
+                        consultation=body.get("consultation"))
                 if tool_name == "save_investigation_progress":
                     return await asyncio.to_thread(
                         tool_save_investigation_progress,

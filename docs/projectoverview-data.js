@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T10:17:31Z",
-  "source_base_commit": "54acf0e3f9db8e8f08a3065c68a9cd70ae443911",
-  "registry_digest": "8229bc2e0afa7f426f78586519d92ccd4c80bc8f1a384a94ba08095c914dc078",
+  "generated_at": "2026-10-14T12:41:45Z",
+  "source_base_commit": "c7c03c4119c5a2e2a3449c22dd6ca5facdeed151",
+  "registry_digest": "330cf78acdab6075ea3a122993e1a874f7a88eb1e6c475e4458953d980f070a9",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5302,6 +5302,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1.2 isolated released-image probe",
           "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
           "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
+        },
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "7 passed；固定 Investigation 与 ZacClient 请求契约回归通过；PG 专项未执行/无 DSN，不能宣称通过。",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "24 passed，55 deselected（包含 proactive Investigation 与 toolset 定向回归）；既存 follow-up handoff 基线失败仍未归因本改动。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "命令：python3 build/investigation-proactive-v1/verify.py \u003cfresh-source>；输出：patch_apply=passed profile=passed compile=passed；ARGUS_RESULTS=[True, True, True, argus_channel_search_budget_exhausted]。验收 fresh source 基线 HEAD=a49f64b47d4b547c584e5c776f1f6180ff696dd6。"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal Draft PR #1502 @ c7c03c4119c5a2e2a3449c22dd6ca5facdeed151；Hermes linked Draft PR #34 @ fcad33db9ee60cf1050be1687c764c81bff57f2b；已发送独立复审线程"
         }
       ],
       "source_refs": [
@@ -5309,8 +5333,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "done",
-      "task_count": 6,
+      "status": "active",
+      "task_count": 7,
       "done_count": 6,
       "blocked_count": 0
     },
@@ -18657,6 +18681,62 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "url": "backend/tests/test_enablement_mode_release_guard.py",
           "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-203",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 主动调查与能力收敛 v1",
+      "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
+      "status": "active",
+      "next_action": "Draft PR #1502 (SupportPortal @ c7c03c4119c5a2e2a3449c22dd6ca5facdeed151) 与 linked Hermes deploy Draft PR #34 (@ fcad33db9ee60cf1050be1687c764c81bff57f2b) 已推送；已交 codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e 独立复审。复审通过前不合并、不部署、不发真实业务消息。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "C1 Skill profile 按实例/回合隔离，非白名单和 Automation/Cron 不可加载；关闭仅在可信工程师授权时开放。",
+        "C2 Investigation 有线索先查；频道缺时间使用固定前30天，空结果/错误/截断分别表达，最多三次搜索。",
+        "C3 Zac 只经专用后端工具，HTTP 200不等于完成，SSE完成/断流/重复/重启/过期写回符合合同。",
+        "C4 原固定路由、多轮、人工审核、英文Slack、长度限制保持不变。"
+      ],
+      "blockers": [
+        "真实 Argus/Zac/Slack/客户业务样本未授权，发布与真实业务验证等待独立验收及后续明确授权。",
+        "PostgreSQL专项需使用隔离 DSN；本机当前仅能运行 skipped 条件，未宣称通过。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "7 passed；固定 Investigation 与 ZacClient 请求契约回归通过；PG 专项未执行/无 DSN，不能宣称通过。",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "24 passed，55 deselected（包含 proactive Investigation 与 toolset 定向回归）；既存 follow-up handoff 基线失败仍未归因本改动。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "命令：python3 build/investigation-proactive-v1/verify.py \u003cfresh-source>；输出：patch_apply=passed profile=passed compile=passed；ARGUS_RESULTS=[True, True, True, argus_channel_search_budget_exhausted]。验收 fresh source 基线 HEAD=a49f64b47d4b547c584e5c776f1f6180ff696dd6。"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal Draft PR #1502 @ c7c03c4119c5a2e2a3449c22dd6ca5facdeed151；Hermes linked Draft PR #34 @ fcad33db9ee60cf1050be1687c764c81bff57f2b；已发送独立复审线程"
+        }
+      ],
+      "source_refs": [
+        "docs/plans/investigation-proactive-v1.md",
+        "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1",
+        "SupportPortal HEAD c7c03c4119c5a2e2a3449c22dd6ca5facdeed151",
+        "Hermes deploy HEAD fcad33db9ee60cf1050be1687c764c81bff57f2b"
       ]
     },
     {

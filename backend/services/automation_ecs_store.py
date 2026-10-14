@@ -404,6 +404,9 @@ class ClaimedJob:
     claimed_by: str
 
 
+from backend.services.investigation_consult_store import MemoryConsultStore, PostgresConsultStore
+
+
 class AutomationEcsStore(Protocol):
     settings: AutomationEcsSettings
 
@@ -569,7 +572,7 @@ class AutomationEcsStore(Protocol):
     def list_heartbeats(self) -> list[dict[str, Any]]: ...
 
 
-class InMemoryAutomationEcsStore(MemoryCaseFileStore):
+class InMemoryAutomationEcsStore(MemoryConsultStore, MemoryCaseFileStore):
     def __init__(self, settings: AutomationEcsSettings) -> None:
         self.settings = settings
         self._lock = threading.RLock()
@@ -1891,7 +1894,7 @@ class InMemoryAutomationEcsStore(MemoryCaseFileStore):
             if turn is None or turn["status"] not in {"pending", "running", "cancel_requested"}:
                 raise HermesTurnStateError(turn_id, "turn is not active")
             work_result = copy.deepcopy(work_result)
-            for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action"):
+            for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action", "zac_consultation"):
                 if field in (turn.get("work_result") or {}):
                     work_result[field] = copy.deepcopy(turn["work_result"][field])
             turn.update(work_result=work_result, updated_at=_iso())
@@ -2361,6 +2364,7 @@ class InMemoryAutomationEcsStore(MemoryCaseFileStore):
             binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"]))
             if binding is None:
                 raise HermesTurnStateError(turn_id, "case binding disappeared")
+            payload.update({k: v for k, v in (binding.get("investigation") or {}).items() if k.startswith("_zac_")})
             binding.update(investigation=copy.deepcopy(payload), updated_at=_iso())
             self._append_event(turn["execution_id"], "agent_turn.investigation_saved", {"turn_id": turn_id})
             return copy.deepcopy(binding)
@@ -2769,7 +2773,7 @@ class InMemoryAutomationEcsStore(MemoryCaseFileStore):
             return {"binding": binding, "active_turn": active_turn, "turns": turns, "drafts": drafts[:10]}
 
 
-class PostgresAutomationEcsStore(PostgresCaseFileStore):
+class PostgresAutomationEcsStore(PostgresConsultStore, PostgresCaseFileStore):
     _UPGRADABLE_SCHEMA_REVISIONS = frozenset(
         {
             "automation-ecs-001",
@@ -4604,11 +4608,12 @@ class PostgresAutomationEcsStore(PostgresCaseFileStore):
     def record_hermes_turn_work(self, turn_id: str, *, work_result: dict[str, Any]) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
+                cursor.execute(sql.SQL("SELECT turn_id FROM {} WHERE turn_id=%s FOR UPDATE").format(self._table("automation_hermes_agent_turns")), (turn_id,))
                 turn = self._lock_turn(cursor, turn_id)
                 if str(turn["status"]) not in {"pending", "running", "cancel_requested"}:
                     raise HermesTurnStateError(turn_id, "turn is not active")
                 work_result = copy.deepcopy(work_result)
-                for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action"):
+                for field in ("reviewer_feedback", "engineer_authority", "attachments", "message_action", "zac_consultation"):
                     if field in (turn.get("work_result") or {}):
                         work_result[field] = copy.deepcopy(turn["work_result"][field])
                 cursor.execute(
@@ -5473,6 +5478,9 @@ class PostgresAutomationEcsStore(PostgresCaseFileStore):
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 turn = self._lock_turn(cursor, turn_id)
+                cursor.execute(sql.SQL("SELECT investigation FROM {} WHERE namespace=%s AND zendesk_ticket_id=%s FOR UPDATE").format(self._table("automation_hermes_case_bindings")), (turn["namespace"], turn["zendesk_ticket_id"]))
+                previous = cursor.fetchone() or {}
+                payload.update({k: v for k, v in (previous.get("investigation") or {}).items() if k.startswith("_zac_")})
                 cursor.execute(
                     sql.SQL(
                         "UPDATE {} SET investigation=%s,updated_at=NOW() "
