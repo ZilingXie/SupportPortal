@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from backend.services.investigation_case_file_store import MemoryCaseFileStore, PostgresCaseFileStore, FILE_TABLE_DDL
+
 import copy
 from contextlib import contextmanager
 import os
@@ -48,6 +50,7 @@ AGENT_MODEL_ENV_NAME = "AGENT_MODEL_ID"
 def _investigation_draft_candidate(
     turn: dict[str, Any], binding: dict[str, Any], case: dict[str, Any],
     existing: dict[str, Any] | None, content: str, validator: Callable[[], dict[str, Any]],
+    attachment_snapshot: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Called only under case/binding/turn locks; rejection is a committed result."""
     turn_id = str(turn["turn_id"])
@@ -63,6 +66,8 @@ def _investigation_draft_candidate(
     if existing:
         if existing.get("status") not in {"draft", "awaiting_approval"}:
             raise HermesDraftStateError(existing["draft_id"], "draft is no longer editable")
+        if attachment_snapshot is not None and (existing.get("basis") or {}).get("attachments", []) != attachment_snapshot:
+            return {"rejection": {"code": "draft_file_snapshot_conflict", "rewrite_allowed": False}}
         if existing["content"] != content:
             return {"rejection": {"code": "draft_content_conflict", "rewrite_allowed": False}}
         return {"existing": existing}
@@ -509,7 +514,7 @@ class AutomationEcsStore(Protocol):
     def find_hermes_ticket_by_thread(self, channel_id: str, thread_ts: str) -> str | None: ...
     def bind_hermes_case_persona(self, zendesk_ticket_id: str, *, persona_key: str, persona_version: int) -> dict[str, Any]: ...
     def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
-                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]: ...
+                                         validator: Callable[[], dict[str, Any]], attachment_snapshot: list[dict[str, Any]] | None = None) -> dict[str, Any]: ...
 
     def get_hermes_turn(self, turn_id: str) -> dict[str, Any] | None: ...
     def get_hermes_draft(self, draft_id: str) -> dict[str, Any] | None: ...
@@ -564,7 +569,7 @@ class AutomationEcsStore(Protocol):
     def list_heartbeats(self) -> list[dict[str, Any]]: ...
 
 
-class InMemoryAutomationEcsStore:
+class InMemoryAutomationEcsStore(MemoryCaseFileStore):
     def __init__(self, settings: AutomationEcsSettings) -> None:
         self.settings = settings
         self._lock = threading.RLock()
@@ -2413,7 +2418,7 @@ class InMemoryAutomationEcsStore:
             yield
 
     def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
-                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+                                         validator: Callable[[], dict[str, Any]], attachment_snapshot: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._lock:
             turn = self._hermes_turns.get(turn_id)
             if not turn:
@@ -2421,7 +2426,7 @@ class InMemoryAutomationEcsStore:
             binding = self._hermes_bindings.get((turn["namespace"], turn["zendesk_ticket_id"])) or {}
             case = self._cases.get(turn["zendesk_ticket_id"]) or {}
             existing = next((d for d in self._hermes_drafts.values() if d["turn_id"] == turn_id), None)
-            candidate = _investigation_draft_candidate(turn, binding, case, existing, content, validator)
+            candidate = _investigation_draft_candidate(turn, binding, case, existing, content, validator, attachment_snapshot)
             if "existing" in candidate:
                 return copy.deepcopy(candidate["existing"])
             if "rejection" in candidate:
@@ -2463,7 +2468,7 @@ class InMemoryAutomationEcsStore:
                 "conversation_version": int(binding["conversation_version"]),
                 "case_revision": int(turn["case_revision"]),
                 "content": normalized,
-                "basis": {**copy.deepcopy(basis or {}), "attachments": copy.deepcopy((turn.get("work_result") or {}).get("attachments") or [])},
+                "basis": {**copy.deepcopy(basis or {}), "attachments": copy.deepcopy((basis or {}).get("attachments", (turn.get("work_result") or {}).get("attachments") or []))},
                 "guardrail": copy.deepcopy(guardrail) if guardrail is not None else None,
                 "publish_policy": publish_policy,
                 "status": "draft",
@@ -2764,7 +2769,7 @@ class InMemoryAutomationEcsStore:
             return {"binding": binding, "active_turn": active_turn, "turns": turns, "drafts": drafts[:10]}
 
 
-class PostgresAutomationEcsStore:
+class PostgresAutomationEcsStore(PostgresCaseFileStore):
     _UPGRADABLE_SCHEMA_REVISIONS = frozenset(
         {
             "automation-ecs-001",
@@ -2781,6 +2786,7 @@ class PostgresAutomationEcsStore:
             "automation-ecs-012",
             "automation-ecs-013",
             "automation-ecs-014",
+            "automation-ecs-015",
         }
     )
 
@@ -2846,6 +2852,7 @@ class PostgresAutomationEcsStore:
 
     def _create_tables(self, cursor: psycopg.Cursor[Any]) -> None:
         statements = [
+            ("investigation_case_files", FILE_TABLE_DDL),
             ("automation_cases", """
                 namespace TEXT NOT NULL,
                 zendesk_ticket_id TEXT NOT NULL,
@@ -3133,6 +3140,7 @@ class PostgresAutomationEcsStore:
                 self._table("automation_hermes_agent_turns"),
             )
         )
+        cursor.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS zac_session_id TEXT").format(self._table("automation_hermes_case_bindings")))
         # Baseline backfill: case_revision derives from the binding's completed
         # turn count (the next event revision); in-flight turns from 003 are
         # superseded because their orchestration no longer exists.
@@ -5573,7 +5581,7 @@ class PostgresAutomationEcsStore:
                 yield
 
     def submit_hermes_investigation_draft(self, turn_id: str, *, content: str,
-                                         validator: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+                                         validator: Callable[[], dict[str, Any]], attachment_snapshot: list[dict[str, Any]] | None = None) -> dict[str, Any]:
         with self._connect() as connection:
             with connection.transaction(), connection.cursor() as cursor:
                 cursor.execute(sql.SQL("SELECT namespace,zendesk_ticket_id FROM {} WHERE turn_id=%s").format(self._table("automation_hermes_agent_turns")), (turn_id,))
@@ -5591,7 +5599,7 @@ class PostgresAutomationEcsStore:
                 turn = dict(cursor.fetchone())
                 cursor.execute(sql.SQL("SELECT * FROM {} WHERE turn_id=%s ORDER BY created_at LIMIT 1").format(self._table("automation_hermes_case_drafts")), (turn_id,))
                 existing = cursor.fetchone()
-                candidate = _investigation_draft_candidate(turn, binding, case, dict(existing) if existing else None, content, validator)
+                candidate = _investigation_draft_candidate(turn, binding, case, dict(existing) if existing else None, content, validator, attachment_snapshot)
                 if "existing" in candidate:
                     return candidate["existing"]
                 if "rejection" in candidate:
@@ -5659,7 +5667,7 @@ class PostgresAutomationEcsStore:
                 int(binding["conversation_version"]),
                 int(turn["case_revision"]),
                 normalized,
-                Jsonb({**(basis or {}), "attachments": (turn.get("work_result") or {}).get("attachments") or []}),
+                Jsonb({**(basis or {}), "attachments": (basis or {}).get("attachments", (turn.get("work_result") or {}).get("attachments") or [])}),
                 Jsonb(guardrail) if guardrail is not None else None,
                 publish_policy,
             ),

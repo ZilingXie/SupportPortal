@@ -1,0 +1,35 @@
+{
+  "plan_name": "Investigation 附件统一管理（Slack）",
+  "revision": "R2",
+  "date": "2026-10-14",
+  "tested_source_commit": "37b54f7ddb252caca2beb348ff5238c16b286460",
+  "reviewed_full_head": "4d710932aa91fc88c22cfb38693d3ce8cfe65e03",
+  "integrated_main": "fce24b4fda64372acd6253221ed64e6faf4741cb",
+  "environment": "local task worktree; disposable PostgreSQL p2192_case_files_test; Slack/Zendesk/Zac boundaries mocked",
+  "checks": [
+    {
+      "command": "rtk proxy env RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_case_files_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_case_files_test /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q -x backend/tests/test_investigation_case_files.py backend/tests/test_investigation_case_files_deploy.py backend/tests/test_investigation_attachments.py backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_draft_save.py backend/tests/test_automation_ecs_deploy.py",
+      "result": "289 passed, 4 existing FastAPI deprecation warnings, 186.32s; exit 0 after latest main sync"
+    },
+    {
+      "command": "rtk proxy /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python scripts/testing/verify_case_files_hermes_bundle.py /Users/xieziling/Desktop/personal_proj/agent-infra",
+      "result": "patch_apply/core_compile/skills_list_gate/skill_view_gate/session_negative passed; exit 0"
+    },
+    {
+      "command": "rtk proxy /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python /Users/xieziling/.codex/skills/.system/skill-creator/scripts/quick_validate.py deployment/hermes-case-files/skills/support-case-files",
+      "result": "Skill is valid; exit 0"
+    },
+    {
+      "command": "rtk proxy bash -n deployment/deploy_automation_ecs_release.sh",
+      "result": "exit 0"
+    },
+    {
+      "command": "git diff main...HEAD --check; git diff --check; generate_project_overview.py --check; verify_feature_list.py; quick_validate.py support-case-files; bash -n deployment/deploy_automation_ecs_release.sh",
+      "result": "all passed after syncing origin/main and resolving projectoverview-data.js/prompt_change_log.md conflicts; gateway.patch trailing whitespace removed"
+    }
+  ],
+  "deployment": "not performed",
+  "business": "not performed; no real customer writes",
+  "zac": "synthetic acquisition seam only; actual protocol waiting-for-evidence",
+  "review": "independent code acceptance passed at reviewed_full_head; documentation status synchronized in follow-up commit"
+}

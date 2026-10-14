@@ -1736,6 +1736,7 @@ def tool_save_reply_draft(
     turn_id: str,
     content: str,
     basis: dict[str, Any] | None = None,
+    selected_file_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     context = _resolve_turn_context(store, repository, turn_id, allow_saved_reply=True)
     turn = context["turn"]
@@ -1813,6 +1814,14 @@ def tool_save_reply_draft(
         ]
         normalized_content = normalized_content + format_rag_fallback_references(references)
 
+    from backend.services.investigation_case_files import enabled, selected_references
+    if native_reply and enabled() and selected_file_ids is None:
+        selected_file_ids = []
+    if selected_file_ids is not None:
+        if not enabled() or not native_reply or binding.get("session_kind", "case") != "case":
+            raise HermesToolError("case_file_selection_forbidden", "file selection requires a bound Investigation reply")
+        candidate_basis["attachments"] = selected_references(store, str(turn["zendesk_ticket_id"]), selected_file_ids)
+
     def validate_candidate() -> dict[str, Any]:
         if not str(content or "").strip():
             raise HermesToolError("content_required", "draft content is required")
@@ -1860,6 +1869,7 @@ def tool_save_reply_draft(
 
         draft = store.submit_hermes_investigation_draft(
             turn_id, content=normalized_content, validator=native_validator,
+            attachment_snapshot=candidate_basis.get("attachments"),
         )
         if "rejection" in draft:
             diagnostic = draft["rejection"]
