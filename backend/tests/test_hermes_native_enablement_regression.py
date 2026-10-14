@@ -19,8 +19,8 @@ from backend.tests.test_hermes_zendesk_agent_tools import _guardrail_pass
 from backend.services.automation_ecs_contracts import IntakeEventType
 
 
-@pytest.mark.parametrize("stale_workflow,completed", [(False, False), (True, False), (False, True)])
-def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflow, completed):
+@pytest.mark.parametrize("stale_workflow,completed,mode", [(False, False, "manual"), (True, False, "manual"), (False, True, "manual"), (False, True, "archer")])
+def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflow, completed, mode):
     store, repository = harness._store(), InMemoryTicketRepository()
     handoff, _, _ = tool_harness.ToolFailureHandoffTests()._seed(store)
     turn_id = handoff["turn_id"]
@@ -44,9 +44,20 @@ def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflo
         extraction.collected_fields["app_id"] = "a" * 32
         extraction.collected_fields["requested_feature_label"] = "media relay"
     ownership = OwnershipGateResult(eligible=True, state="assigned", ticket_status="open")
-    with patch.dict(os.environ, {"AUTOMATION_CASE_ENGINE": "hermes", "HERMES_CASE_WORKFLOW_MODE": "disabled", "ENABLEMENT_WORKFLOW_MODE": "manual"}), patch(
+    actual_save = repository.save_account_reply_job
+    def save_and_schedule(job):
+        persisted = actual_save(job)
+        # Exercise the competing scheduler before the workflow returns to Hermes.
+        assert persisted["payload"]["hermes_compatibility_only"] is True
+        with patch.object(worker, "ticket_repository", repository), patch.object(worker, "render_automation_reply") as render:
+            worker._process_claimed_account_reply_jobs(from_status=persisted["status"],
+                to_status="persona_v8_preparing", due_only=False, limit=10)
+        render.assert_not_called()
+        assert repository.get_account_reply_job(persisted["job_id"])["status"] == persisted["status"]
+        return persisted
+    with patch.dict(os.environ, {"AUTOMATION_CASE_ENGINE": "hermes", "HERMES_CASE_WORKFLOW_MODE": "disabled", "ENABLEMENT_WORKFLOW_MODE": mode}), patch(
         "backend.services.automation_account_intake.extract_enablement_fields", return_value=extraction,
-    ), patch("backend.services.account_automation_ownership.ensure_production_automation_ownership", return_value=ownership):
+    ), patch("backend.services.account_automation_ownership.ensure_production_automation_ownership", return_value=ownership), patch.object(repository, "save_account_reply_job", side_effect=save_and_schedule):
         result = asyncio.run(tool_execute_automation_action(store, repository, turn_id=turn_id, route="enablement", environment="preproduction"))
     assert result["status"] == ("workflow_completed" if completed else "missing_fields")
     assert result["reply_basis"]["compatibility_relay_required"] is completed
@@ -54,7 +65,7 @@ def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflo
         job_id = result["compatibility_account_reply_job_id"]
         job = repository.get_account_reply_job(job_id)
         assert job["payload"]["hermes_compatibility_only"] is True
-        assert repository.get_account_case("AC-123")["automation_context"]["enablement_manual_workflow"]["reply_job_id"] == job_id
+        assert repository.get_account_case("AC-123")["automation_context"][f"enablement_{'manual' if mode == 'manual' else 'auto'}_workflow"]["reply_job_id"] == job_id
     store._hermes_turns[turn_id]["phase"] = "persona"
     with patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final", side_effect=_guardrail_pass):
         saved = tool_save_reply_draft(store, repository, turn_id=turn_id, content=(
@@ -86,7 +97,7 @@ def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflo
     send.assert_called_once()
     if completed:
         assert relay.call_count == 2 and mail.call_count == 2
-        assert repository.get_account_case("AC-123")["internal_email_send_status"] == "pending"
+        assert repository.get_account_case("AC-123")["internal_email_send_status"] == ("pending" if mode == "manual" else "not_applicable")
         assert len(repository.get_ticket("123")["messages"]) == 2
         return
     relay.assert_not_called()

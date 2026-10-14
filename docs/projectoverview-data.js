@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-13T11:59:22Z",
-  "source_base_commit": "0915d8cea2b0e13e3921292c97ac0be55ca5d9cd",
-  "registry_digest": "5c67ee67f848f8e007db7c3c5e4c9e3cc4241d3362507c6429dc5a115c4c7a04",
+  "generated_at": "2026-10-14T02:21:06Z",
+  "source_base_commit": "5a91cfc251d5b70c44dd28284fa1c340f0397bdc",
+  "registry_digest": "cd2a830c9dcb8209e9741ca740d9e590f5fdb1d42276394eb7772ee0ff3598c6",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1601,13 +1601,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json; docs/evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json",
+          "result": "reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 / base c9722399daa347a7a24e0f15fafb8fddaedebe39；278 passed、50 subtests，无跳过；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。旧 32be4faa、265 passed + 48 subtests、七项负控数字均标为历史结果。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction immutable release and Prompt/Persona readback",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-release.json",
+          "result": "r20261013-4ecea04 / main@4ecea043 / pr-78386473bd08 v6；sid-precise published v2；ECS API146/Route144/Worker146、健康、镜像、Prompt、Terraform等正式门禁通过。全 pipeline 1431.914s 超过900s SLO，未放宽门禁；Production未发布。"
+        },
+        {
+          "type": "test",
+          "label": "New-ticket real business observation (not overall acceptance)",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-business-readback.json",
+          "result": "14037 两轮已投递但兼容终态阻断内部邮件；14038 Fraud部分补资料→回复→审核邮件sent→human_review_required已观测；14039回复/审核邮件sent/closed solved已观测但完整分派待证据；14040仅Work report零draft；Invoice/Verification intake超时，未重发或执行真实relay。"
+        },
+        {
+          "type": "test",
           "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
           "command": "见 docs/evidence/hermes-natural-persona-v3/audit-watermark-verification.json",
           "result": "真实 worker→audit parser→InMemory ledger/manual email/auto request：旧评论与缺失/非法/无时区时间不确认、不释放；当轮有效评论单次释放，footer 兼容保留。62 passed、9 skipped、33 subtests；worker delivery 4 passed + 4 subtests；两项反向变异均检出。未重跑 PG/模型，不部署或真实写入。"
         },
         {
           "type": "test",
-          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "label": "历史结果（不作为 reviewed HEAD 证据）：rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
           "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
           "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
         },
@@ -5216,7 +5234,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "R1.1终态缺失Account Case状态同步",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
-          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。r20261013-44b6d1e-status-r4 已通过完整 immutable Preproduction 门禁。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 Preproduction immutable release",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/preproduction-deploy/evidence.json",
+          "result": "r20261013-44b6d1e-status-r4 complete；source 44b6d1e6、Prompt pr-88298d4e0a3f；CodeBuild、preflight、Prompt sync/activation、三角色 rollout、heartbeat、provider probe、public health、CloudWatch、Terraform pre/post zero-drift、target health、digest 对账全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 independent runtime readback",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/independent-runtime-readback.json",
+          "result": "API :151、Route :148、Worker :151 均 PRIMARY/running=1/pending=0/COMPLETED；digest 与 manifest 一致；API/Worker knowledge master、source intake、summary review=1；公网 health/release status=ok 且 provenance 全匹配。"
+        },
+        {
+          "type": "test",
+          "label": "R1.2 isolated released-image probe",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
+          "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
         }
       ],
       "source_refs": [
@@ -5224,9 +5260,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 6,
-      "done_count": 5,
+      "done_count": 6,
       "blocked_count": 0
     },
     {
@@ -18344,8 +18380,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
-      "summary": "统一 Hermes 客户回复的权威 basis、Persona 表达、称呼、安全校验、Enablement compatibility identity 和投递门禁。当前修复计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.1，原基线 main@42a187ae，修复起点 378cc6fb，已集成 main@9418f7f1。R2-F1–F4 与 14027 native 回归的执行证据集中于 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md；代码待独立验收，未部署或重放真实工单。",
-      "next_action": "PR #1485 保持 Draft：独立复验 v3.1 R2-F1 投递时间水位修复完整 HEAD；R2-F2–F4 等已关闭项保留。匹配通过前不 finalize、合并、部署或真实客户写入。",
+      "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
+      "next_action": "独立验收 reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3（base c9722399daa347a7a24e0f15fafb8fddaedebe39）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18356,9 +18392,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes delivery readback 二次校验 job identity 后完成兼容 relay 释放、审核人分派、human_review_required 和 Suspension 收尾；旧 reply job 仅作为兼容身份。"
       ],
       "blockers": [
-        "独立代码验收仍待执行；Preproduction 发布/Prompt 实际生效和新工单业务验收分别保留后续门禁。"
+        "14037 实际业务链未完成：已发布代码将 Hermes 兼容身份终态化，内部邮件仍 awaiting_public_reply；本地修复待独立验收且未部署。",
+        "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",
+          "command": "docs/evidence/hermes-natural-persona-v3/runtime-scheduler-verification.json; docs/evidence/hermes-natural-persona-v3/runtime-scheduler-negative-controls.json",
+          "result": "reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3 / base c9722399daa347a7a24e0f15fafb8fddaedebe39；278 passed、50 subtests，无跳过；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。旧 32be4faa、265 passed + 48 subtests、七项负控数字均标为历史结果。"
+        },
+        {
+          "type": "test",
+          "label": "Preproduction immutable release and Prompt/Persona readback",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-release.json",
+          "result": "r20261013-4ecea04 / main@4ecea043 / pr-78386473bd08 v6；sid-precise published v2；ECS API146/Route144/Worker146、健康、镜像、Prompt、Terraform等正式门禁通过。全 pipeline 1431.914s 超过900s SLO，未放宽门禁；Production未发布。"
+        },
+        {
+          "type": "test",
+          "label": "New-ticket real business observation (not overall acceptance)",
+          "command": "docs/evidence/hermes-natural-persona-v3/preproduction-business-readback.json",
+          "result": "14037 两轮已投递但兼容终态阻断内部邮件；14038 Fraud部分补资料→回复→审核邮件sent→human_review_required已观测；14039回复/审核邮件sent/closed solved已观测但完整分派待证据；14040仅Work report零draft；Invoice/Verification intake超时，未重发或执行真实relay。"
+        },
         {
           "type": "test",
           "label": "v3.1 R2-F1 真实 audit 时间水位修复（待独立复验）",
@@ -18367,7 +18422,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
+          "label": "历史结果（不作为 reviewed HEAD 证据）：rev v3 真实入口、PG、审批 pins 与模型评估（待独立验收）",
           "command": "见 docs/plans/hermes-enablement-reply-delivery-natural-persona-v1.1.md 的可重现命令和 docs/evidence/hermes-natural-persona-v3/",
           "result": "受影响定向回归 291 passed + 75 subtests；隔离 PostgreSQL 5 passed + 5 subtests（未 skip）；ownership gate 4 passed；rerun 离线 39 passed + 55 subtests；worker delivery 矩阵 4 passed + 4 subtests。完整 worker 分支/main 均 153 passed、14 failed、25 subtests，逐项完全一致。七项源码反向验证均检出故障。实际模型使用 gpt-6.1-sol/medium、sid-precise v2、v6 完整共享 Prompt 和真实 snapshot/canonical basis；九样本及原文评审见证据文件，不能替代部署和真实业务验收。"
         },
@@ -18413,7 +18468,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "command": "python3 scripts/generate_project_overview.py --write --check; JSON parse; git diff --check",
           "result": "Project Overview validation passed; JSON parse passed; git diff --check passed"
         }
-      ]
+      ],
+      "reviewed_head": "0de4868ef1624e619255cff87a6b0808ccfb2fe3",
+      "reviewed_base": "c9722399daa347a7a24e0f15fafb8fddaedebe39"
     },
     {
       "schema_version": 2,
@@ -18464,8 +18521,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "native Hermes Investigation 草稿保存修复",
       "summary": "R1.1：技术名称识别、完整草稿1200字符、同Persona run最多两次候选、保存错误可回读；补齐终态状态同步的历史缺失 Account Case 门禁修复。关联p2-191与p2-199。",
-      "status": "active",
-      "next_action": "完成 R1.1 status-sync 回归并 finalize，重新走 ECS Preproduction 完整门禁；不操作 14031 或客户发送。",
+      "status": "done",
+      "next_action": "已完成代码合并与 ECS Preproduction 技术验收；r20261013-44b6d1e-status-r4 evidence=complete，真实业务样本仍未授权，不重放 14031、不发送客户或 Slack 消息、不发布 Production。",
       "owner": "codex",
       "created_at": "2026-10-13",
       "updated_at": "2026-10-13",
@@ -18484,12 +18541,37 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "R1.1终态缺失Account Case状态同步",
           "path": "docs/plans/native-hermes-draft-save-r1-evidence.json",
-          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。上一轮发布失败证据保留，待新immutable release完整门禁。"
+          "result": "新增4项worker回归通过；worker 25 passed、native status 7 passed（21项环境跳过）；活跃状态仍fail-closed。r20261013-44b6d1e-status-r4 已通过完整 immutable Preproduction 门禁。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 Preproduction immutable release",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/preproduction-deploy/evidence.json",
+          "result": "r20261013-44b6d1e-status-r4 complete；source 44b6d1e6、Prompt pr-88298d4e0a3f；CodeBuild、preflight、Prompt sync/activation、三角色 rollout、heartbeat、provider probe、public health、CloudWatch、Terraform pre/post zero-drift、target health、digest 对账全部通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "R1.2 independent runtime readback",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/independent-runtime-readback.json",
+          "result": "API :151、Route :148、Worker :151 均 PRIMARY/running=1/pending=0/COMPLETED；digest 与 manifest 一致；API/Worker knowledge master、source intake、summary review=1；公网 health/release status=ok 且 provenance 全匹配。"
+        },
+        {
+          "type": "test",
+          "label": "R1.2 isolated released-image probe",
+          "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
+          "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
         }
       ],
       "source_refs": [
         "docs/project/tasks/p2-191.json",
         "docs/project/tasks/p2-199.json"
+      ],
+      "history": [
+        {
+          "at": "2026-10-13-r4",
+          "event": "completed",
+          "summary": "R1.1 status-sync 修复随 PR#1493 合入 main；r1/r2/r3 发布尝试原因保留，r4 以正确 SSM DSN 与 knowledge-stage-config 完成 immutable Preproduction evidence；独立运行回读和镜像隔离探针通过。"
+        }
       ]
     },
     {

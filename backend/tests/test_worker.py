@@ -5681,7 +5681,7 @@ class WorkerResilienceTests(unittest.TestCase):
             worker._publish_account_reply_job(job)
 
         render.assert_not_called()
-        self.assertEqual(job["status"], "manual_attention")
+        self.assertEqual(job["status"], "persona_queued")
         self.assertEqual(job["payload"]["persona_render_status"], "hermes_compatibility_only")
         repository.update_claimed_account_reply_job.assert_called_once()
 

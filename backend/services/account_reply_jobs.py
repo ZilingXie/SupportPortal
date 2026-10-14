@@ -232,6 +232,7 @@ def create_account_reply_job(
     rerun_job_id: str | None = None,
     close_after_publish: bool = False,
     reply_intent: str | None = None,
+    hermes_compatibility_only: bool = False,
 ) -> dict[str, Any]:
     trigger_at = datetime.fromisoformat(trigger_message_created_at).astimezone(timezone.utc)
     created_at_value = datetime.fromisoformat(created_at).astimezone(timezone.utc)
@@ -269,6 +270,8 @@ def create_account_reply_job(
         # Work result and never rely on this renderer for the new contract.
         "reply_owner": "account_reply_job_legacy",
     }
+    if hermes_compatibility_only:
+        payload.update(reply_owner="hermes_persona", hermes_compatibility_only=True)
     rag_fallback_without_provided_answer = (
         canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
         and not str((normalized_facts or {}).get("provided_answer") or "").strip()
