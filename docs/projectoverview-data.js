@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T13:36:49Z",
-  "source_base_commit": "8c151238f83e866fdb28680d5f8e476c858b1187",
-  "registry_digest": "bd4e6d149109852d4b8ede21438c0497ef947bf2644e16323aa31756d047e1c4",
+  "generated_at": "2026-10-14T13:49:10Z",
+  "source_base_commit": "dd3b537c41927cfc96eb08c7c2cc83c3802c06ea",
+  "registry_digest": "27403a2391f4c3776d6a1d748cda3b05c731ca76aee6a27e0a7cefde479ca62b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5338,6 +5338,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 只读健康与发布对账",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
           "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "独立最终验收",
+          "path": "codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e",
+          "result": "结论：代码验收通过；Preproduction 技术发布通过；真实业务验收证据不足；PG waiting-for-evidence。复审确认 main 与发布源一致，release evidence complete。"
+        },
+        {
+          "type": "deployment",
+          "label": "发布时长观察",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
+          "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
         }
       ],
       "source_refs": [
@@ -5345,9 +5357,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/investigation_flow.py"
       ],
       "legacy_ids": [],
-      "status": "active",
+      "status": "done",
       "task_count": 7,
-      "done_count": 6,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -18703,8 +18715,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "Investigation 主动调查与能力收敛 v1",
       "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
-      "status": "active",
-      "next_action": "代码已合入 main；Preproduction release r20261014-8c15123 evidence=complete。现交指定线程 codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e 独立验收；真实 Argus/Zac/Slack/Zendesk/客户业务验证仍未授权。",
+      "status": "done",
+      "next_action": "无。代码验收与 Preproduction 技术发布均通过；真实 Argus/Zac/Slack/Zendesk/客户业务验证及 PG 专项仍未执行，后续如需进行必须单独授权。",
       "owner": "codex",
       "created_at": "2026-10-14",
       "updated_at": "2026-10-14",
@@ -18715,8 +18727,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C4 原固定路由、多轮、人工审核、英文Slack、长度限制保持不变。"
       ],
       "blockers": [
-        "真实 Argus/Zac/Slack/客户业务样本未授权，发布与真实业务验证等待独立验收及后续明确授权。",
-        "PostgreSQL专项需使用隔离 DSN；本机当前仅能运行 skipped 条件，未宣称通过。"
+        "真实 Argus/Zac/Slack/客户业务样本未授权，不能以代码或 Preproduction 技术通过替代真实业务验收。",
+        "PostgreSQL 专项仍 waiting-for-evidence（当前环境无 DSN）。"
       ],
       "evidence": [
         {
@@ -18754,6 +18766,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "Preproduction 只读健康与发布对账",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
           "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "独立最终验收",
+          "path": "codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e",
+          "result": "结论：代码验收通过；Preproduction 技术发布通过；真实业务验收证据不足；PG waiting-for-evidence。复审确认 main 与发布源一致，release evidence complete。"
+        },
+        {
+          "type": "deployment",
+          "label": "发布时长观察",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
+          "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
         }
       ],
       "source_refs": [
