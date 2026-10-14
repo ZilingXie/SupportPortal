@@ -1,0 +1,254 @@
+{
+  "plan": "Enablement Archer 模式切换与 E3 复测 v1",
+  "source_commit": "48bca0c9f86c9342b37b5478cb3a86aceee56acc",
+  "code_pr": "https://github.com/ZilingXie/SupportPortal/pull/1500",
+  "environment": "preproduction",
+  "code_verification": {
+    "related_tests_passed": 241,
+    "shell_syntax": "passed",
+    "overview": "passed",
+    "diff_check": "passed"
+  },
+  "deployment": {
+    "release_id": "r20261014-48bca0c9-e3-archer",
+    "status": "complete",
+    "checks": {
+      "cloudwatch": "passed",
+      "ec2_backup": "passed",
+      "ecr": "passed",
+      "heartbeats": "passed",
+      "prompt_activation": "active",
+      "prompt_sync": "active",
+      "provider_probe": "passed",
+      "public_health": "passed",
+      "rollback": "not_started",
+      "schema_bootstrap": "passed",
+      "source_prompt": "passed",
+      "suspension_recipients": "passed",
+      "terraform_post_deploy_zero_drift": "passed",
+      "terraform_zero_drift": "passed"
+    },
+    "prompt_release": {
+      "build_ref": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda",
+      "content_fingerprint": "sha256:6194914430b0bf2cc91b656e2ee508b9cc04e7a372212bfeb7329300ef43b9d8",
+      "release_id": "pr-88298d4e0a3f"
+    }
+  },
+  "independent_runtime_readback": {
+    "at": "2026-10-14T09:59:19.703943+00:00",
+    "release": "r20261014-48bca0c9-e3-archer",
+    "source": "48bca0c9f86c9342b37b5478cb3a86aceee56acc",
+    "services": [
+      {
+        "service": "supportportal-preproduction-api",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:155",
+        "running": 1,
+        "pending": 0,
+        "config": {
+          "ENABLEMENT_WORKFLOW_MODE": "archer",
+          "AGENT_MODEL_ID": "gpt-6.1-sol",
+          "HERMES_CASE_WORKFLOW_MODE": "disabled",
+          "INVESTIGATION_CASE_FILES_ENABLED": "0",
+          "PROMPT_RELEASE_ID": "pr-88298d4e0a3f"
+        },
+        "other_configuration": "unchanged",
+        "digest_verified": true
+      },
+      {
+        "service": "supportportal-preproduction-route",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:151",
+        "running": 1,
+        "pending": 0,
+        "config": {
+          "AUTOMATION_CASE_ENGINE": "hermes",
+          "AGENT_MODEL_ID": "gpt-6.1-sol",
+          "PROMPT_RELEASE_ID": "pr-88298d4e0a3f"
+        },
+        "other_configuration": "unchanged",
+        "digest_verified": true
+      },
+      {
+        "service": "supportportal-preproduction-worker",
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:154",
+        "running": 1,
+        "pending": 0,
+        "config": {
+          "ENABLEMENT_WORKFLOW_MODE": "archer",
+          "HERMES_CASE_WORKFLOW_MODE": "disabled",
+          "INVESTIGATION_CASE_FILES_ENABLED": "0",
+          "AGENT_MODEL_ID": "gpt-6.1-sol",
+          "PROMPT_RELEASE_ID": "pr-88298d4e0a3f"
+        },
+        "other_configuration": "unchanged",
+        "digest_verified": true
+      }
+    ],
+    "ok": true,
+    "health": {
+      "status": "ok",
+      "provenance": {
+        "environment": "preproduction",
+        "service_role": "api",
+        "runtime_identity": "ip-172-31-38-166.ec2.internal",
+        "release_id": "r20261014-48bca0c9-e3-archer",
+        "git_commit": "48bca0c9f86c9342b37b5478cb3a86aceee56acc",
+        "image_digest": "sha256:5ffcce802e2b3cc7544feb85e6025c29977fe548e7c793bf192da1c64f154013",
+        "build_time": "2026-10-14T09:31:24Z",
+        "schema_revision": "automation-ecs-016",
+        "prompt_release_id": "pr-88298d4e0a3f",
+        "db_resource_id": "supportportal-preproduction",
+        "db_schema": "supportportal_preproduction",
+        "job_namespace": "supportportal-preproduction",
+        "contracts": {
+          "intake": "automation-intake-v1",
+          "route": "automation-route-v1",
+          "processing": "automation-processing-v1",
+          "execution": "automation-execution-v1",
+          "heartbeat": "automation-heartbeat-v1"
+        }
+      },
+      "hermes_case_workflow": {
+        "mode": "disabled",
+        "turn_contract_version": "v1",
+        "output_contract_version": "v1",
+        "producer_contract_version": null
+      }
+    }
+  },
+  "e3": {
+    "scenario": "E3",
+    "environment": "preproduction",
+    "completed": false,
+    "steps": [
+      {
+        "step": "routed to enablement",
+        "status": "PASS",
+        "detail": "execution_action=enablement",
+        "at": "2026-10-14T10:02:07.328152+00:00"
+      },
+      {
+        "step": "ask for App ID draft delivered (turn 1)",
+        "status": "PASS",
+        "detail": "draft=queued comment=54579365640468; content check passed",
+        "at": "2026-10-14T10:02:54.892875+00:00"
+      },
+      {
+        "step": "knowledge question answered by message_action (turn 2)",
+        "status": "PASS",
+        "detail": "turn=turn-<appid> kind=message_action status=completed direction=automation route=enablement action=answer_related_question reason_code=related_question event_id=zendesk:ticket:14061:comment:54579374492948",
+        "at": "2026-10-14T10:03:45.340443+00:00"
+      },
+      {
+        "step": "knowledge answer delivered with references (turn 2)",
+        "status": "PASS",
+        "detail": "draft=queued comment=54579376355476; content check passed",
+        "at": "2026-10-14T10:03:48.475160+00:00"
+      },
+      {
+        "step": "case stays automation-owned after the knowledge answer (turn 2)",
+        "status": "PASS",
+        "detail": "automation_status=automation",
+        "at": "2026-10-14T10:03:51.305702+00:00"
+      },
+      {
+        "step": "knowledge answer creates no relay application (turn 2)",
+        "status": "PASS",
+        "detail": "relay_request_count=0",
+        "at": "2026-10-14T10:03:54.245540+00:00"
+      }
+    ],
+    "error_type": "TimeoutError",
+    "error": "timed out waiting for reply job (expect enablement_appid_invalid); condition never met",
+    "finished_at": "2026-10-14T10:13:58.722051+00:00"
+  },
+  "after_stop_readback": {
+    "at": "2026-10-14T10:14:15.654610+00:00",
+    "ticket": "14061",
+    "case": {
+      "account_case_id": "AC-14061",
+      "zendesk_ticket_id": "14061",
+      "route": "enablement",
+      "execution_action": "enablement",
+      "automation_status": "automation",
+      "internal_email_send_status": "not_applicable",
+      "internal_email_send_reason": "appid_invalid_format",
+      "zendesk_ticket_status": "pending",
+      "updated_at": "2026-10-14 10:04:18.194010+00:00"
+    },
+    "turns": [
+      {
+        "turn_id": "turn-4f7730bfb8b94c54a78d0126be09862c",
+        "status": "completed",
+        "created_at": "2026-10-14 10:03:58.224279+00:00",
+        "updated_at": "2026-10-14 10:04:44.241110+00:00",
+        "phase": "persona",
+        "direction": "automation",
+        "route": "enablement"
+      },
+      {
+        "turn_id": "turn-57f73f65c30e4c19a00175e84af231b6",
+        "status": "completed",
+        "created_at": "2026-10-14 10:02:58.503688+00:00",
+        "updated_at": "2026-10-14 10:03:30.692217+00:00",
+        "phase": "persona",
+        "direction": "automation",
+        "route": "enablement"
+      },
+      {
+        "turn_id": "turn-cbd7df2cf2db4b868d0b786bd6c515aa",
+        "status": "completed",
+        "created_at": "2026-10-14 10:00:20.581945+00:00",
+        "updated_at": "2026-10-14 10:02:27.761545+00:00",
+        "phase": "persona",
+        "direction": "automation",
+        "route": "enablement"
+      }
+    ],
+    "reply_jobs": [
+      {
+        "job_id": "account-reply-57c15a90ac82443fa427ed4b2eee07d1",
+        "status": "persona_v8_queued",
+        "created_at": "2026-10-14 10:04:18.205787+00:00",
+        "updated_at": "2026-10-14 10:04:18.205787+00:00",
+        "reply_intent": "enablement_appid_invalid",
+        "reply_owner": "hermes_persona",
+        "hermes_compatibility_only": "true"
+      }
+    ],
+    "drafts": [
+      {
+        "draft_id": "draft-ecc6aee50a0a41c28da8386296cf99bf",
+        "turn_id": "turn-4f7730bfb8b94c54a78d0126be09862c",
+        "status": "queued",
+        "delivery_status": "delivered",
+        "zendesk_comment_id": "54579393894932"
+      },
+      {
+        "draft_id": "draft-4dd6e7845bd246c4bdf70f82e1786c6e",
+        "turn_id": "turn-57f73f65c30e4c19a00175e84af231b6",
+        "status": "queued",
+        "delivery_status": "delivered",
+        "zendesk_comment_id": "54579376355476"
+      },
+      {
+        "draft_id": "draft-d8e59237c13543beb5ffa2cd4691b748",
+        "turn_id": "turn-cbd7df2cf2db4b868d0b786bd6c515aa",
+        "status": "queued",
+        "delivery_status": "delivered",
+        "zendesk_comment_id": "54579365640468"
+      }
+    ],
+    "relay_request_count": 0
+  },
+  "business_acceptance": "not_passed",
+  "open_finding": "E3-F1: published-job waiter does not accept the observed Hermes delivery; no harness repair or rerun in this task.",
+  "boundaries": {
+    "production_changed": false,
+    "footer_changed": false,
+    "files_enabled": false,
+    "real_archer_enablement_executed": false,
+    "approval_bypassed": false,
+    "next_customer_turn_sent_after_failure": false
+  },
+  "local_artifact_directory": ".deployments/r20261014-48bca0c9-e3-archer"
+}
