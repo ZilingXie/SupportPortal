@@ -87,7 +87,7 @@
 | [[review]Random](https://n8n.stellarix.space/workflow/vvyPwdWXvJENN1zm) | 配套 / 随机质检 | 工作日 06:00 按每位已配置负责人抽一条未评审工单。 | [运维说明](./active-workflows.md#w-vvyPwdWXvJENN1zm) |
 | [[slack]Handle Action\|Preprod](https://n8n.stellarix.space/workflow/FKv8vtZBQk6tH4Gt) | 直接接入 / Slack 操作 | 消费 Slack 按钮操作并交给 ECS Preproduction；当前缺少可用的 HMAC 验签路径。 | [运维说明](./active-workflows.md#w-FKv8vtZBQk6tH4Gt) |
 | [[slack]Route Support](https://n8n.stellarix.space/workflow/kyiA0QuiVx6JJ03i) | 上游接入 / Slack 建单 | Slack 支持请求创建 Zendesk 工单；内部线程消息转交 SupportPortal。 | [运维说明](./active-workflows.md#w-kyiA0QuiVx6JJ03i) |
-| [[case]Sync Status](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) | 直接接入 / 状态联动 | 旧 EC2 双环境状态同步；持续 404 的 ECS 分支已于 2026-09-16 移除。 | [运维说明](./active-workflows.md#w-03B6AvcrOgRkWlUc) |
+| [[case]Sync Status](https://n8n.stellarix.space/workflow/03B6AvcrOgRkWlUc) | 直接接入 / 状态联动 | 仅 ECS Preproduction 状态同步；两个旧 EC2 分支已于 2026-10-14 按用户确认退役。 | [运维说明](./active-workflows.md#w-03B6AvcrOgRkWlUc) |
 | [[ops]Error Test\|Zendesk](https://n8n.stellarix.space/workflow/3zJvu5KQFZIoOoqu) | 配套 / 运维测试 | 聊天输入工单号后查询 Zendesk，失败时验证共享错误处理。 | [运维说明](./active-workflows.md#w-3zJvu5KQFZIoOoqu) |
 | [[kb]Build\|Solved Cases](https://n8n.stellarix.space/workflow/MM3Z3T469Eru3Q1I) | 知识入库 / Zendesk | SOLVED 工单经去重和 AI 筛选后生成 KB 草稿；Media Relay enablement 等非知识型请求会被排除。合格内容同步 Tencent Memory 并提交原有知识库。 | [运维说明](./active-workflows.md#w-MM3Z3T469Eru3Q1I) |
 
@@ -114,7 +114,7 @@
 ## 主要调用关系
 
 - Zendesk 新工单 → `[case]Intake|ECS Route` → ECS Preproduction / Production；旧 `[case]Intake|EC2 Staging` 已取消发布。
-- Zendesk 评论 → `[case]Sync Comments` → 旧 Production 与 ECS 两个环境；状态变化 → `[case]Sync Status` → 旧主栈与旧 Production（ECS 不经此流程，2026-09-16 移除了持续 404 的 ECS 分支）。
+- Zendesk 评论 → `[case]Sync Comments` → 旧 Production 与 ECS 两个环境；状态变化 → `[case]Sync Status` → ECS Preproduction 的 `ticket.updated` intake；两条旧 EC2 状态分支已退役，ECS Production 状态分支尚未激活。
 - Slack → `[slack]Route Support` → Zendesk 建单，或 `[slack]Forward Thread|Prod` → ECS Production；按钮交互另由 `[slack]Handle Action|Preprod` 发往 ECS Preproduction。
 - SupportPortal 交接确认 → `[slack]Notify Handoff` → Slack。
 - `[review]Random` / `[review]Aged` / `[review]Rating` → `[review]Case|Subflow` → Slack 人工评审及记录。
