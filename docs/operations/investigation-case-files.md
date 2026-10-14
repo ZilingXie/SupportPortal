@@ -2,6 +2,8 @@
 
 核验日期：2026-10-13。仅本地代码/隔离数据库/补丁构建检查；尚未验证云端部署。[合同](../plans/investigation-case-files-r2.md)。
 
+2026-10-14 关闭状态发布门禁修复：[发布计划与证据](../plans/investigation-case-files-r2-preprod-closed.md)。配置保留检查只将缺失文件开关与显式 `0` 视为等价；涉及 `1` 的状态改变、模型、凭据引用及其他配置改变仍拒绝。真实 renderer/CLI 回归与旧逻辑逆向验证见该计划；补丁验收不等于 schema 016 或线上发布已通过。
+
 ## 启用顺序
 
 独立代码验收通过后，使用正式 immutable release/Preproduction pipeline；保留 schema、Prompt、健康检查与回滚门禁。
