@@ -263,7 +263,7 @@ class FakeHermesClient:
     terminal_output: Any = "ok"
 
     def start_run(self, *, session_id, instructions, input_text, idempotency_key,
-                  workspace_key=None, enabled_toolsets=None, model=None, model_options=None):
+                  workspace_key=None, enabled_toolsets=None, model=None, model_options=None, supportportal_file_scope=None, supportportal_skill_profile=None):
         if self.fail_submit:
             raise HermesAgentError("hermes_agent_rejected", "HTTP 500", retryable=False)
         self.run_counter += 1
@@ -278,6 +278,7 @@ class FakeHermesClient:
                 "enabled_toolsets": list(enabled_toolsets or []),
                 "model": model,
                 "model_options": model_options,
+                "supportportal_skill_profile": supportportal_skill_profile,
             }
         )
         if self.on_run_completed is not None:
@@ -1461,7 +1462,7 @@ class TestInvestigationReviewGate:
             s for s in client.submissions if s["idempotency_key"].endswith(":work")
         )
         assert work_submission["enabled_toolsets"] == [
-            "supportportal_work",
+            "supportportal_investigation",
             "common",
             "memory",
             "skills",
@@ -2437,7 +2438,7 @@ class TestAdhocSession:
         # work-only, the ad-hoc manual, the widened toolset, the question itself
         assert len(client.submissions) == 1
         submission = client.submissions[0]
-        assert submission["enabled_toolsets"] == ["supportportal_work", "common", "memory", "skills"]
+        assert submission["enabled_toolsets"] == ["supportportal_investigation", "common", "memory", "skills"]
         # the recorded manual marker is the ad-hoc key (the prompt registry is
         # empty in unit tests, so only the core fallback text resolves)
         work_run = store.get_or_create_hermes_turn_run(created["turn_id"], "work")
@@ -2556,10 +2557,10 @@ def test_investigation_work_toolsets_include_skills() -> None:
     from backend.services.automation_hermes_agent import toolsets_for_phase
 
     assert toolsets_for_phase("work", direction="investigation") == [
-        "supportportal_work", "common", "memory", "skills"
+        "supportportal_investigation", "common", "memory", "skills"
     ]
     assert toolsets_for_phase("work", direction="investigation", session_kind="adhoc") == [
-        "supportportal_work", "common", "memory", "skills"
+        "supportportal_investigation", "common", "memory", "skills"
     ]
     # automation work runs stay narrow
     assert toolsets_for_phase("work", direction="automation") == ["supportportal_work"]

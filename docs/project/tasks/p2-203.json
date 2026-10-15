@@ -1,0 +1,81 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-203",
+  "phase_id": "phase-2",
+  "module_id": "engineer-workspace",
+  "function_id": "engineer-investigation-reply",
+  "title": "Investigation 主动调查与能力收敛 v1",
+  "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
+  "status": "done",
+  "next_action": "无。代码验收与 Preproduction 技术发布均通过；真实 Argus/Zac/Slack/Zendesk/客户业务验证及 PG 专项仍未执行，后续如需进行必须单独授权。",
+  "owner": "codex",
+  "created_at": "2026-10-14",
+  "updated_at": "2026-10-14",
+  "acceptance_criteria": [
+    "C1 Skill profile 按实例/回合隔离，非白名单和 Automation/Cron 不可加载；关闭仅在可信工程师授权时开放。",
+    "C2 Investigation 有线索先查；频道缺时间使用固定前30天，空结果/错误/截断分别表达，最多三次搜索。",
+    "C3 Zac 只经专用后端工具，HTTP 200不等于完成，SSE完成/断流/重复/重启/过期写回符合合同。",
+    "C4 原固定路由、多轮、人工审核、英文Slack、长度限制保持不变。"
+  ],
+  "blockers": [
+    "真实 Argus/Zac/Slack/客户业务样本未授权，不能以代码或 Preproduction 技术通过替代真实业务验收。",
+    "PostgreSQL 专项仍 waiting-for-evidence（当前环境无 DSN）。"
+  ],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "主动调查专项与固定任务回归",
+      "path": "backend/tests/test_investigation_proactive_v1.py",
+      "result": "7 passed；固定 Investigation 与 ZacClient 请求契约回归通过；PG 专项未执行/无 DSN，不能宣称通过。",
+      "url": "backend/tests/test_investigation_proactive_v1.py"
+    },
+    {
+      "type": "test",
+      "label": "Hermes compatibility focused regression",
+      "path": "backend/tests/test_hermes_zendesk_agent.py",
+      "result": "24 passed，55 deselected（包含 proactive Investigation 与 toolset 定向回归）；既存 follow-up handoff 基线失败仍未归因本改动。"
+    },
+    {
+      "type": "test",
+      "label": "Hermes :45 source-bound overlay check",
+      "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+      "result": "命令：python3 build/investigation-proactive-v1/verify.py <fresh-source>；输出：patch_apply=passed profile=passed compile=passed；ARGUS_RESULTS=[True, True, True, argus_channel_search_budget_exhausted]。验收 fresh source 基线 HEAD=a49f64b47d4b547c584e5c776f1f6180ff696dd6。"
+    },
+    {
+      "type": "pr",
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+      "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+    },
+    {
+      "type": "deployment",
+      "label": "ECS Preproduction 正式发布",
+      "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+      "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+    },
+    {
+      "type": "deployment",
+      "label": "Preproduction 只读健康与发布对账",
+      "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+      "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
+    },
+    {
+      "type": "deployment",
+      "label": "独立最终验收",
+      "path": "codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e",
+      "result": "结论：代码验收通过；Preproduction 技术发布通过；真实业务验收证据不足；PG waiting-for-evidence。复审确认 main 与发布源一致，release evidence complete。"
+    },
+    {
+      "type": "deployment",
+      "label": "发布时长观察",
+      "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
+      "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
+    }
+  ],
+  "source_refs": [
+    "docs/plans/investigation-proactive-v1.md",
+    "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1",
+    "SupportPortal merged main 8c151238f83e866fdb28680d5f8e476c858b1187",
+    "Hermes deploy merged main 17284d3e69726008028dc9ca9b35455b5f13ad0",
+    ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json"
+  ]
+}

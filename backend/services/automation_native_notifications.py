@@ -85,7 +85,7 @@ def status_notification(*, binding: dict[str, Any], event_id: str,
 
 
 def deliver_native_notification(repository: Any, *, scope: str, key: str,
-                                claim_token: str, before_external: Callable[[], None]) -> dict[str, Any]:
+                                claim_token: str, before_external: Callable[[], None], store: Any = None) -> dict[str, Any]:
     previous = repository.get_native_notification(scope, key)
     if previous is None:
         return {"status": "no_intent"}
@@ -94,7 +94,7 @@ def deliver_native_notification(repository: Any, *, scope: str, key: str,
         # never uploads already confirmed attachments a second time.
         for attachment in previous["response_payload"].get("attachments") or []:
             deliver_customer_attachment(repository, scope=scope, parent=previous["response_payload"],
-                attachment=attachment, claim_token=claim_token, before_external=before_external)
+                attachment=attachment, claim_token=claim_token, before_external=before_external, store=store)
     if previous["state"] == "completed":
         return {"status": "confirmed", "delivery": previous["response_payload"].get("delivery"), "replayed": True}
     if previous["state"] in {"sending", "outcome_unknown"}:
@@ -157,15 +157,39 @@ def deliver_native_notification(repository: Any, *, scope: str, key: str,
 
 
 def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str, Any],
-                                attachment: dict[str, Any], claim_token: str, before_external: Any) -> dict[str, Any]:
+                                attachment: dict[str, Any], claim_token: str, before_external: Any, store: Any = None) -> dict[str, Any]:
     from backend.services.investigation_attachments import download_zendesk_attachment, upload_slack_attachment, _slack
+    from backend.services.investigation_case_files import enabled, confirm_slack
+    map_row = None
+    if enabled():
+        if store is None:
+            from backend.services.automation_ecs_store import create_automation_ecs_store
+            from backend.services.automation_ecs_runtime import AutomationEcsSettings
+            store = create_automation_ecs_store(AutomationEcsSettings.from_env("worker"))
+        binding = store.get_hermes_case_binding(parent["ticket_id"]) or {}
+        if attachment_recovery_blocker(store, parent):
+            raise ValueError("attachment_thread_not_authorized")
+        map_row = store.register_case_file(case_id=parent["ticket_id"], source_system="zendesk",
+            source_file_id=f"{parent['comment_id']}:{attachment['attachment_id']}",
+            original_filename=attachment["file_name"], content_type=attachment.get("content_type") or "application/octet-stream",
+            size_bytes=int(attachment.get("size_bytes") or 0), purpose="customer_input",
+            provenance={"channel_id": parent["channel_id"], "thread_ts": parent["thread_ts"],
+                "source_event_id": f"zendesk:{parent['comment_id']}:{attachment['attachment_id']}",
+                "comment_id": parent["comment_id"], "provider_id": parent.get("author_id"),
+                "turn_id": parent.get("turn_id")})
+    def confirmed(result):
+        if map_row and result.get("file_id"):
+            current_map = store.get_case_file(parent["ticket_id"], map_row["id"])
+            legacy_name = map_row["original_filename"] if not current_map["slack_file_id"] else None
+            confirm_slack(store, current_map, result["file_id"], expected_filename=legacy_name)
+        return result
     key = f"attachment:{parent['ticket_id']}:{parent['comment_id']}:{attachment['attachment_id']}"
     row = repository.enqueue_native_notification(scope=scope, key=key, created_at=now(),
         payload={"kind": "customer_attachment", "ticket_id": parent["ticket_id"],
             "comment_id": parent["comment_id"], "attachment": attachment,
             "channel_id": parent["channel_id"], "thread_ts": parent["thread_ts"]})
     if row["state"] == "completed":
-        return row["response_payload"].get("delivery") or {}
+        return confirmed(row["response_payload"].get("delivery") or {})
     if row["state"] == "failed" and not _retryable_attachment_result(row["response_payload"].get("delivery")):
         return row["response_payload"].get("delivery") or {"status": "failed"}
     if row["state"] in {"sending", "outcome_unknown"}:
@@ -178,9 +202,13 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
                 shares = (file.get("shares") or {}).get("private", {}) | (file.get("shares") or {}).get("public", {})
                 if file.get("id") == file_id and any(s.get("thread_ts") == parent["thread_ts"] for s in shares.get(parent["channel_id"], [])):
                     result = {"status": "confirmed_readback", "file_id": file_id}
-                    repository.confirm_native_attachment_readback(scope=scope, key=key, file_id=file_id, result=result, updated_at=now())
+                    confirmed(result)
+                    if not repository.confirm_native_attachment_readback(scope=scope, key=key, file_id=file_id, result=result, updated_at=now()):
+                        if map_row:
+                            store.update_case_file(parent["ticket_id"], map_row["id"], state="pending", failure_code="attachment_receipt_unpersisted")
+                        return {"status": "outcome_unknown", "file_id": file_id}
                     return result
-            except EngineerSlackDeliveryError:
+            except (EngineerSlackDeliveryError, ValueError):
                 pass
         return {"status": "outcome_unknown", "file_id": file_id}
     before_external()
@@ -191,6 +219,8 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
         if not repository.checkpoint_native_notification(scope=scope, key=key, claim_token=claim_token,
             fields={"slack_file_id": file_id}, updated_at=now()):
             raise ValueError("attachment_receipt_checkpoint_failed")
+        if map_row:
+            store.update_case_file(parent["ticket_id"], map_row["id"], slack_file_id=file_id)
     stage = "download"
     try:
         if engineer_slack_outbound_disabled() or parent["channel_id"] != str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or ""):
@@ -198,9 +228,10 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
         data = download_zendesk_attachment(ticket_id=parent["ticket_id"], comment_id=parent["comment_id"], attachment_id=attachment["attachment_id"])
         before_external()
         stage = "upload"
-        receipt = upload_slack_attachment(data=data, file_name=attachment["file_name"],
+        receipt = upload_slack_attachment(data=data, file_name=map_row["managed_filename"] if map_row else attachment["file_name"],
             channel_id=parent["channel_id"], thread_ts=parent["thread_ts"], persist_file_id=persist)
         result = {"status": "delivered", **receipt}
+        confirmed(result)
         if not repository.finish_native_notification(scope=scope, key=key, claim_token=claim_token,
             state="completed", result=result, updated_at=now()):
             raise EngineerSlackDeliveryError("attachment_receipt_unpersisted", outcome_unknown=True)
@@ -208,6 +239,10 @@ def deliver_customer_attachment(repository: Any, *, scope: str, parent: dict[str
 
     except Exception as exc:
         result = _attachment_failure(exc, stage=stage)
+        if map_row:
+            if stage == "upload" and store.get_case_file(parent["ticket_id"], map_row["id"])["slack_file_id"]:
+                result.update(status="outcome_unknown", retryable=False)
+            store.update_case_file(parent["ticket_id"], map_row["id"], state="pending" if result["status"] == "outcome_unknown" else "unavailable", failure_code=result["failure_code"])
         repository.finish_native_notification(scope=scope, key=key, claim_token=claim_token,
             state=result["status"], result=result, updated_at=now())
         notice_key = key + ":failure-notice"
@@ -253,6 +288,8 @@ def drain_customer_attachments(repository: Any, store: Any) -> None:
         if updated and datetime.fromisoformat(str(updated).replace("Z", "+00:00")) > datetime.now(timezone.utc) - timedelta(seconds=60):
             continue
         parent = row["response_payload"]
+        if parent.get("kind") == "generated_attachment":
+            continue  # Generation recovery is readback via the stable publish operation.
         if row["state"] == "failed" and not _retryable_attachment_result(parent.get("delivery")):
             continue
         def fence():
@@ -264,7 +301,7 @@ def drain_customer_attachments(repository: Any, store: Any) -> None:
             if reason:
                 LOGGER.info("attachment_recovery_skipped key=%s reason=%s", row["idempotency_key"], reason)
                 continue
-            deliver_customer_attachment(repository, scope=scope, parent=parent, attachment=parent["attachment"], claim_token=str(uuid4()), before_external=fence)
+            deliver_customer_attachment(repository, scope=scope, parent=parent, attachment=parent["attachment"], claim_token=str(uuid4()), before_external=fence, store=store)
         except ValueError as exc:
             LOGGER.info("attachment_recovery_skipped key=%s reason=%s", row["idempotency_key"], exc)
         except Exception:

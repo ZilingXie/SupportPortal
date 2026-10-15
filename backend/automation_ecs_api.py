@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hmac
 import os
+import json
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path as FilePath
@@ -1456,6 +1457,28 @@ def create_app(    *,
                     )
                 except HermesToolError as exc:
                     raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
+            if tool_name.startswith("case_files_"):
+                from backend.services.investigation_case_files import tool_case_files
+                args = dict(body)
+                scope = args.pop("file_scope", "")
+                if tool_name == "case_files_download_stream":
+                    from backend.services.investigation_case_files import download_for_bridge
+                    from fastapi.responses import FileResponse
+                    from starlette.background import BackgroundTask
+                    if set(args) != {"map_id"}:
+                        raise HTTPException(status_code=422, detail={"code": "case_file_parameters_invalid"})
+                    try:
+                        path, ref = await asyncio.to_thread(download_for_bridge, coordination_store, scope=scope, map_id=args["map_id"])
+                    except HermesToolError as exc:
+                        raise HTTPException(status_code=422, detail={"code": exc.code}) from exc
+                    return FileResponse(path, media_type="application/octet-stream",
+                        headers={"X-SupportPortal-File": json.dumps(ref, ensure_ascii=True), "Cache-Control": "no-store"},
+                        background=BackgroundTask(os.unlink, path))
+                try:
+                    return await asyncio.to_thread(tool_case_files, coordination_store, _engineer_ticket_repository(),
+                        scope=scope, action=tool_name.removeprefix("case_files_"), args=args)
+                except HermesToolError as exc:
+                    raise HTTPException(status_code=422, detail={"code": exc.code, "message": str(exc)}) from exc
             turn_id = str(body.get("turn_id") or "").strip()
             if not turn_id:
                 raise HTTPException(status_code=422, detail="turn_id is required")
@@ -1497,6 +1520,13 @@ def create_app(    *,
                         environment=runtime.environment,
                         zendesk_side_effects_enabled=side_effects,
                     )
+                if tool_name == "zac_consult":
+                    from backend.services.automation_hermes_tools import tool_zac_consult
+                    if set(body) != {"turn_id", "run_id", "consultation"}:
+                        raise HermesToolError("zac_request_invalid", "unexpected consultation parameters")
+                    return await asyncio.to_thread(tool_zac_consult, coordination_store, repository,
+                        turn_id=turn_id, run_id=str(body.get("run_id") or ""),
+                        consultation=body.get("consultation"))
                 if tool_name == "save_investigation_progress":
                     return await asyncio.to_thread(
                         tool_save_investigation_progress,
@@ -1508,6 +1538,11 @@ def create_app(    *,
                         blockers=body.get("blockers"),
                         next_steps=body.get("next_steps"),
                     )
+                if tool_name == "save_reply_draft" and body.get("selected_file_ids"):
+                    from backend.services.investigation_case_files import context as file_context
+                    trusted, _ = file_context(coordination_store, body.get("file_scope"), expected_phase="persona")
+                    if trusted["turn_id"] != turn_id:
+                        raise HermesToolError("file_scope_invalid", "draft selection turn does not match its trusted run")
                 if tool_name == "save_reply_draft":
                     return await asyncio.to_thread(
                         tool_save_reply_draft,
@@ -1516,6 +1551,7 @@ def create_app(    *,
                         turn_id=turn_id,
                         content=str(body.get("content") or ""),
                         basis=body.get("basis"),
+                        selected_file_ids=body.get("selected_file_ids"),
                     )
                 if tool_name == "escalate_human":
                     return await asyncio.to_thread(

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import os
 import urllib.parse
 import urllib.error
@@ -37,7 +38,7 @@ def _slack(method: str, payload: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _download(url: str, authorization: str, *, provider: str) -> bytes:
+def _download(url: str, authorization: str, *, provider: str, output=None) -> bytes:
     opener = urllib.request.build_opener(_NoRedirect())
     original_host = urllib.parse.urlparse(url).hostname
     for _ in range(5):
@@ -54,13 +55,30 @@ def _download(url: str, authorization: str, *, provider: str) -> bytes:
         request = urllib.request.Request(url, headers=headers)
         try:
             with opener.open(request, timeout=60) as response:
-                data = response.read(MAX_FILE_BYTES + 1)
+                target = output or tempfile.TemporaryFile()
+                total = 0
+                try:
+                    while True:
+                        chunk = response.read(min(512 * 1024, MAX_FILE_BYTES + 1 - total))
+                        if not chunk:
+                            break
+                        total += len(chunk)
+                        if total > MAX_FILE_BYTES:
+                            raise ValueError("attachment_download_size_invalid")
+                        target.write(chunk)
+                    if total == 0:
+                        raise ValueError("attachment_download_size_invalid")
+                    target.seek(0)
+                    data = b"" if output is not None else target.read()
+                finally:
+                    if output is None:
+                        target.close()
         except urllib.error.HTTPError as exc:
             if exc.code not in (301, 302, 303, 307, 308) or not exc.headers.get("Location"):
                 raise
             url = urllib.parse.urljoin(url, exc.headers["Location"])
             continue
-        if not data or len(data) > MAX_FILE_BYTES:
+        if output is None and (not data or len(data) > MAX_FILE_BYTES):
             raise ValueError("attachment_download_size_invalid")
         return data
     raise ValueError("attachment_download_redirect_limit")
@@ -96,18 +114,21 @@ def validate_slack_files(files: Any, *, channel_id: str, thread_ts: str,
     return result
 
 
-def download_slack_attachment(ref: dict[str, Any]) -> bytes:
+def download_slack_attachment(ref: dict[str, Any], *, output=None) -> bytes:
     # Revalidate message membership at delivery, including deleted/revoked files.
     current = validate_slack_files([{"file_id": ref["slack_file_id"]}],
         channel_id=ref["channel_id"], thread_ts=ref["thread_ts"],
         message_ts=ref["source_message_ts"], actor=ref["actor_id"], source_event_id=ref["source_event_id"])
-    if any(current[0][k] != ref[k] for k in ("file_name", "size_bytes", "content_type")):
+    if current[0]["file_name"] != ref.get("slack_filename", ref["file_name"]) or any(current[0][k] != ref[k] for k in ("size_bytes", "content_type")):
         raise ValueError("attachment_source_changed")
     file = _slack("files.info", {"file": ref["slack_file_id"]}).get("file") or {}
     if file.get("id") != ref["slack_file_id"] or not file.get("url_private_download"):
         raise ValueError("attachment_source_unavailable_please_reattach")
-    data = _download(file["url_private_download"], "Bearer " + str(os.getenv("ENGINEER_SLACK_ACCESS_TOKEN") or ""), provider="slack")
-    if len(data) != ref["size_bytes"]:
+    data = _download(file["url_private_download"], "Bearer " + str(os.getenv("ENGINEER_SLACK_ACCESS_TOKEN") or ""), provider="slack", **({"output": output} if output is not None else {}))
+    actual_size = output.seek(0, 2) if output is not None else len(data)
+    if output is not None:
+        output.seek(0)
+    if actual_size != ref["size_bytes"]:
         raise ValueError("attachment_size_mismatch")
     return data
 

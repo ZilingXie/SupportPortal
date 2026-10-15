@@ -1,0 +1,10 @@
+{
+  "hermes_source_head": "bc9a0f7d3aa1bbee4600195f91e0f9bb7f1cfabe",
+  "note": "Core files are clean at this local HEAD. Plugin canonical source is unversioned. These are build inputs, not evidence of the running cloud artifact.",
+  "files": {
+    "hermes-agent/gateway/platforms/api_server_runs.py": "480bd23340408532ba5d7f0b87b0c73890b1de66e7399c3d01bb9976d69577ae",
+    "hermes-agent/tools/skills_tool.py": "7e258db459eff5906e7a29f1e2c8fc061fbd46aadf5633ac49d1ea5949cfe3e4",
+    "deploy-ecs/supportportal_agent_tools/__init__.py": "55bea1629034f194d8851c6f84ba0f68142bcec8adff9e154929a9ed2cacae2b",
+    "deploy-ecs/supportportal_agent_tools/plugin.yaml": "9daae02bfcb89fba66894aa065f4f9678f4882d90e5105e766b4ae4f4f0a3c0a"
+  }
+}

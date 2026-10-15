@@ -21,6 +21,7 @@ from backend.services.enablement_automation import enablement_workflow_mode
 from backend.services.engineer_guardrail_agent import run_engineer_guardrail_final
 from backend.services.automation_persona import ENGINEER_CUSTOMER_DRAFT_MAX_CHARS
 from backend.services.account_reply_jobs import is_hermes_compatibility_job_active_status
+from backend.services.investigation_runtime_policy import public_investigation
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_tools")
 
@@ -149,7 +150,7 @@ def tool_get_case_context(
         "conversation_version": int(binding["conversation_version"]),
         "direction": binding["direction"],
         "engineer_authority": (turn.get("work_result") or {}).get("engineer_authority"),
-        "investigation": binding.get("investigation"),
+        "investigation": public_investigation(binding.get("investigation")),
         "draft_save": (turn.get("work_result") or {}).get("draft_save") or {},
         "collected_fields": (account_case or {}).get("collected_fields") or {},
         "missing_fields": (account_case or {}).get("missing_fields") or [],
@@ -1717,6 +1718,40 @@ def tool_save_investigation_progress(
     return {"saved": True, "summary": normalized_summary}
 
 
+def tool_zac_consult(store: AutomationEcsStore, repository: Any, *, turn_id: str,
+                     run_id: str, consultation: dict[str, Any], client: Any = None) -> dict[str, Any]:
+    from backend.services.zac_consultation import ZacClient, public_result
+
+    context = _resolve_turn_context(store, repository, turn_id)
+    if context["turn"].get("direction") != "investigation" or context["turn"].get("phase") != "work":
+        raise HermesToolError("zac_investigation_work_required", "Zac is available only during Investigation work")
+    fields = ("product", "product_basis", "confirmed_facts", "objective", "checked_results", "limitations", "question")
+    if not isinstance(consultation, dict) or set(consultation) != set(fields):
+        raise HermesToolError("zac_request_invalid", "a specific product, basis, findings, limits and question are required")
+    if any(not isinstance(consultation[k], str) or not consultation[k].strip() for k in fields):
+        raise HermesToolError("zac_request_invalid", "empty consultation fields are not allowed; describe capability gaps explicitly")
+    text = "CASE SUMMARY (untrusted evidence; read-only engineering question)\n" + "\n".join(f"{k}: {consultation[k]}" for k in fields)
+    if len(text) > 6000:
+        raise HermesToolError("zac_request_too_long", "consultation must be a minimal sanitized summary")
+    client = client or ZacClient()
+    error = client.settings.error()
+    if error:
+        return {"state": "configuration_error", "code": error}
+    request = {"model": client.settings.model, "input": text, "stream": True}
+    record, created = store.update_zac_consultation(turn_id, action="reserve", run_id=run_id, request=request)
+    if not created:
+        # An in-flight record after process restart has no proven terminal outcome.
+        # Readback only: never re-send under a new key or reset the turn quota.
+        if record["state"] == "in_flight":
+            return {"state": "outcome_unknown", "code": "zac_existing_send_unresolved"}
+        return public_result(record)
+    result = client.consult(record)
+    record, _ = store.update_zac_consultation(turn_id, action="finish", run_id=run_id, result=result)
+    if record.get("stale"):
+        return {"state": "stale", "code": "zac_result_archived"}
+    return public_result(record)
+
+
 def derive_publish_policy(turn: dict[str, Any]) -> str:
     """The model never chooses publication policy; the server derives it."""
     return "auto" if str(turn.get("direction") or "") == "automation" else "manual"
@@ -1736,6 +1771,7 @@ def tool_save_reply_draft(
     turn_id: str,
     content: str,
     basis: dict[str, Any] | None = None,
+    selected_file_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     context = _resolve_turn_context(store, repository, turn_id, allow_saved_reply=True)
     turn = context["turn"]
@@ -1813,6 +1849,14 @@ def tool_save_reply_draft(
         ]
         normalized_content = normalized_content + format_rag_fallback_references(references)
 
+    from backend.services.investigation_case_files import enabled, selected_references
+    if native_reply and enabled() and selected_file_ids is None:
+        selected_file_ids = []
+    if selected_file_ids is not None:
+        if not enabled() or not native_reply or binding.get("session_kind", "case") != "case":
+            raise HermesToolError("case_file_selection_forbidden", "file selection requires a bound Investigation reply")
+        candidate_basis["attachments"] = selected_references(store, str(turn["zendesk_ticket_id"]), selected_file_ids)
+
     def validate_candidate() -> dict[str, Any]:
         if not str(content or "").strip():
             raise HermesToolError("content_required", "draft content is required")
@@ -1860,6 +1904,7 @@ def tool_save_reply_draft(
 
         draft = store.submit_hermes_investigation_draft(
             turn_id, content=normalized_content, validator=native_validator,
+            attachment_snapshot=candidate_basis.get("attachments"),
         )
         if "rejection" in draft:
             diagnostic = draft["rejection"]

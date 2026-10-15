@@ -1,5 +1,12 @@
 # Prompt Change Log
 
+## 2026-10-14 - Investigation 文件工具与 Skill（p2-192，R2，待验收未部署）
+
+- 绑定 Investigation Work 新增 `supportportal_files` 五工具与 `support-case-files` Skill；私有运行 metadata 注入可信 case/turn/session/request，工具参数不接受切换 case 或 URL。Automation、Route、adhoc 不可列举或直接加载此 Skill。
+- 读取返回 Map/管理名称/行与 ZIP 成员位置，超限或不支持格式明确提示下载/专用工具；发布使用稳定 operation，未知结果先回读。Persona 仅可显式选择 Map 快照，内部报告未经选择与审批不交付客户。
+- 云端 gateway/plugin/profile 配套源码交付在 `deployment/hermes-case-files`，非仅 Skill 文本；本地补丁与入口验证不代表 live 安装。无 managed Prompt catalog 修改。
+- 合同、验证与外部等待：[R2](plans/investigation-case-files-r2.md)。
+
 ## 2026-10-13 - Hermes v6 Preproduction 发布与兼容身份 scheduler 运行修复（p2-198）
 
 - 原 #1485 独立代码验收通过并合并为 `4ecea0431f1b84490bab4bf51220faeef815e6b2`；Preproduction `r20261013-4ecea04` / Prompt `pr-78386473bd08` 已发布 v6 contract/manual，sid-precise published v2。
@@ -5214,3 +5221,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 ## 2026-10-13 — p2-197 层 2 修复 A（待独立验收/部署）
 
 知识 Summary/Review 生产就绪不再依赖旧 typed Case real 模式；新增默认关闭的 `KNOWLEDGE_AI_EXECUTION_ENABLED` 作为独立消费门。层 2 只排队、层 3 才调用 AI；双写 worker 仍只控制 delivery。manual/model/toolset 未改。本轮尚未部署，合同与证据见 `docs/evidence/weknora-dualwrite-phase6/stage6-layer2-repair-A.md`。
+
+## 2026-10-14 — Investigation 主动调查与能力收敛 v1（p2-203，代码与 Preproduction 技术发布验收通过）
+
+- `hermes-investigation-manual-v4` → `v5`：先执行只读调查；频道仅有名称时使用服务端固定前30天初查窗口；区分空结果、错误、截断；限制三次搜索；偏色结论明确证据边界。
+- 新增按回合绑定的 `supportportal-investigation-v1` Skill profile 与专用 `support_zac_consult` 工具；不改变 Automation/Cron 默认技能。
+- SupportPortal PR #1502 与 Hermes deploy PR #34 已合入 main；Preproduction release `r20261014-8c15123`（Prompt `pr-88298d4e0a3f`）正式 evidence 为 `complete`，健康与发布身份已只读回读一致。未触达真实 Argus/Zac/Slack/Zendesk/客户业务，Production 未执行。

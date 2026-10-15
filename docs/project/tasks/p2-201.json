@@ -1,0 +1,36 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-201",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "title": "退役 n8n 旧 EC2 状态同步分支",
+  "summary": "按用户确认停用 [case]Sync Status 的两个旧 EC2 分支；保留 ECS Preproduction 状态分支，并为 execution 191922 写入退役处理说明。",
+  "status": "done",
+  "next_action": "两条旧 EC2 状态分支已退役并发布回读；execution 191922 已登记处理原因，未处理清单为 0。ECS Production 状态同步另行评估，本任务不激活。",
+  "owner": "codex",
+  "created_at": "2026-10-14",
+  "updated_at": "2026-10-14",
+  "acceptance_criteria": [
+    "发布图中 Zendesk Trigger 无法到达两个旧 EC2 状态分支，六个旧节点 disabled=true。",
+    "ECS Preproduction 分支的节点、凭据和内部连接与修改前一致，workflow 保持 active。",
+    "使用最新 incidentId/sourceInstance/executionId 写入用户认可的退役原因；未处理清单不再包含 execution 191922。"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "decision",
+      "label": "用户确认停用 EC2 状态同步分支，并写 note 关闭本次 execution 191922；不修旧工单。"
+    },
+    {
+      "type": "document",
+      "url": "docs/operations/n8n/retire-ec2-status-sync.md",
+      "label": "发布图、范围比较及处理台账回读证据"
+    },
+    {
+      "type": "document",
+      "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
+      "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
+    }
+  ]
+}

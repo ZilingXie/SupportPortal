@@ -604,6 +604,10 @@ def deploy_mode_args(args: argparse.Namespace) -> list[str]:
     values.extend(["--automation-case-engine", engine])
     if getattr(args, "hermes_agent_enabled", False):
         values.append("--hermes-agent-enabled")
+    if getattr(args, "investigation_case_files_enabled", False):
+        if getattr(args, "through", "preproduction") != "preproduction":
+            raise ValueError("Investigation case files can only be enabled in Preproduction")
+        values.append("--investigation-case-files-enabled")
     values.extend(
         ["--enablement-workflow-mode", str(getattr(args, "enablement_workflow_mode", "manual") or "manual")]
     )
@@ -1177,6 +1181,8 @@ def build_parser() -> argparse.ArgumentParser:
     pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"),
                           help="Required for Preproduction; Production retains legacy")
     pipeline.add_argument("--hermes-agent-enabled", action="store_true")
+    pipeline.add_argument("--investigation-case-files-enabled", action="store_true",
+                          help="Enable the R2 Investigation Slack case-file tools in Preproduction")
     pipeline.add_argument(
         "--enablement-workflow-mode",
         choices=("manual", "archer"),

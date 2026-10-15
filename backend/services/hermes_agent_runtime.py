@@ -110,6 +110,8 @@ class HermesAgentClient:
         enabled_toolsets: list[str] | None = None,
         model: str | None = None,
         model_options: dict[str, Any] | None = None,
+        supportportal_file_scope: dict[str, Any] | None = None,
+        supportportal_skill_profile: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if not self.settings.configured():
             raise HermesAgentError(
@@ -131,6 +133,10 @@ class HermesAgentClient:
             body["workspace_key"] = workspace_key
         if enabled_toolsets:
             body["enabled_toolsets"] = list(enabled_toolsets)
+        if supportportal_file_scope is not None:
+            body["supportportal_file_scope"] = supportportal_file_scope
+        if supportportal_skill_profile is not None:
+            body["supportportal_skill_profile"] = dict(supportportal_skill_profile)
         # Deployment-pinned model tiering: /v1/runs honors a bare request-body
         # model plus model_options.reasoning_effort. The gateway idempotency
         # fingerprint hashes the whole body, so callers must source these

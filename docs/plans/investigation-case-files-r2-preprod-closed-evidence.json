@@ -1,0 +1,339 @@
+{
+  "plan": "investigation-case-files-r2-preprod-closed",
+  "revision": "v2",
+  "captured_at": "2026-10-14T08:15:59.764814+00:00",
+  "scope": "Preproduction schema 016 + API/Route/Worker release, files disabled; no Production/no real customer replay/no Hermes overlay/no n8n mutation",
+  "code_acceptance": {
+    "finding": "PP-CLOSED-GATE-01",
+    "status": "independent acceptance passed",
+    "pr": "https://github.com/ZilingXie/SupportPortal/pull/1498",
+    "reviewed_full_head": "d4b1ba82a241bd76fa18c75d9f9468c0c4dcdfdc",
+    "merged_source_head": "7800b8eeb573ac97196413b880a4d44cf38a150e",
+    "tests": "170 passed, 4 existing deprecation warnings"
+  },
+  "release": {
+    "release_id": "r20261014-7800b8ee-files-closed",
+    "source_head": "7800b8eeb573ac97196413b880a4d44cf38a150e",
+    "codebuild_id": "supportportal-automation-release:f6872cd5-1c13-4563-8a0a-c8dc6c27b2bf",
+    "status": "complete",
+    "services": {
+      "api": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:154",
+        "running_digests": [
+          "sha256:1b89c02c880e54704ffc917ddbc738429bcfadb948ddd984405955ef12ffd273"
+        ],
+        "single_completed_deployment": true,
+        "file_switch_effective": "0"
+      },
+      "route": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:150",
+        "running_digests": [
+          "sha256:6cee57abaeb1d3829c8660b9e03e31bcdc5070c3f3a44c6eb6f04001801ac93c"
+        ],
+        "single_completed_deployment": true,
+        "file_switch_effective": "0"
+      },
+      "worker": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:153",
+        "running_digests": [
+          "sha256:bbeebf6d05e27ad596439933f795344f2a201e353d0043267024e2fa7ba97dcb"
+        ],
+        "single_completed_deployment": true,
+        "file_switch_effective": "0"
+      },
+      "hermes": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:45",
+        "running_digests": [
+          "sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99"
+        ],
+        "single_completed_deployment": true,
+        "file_switch_effective": "0"
+      }
+    },
+    "switch_detail": "API/Worker explicitly 0; Route unset, effective default 0. Hermes image unchanged."
+  },
+  "schema_and_disabled_entries": {
+    "captured_at": "2026-10-14T07:55:21.908870+00:00",
+    "schema_and_permissions": {
+      "schema": "automation-ecs-016",
+      "map_count": 0,
+      "runtime_role": "supportportal_preproduction_runtime",
+      "permissions": {
+        "select": true,
+        "insert": true,
+        "update": true,
+        "sequence_usage": true
+      },
+      "unique_constraints": [
+        "UNIQUE (namespace, case_id, source_system, source_file_id)"
+      ],
+      "zac_session_column": true
+    },
+    "negative_requests": [
+      {
+        "action": "list",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      },
+      {
+        "action": "download",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      },
+      {
+        "action": "read",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      },
+      {
+        "action": "search",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      },
+      {
+        "action": "publish",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      },
+      {
+        "action": "download_stream",
+        "http_status": 422,
+        "code": "case_files_disabled"
+      }
+    ],
+    "map_count_unchanged": true,
+    "limits": "Authenticated real API entry; does not claim live Hermes skill list or business workflow acceptance"
+  },
+  "hermes_readback": {
+    "captured_at": "2026-10-14T07:45:56.689256+00:00",
+    "task": "93bda8af0fcb4ae7b333ac3f230ff240",
+    "task_definition": "supportportal-preproduction-hermes:45",
+    "image_digest": "sha256:0d75c8dba574b567ee05a5060b3779da31e06d2c9796a14b8c6c5ccad23d5c99",
+    "profile_exec_session": "ecs-execute-command-gqrtuis4ed3zabbtdatsbybi7e",
+    "profile_selected_fields": {
+      "toolsets": null,
+      "platform_toolsets": null,
+      "plugins_enabled": []
+    },
+    "skill_exec_session": "ecs-execute-command-z9tjdrndfqusiv836vsoeuntu4",
+    "skill_roots": {
+      "/opt/data/skills": {
+        "exists": true,
+        "support_case_files": []
+      },
+      "/opt/hermes/skills": {
+        "exists": true,
+        "support_case_files": []
+      },
+      "/opt/data/.hermes/skills": {
+        "exists": false,
+        "support_case_files": []
+      }
+    },
+    "limits": "Actual Skill list/view and profile/path readback; Gateway file tool registry invocation is separate",
+    "skill_entry": {
+      "exec_session": "ecs-execute-command-ko9gaqkoipb977t435s24vll94",
+      "skills_list_support_case_files": false,
+      "skill_view_success": false,
+      "skill_view_error": "Skill 'support-case-files' not found."
+    },
+    "live_plugin_entry": {
+      "exec_session": "ecs-execute-command-zdisnxg69q69dr7xax7352qbyy",
+      "module": "/opt/hermes/plugins/supportportal_agent_tools/__init__.py",
+      "toolsets": [
+        "common",
+        "supportportal_route",
+        "supportportal_work",
+        "supportportal_persona"
+      ],
+      "file_tools": [],
+      "transport_note": "ECS exec emitted complete selected JSON; Session Manager then logged EOF with CLI exit 0. No active server registry claim from a fresh Python registry."
+    }
+  },
+  "deploy_checks": {
+    "cloudwatch": "passed",
+    "ec2_backup": "passed",
+    "ecr": "passed",
+    "heartbeats": "passed",
+    "prompt_activation": "active",
+    "prompt_sync": "active",
+    "provider_probe": "passed",
+    "public_health": "passed",
+    "rollback": "not_started",
+    "schema_bootstrap": "passed",
+    "source_prompt": "passed",
+    "suspension_recipients": "passed",
+    "terraform_post_deploy_zero_drift": "passed",
+    "terraform_zero_drift": "passed"
+  },
+  "prompt": {
+    "build_ref": "44b6d1e664d2fe99f1cd210ea054cdfdf511ccda",
+    "content_fingerprint": "sha256:6194914430b0bf2cc91b656e2ee508b9cc04e7a372212bfeb7329300ef43b9d8",
+    "release_id": "pr-88298d4e0a3f"
+  },
+  "timing": {
+    "controllable_seconds": 544.563,
+    "ecs_wait_seconds": 496.179,
+    "normal_release_slo_seconds": 900,
+    "slo_breach": true,
+    "target_range_seconds": {
+      "max": 900,
+      "min": 600
+    },
+    "total_seconds": 1040.742
+  },
+  "target_health": {
+    "blocking": 0,
+    "draining": 1,
+    "healthy": 1,
+    "target_id": "172.31.45.155",
+    "target_state": "healthy",
+    "total": 2
+  },
+  "business": {
+    "ticket_id": "14057",
+    "scope": "authorized synthetic, no attachments; executor performed controlled test approval, not human verbatim acceptance",
+    "work_turn_id": "turn-ec49661f71a24dd1acf1aec9cae2a9ea",
+    "work_run_id": "run_9667466c10604abd8856755211cf136c",
+    "reply_turn_id": "turn-f1c26cb6d69342dc88eec7cd51caf3ce",
+    "reply_run_id": "run_21bd8eeef4194577847fad651ec1e2f6",
+    "continue": {
+      "continued": true,
+      "source_turn_id": "turn-ec49661f71a24dd1acf1aec9cae2a9ea",
+      "reply_turn_id": "turn-f1c26cb6d69342dc88eec7cd51caf3ce",
+      "case_revision": 1
+    },
+    "duplicate_continue": {
+      "http_status": 409,
+      "result": {
+        "detail": "another hermes turn is running for the case of turn turn-f1c26cb6d69342dc88eec7cd51caf3ce"
+      }
+    },
+    "before_approval": {
+      "deliveries": [],
+      "zendesk_comment_count": 1,
+      "attachment_count": 0,
+      "draft_status": "awaiting_approval"
+    },
+    "delivery": {
+      "ticket_id": "14057",
+      "draft_id": "draft-64846f1b271f49ec8b454fdb66687380",
+      "case_revision": 1,
+      "frozen_body_matches_draft": true,
+      "zendesk_body_matches_frozen_body_plus_existing_signature": true,
+      "zendesk_comment_id": "54577789232788",
+      "customer_reply_count": 1,
+      "attachment_count": 0,
+      "synthetic_test_approval": true,
+      "map_count": 0
+    },
+    "replay": {
+      "ticket_id": "14057",
+      "before": {
+        "automation_executions": 4,
+        "automation_hermes_agent_turns": 2,
+        "automation_hermes_case_drafts": 1,
+        "automation_jobs": 7
+      },
+      "after": {
+        "automation_executions": 4,
+        "automation_hermes_agent_turns": 2,
+        "automation_hermes_case_drafts": 1,
+        "automation_jobs": 7
+      },
+      "response": {
+        "contract_version": "automation-execution-v1",
+        "environment": "preproduction",
+        "event_id": "zendesk:ticket:14057:created",
+        "zendesk_ticket_id": "14057",
+        "execution_id": "exec-550d1f9aec10490b8b2d6506a04718cf",
+        "status": "completed",
+        "idempotent_replay": true
+      }
+    },
+    "terminal": {
+      "ticket_id": "14057",
+      "zendesk_status": "solved",
+      "supportportal_status": "closed",
+      "terminal_event_id": "zendesk:automation.preproduction:ticket:14057:updated:2026-10-14T08:11:47.000Z:solved",
+      "execution_id": "exec-316f00a52522417ca6ca60ac95209bc2",
+      "execution_status": "completed",
+      "customer_reply_count": 1,
+      "map_count": 0
+    },
+    "fixture_recovery": "Zendesk solve returned 422 for required product/platform/version fields. Completed only synthetic 14057 form: Video Calling, Windows, 4.6.3 and checked corrected fields; no Zendesk schema/rule change. Solved event arrived through existing n8n intake.",
+    "content_limit": "Knowledge search lacked authoritative Windows 4.6.3 lifecycle/error reference; investigation and reply explicitly retained uncertainty. This verifies workflow, not technical answer correctness.",
+    "draft_state_limit": "Draft API still reports queued after downstream delivered receipt; do not claim draft status=delivered."
+  },
+  "health": {
+    "statuses": {
+      "live": "ok",
+      "ready": "ok",
+      "release": "ok"
+    },
+    "source": {
+      "environment": "preproduction",
+      "service_role": "api",
+      "runtime_identity": "ip-172-31-45-155.ec2.internal",
+      "release_id": "r20261014-7800b8ee-files-closed",
+      "git_commit": "7800b8eeb573ac97196413b880a4d44cf38a150e",
+      "image_digest": "sha256:1b89c02c880e54704ffc917ddbc738429bcfadb948ddd984405955ef12ffd273",
+      "build_time": "2026-10-14T07:23:41Z",
+      "schema_revision": "automation-ecs-016",
+      "prompt_release_id": "pr-88298d4e0a3f",
+      "db_resource_id": "supportportal-preproduction",
+      "db_schema": "supportportal_preproduction",
+      "job_namespace": "supportportal-preproduction",
+      "contracts": {
+        "intake": "automation-intake-v1",
+        "route": "automation-route-v1",
+        "processing": "automation-processing-v1",
+        "execution": "automation-execution-v1",
+        "heartbeat": "automation-heartbeat-v1"
+      }
+    },
+    "current_heartbeats": [
+      {
+        "role": "route",
+        "age_seconds": 0.573888,
+        "provenance_mismatches": [],
+        "git_commit": "7800b8eeb573ac97196413b880a4d44cf38a150e"
+      },
+      {
+        "role": "worker",
+        "age_seconds": 0.855406,
+        "provenance_mismatches": [],
+        "git_commit": "7800b8eeb573ac97196413b880a4d44cf38a150e"
+      }
+    ]
+  },
+  "contracts": {
+    "C1": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C2": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C3": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C4": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C5": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)",
+    "C6": "independent acceptance passed (closed-mode release and attachment-free synthetic scope)"
+  },
+  "limits": [
+    "Release exceeded 900s SLO: 1040.742s; hard gates retained.",
+    "Rollback not_started: no rollback drill claimed.",
+    "No files enabled, uploaded, read or delivered. Map 0 before and after; cloud Skill absent; live plugin has no files toolset.",
+    "Original R1 release review/business gates, enabled file C1-C7 and Zac protocol remain open; this closed-mode result does not replace them."
+  ],
+  "local_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/investigation-case-files-r2-preprod-closed-v2",
+  "formal_deploy_evidence": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/ecs-deploy-preproduction-r20261014-7800b8ee-files-closed-disabled-persona-hermes/evidence.json",
+  "reproducibility": "Sanitized selected observations committed here. Full immutable release, logs and operation scripts retained in local artifacts for same-host independent review; not claimed as remotely reproducible without access.",
+  "independent_acceptance": {
+    "result": "通过",
+    "scope": "关闭状态发布与无附件 synthetic C1-C6",
+    "reviewed_document_head": "e237d5366a6792318d4a054238acd11c7c6112b2",
+    "runtime_source_head": "7800b8eeb573ac97196413b880a4d44cf38a150e",
+    "release_id": "r20261014-7800b8ee-files-closed",
+    "review_thread": "codex://threads/01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "report_source": "用户转交的独立验收结论",
+    "closed_gate": "PP-CLOSED-ACCEPTANCE",
+    "limits_retained": true,
+    "finalization_delta": "验收后仅登记结论、关闭对应 blocker 并生成 Overview；不修改运行代码、合同、观测值或开放门禁。"
+  }
+}

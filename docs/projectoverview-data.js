@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T02:12:50Z",
-  "source_base_commit": "0160e171d6dba6662ebc5bc61ce28792f68d760f",
-  "registry_digest": "f28b53f14c31cc1a0654e374687ac9c9150dab2d23a62226135902439b59e70b",
+  "generated_at": "2026-10-14T13:49:10Z",
+  "source_base_commit": "dd3b537c41927cfc96eb08c7c2cc83c3802c06ea",
+  "registry_digest": "27403a2391f4c3776d6a1d748cda3b05c731ca76aee6a27e0a7cefde479ca62b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1574,6 +1574,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "document",
+          "url": "docs/plans/investigation-case-files-r2.md",
+          "label": "R2 当前合同、云端补丁与本地隔离入口证据；独立代码验收通过，启用链路待云端验收"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed.md",
+          "label": "关闭状态 Preproduction v2：配置保留门禁修复与分层验收；旧 release 证据保留"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
+          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
+        },
+        {
+          "type": "document",
           "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
           "label": "r4 contract/evidence record"
         },
@@ -1690,6 +1705,40 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "fixed_task/work completed -> awaiting_investigation_review；Slack回读2条消息、prepare_draft按钮；draft=0、delivery ledger=0、Zendesk仅1条首轮客户公开评论。未点击Prepare或Approve。"
         },
         {
+          "type": "decision",
+          "label": "用户确认停用 EC2 状态同步分支，并写 note 关闭本次 execution 191922；不修旧工单。"
+        },
+        {
+          "type": "document",
+          "url": "docs/operations/n8n/retire-ec2-status-sync.md",
+          "label": "发布图、范围比较及处理台账回读证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
+          "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1500",
+          "label": "显式 Enablement 模式发布修正；main@48bca0c9"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/evidence/enablement-archer-mode-switch/evidence.json",
+          "label": "r20261014-48bca0c9-e3-archer 部署与独立回读通过；E3 第三轮失败即停"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/enablement-archer-mode-switch.md",
+          "label": "当前 v1 合同、执行顺序和证据边界"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_enablement_mode_release_guard.py",
+          "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -1796,9 +1845,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 47,
-      "done_count": 24,
-      "blocked_count": 1
+      "task_count": 49,
+      "done_count": 25,
+      "blocked_count": 2
     },
     {
       "schema_version": 2,
@@ -5253,6 +5302,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "R1.2 isolated released-image probe",
           "path": ".deployments/ecs-pipeline-r20261013-44b6d1e-status-r4/isolated-image-probe.json",
           "result": "worker :151 镜像内合成探针 exit 0；prepare_one_rewrite_awaiting_approval 与 exhaustion_exact_reason_zero_drafts 通过；mocked model、isolated memory store、business_writes=0。首次拉取失败保留为环境尝试记录，按 Fargate 1.4.0 重试通过。"
+        },
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "7 passed；固定 Investigation 与 ZacClient 请求契约回归通过；PG 专项未执行/无 DSN，不能宣称通过。",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "24 passed，55 deselected（包含 proactive Investigation 与 toolset 定向回归）；既存 follow-up handoff 基线失败仍未归因本改动。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "命令：python3 build/investigation-proactive-v1/verify.py \u003cfresh-source>；输出：patch_apply=passed profile=passed compile=passed；ARGUS_RESULTS=[True, True, True, argus_channel_search_budget_exhausted]。验收 fresh source 基线 HEAD=a49f64b47d4b547c584e5c776f1f6180ff696dd6。"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Preproduction 正式发布",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 只读健康与发布对账",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+          "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "独立最终验收",
+          "path": "codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e",
+          "result": "结论：代码验收通过；Preproduction 技术发布通过；真实业务验收证据不足；PG waiting-for-evidence。复审确认 main 与发布源一致，release evidence complete。"
+        },
+        {
+          "type": "deployment",
+          "label": "发布时长观察",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
+          "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
         }
       ],
       "source_refs": [
@@ -5261,8 +5358,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "done",
-      "task_count": 6,
-      "done_count": 6,
+      "task_count": 7,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -17779,17 +17876,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。",
       "status": "blocked",
-      "next_action": "用户已授权 F-R1-DEPLOY-01 窄发布门禁修复；修复完成，等待 Draft PR 完整 HEAD 的独立复审。通过后 finalize 并重跑正式 ECS Preproduction pipeline。附件代码既有验收保留，Ticket 14002 真实 Slack/Zendesk 测试仍需单独授权。",
+      "next_action": "关闭状态 Preproduction v2 发布与 synthetic 14057 C1-C6 独立验收已通过，文件保持关闭。后续单独处理原 R1 发布复审/真实业务门禁、Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7 和 Zac 协议；开启文件与 Production 各自需要单独授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-11",
+      "updated_at": "2026-10-14",
       "acceptance_criteria": [
-        "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。"
+        "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
+        "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
       ],
       "blockers": [
-        "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。"
+        "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
+        "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
       ],
       "evidence": [
         {
@@ -17841,6 +17941,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "docs/plans/investigation-cloudwatch-gate-repair-evidence.json",
           "label": "F-R1-DEPLOY-01 已授权修复：实际 shell/CLI 回归与反向检出，等待独立复审，不代表部署或业务验收。"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2.md",
+          "label": "R2 当前合同、云端补丁与本地隔离入口证据；独立代码验收通过，启用链路待云端验收"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed.md",
+          "label": "关闭状态 Preproduction v2：配置保留门禁修复与分层验收；旧 release 证据保留"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
+          "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
         }
       ]
     },
@@ -18510,6 +18625,167 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "event": "completed",
           "summary": "R1.1 status-sync 修复随 PR#1493 合入 main；r1/r2/r3 发布尝试原因保留，r4 以正确 SSM DSN 与 knowledge-stage-config 完成 immutable Preproduction evidence；独立运行回读和镜像隔离探针通过。"
         }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-201",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "退役 n8n 旧 EC2 状态同步分支",
+      "summary": "按用户确认停用 [case]Sync Status 的两个旧 EC2 分支；保留 ECS Preproduction 状态分支，并为 execution 191922 写入退役处理说明。",
+      "status": "done",
+      "next_action": "两条旧 EC2 状态分支已退役并发布回读；execution 191922 已登记处理原因，未处理清单为 0。ECS Production 状态同步另行评估，本任务不激活。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "发布图中 Zendesk Trigger 无法到达两个旧 EC2 状态分支，六个旧节点 disabled=true。",
+        "ECS Preproduction 分支的节点、凭据和内部连接与修改前一致，workflow 保持 active。",
+        "使用最新 incidentId/sourceInstance/executionId 写入用户认可的退役原因；未处理清单不再包含 execution 191922。"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "用户确认停用 EC2 状态同步分支，并写 note 关闭本次 execution 191922；不修旧工单。"
+        },
+        {
+          "type": "document",
+          "url": "docs/operations/n8n/retire-ec2-status-sync.md",
+          "label": "发布图、范围比较及处理台账回读证据"
+        },
+        {
+          "type": "document",
+          "url": "docs/integrations/n8n/workflows/active/03B6AvcrOgRkWlUc.published.json",
+          "label": "发布版本 416d2b54-4f90-4be0-be95-4bad7a9a8be8 的脱敏恢复基线"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-202",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Enablement 显式 Archer 模式切换与 E3 复测",
+      "summary": "保留现行 Knowledge 与文件关闭配置，修正正式发布共享配置检查对显式 Enablement 模式切换的拦截，再发布 Preproduction 并运行完整 E3。",
+      "status": "blocked",
+      "next_action": "Archer 切换及 Preproduction 发布已完成；E3 14061 第三轮因等待 published job 超时，已按失败即停收口。另行对齐测试载具与当前回合 Hermes 投递凭据后，才安排新工单完整复测。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "仅显式请求且渲染精确匹配的 api/worker Enablement mode 差异被允许，其他共享配置保持严格校验。",
+        "Preflight 和部署 checkpoint 绑定 Enablement mode，正式发布后读回 archer 与所有保留配置。",
+        "E3 用新 Preproduction 工单运行；遇业务失败立即停止；本地真实审批和独立回读不绕过。"
+      ],
+      "blockers": [
+        "E3-F1：第三轮实际 Persona 回复已 delivered，但兼容 job 为 persona_v8_queued；E3 只等 published，完整业务链未验证。"
+      ],
+      "evidence": [
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1500",
+          "label": "显式 Enablement 模式发布修正；main@48bca0c9"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/evidence/enablement-archer-mode-switch/evidence.json",
+          "label": "r20261014-48bca0c9-e3-archer 部署与独立回读通过；E3 第三轮失败即停"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/enablement-archer-mode-switch.md",
+          "label": "当前 v1 合同、执行顺序和证据边界"
+        },
+        {
+          "type": "test",
+          "url": "backend/tests/test_enablement_mode_release_guard.py",
+          "label": "真实 renderer、CLI、shell 门禁与发布身份验证入口"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-203",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 主动调查与能力收敛 v1",
+      "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
+      "status": "done",
+      "next_action": "无。代码验收与 Preproduction 技术发布均通过；真实 Argus/Zac/Slack/Zendesk/客户业务验证及 PG 专项仍未执行，后续如需进行必须单独授权。",
+      "owner": "codex",
+      "created_at": "2026-10-14",
+      "updated_at": "2026-10-14",
+      "acceptance_criteria": [
+        "C1 Skill profile 按实例/回合隔离，非白名单和 Automation/Cron 不可加载；关闭仅在可信工程师授权时开放。",
+        "C2 Investigation 有线索先查；频道缺时间使用固定前30天，空结果/错误/截断分别表达，最多三次搜索。",
+        "C3 Zac 只经专用后端工具，HTTP 200不等于完成，SSE完成/断流/重复/重启/过期写回符合合同。",
+        "C4 原固定路由、多轮、人工审核、英文Slack、长度限制保持不变。"
+      ],
+      "blockers": [
+        "真实 Argus/Zac/Slack/客户业务样本未授权，不能以代码或 Preproduction 技术通过替代真实业务验收。",
+        "PostgreSQL 专项仍 waiting-for-evidence（当前环境无 DSN）。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "主动调查专项与固定任务回归",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "7 passed；固定 Investigation 与 ZacClient 请求契约回归通过；PG 专项未执行/无 DSN，不能宣称通过。",
+          "url": "backend/tests/test_investigation_proactive_v1.py"
+        },
+        {
+          "type": "test",
+          "label": "Hermes compatibility focused regression",
+          "path": "backend/tests/test_hermes_zendesk_agent.py",
+          "result": "24 passed，55 deselected（包含 proactive Investigation 与 toolset 定向回归）；既存 follow-up handoff 基线失败仍未归因本改动。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes :45 source-bound overlay check",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1/verify.py",
+          "result": "命令：python3 build/investigation-proactive-v1/verify.py \u003cfresh-source>；输出：patch_apply=passed profile=passed compile=passed；ARGUS_RESULTS=[True, True, True, argus_channel_search_budget_exhausted]。验收 fresh source 基线 HEAD=a49f64b47d4b547c584e5c776f1f6180ff696dd6。"
+        },
+        {
+          "type": "pr",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
+          "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+        },
+        {
+          "type": "deployment",
+          "label": "ECS Preproduction 正式发布",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 只读健康与发布对账",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
+          "result": "/health/live、/health/release、/health/ready 均返回 ok；release_id/git_commit/digest/schema/prompt 与 manifest/evidence 一致。/health/ready 含历史过期 heartbeat/provenance 列表，未将其误判为本 release 门禁失败。真实业务写入未执行。"
+        },
+        {
+          "type": "deployment",
+          "label": "独立最终验收",
+          "path": "codex://threads/01a11961-20c6-7630-9e82-a8dafc51117e",
+          "result": "结论：代码验收通过；Preproduction 技术发布通过；真实业务验收证据不足；PG waiting-for-evidence。复审确认 main 与发布源一致，release evidence complete。"
+        },
+        {
+          "type": "deployment",
+          "label": "发布时长观察",
+          "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
+          "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
+        }
+      ],
+      "source_refs": [
+        "docs/plans/investigation-proactive-v1.md",
+        "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1",
+        "SupportPortal merged main 8c151238f83e866fdb28680d5f8e476c858b1187",
+        "Hermes deploy merged main 17284d3e69726008028dc9ca9b35455b5f13ad0",
+        ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json"
       ]
     },
     {
@@ -23847,7 +24123,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
         "原生 Investigation 续轮与关闭（p2-190，Preproduction 技术发布通过，最终运行验收方式待用户确认）：首次有效 Investigation 后客户消息在原 session/thread 仅跑 work，工程师可见完整原文；ticket.updated 状态与通知 intent 同事务保存，未知发送结果不自动重发。可信工程师明确 `close the case` 可调用已注册 work tool/skill 将绑定票设为 solved，无客户自动回复；客户感谢/请求关闭、引用与历史均不赋权。SP/Hermes/n8n 版本与工具/技能实际回读通过；没有授权隔离业务 fixture，自然闭环样本未验证。",
-        "Investigation 附件闭环 v1（p2-192，代码与 ECS Preproduction 发布完成；n8n 附件入口已补 Preproduction Hermes binding gate，完整业务样本待验收）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。Production-bound 与未绑定附件显式忽略，不进入 adhoc；旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。",
+        "Investigation 附件闭环 v1（p2-192，既有代码验收保留；发布修复及完整业务证据未闭环，n8n 附件入口已补 Preproduction Hermes binding gate）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。Production-bound 与未绑定附件显式忽略，不进入 adhoc；旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。R2 统一管理名称、Slack Map、绑定 Investigation 文件工具/Skill与显式审批附件快照已实现待独立代码验收，未部署；Zac真实获取等待证据。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",

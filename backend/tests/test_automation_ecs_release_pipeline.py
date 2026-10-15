@@ -731,6 +731,7 @@ def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> No
         automation_case_engine="legacy",
         hermes_case_workflow_mode="mock",
         hermes_persona_enabled=True,
+        investigation_case_files_enabled=True,
     )
     assert deploy_mode_args(args) == [
         "--bootstrap-account-schema",
@@ -739,6 +740,7 @@ def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> No
         "--hermes-persona-enabled",
         "--automation-case-engine",
         "legacy",
+        "--investigation-case-files-enabled",
         "--enablement-workflow-mode",
         "manual",
     ]
@@ -750,6 +752,7 @@ def test_pipeline_uses_identical_mode_arguments_for_preflight_and_deploy() -> No
             automation_case_engine="hermes",
             hermes_agent_enabled=True,
             enablement_workflow_mode="archer",
+            investigation_case_files_enabled=False,
         )
     ) == [
         "--automation-case-engine",
@@ -771,6 +774,20 @@ def test_pipeline_requires_environment_specific_production_prompt_target() -> No
     assert prompt_target_dsn({"PROMPT_RELEASE_TARGET_DSN": "legacy"}, "preproduction") == "legacy"
     with pytest.raises(ValueError, match="PRODUCTION_PROMPT_RELEASE_TARGET_DSN"):
         prompt_target_dsn({"PROMPT_RELEASE_TARGET_DSN": "must-not-cross-environments"}, "production")
+
+
+def test_pipeline_rejects_case_files_in_production() -> None:
+    with pytest.raises(ValueError, match="only be enabled in Preproduction"):
+        deploy_mode_args(argparse.Namespace(
+            bootstrap_account_schema=False,
+            hermes_case_workflow_mode="disabled",
+            hermes_persona_enabled=False,
+            automation_case_engine="legacy",
+            hermes_agent_enabled=False,
+            enablement_workflow_mode="manual",
+            through="production",
+            investigation_case_files_enabled=True,
+        ))
 
 
 def test_prompt_target_identity_is_stable_without_persisting_connection_values() -> None:

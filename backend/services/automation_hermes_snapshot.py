@@ -13,6 +13,7 @@ from datetime import date, datetime
 from typing import Any
 
 from backend.services.automation_ecs_store import AutomationEcsStore
+from backend.services.investigation_runtime_policy import public_investigation
 
 DEFAULT_SNAPSHOT_MAX_CHARS = 240_000
 
@@ -88,7 +89,7 @@ def build_case_snapshot(
         "active_customer": dict(mirror.get("active_customer") or {}),
         "greeting_name": None,
         "conversation": conversation,
-        "investigation": binding.get("investigation"),
+        "investigation": public_investigation(binding.get("investigation")),
         "drafts": [
             {
                 "draft_id": item.get("draft_id"),

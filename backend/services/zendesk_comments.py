@@ -386,16 +386,23 @@ def upload_ticket_attachment(
     """
     normalized_filename = str(filename or "").strip()
     normalized_content_type = str(content_type or "").strip() or "application/pdf"
-    if not normalized_filename or not isinstance(data, (bytes, bytearray)) or not data:
+    streaming = hasattr(data, "read") and hasattr(data, "seek")
+    if streaming:
+        size = data.seek(0, 2)
+        data.seek(0)
+    else:
+        size = len(data) if isinstance(data, (bytes, bytearray)) else 0
+    if not normalized_filename or not 0 < size <= 50 * 1024 * 1024:
         raise ZendeskCommentError("permanent", error_code="zendesk_upload_input_invalid")
     url = f"{ZENDESK_UPLOADS_API_BASE}?{urllib.parse.urlencode({'filename': normalized_filename})}"
     request = urllib.request.Request(
         url,
-        data=bytes(data),
+        data=data if streaming else bytes(data),
         method="POST",
         headers={
             "Authorization": _basic_auth_header(),
             "Content-Type": normalized_content_type,
+            "Content-Length": str(size),
             "Accept": "application/json",
         },
     )

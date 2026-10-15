@@ -231,8 +231,20 @@ KNOWLEDGE_STAGE_SWITCH_DEPENDENCIES = {
 }
 
 
-def verify_knowledge_shared_configuration(current_path: str, rendered_path: str, role: str) -> dict[str, Any]:
-    """Knowledge-only releases may change knowledge config and image provenance."""
+def verify_knowledge_shared_configuration(
+    current_path: str,
+    rendered_path: str,
+    role: str,
+    *,
+    expected_enablement_workflow_mode: str | None = None,
+) -> dict[str, Any]:
+    """Preserve shared config, allowing only an explicitly requested mode change."""
+    if (
+        expected_enablement_workflow_mode is not None
+        and expected_enablement_workflow_mode not in ENABLEMENT_WORKFLOW_MODES
+    ):
+        raise ValueError("Expected Enablement workflow mode must be manual or archer")
+
     def configuration(path: str) -> dict[tuple[str, str], str]:
         definition = json.loads(Path(path).read_text())
         definition = definition.get("taskDefinition", definition)
@@ -253,14 +265,33 @@ def verify_knowledge_shared_configuration(current_path: str, rendered_path: str,
                 if key in result:
                     raise ValueError(f"Duplicate shared configuration name: {name}")
                 result[key] = item[value_key]
+        # An absent file switch is the same fail-closed value as explicit zero.
+        # Enabling or changing an existing enabled switch still requires review.
+        result.setdefault(("environment", "INVESTIGATION_CASE_FILES_ENABLED"), "0")
         return result
 
     before, after = configuration(current_path), configuration(rendered_path)
+    allowed_changes = []
+    if expected_enablement_workflow_mode is not None and role in {"api", "worker"}:
+        mode_key = ("environment", "ENABLEMENT_WORKFLOW_MODE")
+        if after.get(mode_key) != expected_enablement_workflow_mode:
+            raise ValueError(f"{role} ENABLEMENT_WORKFLOW_MODE does not match the requested mode")
+        if before.get(mode_key, "manual") not in ENABLEMENT_WORKFLOW_MODES:
+            raise ValueError(f"{role} current ENABLEMENT_WORKFLOW_MODE is invalid")
+        if before.get(mode_key) != after[mode_key]:
+            allowed_changes.append(mode_key[1])
+        # The rendered value was checked against the operator's exact target.
+        # Model, credentials, file switches and every other shared key stay guarded.
+        before[mode_key] = after[mode_key]
     changed = sorted({key[1] for key in before.keys() | after.keys() if before.get(key) != after.get(key)})
     if changed:
         # Values may contain secrets; only configuration names enter diagnostics.
         raise ValueError(f"Knowledge release would change shared {role} configuration: {', '.join(changed)}")
-    return {"status": "ok", "role": role, "shared_configuration": "unchanged"}
+    return {
+        "status": "ok", "role": role,
+        "shared_configuration": "unchanged_except_requested_mode" if allowed_changes else "unchanged",
+        "allowed_changes": allowed_changes,
+    }
 
 
 def default_knowledge_stage_config() -> dict[str, Any]:
@@ -1104,6 +1135,7 @@ def render_task_definition(
     repository: str = "supportportal/production",
     hermes_case_workflow_mode: str | None = None,
     hermes_persona_enabled: bool | None = None,
+    investigation_case_files_enabled: bool | None = None,
     automation_case_engine: str | None = None,
     hermes_agent_enabled: bool | None = None,
     enablement_workflow_mode: str | None = None,
@@ -1113,6 +1145,8 @@ def render_task_definition(
     knowledge_source_allowlist: str | None = None,
     knowledge_stage_config: str | None = None,
 ) -> dict[str, Any]:
+    if investigation_case_files_enabled is True and environment != "preproduction":
+        raise ValueError("Investigation case files may only be enabled in Preproduction")
     if role not in {"api", "route", "worker"}:
         raise ValueError("role must be api, route, or worker")
     if environment not in {"preproduction", "production"}:
@@ -1207,6 +1241,11 @@ def render_task_definition(
         name = str(item.get("name") or "")
         if name in replacements:
             item["value"] = replacements[name]
+    if role in {"api", "worker"}:
+        if investigation_case_files_enabled is not None:
+            _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "1" if investigation_case_files_enabled else "0")
+        elif "INVESTIGATION_CASE_FILES_ENABLED" not in existing_names:
+            _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "0")
     if role in {"api", "worker"} and (
         hermes_case_workflow_mode is not None or hermes_persona_enabled is not None
     ):
@@ -1671,6 +1710,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--hermes-case-workflow-mode",
         choices=sorted(HERMES_CASE_WORKFLOW_MODES),
     )
+    file_switch = render.add_mutually_exclusive_group()
+    file_switch.add_argument("--investigation-case-files-enabled", dest="investigation_case_files_enabled", action="store_const", const=True, default=None)
+    file_switch.add_argument("--investigation-case-files-disabled", dest="investigation_case_files_enabled", action="store_const", const=False)
     render.add_argument(
         "--hermes-persona-enabled",
         action="store_const",
@@ -1748,6 +1790,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify_shared.add_argument("--current", required=True)
     verify_shared.add_argument("--rendered", required=True)
     verify_shared.add_argument("--role", choices=("api", "route", "worker"), required=True)
+    verify_shared.add_argument(
+        "--expected-enablement-workflow-mode", choices=sorted(ENABLEMENT_WORKFLOW_MODES),
+    )
     bootstrap = subparsers.add_parser("render-schema-bootstrap-task-definition")
     bootstrap.add_argument("--current", required=True)
     bootstrap.add_argument("--manifest", required=True)
@@ -1790,6 +1835,7 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             repository=args.repository,
             hermes_case_workflow_mode=args.hermes_case_workflow_mode,
             hermes_persona_enabled=args.hermes_persona_enabled,
+            investigation_case_files_enabled=args.investigation_case_files_enabled,
             automation_case_engine=args.automation_case_engine,
             hermes_agent_enabled=args.hermes_agent_enabled,
             enablement_workflow_mode=args.enablement_workflow_mode,
@@ -1843,7 +1889,10 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         )
         return {"status": "ok", "output": args.output}
     if args.command == "verify-knowledge-shared-configuration":
-        return verify_knowledge_shared_configuration(args.current, args.rendered, args.role)
+        return verify_knowledge_shared_configuration(
+            args.current, args.rendered, args.role,
+            expected_enablement_workflow_mode=args.expected_enablement_workflow_mode,
+        )
     if args.command == "verify-knowledge-stage-config":
         return verify_knowledge_stage_config(
             task_definition_path=args.task_definition,

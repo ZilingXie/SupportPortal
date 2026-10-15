@@ -402,7 +402,14 @@ worker 关闭（投递行与 Slack 通知只由该 worker 消费）。allowlist 
 携带 `--knowledge-stage-config` 的发布在渲染后及激活前，对三角色调用
 `verify-knowledge-shared-configuration`：除知识配置与镜像/Prompt provenance 外，
 其他 environment 和 secret 引用必须与发布前定义一致，否则注册/激活被阻断。
+唯一的额外允许项是显式 `--enablement-workflow-mode manual|archer`：api/worker
+渲染值必须精确等于本次请求，且原值合法；未传参时不允许默认 manual 覆盖现行 archer。
+route 不放行此差异。模式进入 Preflight Evidence 与部署 checkpoint 身份，切换模式
+必须新建 immutable release，不能复用另一模式的检查或恢复记录。
 错误只报告配置名称，不输出值。资源、schema、Prompt、digest 继续走既有发布门禁。
+
+以上模式切换合同于 2026-10-14 用真实 renderer、CLI 和部署 shell 函数验证；
+覆盖见 `backend/tests/test_enablement_mode_release_guard.py`。
 
 新阶段或部分构建失败后需要新 immutable release：使用
 `--release-id rYYYYMMDD-<commit7>-<stage>`（例如 `-layer2` / `-layer3`）生成独立 tag 和 checkpoint。

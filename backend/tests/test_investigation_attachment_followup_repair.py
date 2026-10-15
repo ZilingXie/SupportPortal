@@ -51,7 +51,7 @@ def response(data):
     result = Mock()
     result.__enter__ = Mock(return_value=result)
     result.__exit__ = Mock(return_value=False)
-    result.read.return_value = data
+    result.read.side_effect = [data, b""]
     return result
 
 
