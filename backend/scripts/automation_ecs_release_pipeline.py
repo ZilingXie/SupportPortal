@@ -32,6 +32,7 @@ from backend.repositories.ticket_repository import PostgresTicketRepository
 ACCOUNT_ID = "891612554546"
 AWS_REGION = "us-east-1"
 AWS_USER_ARN = f"arn:aws:iam::{ACCOUNT_ID}:user/Zac"
+PREPRODUCTION_PROMPT_TARGET_PARAMETER = "/supportportal/preproduction/automation-db-migration-dsn"
 PREFLIGHT_SCHEMA = "automation-ecs-preflight-evidence-v1"
 PIPELINE_SCHEMA = "automation-ecs-release-pipeline-v1"
 DEFAULT_PREFLIGHT_TTL_SECONDS = 15 * 60
@@ -585,7 +586,56 @@ def verify_aws_identity(env: Mapping[str, str]) -> dict[str, str]:
     arn = str(identity.get("Arn") or "")
     if account != ACCOUNT_ID or arn != AWS_USER_ARN:
         raise ValueError("AWS identity must be account 891612554546 IAM user Zac")
+    provider = subprocess.run(
+        ["aws", "configure", "list"],
+        env=dict(env),
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    ).stdout.splitlines()
+    provider_type = next(
+        (line.split()[4] for line in provider if line.split() and line.split()[0] == "access_key" and len(line.split()) >= 5),
+        "",
+    )
+    if provider_type != "login":
+        raise ValueError("AWS provider must be a refreshable login profile")
     return {"account_id": account, "arn": arn, "region": AWS_REGION}
+
+
+def read_preproduction_prompt_target_dsn(env: Mapping[str, str]) -> str:
+    """Read the migration DSN under the already-validated release provider.
+
+    The value is returned only to the caller so it can be placed in the
+    deploy child process environment. It is never added to argv or evidence.
+    """
+    argv = [
+        "aws",
+        "ssm",
+        "get-parameter",
+        "--name",
+        PREPRODUCTION_PROMPT_TARGET_PARAMETER,
+        "--with-decryption",
+        "--query",
+        "Parameter.Value",
+        "--output",
+        "text",
+        "--region",
+        AWS_REGION,
+    ]
+    assert_secret_free_argv(argv, env)
+    result = subprocess.run(
+        argv,
+        env=dict(env),
+        check=True,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    value = result.stdout.strip()
+    if not value or value == "None":
+        raise ValueError("Preproduction Prompt migration parameter is empty")
+    return value
 
 
 def deploy_mode_args(args: argparse.Namespace) -> list[str]:
@@ -1006,7 +1056,7 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
         )
         if not direct_production:
             preproduction_env = dict(env)
-            preproduction_env["PROMPT_RELEASE_TARGET_DSN"] = prompt_target_dsn(env, "preproduction")
+            preproduction_env["PROMPT_RELEASE_TARGET_DSN"] = read_preproduction_prompt_target_dsn(env)
             preflight_path = state.path / "preproduction-preflight.json"
             _run_stage(
                 state,
