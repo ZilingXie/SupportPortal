@@ -1947,10 +1947,23 @@ def run_pp_a1_full(
     )
 
     # Turn 3 (p2-178 pinned, worker-side): invalid-format App ID is rejected
-    # with the dedicated reply intent and case marker, no relay application.
+    # by the native Hermes turn/draft chain. The compatibility job is only an
+    # identity observation; it is never treated as a published legacy reply.
     engine.next_customer_turn(ctx, f"My App ID is {A1_INVALID_APPID}")
-    engine.wait_reply_intent(
-        ctx, {"enablement_appid_invalid"}, "invalid-format App ID rejected (turn 3)"
+    turn3 = engine.wait_hermes_workflow_outcome(
+        ctx,
+        expected_outcome="appid_invalid",
+        expected_reason="appid_invalid_format",
+        step="invalid-format App ID workflow completed (turn 3)",
+    )
+    engine.wait_customer_reply_delivered(
+        ctx, "invalid-format App ID reply delivered (turn 3)"
+    )
+    engine.wait_hermes_compatibility_job(
+        ctx,
+        job_id=str(turn3.get("compatibility_account_reply_job_id") or ""),
+        expected_intent="enablement_appid_invalid",
+        step="invalid-format App ID compatibility identity (turn 3)",
     )
     engine.wait_case_field(
         ctx, "internal_email_send_reason", "appid_invalid_format",

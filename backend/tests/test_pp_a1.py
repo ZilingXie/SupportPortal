@@ -91,6 +91,12 @@ class FakeEngine(ScenarioEngine):
             return []
         matcher, rows = self.db_queue.pop(0)
         assert matcher in sql, f"unexpected query: {sql} (expected matcher {matcher})"
+        if "event_id = %s" in sql and rows:
+            for row in rows:
+                if row.get("event_id") == "__CURRENT_EVENT__" and self.posted_comments:
+                    row["event_id"] = (
+                        f"zendesk:ticket:13899:comment:{self.posted_comments[-1]['id']}"
+                    )
         return rows
 
     def send_email(self, subject, body, to_address, headers=None):
@@ -653,12 +659,32 @@ def _happy_path_engine(*, turn2_via: str = "draft") -> FakeEngine:
             ("COUNT(*) AS n", [{"n": 0}]),
         ]
     )
-    # Turn 3: invalid-format rejection published as a reply job.
+    # Turn 3: native Hermes workflow/draft delivery plus a queued compatibility
+    # identity. The queued row is never treated as a published legacy reply.
     engine.db_queue.extend(
         [
-            ("close_after_publish", [{
-                "job_id": "j3", "status": "published",
-                "reply_intent": "enablement_appid_invalid", "close_after_publish": None,
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "t3",
+                "status": "completed",
+                "event_id": "__CURRENT_EVENT__",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "appid_invalid",
+                    "internal_email_send_reason": "appid_invalid_format",
+                    "compatibility_account_reply_job_id": "j3",
+                },
+            }]),
+            ("WHERE event_id = %s", [{"turn_id": "t3", "status": "completed"}]),
+            ("WHERE d.turn_id = %s", [{
+                "draft_id": "d3", "turn_id": "t3", "draft_status": "queued",
+                "delivery_status": "delivered", "zendesk_comment_id": "c3",
+                "content": "The App ID format is not valid.",
+            }]),
+            ("FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s", [{
+                "job_id": "j3", "status": "persona_v8_queued",
+                "reply_intent": "enablement_appid_invalid",
+                "reply_owner": "hermes_persona",
+                "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", _case_row()),
             ("COUNT(*) AS n", [{"n": 0}]),
