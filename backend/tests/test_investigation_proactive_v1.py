@@ -12,6 +12,16 @@ from backend.services.investigation_consult_store import transition
 def _turn():
     return {"direction":"investigation", "created_at":"2026-10-14T12:00:00+00:00", "work_result":{}}
 
+def test_investigation_toolset_contract_is_explicit_and_automation_is_separate():
+    assert toolsets_for_phase("work", direction="investigation") == [
+        "supportportal_investigation", "common", "memory", "skills"
+    ]
+    assert "supportportal_work" not in toolsets_for_phase("work", direction="investigation")
+    assert toolsets_for_phase("work", direction="automation") == ["supportportal_work"]
+    assert toolsets_for_phase("work", direction="investigation", allow_close=True) == [
+        "supportportal_investigation", "common", "memory", "skills", "supportportal_work"
+    ]
+
 def test_channel_only_policy_is_fixed_30_day_window_and_close_is_false():
     policy=investigation_policy(_turn(), {"case_task":{"direction":"investigation"}})
     assert policy["initial_search_window"]["toTs"]-policy["initial_search_window"]["fromTs"] == 30*86400
