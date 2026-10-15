@@ -1648,6 +1648,156 @@ class ScenarioEngine:
             raise AssertionError(f"unexpected Hermes message-action turn: {detail}")
         return row
 
+    def wait_hermes_workflow_outcome(
+        self,
+        ctx: ScenarioContext,
+        *,
+        expected_outcome: str,
+        expected_reason: str,
+        step: str,
+    ) -> dict:
+        """Wait for the workflow result bound to the current customer comment.
+
+        This is deliberately separate from ``wait_reply_intent``. Native
+        Hermes produces a customer-facing draft/delivery and may also leave a
+        compatibility job in an active Hermes state; that compatibility row is
+        not a published legacy reply.
+        """
+        event_id = (
+            f"zendesk:ticket:{ctx.zendesk_ticket_id}:comment:{ctx.last_customer_comment_id}"
+            if ctx.last_customer_comment_id else ""
+        )
+        if not event_id:
+            detail = "cannot bind workflow result: current customer comment id is missing"
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+
+        def _object(value: Any) -> dict[str, Any]:
+            if isinstance(value, dict):
+                return value
+            if isinstance(value, str):
+                try:
+                    parsed = json.loads(value)
+                except json.JSONDecodeError:
+                    return {}
+                return parsed if isinstance(parsed, dict) else {}
+            return {}
+
+        terminal = {"completed", "failed", "human_review", "cancelled", "superseded"}
+        binding_failure: list[str] = []
+
+        def probe():
+            rows = self.db_query(
+                "SELECT turn_id, status, event_id, work_result "
+                "FROM automation_hermes_agent_turns "
+                "WHERE zendesk_ticket_id = %s AND event_id = %s "
+                "ORDER BY created_at DESC",
+                (ctx.zendesk_ticket_id, event_id),
+            )
+            if not rows:
+                return None
+            turn_ids = {str(item.get("turn_id") or "") for item in rows}
+            if len(turn_ids) != 1 or "" in turn_ids:
+                binding_failure.append(
+                    "cannot bind workflow result: current customer event has "
+                    f"ambiguous Hermes turns {sorted(turn_ids)}"
+                )
+                return {"_binding_error": binding_failure[-1]}
+            row = rows[0]
+            turn_id = str(row.get("turn_id") or "")
+            if not turn_id or turn_id in ctx.baseline_turn_ids:
+                return None
+            if str(row.get("status") or "") in terminal:
+                return row
+            return None
+
+        row = self.wait_for(
+            f"Hermes workflow outcome={expected_outcome}",
+            probe,
+            self.turn_timeout_min * 60,
+        )
+        if binding_failure or row.get("_binding_error"):
+            detail = binding_failure[-1] if binding_failure else str(row["_binding_error"])
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+        ctx.seen_turn_ids.add(str(row.get("turn_id") or ""))
+        work_result = _object(row.get("work_result"))
+        trusted = _object(work_result.get("trusted_conclusion"))
+        outcome = str(work_result.get("outcome") or trusted.get("outcome") or "")
+        status = str(work_result.get("status") or "")
+        reason = str(
+            work_result.get("internal_email_send_reason")
+            or trusted.get("internal_email_send_reason")
+            or ""
+        )
+        ok = (
+            str(row.get("event_id") or "") == event_id
+            and str(row.get("status") or "") == "completed"
+            and status == "workflow_completed"
+            and outcome == expected_outcome
+            and reason == expected_reason
+        )
+        detail = (
+            f"turn={row.get('turn_id')} status={row.get('status')} "
+            f"work_status={status} outcome={outcome} reason={reason}"
+        )
+        self.record(ctx, step, ok, detail)
+        if not ok:
+            raise AssertionError(f"unexpected Hermes workflow outcome: {detail}")
+        row["work_result_object"] = work_result
+        row["compatibility_account_reply_job_id"] = str(
+            work_result.get("compatibility_account_reply_job_id") or ""
+        )
+        return row
+
+    def wait_hermes_compatibility_job(
+        self,
+        ctx: ScenarioContext,
+        *,
+        job_id: str,
+        expected_intent: str,
+        step: str,
+    ) -> dict:
+        """Observe a Hermes compatibility identity without claiming/publishing it."""
+        if not job_id:
+            detail = "workflow result did not provide a compatibility job id"
+            self.record(ctx, step, False, detail)
+            raise AutomationTestScenarioError(detail)
+        allowed_active = {"persona_v8_queued", "persona_v8_preparing", "persona_v8_generating"}
+
+        def probe():
+            rows = self.db_query(
+                "SELECT job_id, status, payload->>'reply_intent' AS reply_intent, "
+                "payload->>'reply_owner' AS reply_owner, "
+                "payload->>'hermes_compatibility_only' AS hermes_compatibility_only "
+                "FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s "
+                "ORDER BY created_at DESC LIMIT 1",
+                (ctx.client_ticket_id, job_id),
+            )
+            return rows[0] if rows else None
+
+        row = self.wait_for(
+            f"Hermes compatibility job={job_id}",
+            probe,
+            self.turn_timeout_min * 60,
+        )
+        status = str(row.get("status") or "")
+        intent = str(row.get("reply_intent") or "")
+        owner = str(row.get("reply_owner") or "")
+        marker = str(row.get("hermes_compatibility_only") or "").lower()
+        ok = (
+            str(row.get("job_id") or "") == job_id
+            and status in allowed_active
+            and intent == expected_intent
+            and owner == "hermes_persona"
+            and marker == "true"
+        )
+        detail = f"job={job_id} status={status} intent={intent} owner={owner} compatibility_only={marker}"
+        self.record(ctx, step, ok, detail)
+        if not ok:
+            raise AssertionError(f"unexpected Hermes compatibility job: {detail}")
+        return row
+
     def wait_hermes_draft_delivered(
         self, ctx: ScenarioContext, step: str,
         *, content_check: Callable[[str], str | None] | None = None,
@@ -2021,8 +2171,20 @@ class ScenarioEngine:
             f"relay_request_count={relay_requests_after_turn2}",
         )
         self.next_customer_turn(ctx, f"My App ID is {E3_APPID_INVALID}")
-        self.wait_reply_intent(
-            ctx, {"enablement_appid_invalid"}, "invalid App ID rejected (turn 3)"
+        turn3 = self.wait_hermes_workflow_outcome(
+            ctx,
+            expected_outcome="appid_invalid",
+            expected_reason="appid_invalid_format",
+            step="invalid App ID workflow completed (turn 3)",
+        )
+        self.wait_customer_reply_delivered(
+            ctx, "invalid App ID reply delivered (turn 3)"
+        )
+        self.wait_hermes_compatibility_job(
+            ctx,
+            job_id=str(turn3.get("compatibility_account_reply_job_id") or ""),
+            expected_intent="enablement_appid_invalid",
+            step="invalid App ID compatibility identity (turn 3)",
         )
         self.wait_case_field(
             ctx, "internal_email_send_reason", "appid_invalid_format",

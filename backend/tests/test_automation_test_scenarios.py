@@ -437,11 +437,20 @@ class ScenarioEngineTests(unittest.TestCase):
             ctx.stamp_turn_baseline()
             if "What is the App ID?" in body:
                 comment_id = "53820000000102"
+            elif "My App ID is" in body and "Sorry" not in body:
+                comment_id = (
+                    "53820000000303"
+                    if str(getattr(ctx, "zendesk_ticket_id", "")) == "13702"
+                    else "53820000000103"
+                )
             elif "possibility of getting" in body:
                 comment_id = "53820000000106"
             else:
                 comment_id = f"scripted-customer-comment-{len(engine.events)}"
             ctx.last_customer_comment_id = comment_id
+            ctx.last_customer_comment_at = ctx.turn_started_at.isoformat()
+            ctx.customer_requester_id = "requester-13700"
+            engine._active_ctx = ctx
             engine.emit(
                 "customer_turn_sent",
                 {
@@ -452,6 +461,23 @@ class ScenarioEngineTests(unittest.TestCase):
             )
 
         engine.zendesk_customer_turn = scripted_zendesk_turn  # type: ignore[method-assign]
+
+        def scripted_zendesk_request(path, method="GET", payload=None):
+            if "/comments.json" in path:
+                active = engine._active_ctx
+                return {
+                    "comments": [{
+                        "id": active.last_customer_comment_id,
+                        "author_id": active.customer_requester_id,
+                        "created_at": active.last_customer_comment_at,
+                    }],
+                    "next_page": None,
+                }
+            return {}
+
+        # The strict current-turn delivery wait only needs the persisted
+        # comment listing; product writes remain out of this unit harness.
+        engine._zendesk_request = scripted_zendesk_request  # type: ignore[method-assign]
         return engine
 
     def test_e3_full_lifecycle_scripted(self) -> None:
@@ -505,12 +531,39 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("WHERE account_case_id", [{"automation_status": "automation"}]),
             ("FROM support_enablement_relay_requests", [{"n": 0}]),
-            # Turn 3: malformed App ID rejected through the reply-job channel.
-            ("FROM support_account_reply_jobs", [{
+            # Turn 3: native Hermes workflow result is bound to the customer
+            # comment; delivery is checked separately, then the queued
+            # compatibility identity is observed without publishing it.
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-3",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000103",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "appid_invalid",
+                    "internal_email_send_reason": "appid_invalid_format",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
+            }]),
+            ("WHERE event_id = %s", [{
+                "turn_id": "turn-3",
+                "status": "completed",
+                "route": "enablement",
+            }]),
+            ("WHERE d.turn_id = %s", [{
+                "draft_id": "draft-3",
+                "turn_id": "turn-3",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000103",
+                "content": "The App ID format is not valid.",
+            }]),
+            ("FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s", [{
                 "job_id": "job-3",
-                "status": "published",
+                "status": "persona_v8_queued",
                 "reply_intent": "enablement_appid_invalid",
-                "close_after_publish": None,
+                "reply_owner": "hermes_persona",
+                "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
             # Turn 4: valid-format submission -> confirmation + relay v1.
@@ -710,11 +763,36 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("WHERE account_case_id", [{"automation_status": "automation"}]),
             ("FROM support_enablement_relay_requests", [{"n": 0}]),
-            ("FROM support_account_reply_jobs", [{
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-3",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000303",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "appid_invalid",
+                    "internal_email_send_reason": "appid_invalid_format",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
+            }]),
+            ("WHERE event_id = %s", [{
+                "turn_id": "turn-3",
+                "status": "completed",
+                "route": "enablement",
+            }]),
+            ("WHERE d.turn_id = %s", [{
+                "draft_id": "draft-3",
+                "turn_id": "turn-3",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000303",
+                "content": "The App ID format is not valid.",
+            }]),
+            ("FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s", [{
                 "job_id": "job-3",
-                "status": "published",
+                "status": "persona_v8_queued",
                 "reply_intent": "enablement_appid_invalid",
-                "close_after_publish": None,
+                "reply_owner": "hermes_persona",
+                "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
             ("FROM support_account_reply_jobs", [{
@@ -925,6 +1003,115 @@ class ScenarioEngineTests(unittest.TestCase):
         )
         self.assertEqual(row["turn_id"], "turn-current")
         self.assertIn("action=answer_related_question", engine.steps[-1].detail)
+
+    def test_native_hermes_workflow_outcome_binds_current_comment(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("T", zendesk_ticket_id="14073", client_ticket_id="14073")
+        ctx.last_customer_comment_id = "comment-current"
+        engine.db_queue = [
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-current",
+                "status": "completed",
+                "event_id": "zendesk:ticket:14073:comment:comment-current",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "appid_invalid",
+                    "internal_email_send_reason": "appid_invalid_format",
+                    "compatibility_account_reply_job_id": "job-current",
+                },
+            }]),
+        ]
+        row = engine.wait_hermes_workflow_outcome(
+            ctx,
+            expected_outcome="appid_invalid",
+            expected_reason="appid_invalid_format",
+            step="native workflow result",
+        )
+        self.assertEqual(row["turn_id"], "turn-current")
+        self.assertEqual(row["compatibility_account_reply_job_id"], "job-current")
+
+    def test_native_hermes_compatibility_job_accepts_queued_identity_only(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("T", client_ticket_id="14073")
+        engine.db_queue = [
+            ("FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s", [{
+                "job_id": "job-current",
+                "status": "persona_v8_queued",
+                "reply_intent": "enablement_appid_invalid",
+                "reply_owner": "hermes_persona",
+                "hermes_compatibility_only": "true",
+            }]),
+        ]
+        row = engine.wait_hermes_compatibility_job(
+            ctx,
+            job_id="job-current",
+            expected_intent="enablement_appid_invalid",
+            step="native compatibility identity",
+        )
+        self.assertEqual(row["status"], "persona_v8_queued")
+
+    def test_native_hermes_compatibility_job_rejects_unknown_status(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("T", client_ticket_id="14073")
+        engine.db_queue = [
+            ("FROM support_account_reply_jobs WHERE ticket_id = %s AND job_id = %s", [{
+                "job_id": "job-current",
+                "status": "published",
+                "reply_intent": "enablement_appid_invalid",
+                "reply_owner": "hermes_persona",
+                "hermes_compatibility_only": "true",
+            }]),
+        ]
+        with self.assertRaises(AssertionError):
+            engine.wait_hermes_compatibility_job(
+                ctx,
+                job_id="job-current",
+                expected_intent="enablement_appid_invalid",
+                step="reject published compatibility identity",
+            )
+
+    def test_native_hermes_workflow_rejects_wrong_outcome_and_reason(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("T", zendesk_ticket_id="14073", client_ticket_id="14073")
+        ctx.last_customer_comment_id = "comment-current"
+        engine.db_queue = [
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-current",
+                "status": "completed",
+                "event_id": "zendesk:ticket:14073:comment:comment-current",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "project_not_found",
+                    "internal_email_send_reason": "other_reason",
+                    "compatibility_account_reply_job_id": "job-current",
+                },
+            }]),
+        ]
+        with self.assertRaises(AssertionError):
+            engine.wait_hermes_workflow_outcome(
+                ctx,
+                expected_outcome="appid_invalid",
+                expected_reason="appid_invalid_format",
+                step="reject wrong native workflow result",
+            )
+
+    def test_native_hermes_workflow_rejects_ambiguous_event_binding(self) -> None:
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("T", zendesk_ticket_id="14073", client_ticket_id="14073")
+        ctx.last_customer_comment_id = "comment-current"
+        engine.db_queue = [
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [
+                {"turn_id": "turn-a", "status": "completed", "event_id": "zendesk:ticket:14073:comment:comment-current"},
+                {"turn_id": "turn-b", "status": "completed", "event_id": "zendesk:ticket:14073:comment:comment-current"},
+            ]),
+        ]
+        with self.assertRaises(AssertionError):
+            engine.wait_hermes_workflow_outcome(
+                ctx,
+                expected_outcome="appid_invalid",
+                expected_reason="appid_invalid_format",
+                step="reject ambiguous native workflow binding",
+            )
 
     def test_draft_wait_rejects_delivery_from_wrong_turn(self) -> None:
         """A delivered draft from another turn must not satisfy a bound wait."""
