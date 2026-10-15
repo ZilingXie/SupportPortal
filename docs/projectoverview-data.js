@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-14T13:49:10Z",
-  "source_base_commit": "dd3b537c41927cfc96eb08c7c2cc83c3802c06ea",
-  "registry_digest": "27403a2391f4c3776d6a1d748cda3b05c731ca76aee6a27e0a7cefde479ca62b",
+  "generated_at": "2026-10-15T06:13:32Z",
+  "source_base_commit": "3ac05dbdc60bd12d2f167927bf3d228cc70cc114",
+  "registry_digest": "ae6cffa58ceab566f3ae7289a8867c0571a6b8cf2c03e7ba034c0077531d7105",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5325,13 +5325,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "pr",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
-          "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+          "label": "SupportPortal PR #1502 与 Hermes deploy PR #34（主动调查基础能力）已合入 main；本轮工具集契约修复另见 PR #1505/#35",
+          "result": "基础主动调查代码：SupportPortal main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0。工具集契约修复：SupportPortal @ 3ac05dbdc60bd12d2f167927bf3d228cc70cc114；Hermes deploy实现 @ 57daa789eccdea70f0036ac3d9a9d83cf20c6d56，合并后 main @ 45b356d。"
         },
         {
           "type": "deployment",
           "label": "ECS Preproduction 正式发布",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
-          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。 本轮 Hermes 工具集契约修复另行发布 supportportal-preproduction-hermes:46，运行 HEALTHY、rollout COMPLETED。"
         },
         {
           "type": "deployment",
@@ -5350,6 +5351,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布时长观察",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
           "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes Investigation Toolset Contract Repair R1：Preproduction task / digest / toolset / runs 对账",
+          "path": ".deployments/hermes-investigation-toolset-r1-evidence.json",
+          "result": "Hermes deploy merge main @ 45b356d（实现提交 57daa789eccdea70f0036ac3d9a9d83cf20c6d56）；SupportPortal main @ 3ac05dbdc60bd12d2f167927bf3d228cc70cc114。supportportal-preproduction-hermes:46 RUNNING/HEALTHY，rollout COMPLETED，Hermes digest sha256:6198ca25c0ceb93c83562830394e9fe6af4348d3e369eb69ff5d2a974a051824。ECS Exec /v1/toolsets 返回 Investigation 四项工具，support_close_case 不在 Investigation/common；/v1/runs 完整 enabled_toolsets 返回 202，stop 返回 200，未调用业务工具。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Investigation toolset contract regression",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/test/test_supportportal_agent_tools.py",
+          "result": "独立复审临时归档测试 20 passed；覆盖 Investigation 四项工具、Automation 工具边界和 close 权限隔离。"
+        },
+        {
+          "type": "test",
+          "label": "SupportPortal cross-repository toolset contract regression",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "独立复审定向测试 8 passed；确认 Investigation 请求使用 supportportal_investigation，Automation 保持 supportportal_work，allow_close 仍为显式门禁。"
         }
       ],
       "source_refs": [
@@ -18716,10 +18735,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 主动调查与能力收敛 v1",
       "summary": "R1：固定 Investigation 按回合绑定隔离 Skill profile；频道缺时间使用服务端固定前30天初查窗口；Argus 结果边界显式化；通过受限 support_zac_consult 保存可恢复请求并防重复/过期回写。",
       "status": "done",
-      "next_action": "无。代码验收与 Preproduction 技术发布均通过；真实 Argus/Zac/Slack/Zendesk/客户业务验证及 PG 专项仍未执行，后续如需进行必须单独授权。",
+      "next_action": "无。代码验收、Preproduction 技术发布与工具集契约探针均通过；真实 Argus/Zac/Slack/Zendesk/客户业务验证及 PG 专项仍未执行，后续如需进行必须单独授权。",
       "owner": "codex",
       "created_at": "2026-10-14",
-      "updated_at": "2026-10-14",
+      "updated_at": "2026-10-15",
       "acceptance_criteria": [
         "C1 Skill profile 按实例/回合隔离，非白名单和 Automation/Cron 不可加载；关闭仅在可信工程师授权时开放。",
         "C2 Investigation 有线索先查；频道缺时间使用固定前30天，空结果/错误/截断分别表达，最多三次搜索。",
@@ -18753,13 +18772,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "pr",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1502",
-          "label": "SupportPortal PR #1502 已合入 main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy PR #34 已合入 main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0"
+          "label": "SupportPortal PR #1502 与 Hermes deploy PR #34（主动调查基础能力）已合入 main；本轮工具集契约修复另见 PR #1505/#35",
+          "result": "基础主动调查代码：SupportPortal main @ 8c151238f83e866fdb28680d5f8e476c858b1187；Hermes deploy main @ 17284d3e697260080a28dc9ca9b35455b5f13ad0。工具集契约修复：SupportPortal @ 3ac05dbdc60bd12d2f167927bf3d228cc70cc114；Hermes deploy实现 @ 57daa789eccdea70f0036ac3d9a9d83cf20c6d56，合并后 main @ 45b356d。"
         },
         {
           "type": "deployment",
           "label": "ECS Preproduction 正式发布",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json",
-          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。"
+          "result": "release r20261014-8c15123；git=8c151238f83e866fdb28680d5f8e476c858b1187；prompt=pr-88298d4e0a3f；schema=automation-ecs-016；evidence status=complete。CodeBuild、preflight、Prompt、Route/Worker/API、Heartbeat、Collector、Activation、CloudWatch、Provider probe、Terraform zero drift、ECR、EC2 backup、Target Health 与三角色 runtime digest 均通过。 本轮 Hermes 工具集契约修复另行发布 supportportal-preproduction-hermes:46，运行 HEALTHY、rollout COMPLETED。"
         },
         {
           "type": "deployment",
@@ -18778,14 +18798,32 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "发布时长观察",
           "path": ".deployments/ecs-pipeline-r20261014-8c15123/timings.json",
           "result": "端到端总时长 1336s，超过 900s SLO；原因包含两次失败的 preflight 尝试后恢复。正式 evidence 各阶段最终 passed，记录为非阻断运行观察。"
+        },
+        {
+          "type": "deployment",
+          "label": "Hermes Investigation Toolset Contract Repair R1：Preproduction task / digest / toolset / runs 对账",
+          "path": ".deployments/hermes-investigation-toolset-r1-evidence.json",
+          "result": "Hermes deploy merge main @ 45b356d（实现提交 57daa789eccdea70f0036ac3d9a9d83cf20c6d56）；SupportPortal main @ 3ac05dbdc60bd12d2f167927bf3d228cc70cc114。supportportal-preproduction-hermes:46 RUNNING/HEALTHY，rollout COMPLETED，Hermes digest sha256:6198ca25c0ceb93c83562830394e9fe6af4348d3e369eb69ff5d2a974a051824。ECS Exec /v1/toolsets 返回 Investigation 四项工具，support_close_case 不在 Investigation/common；/v1/runs 完整 enabled_toolsets 返回 202，stop 返回 200，未调用业务工具。"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Investigation toolset contract regression",
+          "path": "/Users/xieziling/Desktop/agentRelay/hermes-deploy/test/test_supportportal_agent_tools.py",
+          "result": "独立复审临时归档测试 20 passed；覆盖 Investigation 四项工具、Automation 工具边界和 close 权限隔离。"
+        },
+        {
+          "type": "test",
+          "label": "SupportPortal cross-repository toolset contract regression",
+          "path": "backend/tests/test_investigation_proactive_v1.py",
+          "result": "独立复审定向测试 8 passed；确认 Investigation 请求使用 supportportal_investigation，Automation 保持 supportportal_work，allow_close 仍为显式门禁。"
         }
       ],
       "source_refs": [
         "docs/plans/investigation-proactive-v1.md",
         "/Users/xieziling/Desktop/agentRelay/hermes-deploy/build/investigation-proactive-v1",
-        "SupportPortal merged main 8c151238f83e866fdb28680d5f8e476c858b1187",
-        "Hermes deploy merged main 17284d3e69726008028dc9ca9b35455b5f13ad0",
-        ".deployments/ecs-pipeline-r20261014-8c15123/preproduction-deploy/evidence.json"
+        "SupportPortal merged main 3ac05dbdc60bd12d2f167927bf3d228cc70cc114 (PR #1505)",
+        "Hermes deploy implementation 57daa789eccdea70f0036ac3d9a9d83cf20c6d56; merged main 45b356d (PR #35)",
+        ".deployments/hermes-investigation-toolset-r1-evidence.json"
       ]
     },
     {
