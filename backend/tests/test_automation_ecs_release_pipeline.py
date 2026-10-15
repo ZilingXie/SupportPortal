@@ -25,6 +25,7 @@ from backend.scripts.automation_ecs_release_pipeline import (
     collect_prompt_target_state,
     deploy_mode_args,
     prompt_target_dsn,
+    read_preproduction_prompt_target_dsn,
     task_definition_sha256,
     validate_preflight_evidence,
     write_preflight_evidence,
@@ -776,6 +777,62 @@ def test_pipeline_requires_environment_specific_production_prompt_target() -> No
         prompt_target_dsn({"PROMPT_RELEASE_TARGET_DSN": "must-not-cross-environments"}, "production")
 
 
+def test_preproduction_prompt_target_is_read_from_ssm_without_persisting_dsn() -> None:
+    sentinel = "postgresql://ssm-only/sentinel"
+    calls = []
+
+    def run(argv, **kwargs):
+        calls.append((list(argv), dict(kwargs["env"])))
+        return subprocess.CompletedProcess(argv, 0, stdout=sentinel + "\n", stderr="")
+
+    with patch("backend.scripts.automation_ecs_release_pipeline.subprocess.run", side_effect=run):
+        value = read_preproduction_prompt_target_dsn({"AWS_PROFILE": "default"})
+
+    assert value == sentinel
+    assert calls[0][0][0:5] == ["aws", "ssm", "get-parameter", "--name", pipeline.PREPRODUCTION_PROMPT_TARGET_PARAMETER]
+    assert sentinel not in calls[0][0]
+    assert "--with-decryption" in calls[0][0]
+
+
+def test_preproduction_prompt_target_rejects_empty_ssm_value() -> None:
+    result = subprocess.CompletedProcess([], 0, stdout="None\n", stderr="")
+    with patch(
+        "backend.scripts.automation_ecs_release_pipeline.subprocess.run",
+        return_value=result,
+    ):
+        with pytest.raises(ValueError, match="parameter is empty"):
+            read_preproduction_prompt_target_dsn({"AWS_PROFILE": "default"})
+
+
+def test_preproduction_prompt_target_propagates_ssm_denial_without_fallback() -> None:
+    denial = subprocess.CalledProcessError(1, ["aws", "ssm", "get-parameter"])
+    with patch(
+        "backend.scripts.automation_ecs_release_pipeline.subprocess.run",
+        side_effect=denial,
+    ):
+        with pytest.raises(subprocess.CalledProcessError):
+            read_preproduction_prompt_target_dsn({"AWS_PROFILE": "default"})
+
+
+@pytest.mark.parametrize("provider_type,expected", [("login", True), ("shared-credentials-file", False)])
+def test_release_identity_requires_refreshable_login_provider(provider_type: str, expected: bool) -> None:
+    identity = json.dumps({"Account": pipeline.ACCOUNT_ID, "Arn": pipeline.AWS_USER_ARN})
+    provider = f"access_key : ****************ABCD : {provider_type} :\n"
+    responses = [
+        subprocess.CompletedProcess([], 0, stdout=identity, stderr=""),
+        subprocess.CompletedProcess([], 0, stdout=provider, stderr=""),
+    ]
+    with patch(
+        "backend.scripts.automation_ecs_release_pipeline.subprocess.run",
+        side_effect=responses,
+    ):
+        if expected:
+            assert pipeline.verify_aws_identity({"AWS_PROFILE": "default"})["account_id"] == pipeline.ACCOUNT_ID
+        else:
+            with pytest.raises(ValueError, match="refreshable login profile"):
+                pipeline.verify_aws_identity({"AWS_PROFILE": "default"})
+
+
 def test_pipeline_rejects_case_files_in_production() -> None:
     with pytest.raises(ValueError, match="only be enabled in Preproduction"):
         deploy_mode_args(argparse.Namespace(
@@ -906,12 +963,15 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
         "sanitized_aws_environment",
         lambda: {"PROMPT_RELEASE_TARGET_DSN": "isolated-test-target"},
     )
+    monkeypatch.setattr(pipeline, "read_preproduction_prompt_target_dsn", lambda env: "isolated-test-target")
     monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
     monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
     stages = []
+    stage_envs = {}
 
     def record_stage(state, name, command, *, env, **kwargs):
         stages.append((name, list(command)))
+        stage_envs[name] = dict(env)
         if name == "codebuild":
             release_dir = Path(command[command.index("--output-dir") + 1])
             release_dir.mkdir(parents=True)
@@ -925,7 +985,10 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
     assert [item[0] for item in stages] == [
         "codebuild", "preproduction_preflight", "preproduction_deploy",
     ]
+    assert stage_envs["preproduction_preflight"]["PROMPT_RELEASE_TARGET_DSN"] == "isolated-test-target"
+    assert stage_envs["preproduction_deploy"]["PROMPT_RELEASE_TARGET_DSN"] == "isolated-test-target"
     state_dir = next((repo / ".deployments").glob("ecs-pipeline-*"))
+    assert "isolated-test-target" not in (state_dir / "checkpoint.json").read_text(encoding="utf-8")
     expected_config = {
         "master": "1",
         "switches": {
