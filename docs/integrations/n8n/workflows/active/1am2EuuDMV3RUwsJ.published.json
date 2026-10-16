@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-10-16T01:36:38.046Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "1am2EuuDMV3RUwsJ",
     "workflowName": "[case]Intake|ECS Route",
     "snapshotKind": "published",
-    "versionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "draftVersionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "publishedVersionId": "35bebae8-92b6-49e8-b3b6-2b1c4ea5f7ed",
-    "updatedAt": "2026-09-16T07:15:49.618Z",
+    "versionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
+    "draftVersionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
+    "publishedVersionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
+    "updatedAt": "2026-10-16T01:35:34.828Z",
     "parentFolderId": "m6g0McsPdron3eH9"
   },
   "workflow": {
@@ -130,12 +130,11 @@
             "conditions": [
               {
                 "id": "c3932562-77da-4416-a27f-055abf322cb6",
-                "leftValue": "={{ !$json.user?.name || !$json.user?.email }}",
-                "rightValue": true,
+                "leftValue": "={{ $('Get_Case_Info').item.json.ticket.organization_id || $json.user?.organization_id || '' }}",
+                "rightValue": "",
                 "operator": {
-                  "type": "boolean",
-                  "operation": "true",
-                  "singleValue": true
+                  "type": "string",
+                  "operation": "notEmpty"
                 }
               }
             ],
@@ -150,7 +149,7 @@
           -96
         ],
         "id": "71145e23-fb87-4193-ac31-e891849f1d63",
-        "name": "IF_Requester_Info_Missing"
+        "name": "IF_Organization_ID_Present"
       },
       {
         "parameters": {
@@ -168,6 +167,9 @@
         "id": "0c413c01-0439-4333-bdc3-20b99e5173ce",
         "name": "Get_Organization_Info",
         "onError": "continueRegularOutput",
+        "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
         "credentials": {
           "zendeskApi": {
             "id": "f85Z4a0savbF0l5r",
@@ -178,7 +180,7 @@
       {
         "parameters": {
           "mode": "runOnceForEachItem",
-          "jsCode": "const ticket = $('Get_Case_Info').item.json.ticket ?? {};\nconst comments = $('Get_Case_Comment1').item.json.comments ?? [];\nconst requester = $('Get_Requester_Info').item.json.user ?? {};\nconst organization = $json.organization ?? {};\nconst organizationFields = organization.organization_fields ?? {};\nconst source = comments[0]?.via?.source ?? {};\n\nconst firstNonEmpty = (...values) => {\n  for (const value of values) {\n    if (value !== null && value !== undefined && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\n\nconst customerEmail = firstNonEmpty(\n  requester.email,\n  source.from?.address,\n  source.to?.address,\n  organizationFields.email,\n  organizationFields.company_email,\n  organizationFields.contact_email,\n  organizationFields.support_email,\n);\n\nconst customerName = firstNonEmpty(\n  requester.name,\n  source.from?.name,\n  source.to?.name,\n  organizationFields.company_name,\n  organization.name,\n);\n\nreturn {\n  json: {\n    ticket,\n    customer_name: customerName,\n    customer_email: customerEmail,\n    customer_company: firstNonEmpty(organizationFields.company_name, organization.name),\n  },\n};"
+          "jsCode": "const ticket = $('Get_Case_Info').item.json.ticket ?? {};\nconst comments = $('Get_Case_Comment1').item.json.comments ?? [];\nconst requester = $('Get_Requester_Info').item.json.user ?? {};\nconst organization = $json.organization ?? {};\nconst organizationFields = organization.organization_fields ?? {};\nconst source = comments[0]?.via?.source ?? {};\n\nconst firstNonEmpty = (...values) => {\n  for (const value of values) {\n    if (value !== null && value !== undefined && String(value).trim() !== '') {\n      return String(value).trim();\n    }\n  }\n  return '';\n};\n\nconst organizationId = firstNonEmpty(\n  ticket.organization_id,\n  requester.organization_id,\n);\n\nconst customerEmail = firstNonEmpty(\n  requester.email,\n  source.from?.address,\n  source.to?.address,\n  organizationFields.email,\n  organizationFields.company_email,\n  organizationFields.contact_email,\n  organizationFields.support_email,\n);\n\nconst customerName = firstNonEmpty(\n  requester.name,\n  source.from?.name,\n  source.to?.name,\n  organizationFields.company_name,\n  organization.name,\n);\n\nreturn {\n  json: {\n    ticket,\n    organization,\n    organization_id: organizationId,\n    organization_id_missing: !organizationId,\n    customer_name: customerName,\n    customer_email: customerEmail,\n    customer_company: firstNonEmpty(organizationFields.company_name, organization.name),\n  },\n};"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
@@ -258,7 +260,7 @@
       },
       {
         "parameters": {
-          "url": "=https://agoraio.zendesk.com/api/v2/organizations/{{ $('Get_Case_Info').item.json.ticket.organization_id }}.json",
+          "url": "=https://agoraio.zendesk.com/api/v2/organizations/{{ $('Prepare_Account_Data').item.json.organization_id }}.json",
           "authentication": "predefinedCredentialType",
           "nodeCredentialType": "zendeskApi",
           "options": {}
@@ -272,6 +274,8 @@
         "id": "381a1af9-ee32-4eaf-9312-791a64feb230",
         "name": "get_cid",
         "retryOnFail": true,
+        "maxTries": 3,
+        "waitBetweenTries": 2000,
         "credentials": {
           "zendeskApi": {
             "id": "f85Z4a0savbF0l5r",
@@ -398,6 +402,39 @@
             "name": "automation_production"
           }
         }
+      },
+      {
+        "id": "54cf98dc-693e-4c1b-87a7-794f1931827b",
+        "name": "IF_Organization_ID_Present_2",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          208,
+          -96
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "b6c3bca6-8b2e-4ef2-9b55-6cf0b0f3aa31",
+                "leftValue": "={{ $('Prepare_Account_Data').item.json.organization_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
       }
     ],
     "connections": {
@@ -438,25 +475,7 @@
         "main": [
           [
             {
-              "node": "IF_Requester_Info_Missing",
-              "type": "main",
-              "index": 0
-            }
-          ]
-        ]
-      },
-      "IF_Requester_Info_Missing": {
-        "main": [
-          [
-            {
-              "node": "Get_Organization_Info",
-              "type": "main",
-              "index": 0
-            }
-          ],
-          [
-            {
-              "node": "Prepare_Account_Data",
+              "node": "IF_Organization_ID_Present",
               "type": "main",
               "index": 0
             }
@@ -548,11 +567,47 @@
           ]
         ]
       },
+      "IF_Organization_ID_Present": {
+        "main": [
+          [
+            {
+              "node": "Get_Organization_Info",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Prepare_Account_Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
       "Prepare_Account_Data": {
         "main": [
           [
             {
+              "node": "IF_Organization_ID_Present_2",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "IF_Organization_ID_Present_2": {
+        "main": [
+          [
+            {
               "node": "get_cid",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Check_Company_ID1",
               "type": "main",
               "index": 0
             }
@@ -563,7 +618,8 @@
     "settings": {
       "binaryMode": "separate",
       "availableInMCP": true,
-      "executionOrder": "v1"
+      "executionOrder": "v1",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt"
     },
     "nodeGroups": [],
     "tags": []
