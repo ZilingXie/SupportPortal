@@ -1056,6 +1056,7 @@ def _start_enablement_auto_dispatch(
         if isinstance(prior_workflow, dict)
         else 1
     )
+    existing_request: dict[str, Any] | None = None
     if prior_request_id:
         prior_request = repository.get_enablement_relay_request(prior_request_id)
         if prior_request is not None and prior_app_id != app_id:
@@ -1068,7 +1069,12 @@ def _start_enablement_auto_dispatch(
                 reason="appid_superseded",
             )
             request_version += 1
-        elif prior_request is None or prior_app_id == app_id:
+        elif prior_request is not None and prior_app_id == app_id:
+            # Same application retry: retain the exact request identity and
+            # let the repository transaction return the existing row. Never
+            # clear the ID and attempt a second insert.
+            existing_request = prior_request
+        elif prior_request is None:
             prior_request_id = ""
 
     reply_facts = _reply_facts(
@@ -1083,8 +1089,22 @@ def _start_enablement_auto_dispatch(
     )
     # Auto-mode copy contract (p2-163): business-day review, no 24h promise.
     reply_facts["activation_sla"] = "business-day review"
-    existing_job_id = str(prior_workflow.get("reply_job_id") or "").strip() if isinstance(prior_workflow, dict) else ""
+    existing_job_id = (
+        str(prior_workflow.get("reply_job_id") or "").strip()
+        if isinstance(prior_workflow, dict) and prior_app_id == app_id
+        else ""
+    )
     reply_job = repository.get_account_reply_job(existing_job_id) if existing_job_id else None
+    if isinstance(reply_job, dict):
+        job_ticket = str(reply_job.get("ticket_id") or reply_job.get("zendesk_ticket_id") or "")
+        expected_reply_intent = str(reply_facts.get("reply_intent") or "").strip()
+        if (
+            job_ticket != str(ticket_id)
+            or str(reply_job.get("reply_intent") or "").strip()
+            != expected_reply_intent
+            or not is_hermes_compatibility_job_active_status(reply_job.get("status"))
+        ):
+            reply_job = None
     if not isinstance(reply_job, dict):
         reply_job = _create_reply_job(
             hermes_compatibility_only=hermes_compatibility_only,
@@ -1111,23 +1131,41 @@ def _start_enablement_auto_dispatch(
             "attempted_at": timestamp,
         })
         return account_case, None, identity_error
-    request_id = build_enablement_relay_request_id(account_case_id, request_version)
-    ttl_seconds = enablement_relay_request_ttl_seconds()
-    expires_at = _iso_after_seconds(timestamp, ttl_seconds)
-    repository.create_enablement_relay_request(
-        request_id=request_id,
-        account_case_id=account_case_id,
-        ticket_id=ticket_id,
-        zendesk_ticket_id=str(account_case.get("zendesk_ticket_id") or "").strip() or None,
-        customer_email=str(customer_email or "").strip() or None,
-        app_id=app_id,
-        request_version=request_version,
-        workflow_mode="archer",
-        reply_job_id=reply_job_id,
-        target_params=dict(ENABLEMENT_RELAY_TARGET_PARAMS),
-        relay_task_expires_at=expires_at,
-        now=timestamp,
-    )
+    request_id = str((existing_request or {}).get("request_id") or "").strip()
+    if not request_id:
+        request_id = build_enablement_relay_request_id(account_case_id, request_version)
+        ttl_seconds = enablement_relay_request_ttl_seconds()
+        expires_at = _iso_after_seconds(timestamp, ttl_seconds)
+        existing_request = repository.create_enablement_relay_request(
+            request_id=request_id,
+            account_case_id=account_case_id,
+            ticket_id=ticket_id,
+            zendesk_ticket_id=str(account_case.get("zendesk_ticket_id") or "").strip() or None,
+            customer_email=str(customer_email or "").strip() or None,
+            app_id=app_id,
+            request_version=request_version,
+            workflow_mode="archer",
+            reply_job_id=reply_job_id,
+            target_params=dict(ENABLEMENT_RELAY_TARGET_PARAMS),
+            relay_task_expires_at=expires_at,
+            now=timestamp,
+        )
+        if not isinstance(existing_request, dict):
+            existing_request = repository.get_enablement_relay_request(request_id)
+        if not isinstance(existing_request, dict):
+            account_case["automation_status"] = "human_review_required"
+            account_case["execution_reason_code"] = "enablement_relay_request_identity_missing"
+            account_case["updated_at"] = timestamp
+            repository.save_account_case(account_case)
+            repository.record_event(ticket_id or None, "enablement_auto_dispatch", {
+                "account_case_id": account_case_id,
+                "outcome": "failed",
+                "reason_code": "enablement_relay_request_identity_missing",
+                "reply_job_id": reply_job_id,
+                "attempted_at": timestamp,
+            })
+            return account_case, None, "enablement_relay_request_identity_missing"
+        request_id = str(existing_request.get("request_id") or request_id)
     context[ENABLEMENT_AUTO_WORKFLOW_CONTEXT_KEY] = {
         "version": 1,
         "state": "awaiting_public_reply",

@@ -2526,6 +2526,45 @@ def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:
             zendesk_ticket_id
         )
         if isinstance(account_case_for_guard, dict):
+            delivery_relay_required = any(
+                isinstance(marker, dict)
+                and marker.get("_hermes_compatibility_relay_required") is True
+                for marker in delivery.get("attachments") or []
+            )
+            guard_reason = str(
+                account_case_for_guard.get("execution_reason_code") or ""
+            ).strip()
+            if (
+                str(account_case_for_guard.get("execution_action") or account_case_for_guard.get("route") or "").strip()
+                == "enablement"
+                and delivery_relay_required
+                and str(account_case_for_guard.get("automation_status") or "").strip().lower()
+                in {"human_review_required", "human_review"}
+                and guard_reason
+            ):
+                # A failed handoff wins over an in-flight Hermes approval. Do
+                # not reclaim ownership or write a stale customer comment.
+                ticket_repository.complete_account_zendesk_comment_delivery(
+                    account_case_id=account_case_id,
+                    message_id=message_id,
+                    status="failed",
+                    zendesk_comment_id=None,
+                    failure_code=guard_reason,
+                    completed_at=now_iso(),
+                )
+                if not guard_reason.startswith("enablement_compatibility_job_"):
+                    ticket_repository.record_event(
+                        zendesk_ticket_id or None,
+                        "hermes_enablement_delivery_blocked_human_review",
+                        {
+                            "account_case_id": account_case_id,
+                            "message_id": message_id,
+                            "reason_code": "enablement_human_review_ownership",
+                            "execution_reason_code": guard_reason,
+                            "attempted_at": now_iso(),
+                        },
+                    )
+                return
             # An approved-and-queued hermes draft reached this delivery only
             # through an explicit human approval (Slack/dashboard approve).
             # Investigation cases sit in human_review_required as their

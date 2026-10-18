@@ -283,7 +283,10 @@ def resolve_persona_style(repository: Any, ticket_id: str) -> dict[str, Any]:
         return fallback
     try:
         assignment = repository.get_account_persona_assignment(ticket_id)
-        if assignment is None:
+        # The metadata getter is intentionally read-only and omits content in
+        # both repositories. Resolve through the same ticket assignment row to
+        # fetch the exact bound version; this never chooses a new persona.
+        if assignment is None or not isinstance(assignment.get("content"), dict):
             assignment = repository.resolve_account_persona(ticket_id)
         content = assignment.get("content") if isinstance(assignment, dict) else None
         instruction = str((content or {}).get("instruction") or "").strip()

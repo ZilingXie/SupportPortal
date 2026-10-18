@@ -5,7 +5,7 @@
   "status": "review",
   "owner": "codex",
   "summary": "修复 Preproduction Hermes enablement 会话中段客户追问的处理合同：会话快照作者角色读取修正（follow_up 不再被误判为新工单）；Route Manual 与服务端归一化区分知识问句/进度催促/优先级请求并核验业务状态门禁；新增服务端控制的受限答复路径（可信 RAG 答案经 Persona 一次公开投递、绑定 relay 申请的实际进度答复）；direction=human、RAG 不可答与答复失败全部接入共享人工交接服务（私有 note、回原队列、所有权释放、待发回复取消、负责人通知，逐子步骤记录）；人工交接后客户补充不得自动夺回工单；E3 剧本 turn 2/5 断言改为新合同、等待绑定防串轮、CLI 通道与 relay 提示修正。 本轮 r1 修复 ownership_mismatch：跨账号 App ID 作为正常终止结果进入专用幂等 customer reply/solved 链路，不进入 failure 或 human_review；新增 E3_OWNERSHIP 场景并保留 project_not_found 独立合同。",
-  "next_action": "代码验收完成后创建 Draft PR；等待独立验收通过，再按授权发布 Preproduction 并执行 E3_OWNERSHIP 与 E3 运行验收；Production 保持禁止。",
+  "next_action": "Draft PR 创建后交给独立验收线程 01a1101b-562b-75e2-a22d-6634ce183a4a；通过前不得 finalize、合并或部署。Relay v0.6 真实恢复与 E3 新工单仍待独立授权和发布后验收。",
   "acceptance_criteria": [
     "会话中段知识问句（如 What is the App ID）在 AI 持有的 enablement 会话中经可信 RAG 产生一次公开答案（Persona 渲染 + 引用块），不执行 enablement、不新建 relay 申请；RAG 无依据/失败完成真实人工交接而非猜答。",
     "礼貌催促/能否更快分类为进度追问：仅在绑定的 relay 申请仍处待处理状态且状态可信时答复实际状态，不承诺加速、不新建申请、不释放原申请；状态不可确认或明确要求人工优先级决定时完成真实人工交接。",
@@ -75,6 +75,12 @@
       "label": "ownership mismatch r1 isolated PostgreSQL regression",
       "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://postgres@127.0.0.1:55439/postgres .venv/bin/pytest -q backend/tests/test_enablement_auto_postgres.py backend/tests/test_account_reply_publication_postgres.py",
       "result": "11 passed；一次性 PostgreSQL 集群已停止并删除。"
+    },
+    {
+      "type": "test",
+      "label": "Hermes E3 投递身份、人工交接门禁与 Persona 绑定正文回归",
+      "command": ".venv/bin/python -m pytest -q backend/tests/test_automation_account_intake.py backend/tests/test_worker_compatibility_scope.py backend/tests/test_hermes_native_enablement_regression.py backend/tests/test_hermes_zendesk_agent.py",
+      "result": "115 passed、35 subtests；覆盖 invalid→valid job 约束、兼容身份 fail-closed、失败转人工后的 Hermes delivery 停止与幂等、已绑定 Persona 正文读取。"
     }
   ],
   "source_refs": [
@@ -87,7 +93,7 @@
     "docs/testing/production_ticket_regression_runbook.md"
   ],
   "created_at": "2026-09-28T00:00:00Z",
-  "updated_at": "2026-10-11T00:00:00Z",
+  "updated_at": "2026-10-18T00:00:00Z",
   "phase_id": "phase-1",
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
@@ -121,6 +127,10 @@
     {
       "at": "2026-10-11T00:00:00Z",
       "note": "独立验收 F-OWN-001：修复 ownership_mismatch 先 applied 后落 job 的结果丢失窗口；改为先持久化确定性 reply job，再标记 result applied；异常边界回归证明 pending/result_received 可重试且不重复回复。"
+    },
+    {
+      "at": "2026-10-18T00:00:00Z",
+      "note": "Hermes E3 v1 修复完成：Enablement 同申请身份复用约束、Relay request 读回 fail-closed、人工交接后的 Hermes delivery 不 reclaim、已绑定 Persona 通过精确版本正文渲染；定向 115 passed + 35 subtests，等待独立验收。"
     }
   ]
 }

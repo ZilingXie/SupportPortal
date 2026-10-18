@@ -298,6 +298,36 @@ def compatibility_fixture(*, auto, delivered=True, repository=None):
 
 
 class WorkerReadbackTests(unittest.TestCase):
+    def test_failed_enablement_handoff_keeps_hermes_delivery_parked(self):
+        from backend.services.zendesk_ticket_assignment import ZendeskOwnershipSnapshot
+        repository, delivery = compatibility_fixture(auto=True, delivered=False)
+        case = repository.get_account_case("AC-COMPAT")
+        case["automation_status"] = "human_review_required"
+        case["execution_reason_code"] = "enablement_relay_request_identity_missing"
+        repository.save_account_case(case)
+        delivery["status"] = "queued"
+        with patch.object(worker, "ticket_repository", repository), patch.object(
+            worker, "add_ticket_comment"
+        ) as add_comment, patch.object(
+            worker, "read_ticket_ownership_snapshot",
+            return_value=ZendeskOwnershipSnapshot(
+                ticket_id="TK-COMPAT", assignee_id="48557297720084",
+                group_id="29388501432596", ticket_updated_at="2026-10-13T10:00:00Z",
+                ai_assignee_id="48557297720084", ai_group_id="29388501432596",
+                human_replied=False, blocking_comment_id=None,
+                unresolved_public_comment_id=None, required_field_missing=False,
+                comments_revision="revision-1", ticket_status="open",
+            ),
+        ):
+            worker._deliver_hermes_zendesk_comment(delivery)
+            worker._deliver_hermes_zendesk_comment(delivery)
+        stored = repository._account_zendesk_comment_deliveries[("AC-COMPAT", "draft-1")]
+        self.assertEqual(stored["status"], "failed")
+        self.assertEqual(stored["failure_code"], "enablement_relay_request_identity_missing")
+        self.assertEqual(repository.get_account_case("AC-COMPAT")["automation_status"], "human_review_required")
+        add_comment.assert_not_called()
+        self.assertEqual(repository.get_enablement_relay_request("request-1")["status"], "gated")
+
     def test_real_audit_watermark_gates_plain_text_release_and_replay(self):
         from backend.services import zendesk_comments
 
