@@ -11,6 +11,11 @@ from backend.services.account_automation_delivery import deliver_account_interna
 from backend.services.automation_account_intake import run_production_account_intake
 
 
+def _store_reply_job(repository, job):
+    repository.reply_jobs[str(job["job_id"])] = dict(job)
+    return dict(job)
+
+
 class _FakeRepository:
     def __init__(self) -> None:
         self.saved_tickets: list[dict] = []
@@ -22,6 +27,7 @@ class _FakeRepository:
         self.events: list[tuple] = []
         self.prepared_deliveries: list[tuple] = []
         self.relay_requests: dict[str, dict] = {}
+        self.reply_jobs: dict[str, dict] = {}
 
     def save_ticket(self, ticket, new_messages=None):
         self.saved_tickets.append(dict(ticket))
@@ -68,6 +74,10 @@ class _FakeRepository:
 
     def record_event(self, ticket_id, event_type, payload):
         self.events.append((ticket_id, event_type, payload))
+
+    def get_account_reply_job(self, job_id):
+        job = self.reply_jobs.get(str(job_id or ""))
+        return dict(job) if job else None
 
     def create_enablement_relay_request(self, **kwargs):
         request_id = str(kwargs.get("request_id") or "")
@@ -184,7 +194,7 @@ class AutomationAccountIntakeTest(unittest.TestCase):
             "notify_account_failure": lambda **kw: {"status": "alerted"},
             "deliver_account_internal_email_async": None,
             "account_reply_delay_seconds_for_profile": lambda profile: 0,
-            "create_account_reply_job": lambda repository, **kw: {"job_id": "job-1", **kw},
+            "create_account_reply_job": lambda repository, **kw: _store_reply_job(repository, {"job_id": "job-1", "status": "queued", **kw}),
             "send_billing_internal_email": lambda payload: {"status": "sent", "reason": ""},
             "send_enablement_internal_email": lambda payload: {"status": "sent", "reason": ""},
             "build_automation_reply_facts": lambda **kw: {"behavior": kw.get("behavior")},
