@@ -260,7 +260,7 @@ def verify_knowledge_shared_configuration(
         owned = set(KNOWLEDGE_GOVERNANCE_SWITCHES) | PROVENANCE_ENV_NAMES | {
             KNOWLEDGE_MASTER_SWITCH_ENV, "KNOWLEDGE_SOURCE_ALLOWLIST",
             "KNOWLEDGE_SLACK_REVIEW_LEASE_SECONDS", "KNOWLEDGE_SLACK_WORKSPACE_DOMAIN",
-        }
+        } | TEAM_AGENT_SECRET_NAMES | {"TEAM_AGENT_MODEL"}
         for field, value_key in (("environment", "value"), ("secrets", "valueFrom")):
             for item in containers[0].get(field, []):
                 name = item["name"]

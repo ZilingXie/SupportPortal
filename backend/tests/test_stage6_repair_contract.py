@@ -91,6 +91,17 @@ def test_shared_guard_wired_before_rollout_and_activation():
     assert 'verify-knowledge-shared-configuration' in source
     assert source.count('  verify_knowledge_stage_config_rendered\n') == 2
 
+def test_shared_guard_allows_renderer_owned_team_agent_configuration(tmp_path):
+    from backend.scripts.automation_ecs_deploy import verify_knowledge_shared_configuration
+    container = {"name": "api", "environment": [
+        {"name": "TEAM_AGENT_MODEL", "value": "team-agent"},
+    ], "secrets": [{"name": "TEAM_AGENT_BASE_URL", "valueFrom": "new-url"},
+                   {"name": "TEAM_AGENT_REST_TOKEN", "valueFrom": "new-token"}]}
+    current = tmp_path / "current.json"; rendered = tmp_path / "rendered.json"
+    current.write_text(json.dumps({"containerDefinitions": [{"name": "api", "environment": [], "secrets": []}]}))
+    rendered.write_text(json.dumps({"containerDefinitions": [container]}))
+    assert verify_knowledge_shared_configuration(str(current), str(rendered), "api")["status"] == "ok"
+
 
 @pytest.mark.parametrize("execution", [None, "0", "1"])
 def test_formal_worker_entries_use_independent_ai_gate(monkeypatch, execution):
