@@ -53,6 +53,25 @@ def test_native_enablement_prompt_keeps_missing_app_id_safety_boundaries() -> No
     assert "No internal system names" in normalized
 
 
+def test_native_enablement_eval_semantics_fail_closed_on_extra_fields_and_claims() -> None:
+    from scripts.testing.hermes_native_enablement_eval import _semantic_verdict
+
+    good = _semantic_verdict(
+        "Hi Taylor, I can help enable Media Relay. Once you share the App ID, I can continue.",
+        greeting_name="Taylor",
+    )
+    assert all(good.values())
+    extra = _semantic_verdict(
+        "Hi Taylor, please share your App ID and office address.", greeting_name="Taylor"
+    )
+    assert extra["c1_only_app_id_request"] is False
+    claim = _semantic_verdict(
+        "Hi Taylor, Media Relay is already enabled and will be reviewed within 24 hours.",
+        greeting_name="Taylor",
+    )
+    assert claim["c3_no_unsupported_claim"] is False
+
+
 @pytest.mark.parametrize("stale_workflow,completed,mode", [(False, False, "manual"), (True, False, "manual"), (False, True, "manual"), (False, True, "archer")])
 def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflow, completed, mode):
     store, repository = harness._store(), InMemoryTicketRepository()

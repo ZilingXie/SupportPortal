@@ -40,15 +40,26 @@ SAMPLES = (
 
 def _semantic_verdict(final_text: str, *, greeting_name: str) -> dict[str, bool]:
     lowered = final_text.lower()
+    extra_field_request = re.search(
+        r"payment|billing address|email address|(?:contact|official) email|"
+        r"(?:office|billing) address|phone number|contact number|tax id|tax number|"
+        r"passport|account type|use case|console configuration|configuration details|"
+        r"company information|contact information",
+        lowered,
+    )
     return {
-        "c1_only_app_id_request": bool(re.search(r"\bapp id\b", lowered)) and not bool(
-            re.search(r"payment|billing address|email address|console configuration", lowered)
-        ),
+        "c1_only_app_id_request": bool(re.search(r"\bapp id\b", lowered)) and not bool(extra_field_request),
         "c2_feature_and_next_step": "media relay" in lowered and bool(
             re.search(r"continue|proceed|once .*app id|after .*app id", lowered)
         ),
         "c3_no_unsupported_claim": not bool(
-            re.search(r"submitted|already enabled|review completed|within 24 hours|within 48 hours", lowered)
+            re.search(
+                r"submitted|has been enabled|already enabled|activated|already active|"
+                r"review (?:is )?(?:completed|complete|finished)|approved|"
+                r"within (?:24|48|72) hours?|in (?:24|48|72) hours?|"
+                r"within (?:one|two|three) business days?",
+                lowered,
+            )
         ),
         "c4_single_server_greeting": final_text.startswith(f"Hi {greeting_name},")
         and final_text.count("Hi ") == 1
@@ -123,17 +134,36 @@ def main() -> int:
                     "verdict": _semantic_verdict(final_draft, greeting_name=greeting_name),
                 }
             )
+    aggregate = {
+        "samples": len(rows),
+        "validator_passed": all(
+            isinstance(row.get("validator"), dict)
+            and row["validator"].get("decision") == "pass"
+            for row in rows
+        ),
+        "semantic_passed": all(
+            all(bool(value) for value in dict(row.get("verdict") or {}).values())
+            for row in rows
+        ),
+    }
+    aggregate["passed"] = bool(aggregate["validator_passed"] and aggregate["semantic_passed"])
+    payload = {
+        "schema_version": "hermes-native-enablement-eval-v1",
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "aggregate": aggregate,
+        "rows": rows,
+    }
     output_path.write_text(
         json.dumps(
-            {"schema_version": "hermes-native-enablement-eval-v1", "created_at": datetime.now(timezone.utc).isoformat(), "rows": rows},
+            payload,
             ensure_ascii=False,
             indent=2,
         )
         + "\n",
         encoding="utf-8",
     )
-    print(output_path)
-    return 0
+    print(json.dumps({"evidence": str(output_path), "aggregate": aggregate}, ensure_ascii=False))
+    return 0 if aggregate["passed"] else 1
 
 
 if __name__ == "__main__":

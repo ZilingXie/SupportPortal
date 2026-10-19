@@ -26,7 +26,7 @@
       "type": "test",
       "label": "Native Enablement and prompt safety regression",
       "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-      "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
+      "result": "53 passed (including real tool_save_reply_draft extra-field negative control and fail-closed eval semantics)"
     },
     {
       "type": "test",

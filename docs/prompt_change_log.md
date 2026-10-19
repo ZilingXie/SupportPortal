@@ -11,6 +11,7 @@
 
 - `hermes-reply-contract-v6` → `v7`：Enablement 且仅缺 `app_id` 时，Persona 先自然承接客户的开通诉求，再以功能名称和下一步语义请求 App ID；禁止请求 payment/其他字段、虚构提交或启用状态、审核完成或未授权时间承诺。
 - 返修补充：新增真实 Persona phase/canonical basis 评估载体 `scripts/testing/hermes_native_enablement_eval.py`（显式环境门控，保存脱敏 messages、prompt hash、raw/final draft 与 C1-C4 verdict），以及 `tool_save_reply_draft` 额外字段请求负控；当前无模型凭据，离线自然度仍为 `waiting-for-evidence`。
+- 返修补充：评估载体聚合 validator 与逐样本 C1-C4 verdict；任一样本不通过时在写出证据后返回非零，覆盖额外字段、启用/提交/审核/时间承诺变体。
 - 服务端 basis、greeting/翻译、draft validator、ownership、delivery、幂等和模型档位不变；仅代码 Prompt 随镜像交付，未发布 Prompt catalog。
 - 未重放 14121，未发送客户/Slack/Zendesk/relay 消息，未部署 Preproduction 或 Production；独立代码验收前不 finalize/合并。
 

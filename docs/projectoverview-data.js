@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T07:42:12Z",
-  "source_base_commit": "679e0753d2a36561e2f5e83567872c91518a3a05",
-  "registry_digest": "a6a7e7a95d6f8112515a18873a366e09ed93a7bb1a20f3ef025cb37000ee1776",
+  "generated_at": "2026-10-19T07:49:24Z",
+  "source_base_commit": "f412654bb227a05dc65b9939ad77e007b35cc63e",
+  "registry_digest": "f988a9dabcbea54b353fdccaa0cec10cfad281d4a52f6043db94d964c0e27685",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1742,7 +1742,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Native Enablement and prompt safety regression",
           "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-          "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
+          "result": "53 passed (including real tool_save_reply_draft extra-field negative control and fail-closed eval semantics)"
         },
         {
           "type": "test",
@@ -18958,7 +18958,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Native Enablement and prompt safety regression",
           "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-          "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
+          "result": "53 passed (including real tool_save_reply_draft extra-field negative control and fail-closed eval semantics)"
         },
         {
           "type": "test",

@@ -22,6 +22,7 @@
 
 - F1（evidence-gap）：代码与静态/入口回归已补强；真实模型评估脚本已具备，但当前环境未配置凭据，仍为 `waiting-for-evidence`。
 - F2（test-carrier）：真实 `tool_save_reply_draft` 入口新增额外 email 字段请求负控，证明只缺 App ID 时该请求被拒绝；未扩大 validator 到未约定的字段别名。
+- F3（implementation）：评估脚本现在聚合 validator 与 C1-C4 verdict；任一样本失败时保存证据后返回非零，并覆盖额外字段、启用/提交/审核/时间承诺变体。
 
 ## 业务边界
 
