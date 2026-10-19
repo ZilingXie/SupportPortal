@@ -123,3 +123,11 @@ Python 3.12（/opt/homebrew/bin/python3.12）
 - **真实入口回归**（经 run_allowlisted_subagent 与 execute_engineer_plan 实跑）：WeKnora transport 故障+AM 可用→`knowledge_agent_memory_fallback` 成功；双侧故障→blocked+missing_information（escalate）；engineer_plan 全链传递实证。
 - **实测**（/tmp/spwt 隔离副本，双 homebrew 解释器一致）：检索/桥接 20+client 49+adapter/worker 全套 **124 passed / 0 failed（4 subtests）**；知识面 19 文件 **528 passed / 4 failed**——4 个失败（test_repository_configuration 的 account_reply 系列，IndexError）经 origin/main（a217702e）基线复跑**同样失败=存量问题非本分支引入**，如实披露。
 - 环境事件披露：会话中段本机文件系统出现新写文件间歇性消失（com.apple 文件提供进程持有相关句柄；跨 Desktop/home//tmp 多路径复现；git 对象库与网络操作全程正常）。应对=全部内容即时提交保全+测试在 /tmp 副本执行；本轮 3 个提交（39fc358e/aba81a59+证据）均经 git 正常读写。建议另立任务处理本机文件系统异常（疑似安全/DLP 或文件提供代理干扰）。
+
+
+## 三轮验收 B3/B4 残留修复（2026-10-19，HEAD 4938edd2）
+
+- **B3 残留**：`_default_agent_memory_client()` 误调 `is_configured()`（真实方法=`configured()`，agent_memory_delivery.py:111）→异常被吞→默认 fallback 恒 None。已改 `configured()`；新增回归：①默认构造走 configured 门（is_configured 即抛 AssertionError 断错方法）；②真实入口不注入 agent_memory_client、仅环境默认构造+WeKnora transport 故障→`knowledge_agent_memory_fallback` 成功。
+- **B4 残留**：Review `_collect_weknora_evidence` 内联复制 readiness 判定→改为直接调用共享 `weknora_readback_is_ready`（hermes_knowledge_workflow.py:813）；新增 Review `agent_ready` 正反例回归（enabled=True；completed+disabled=False；缺 lifecycle 字段=False——Review 仍看全部冲突候选，ok 不受影响）。
+- **实测（-r1 工作树本机直跑）**：桥接全套 24 passed；受影响面（含 engineer_execute_agent/hermes_knowledge_workflow/standalone/stage3-5/AM delivery/dual_write/PG）**306 passed / 0 failed**（8 subtests）。
+- **版本锚点统一（本轮 HEAD=4938edd2）**：PR body、p2-197、本证据文档同步以此为准（此前 22fa1679/e84d3044 为历史轮锚点）。
