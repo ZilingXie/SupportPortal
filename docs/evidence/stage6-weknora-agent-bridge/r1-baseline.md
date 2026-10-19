@@ -79,7 +79,7 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 - **底层客户端**：hermes_weknora.py HermesWeKnoraClient（search+read，硬编码 X-API-Key，search 响应严格 data-list 校验已在）=检索服务底层；weknora_client.py 合同驱面（v4 五操作）=补 status/parse_status_key/enable_status_key。
 - **检索服务落位**：新建 backend/services/weknora_knowledge_retrieval.py（共享，Review 与 Agent 共用）；Agent 侧 evidence 字段按计划 C4（retrieval_source/weknora_object_id/content_version/content_hash/source_type/source_id/evidence）。
 
-## 步 2 完成状态与修复后独立验收准备（2026-10-19，代码/证据提交 9482469a）
+## 步 2 完成状态与修复后独立验收准备（2026-10-19，整合 HEAD 82fdf70e）
 
 已实现并提交（全部内容经 git 提交保全）：B1 修复（status 未提供时省略字段不上 wire）；B2 wire 级回归 9 项（publish 携带/v4 无绑定 fail-closed 零外发/非法值拒绝/省略验证/read 回执 lifecycle 提取/readiness 九参数矩阵）；适配器 publish_on_write+requested_status+lifecycle_at_accept 回执+实际接线的 weknora_wait_until_ready 有界轮询（首次回读复用为 poll #1，超时/传输故障 outcome_unknown、parse failed 快败为 failed、5xx 瞬态重试）；共享检索服务 weknora_knowledge_retrieval.py（C4-C8：ready 过滤/lineage 提取/逐命中 malformed readback fallback/降级仅限 transport+timeout+auth+5xx+malformed/空结果不降级/双侧不可用 escalate）+Agent 桥（run_internal_knowledge_search_subagent WeKnora 优先+escalate 转 blocked+无配置保持 v1 行为）。
 
@@ -104,14 +104,14 @@ Python 3.13（/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/pyt
 RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q
   25 个阶段 6/知识面文件（含 test_weknora_knowledge_retrieval.py 与
   test_weknora_promotion_adapter.py）
-结果：581 passed / 0 failed / 8 subtests passed，62.98s
+结果：582 passed / 0 failed / 8 subtests passed，62.26s
 
 Python 3.12（/opt/homebrew/bin/python3.12）
 同一 25 文件命令与隔离 PostgreSQL
-结果：581 passed / 0 failed / 8 subtests passed，80.11s
+结果：582 passed / 0 failed / 8 subtests passed，60.41s
 
 定向修复集合（5 个工作流/适配器/检索文件）：125 passed / 0 failed。
 静态：git diff --check 通过；未改 n8n、未部署、未重投业务样本。
 ```
 
-本轮提交前的代码验证不释放独立验收门；下一步是以新完整 HEAD 提交增量独立验收。部署前仍需重新冻结实时基线并重新处理 Terraform task definition 指针差异。
+最新 main 已在任务工作树合入（merge 82fdf70e，唯一冲突为生成 Overview，已从登记源重生成）；合并后两解释器完整回归仍通过。本轮代码验证不释放独立验收门，下一步是以整合后的完整 HEAD 提交增量独立验收。部署前仍需重新冻结实时基线并重新处理 Terraform task definition 指针差异。

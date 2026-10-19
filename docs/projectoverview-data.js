@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T07:17:53Z",
-  "source_base_commit": "7eb87d0d621090af7ac705df795a4b00cef0ce3a",
-  "registry_digest": "6ac18472bb1b315c5ec665698c39bff55af249a38fa225f6907a1880eac75b10",
+  "generated_at": "2026-10-19T07:20:55Z",
+  "source_base_commit": "82fdf70e1edca917b0ba18175003c1e452d65409",
+  "registry_digest": "4c6feba5b90d2f4d87828c03fd7824c37dbd3fd69a6663047b099652aa93a1cb",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6081,7 +6081,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "步 2 修复轮 F1-F4：检索、Agent、写入 readiness 与全套复跑",
           "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q（25 个阶段 6/知识面文件，详见 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md）；Python 3.13 与 /opt/homebrew/bin/python3.12 各执行一次",
-          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 581 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md"
+          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 582 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md 最新 main 已合入任务工作树，merge 82fdf70e；唯一 Overview 冲突已重生成，合并后计数按新基线登记。"
         }
       ],
       "source_refs": [
@@ -18367,8 +18367,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
       "updated_at": "2026-10-19",
-      "summary": "阶段 6 WeKnora-Agent bridge 步 0/1 完成，步 2 修复轮完成待独立验收：HEAD 仍在 codex/stage6-weknora-agent-bridge，F1 模块导入、F2 畸形逐命中回读降级、F3 写入适配器 readiness 接线已修复；WeKnora 主检索、AgentMemory 迁移期 fallback、双侧不可用人工升级合同已实现。Python 3.13/3.12 同一 25 文件集合各 581 passed，含隔离 PostgreSQL；定向修复集合 125 passed。未 finalize、未部署、未重投业务样本；Terraform task definition 指针差异仍待正式部署前处理。",
-      "next_action": "以当前完整 HEAD 提交步 2 修复后的独立增量验收：复核 F1-F3 diff、readiness 状态映射、malformed hit fallback、两解释器与隔离 PG 证据；通过后才重新冻结发布基线并继续 Preproduction，验收门未释放。",
+      "summary": "阶段 6 WeKnora-Agent bridge 步 0/1 完成，步 2 修复轮完成待独立验收：HEAD 仍在 codex/stage6-weknora-agent-bridge，F1 模块导入、F2 畸形逐命中回读降级、F3 写入适配器 readiness 接线已修复；WeKnora 主检索、AgentMemory 迁移期 fallback、双侧不可用人工升级合同已实现。Python 3.13/3.12 同一 25 文件集合各 582 passed，含隔离 PostgreSQL；定向修复集合 125 passed。未 finalize、未部署、未重投业务样本；Terraform task definition 指针差异仍待正式部署前处理。",
+      "next_action": "以整合 HEAD 82fdf70e 提交步 2 修复后的独立增量验收：复核 F1-F3 diff、readiness 状态映射、malformed hit fallback、main 合并差异与两解释器/隔离 PG 证据；通过后才重新冻结发布基线并继续 Preproduction，验收门未释放。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18473,7 +18473,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "步 2 修复轮 F1-F4：检索、Agent、写入 readiness 与全套复跑",
           "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q（25 个阶段 6/知识面文件，详见 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md）；Python 3.13 与 /opt/homebrew/bin/python3.12 各执行一次",
-          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 581 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md"
+          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 582 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md 最新 main 已合入任务工作树，merge 82fdf70e；唯一 Overview 冲突已重生成，合并后计数按新基线登记。"
         }
       ]
     },
