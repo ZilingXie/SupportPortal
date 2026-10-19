@@ -51,3 +51,23 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 | 线上状态无法证明属于当前发布 | **可证明**（三方一致：task def env ↔ 服务运行 revision ↔ .deployments/ecs-pipeline-r20261019-15f3602-argus-zac-r1） |
 
 **结论：五项停止条件全部不触发，步 0 通过，可进步 1。**
+
+## 步 1：WeKnora 写入/发布/索引合同确认（fork 源码只读核实，2026-10-19）
+
+| 能力 | fork 侧 | 合同 v4 侧 | 结论 |
+|---|---|---|---|
+| create/update | ✅ POST /knowledge-bases/:id/knowledge/manual、PUT /knowledge/manual/{id} | ✅ 已有 | 已具备 |
+| publish | ✅ ManualKnowledgePayload.Status ∈ {draft,publish}（types/knowledge.go:90-91）；create（knowledge_create.go:819-850）与 update（:1011-1095）均处理 publish→ParseStatus=pending+异步索引任务 | ❌ body 模板无 status 绑定（恒 draft） | **需补合同** |
+| index/ready 回读 | ✅ 生命周期=pending→processing→**completed**（types ParseStatus*）+ 解析完成置 EnableStatus=**enabled**（knowledge_process.go:152/241）；draft 恒 disabled 且不入索引；GET 回读含 parse_status/enable_status/metadata.version/metadata.lineage | ⚠️ read 的 receipt 保留全 payload 可达但未提为合同字段 | **需补合同** |
+| full content/version/lineage 回读 | ✅ data.metadata.content/version/lineage（governance lineage 落 manual metadata，阶段 2 已实证） | ✅ 已有（content_key/version_key 在位） | 已具备 |
+
+**生命周期定义（步 2/7 合同基础）**：ready = `parse_status=completed ∧ enable_status=enabled`；draft/未索引/未知 = 不可进 Agent 上下文（C3/C8）。发布路径=创建或更新时 status=publish（单次调用即触发异步解析+索引）；ready 为异步 → 需有界轮询回读（超时 fail-closed，C10）。
+
+**判定：当前合同无 publish/index 显式能力 → 按计划步 1 停止条件执行：先补合同与适配器，不猜 endpoint、不投业务样本。**
+
+## 合同 v5 + 适配器设计（步 2 实施蓝本）
+
+1. **合同 v5**（SSM weknora-api-contract-json 升 v5）：create/update body 增 `"status": {"$":"status"}` 语义绑定；read 增根级 `parse_status_key=data.parse_status`、`enable_status_key=data.enable_status` 显式提取。
+2. **适配器**（weknora_promotion_adapter）：delivery 写入带 status=publish（新计划方向取代 draft 保持）；新增有界 readiness 轮询（read→parse_status=completed∧enable_status=enabled，间隔+上限+超时=failed fail-closed）。
+3. **统一检索服务**（新共享模块，Review 与 Agent 共用避免双实现漂移）：WeKnora hybrid-search（索引面=仅已发布对象，结构性满足 C3/C8）→ 逐 hit 按 ID readback → 严格结构校验（五层）→ 提取 object_id/metadata.version/metadata.lineage（source_type/source_id/candidate/promotion）→ 组装 evidence；`retrieval_source=weknora|agent_memory_fallback|escalate_human` 标记；Agent 侧入口=engineer_execute_agent.py internal_knowledge_search（现消费旧 rag_result）。
+4. 待实现时核实现行 main 的渲染器/运行时（并行线已新增第七开关 KNOWLEDGE_AI_EXECUTION_ENABLED——步 2 实现基于 5bfbd86a 重读，不沿用旧假设）。
