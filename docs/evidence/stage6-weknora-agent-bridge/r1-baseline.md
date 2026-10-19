@@ -115,3 +115,11 @@ Python 3.12（/opt/homebrew/bin/python3.12）
 ```
 
 最新 main 已在任务工作树合入（merge 82fdf70e，唯一冲突为生成 Overview，已从登记源重生成）；合并后两解释器完整回归仍通过。本轮代码验证不释放独立验收门，下一步是以整合后的完整 HEAD 提交增量独立验收。部署前仍需重新冻结实时基线并重新处理 Terraform task definition 指针差异。
+
+## B3/B4 修复与真实入口回归（2026-10-19，HEAD aba81a59）
+
+- **B3（DI 全链）**：run_allowlisted_subagent（engineer_execute_agent.py:663）+execute_engineer_plan（:788）增 weknora_client/agent_memory_client 参数并传递；main.py 主入口（:14538）显式注入 `_default_weknora_retrieval_client()`+`_default_agent_memory_client()`；subagent 侧保留 None 时惰性默认构造兜底。
+- **B4（Review 共享原语）**：HermesWeKnoraClient.read 回执增 parse_status/enable_status；Review `_collect_weknora_evidence` 对每个 enriched 条目标记 `agent_ready`（completed∧enabled，与 Agent 路径同一判定）——Review 冲突检测仍看全部索引对象（决策流不变），但两条路径的 readiness 语义同源。
+- **真实入口回归**（经 run_allowlisted_subagent 与 execute_engineer_plan 实跑）：WeKnora transport 故障+AM 可用→`knowledge_agent_memory_fallback` 成功；双侧故障→blocked+missing_information（escalate）；engineer_plan 全链传递实证。
+- **实测**（/tmp/spwt 隔离副本，双 homebrew 解释器一致）：检索/桥接 20+client 49+adapter/worker 全套 **124 passed / 0 failed（4 subtests）**；知识面 19 文件 **528 passed / 4 failed**——4 个失败（test_repository_configuration 的 account_reply 系列，IndexError）经 origin/main（a217702e）基线复跑**同样失败=存量问题非本分支引入**，如实披露。
+- 环境事件披露：会话中段本机文件系统出现新写文件间歇性消失（com.apple 文件提供进程持有相关句柄；跨 Desktop/home//tmp 多路径复现；git 对象库与网络操作全程正常）。应对=全部内容即时提交保全+测试在 /tmp 副本执行；本轮 3 个提交（39fc358e/aba81a59+证据）均经 git 正常读写。建议另立任务处理本机文件系统异常（疑似安全/DLP 或文件提供代理干扰）。
