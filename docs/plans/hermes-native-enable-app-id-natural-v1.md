@@ -16,7 +16,12 @@
 
 ## 实施与验证
 
-只调整 `hermes-reply-contract` 的 Enablement missing-App-ID 指令，版本升至 v7；不修改 basis、validator、字段提取、路由、delivery 或模型档位。新增真实 Persona phase assembly 断言，并保留 native regression 的 tool/basis/draft/delivery 测试。离线模型评估使用脱敏样本；若环境不可用，记录 `waiting-for-evidence`，不以静态测试数替代自然度结论。
+只调整 `hermes-reply-contract` 的 Enablement missing-App-ID 指令，版本升至 v7；不修改 basis、validator、字段提取、路由、delivery 或模型档位。新增真实 Persona phase assembly 断言、真实 `tool_save_reply_draft` 的额外字段负控，并保留 native regression 的 tool/basis/draft/delivery 测试。`scripts/testing/hermes_native_enablement_eval.py` 使用初始化的 code snapshot、canonical basis 和真实 Responses profile，在显式 `HERMES_NATIVE_ENABLEMENT_EVAL=1` 时保存请求 messages、prompt hash、raw/final draft 与 C1-C4 verdict；无凭据时保持 `waiting-for-evidence`，不以静态测试数替代自然度结论。
+
+## 返修证据台账
+
+- F1（evidence-gap）：代码与静态/入口回归已补强；真实模型评估脚本已具备，但当前环境未配置凭据，仍为 `waiting-for-evidence`。
+- F2（test-carrier）：真实 `tool_save_reply_draft` 入口新增额外 email 字段请求负控，证明只缺 App ID 时该请求被拒绝；未扩大 validator 到未约定的字段别名。
 
 ## 业务边界
 

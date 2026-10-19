@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T07:24:49Z",
-  "source_base_commit": "f666a8cb51109d5e54ea539abb336a4131d024c9",
-  "registry_digest": "603f0d3b2c39065d2f32f8968e7ddf737efe6e3783366df438a9fd1d66fd5d1a",
+  "generated_at": "2026-10-19T07:42:12Z",
+  "source_base_commit": "679e0753d2a36561e2f5e83567872c91518a3a05",
+  "registry_digest": "a6a7e7a95d6f8112515a18873a366e09ed93a7bb1a20f3ef025cb37000ee1776",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1742,7 +1742,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Native Enablement and prompt safety regression",
           "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-          "result": "51 passed"
+          "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
         },
         {
           "type": "test",
@@ -1758,7 +1758,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "decision",
           "label": "Offline model evaluation",
-          "result": "waiting-for-evidence; no model evaluation or real customer/business message was executed in this turn"
+          "path": "scripts/testing/hermes_native_enablement_eval.py",
+          "result": "waiting-for-evidence; gated by HERMES_NATIVE_ENABLEMENT_EVAL=1 and model credentials; no model evaluation or real customer/business message was executed in this turn"
         },
         {
           "type": "test",
@@ -18957,7 +18958,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Native Enablement and prompt safety regression",
           "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-          "result": "51 passed"
+          "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
         },
         {
           "type": "test",
@@ -18973,7 +18974,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "decision",
           "label": "Offline model evaluation",
-          "result": "waiting-for-evidence; no model evaluation or real customer/business message was executed in this turn"
+          "path": "scripts/testing/hermes_native_enablement_eval.py",
+          "result": "waiting-for-evidence; gated by HERMES_NATIVE_ENABLEMENT_EVAL=1 and model credentials; no model evaluation or real customer/business message was executed in this turn"
         }
       ],
       "source_refs": [

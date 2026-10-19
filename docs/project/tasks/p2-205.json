@@ -26,7 +26,7 @@
       "type": "test",
       "label": "Native Enablement and prompt safety regression",
       "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
-      "result": "51 passed"
+      "result": "52 passed (including real tool_save_reply_draft extra-field negative control)"
     },
     {
       "type": "test",
@@ -42,7 +42,8 @@
     {
       "type": "decision",
       "label": "Offline model evaluation",
-      "result": "waiting-for-evidence; no model evaluation or real customer/business message was executed in this turn"
+      "path": "scripts/testing/hermes_native_enablement_eval.py",
+      "result": "waiting-for-evidence; gated by HERMES_NATIVE_ENABLEMENT_EVAL=1 and model credentials; no model evaluation or real customer/business message was executed in this turn"
     }
   ],
   "source_refs": [

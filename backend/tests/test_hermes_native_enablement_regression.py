@@ -149,3 +149,35 @@ def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflo
         next_result = asyncio.run(tool_execute_automation_action(store, repository, turn_id=next_id, route="enablement", environment="preproduction"))
     assert next_result["status"] == "missing_fields"
     assert repository.get_account_case("AC-123")["automation_status"] == "automation"
+
+
+def test_missing_app_id_real_draft_entry_rejects_extra_sensitive_field_request():
+    """C1 negative control: the real draft boundary rejects an extra email ask."""
+    from backend.services.automation_hermes_tools import HermesToolError
+
+    store = harness._store()
+    repository = InMemoryTicketRepository()
+    handoff, _, _ = tool_harness.ToolFailureHandoffTests()._seed(store)
+    turn_id = handoff["turn_id"]
+    store.start_hermes_agent_turn(turn_id, run_id="synthetic-work-run")
+    store.record_hermes_turn_direction(turn_id, direction="automation", route="enablement")
+    store.record_hermes_case_direction(turn_id, direction="automation", reason="missing app id")
+    store.record_hermes_turn_work(
+        turn_id,
+        work_result={
+            "status": "missing_fields",
+            "route": "enablement",
+            "missing_fields": ["app_id"],
+            "collected_fields": {"requested_feature": "media_relay"},
+        },
+    )
+    with store._lock:
+        store._hermes_turns[turn_id]["phase"] = "persona"
+    with patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final", side_effect=_guardrail_pass):
+        with pytest.raises(HermesToolError, match="contact_email|unauthorized_field_request"):
+            tool_save_reply_draft(
+                store,
+                repository,
+                turn_id=turn_id,
+                content="I can help enable Media Relay. Please also send your email address.",
+            )
