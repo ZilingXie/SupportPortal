@@ -61,6 +61,7 @@ from backend.services.hermes_weknora import (
     WeKnoraUnavailable,
     build_weknora_submissions,
 )
+from backend.services.weknora_client import weknora_readback_is_ready
 from backend.services.prompt_runtime import resolve_system_prompt
 
 LOGGER = logging.getLogger("supportportal.hermes_knowledge_workflow")
@@ -809,10 +810,7 @@ def _collect_weknora_evidence(
                         # exactly a conflict candidate), but the flag keeps
                         # the two paths from disagreeing about what "ready"
                         # means.
-                        entry["agent_ready"] = (
-                            full.get("parse_status") == "completed"
-                            and full.get("enable_status") == "enabled"
-                        )
+                        entry["agent_ready"] = weknora_readback_is_ready(full)
                         enriched.append(entry)
                     knowledge_results[candidate_id] = enriched
                 else:

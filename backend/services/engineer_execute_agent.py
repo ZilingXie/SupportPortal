@@ -484,7 +484,7 @@ def _default_agent_memory_client() -> Any:
         from backend.services.agent_memory_delivery import AgentMemoryWikiClient
 
         client = AgentMemoryWikiClient()
-        return client if client.is_configured() else None
+        return client if client.configured() else None
     except Exception:  # noqa: BLE001 - unconfigured deployments escalate
         return None
 

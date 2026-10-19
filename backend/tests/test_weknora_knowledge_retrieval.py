@@ -291,3 +291,109 @@ def test_execute_engineer_plan_passes_retrieval_clients() -> None:
     assert knowledge_results
     kinds = [ref["kind"] for ref in knowledge_results[0].get("evidence_refs") or []]
     assert "knowledge_agent_memory_fallback" in kinds
+
+
+# -- B3 residual: DEFAULT-constructed AgentMemory fallback (no injection) ----
+
+
+def test_default_agent_memory_client_uses_configured_method(monkeypatch) -> None:
+    """The default constructor must gate on the REAL client API
+    (``configured()``, not ``is_configured()``): a wrong method name raises
+    AttributeError, the helper swallows it, and every real entry silently
+    loses its fallback (review finding)."""
+    import backend.services.engineer_execute_agent as agent_mod
+    import backend.services.agent_memory_delivery as am_mod
+
+    class EnvConfiguredAM(am_mod.AgentMemoryWikiClient):
+        def __init__(self):  # bypass env parsing
+            pass
+
+        def configured(self) -> bool:
+            return True
+
+        def is_configured(self) -> bool:
+            raise AssertionError("wrong gate method; must be configured()")
+
+    monkeypatch.setattr(am_mod, "AgentMemoryWikiClient", EnvConfiguredAM)
+    client = agent_mod._default_agent_memory_client()
+    assert isinstance(client, EnvConfiguredAM)
+
+
+def test_real_entry_default_fallback_without_injection(monkeypatch) -> None:
+    """WeKnora down + AgentMemory configured IN THE ENVIRONMENT (via the
+    default-constructor path) -> the real allowlisted entry falls back."""
+    import backend.services.engineer_execute_agent as agent_mod
+    import backend.services.agent_memory_delivery as am_mod
+
+    class EnvAM(am_mod.AgentMemoryWikiClient):
+        def __init__(self):
+            pass
+
+        def configured(self) -> bool:
+            return True
+
+        def search_knowledge(self, query, *, top_k=None):
+            return {"hits": [{"title": "default AM", "excerpt": "default am evidence", "wiki_id": "w-7"}]}
+
+    monkeypatch.setattr(am_mod, "AgentMemoryWikiClient", EnvAM)
+    result = agent_mod.run_allowlisted_subagent(
+        _allowlisted_task(),
+        {"question": "q"},
+        now_value="2026-10-19T00:00:00+00:00",
+        weknora_client=_FailingWeKnora(),
+        # NOTE: no agent_memory_client — the default path must supply it
+    )
+    assert result["status"] == "succeeded"
+    kinds = [ref["kind"] for ref in result["evidence_refs"]]
+    assert "knowledge_agent_memory_fallback" in kinds
+
+
+# -- B4 residual: Review uses the SHARED readiness primitive ---------------
+
+
+def _review_packet() -> dict:
+    return {"candidates": [{"candidate_id": "c-1", "statement": "s"}]}
+
+
+class _ReviewWeKnora:
+    def __init__(self, reads):
+        self._reads = reads
+        self.configured = lambda: True
+
+    def search(self, query):
+        return [{"object_id": "doc-1", "title": "T"}]
+
+    def read(self, object_id):
+        record = self._reads[object_id]
+        if isinstance(record, Exception):
+            raise record
+        return record
+
+
+def _collect(client):
+    from backend.services.hermes_knowledge_workflow import _collect_weknora_evidence
+
+    knowledge, memory, k_ok, m_ok = _collect_weknora_evidence(client, _review_packet())
+    return knowledge["c-1"], k_ok
+
+
+def test_review_agent_ready_marks_enabled_entry() -> None:
+    full = {
+        "content": "body", "content_version": "2", "lineage": {},
+        "parse_status": "completed", "enable_status": "enabled",
+    }
+    entries, ok = _collect(_ReviewWeKnora({"doc-1": full}))
+    assert ok is True
+    assert entries[0]["agent_ready"] is True
+
+
+def test_review_agent_ready_false_for_disabled_or_missing() -> None:
+    disabled = {"content": "b", "content_version": "1", "lineage": {},
+                "parse_status": "completed", "enable_status": "disabled"}
+    entries, ok = _collect(_ReviewWeKnora({"doc-1": disabled}))
+    assert ok is True  # review still sees the conflict candidate
+    assert entries[0]["agent_ready"] is False
+
+    missing = {"content": "b", "content_version": "1", "lineage": {}}
+    entries2, _ = _collect(_ReviewWeKnora({"doc-1": missing}))
+    assert entries2[0]["agent_ready"] is False
