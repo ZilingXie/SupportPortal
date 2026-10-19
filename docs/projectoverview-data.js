@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T09:51:43Z",
-  "source_base_commit": "1bce9bb4fd87fd49084cbdc4a424791dd57829b8",
-  "registry_digest": "a7462378189daee8ac5380181c587977a08aafd0cfd014ce98adb80119585523",
+  "generated_at": "2026-10-19T09:54:14Z",
+  "source_base_commit": "c547b5040695c0d3d9091179f0df39ad70de880c",
+  "registry_digest": "a8c073ba47eea2d503eaac47a1baab8402b9c9c1dd21dce524d13661c33d81ea",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6117,6 +6117,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "三轮残留修复（HEAD 4938edd2）",
           "command": "-r1 本机直跑：pytest test_weknora_knowledge_retrieval（24 passed 含 5 项新回归）+受影响面 12 文件 RUN_POSTGRES_INTEGRATION=1",
           "result": "306 passed / 0 failed（8 subtests）；B3=is_configured→configured()（agent_memory_delivery.py:111 真实方法）+默认路径真实入口 fallback 实证；B4=Review :813 直调 weknora_readback_is_ready+enabled/disabled/missing 矩阵。"
+        },
+        {
+          "type": "document",
+          "label": "五轮 main 同步合并（c547b504）",
+          "command": "git merge origin/main(301a39d8)；Overview 冲突重生成解决；合并后全套直跑",
+          "result": "唯一文本冲突=生成的 Overview；运行时自动合并零重叠（renderer 2 行/prompt 13 行/3 测试文件来自 main）；合并后 469/0+隔离 PG 44/0+agent 链 18/0；共存点核对（显式注入保留/Team Agent 门保留/无冲突标记）。"
         }
       ],
       "source_refs": [
@@ -18402,8 +18408,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
       "updated_at": "2026-10-19",
-      "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。执行分支 codex/stage6-weknora-agent-bridge（Draft PR #1515，完整 HEAD 4938edd2）。步 0 基线冻结（r20261019-15f3602-argus-zac-r1，五停止条件不触发；Terraform refresh-only exit2=task def 指针滞后非配置漂移，持续披露步 5 前重处理）；步 1 合同确认（fork 有 publish/index/ready 能力=status=publish 经现有 create/update+ready=parse_status completed∧enable_status enabled；合同 v4 未暴露→已补 v5：status 语义绑定+readiness keys，工件入库，SSM 升级留步 5）。步 2 代码全量完成：客户端 v5（publish fail-closed 合同校验+status 未提供省略不上 wire+read 回执 lifecycle 首类化+weknora_readback_is_ready）；适配器 publish_on_write+requested_status+lifecycle_at_accept+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval（C4-C8：ready 过滤/lineage/降级仅 transport+timeout+auth+5xx+malformed/空结果不降级/双侧 escalate）；Agent 桥 WeKnora 优先+escalate=blocked+无配置保 v1；**B3 修复=AM fallback DI 全链穿透（allowlisted/plan executor/main 显式注入+惰性默认兜底）；B4=Review 路径共享 readiness 原语（HermesWeKnoraClient.read 补 lifecycle+collect 标记 agent_ready，决策流不变）**。首轮验收未过（B1 status null 上 wire/B2 缺回归→已修；二轮未过（B3 AM 未接真实链/B4 Review 漂移→已修）。实测（/tmp 隔离副本）：桥接+client+adapter/worker 124/0；知识面 19 文件 528/4（4 失败=origin/main 基线同样失败的存量问题，如实披露）。环境事件：本机新写文件间歇消失（com.apple 文件提供进程句柄；建议另立任务）。待：三轮增量独立验收（新完整 HEAD 4938edd2）→通过后 finalize→步 5 全关闭发布（含 SSM v5 升级+Terraform 指针重处理）→步 6-10。 三轮验收再发现两残留（B3 默认 AM 门方法名错 is_configured→configured；B4 Review 内联 readiness 判定未调共享 helper）→已修复+五项新回归（默认构造门/真实入口默认 fallback/Review agent_ready 正反例）；受影响面 306/0 直跑实测。",
-      "next_action": "四轮增量独立验收范围=PR #1515 增量提交 4938edd2（B3/B4 残留修复+五项回归），重点复验：默认构造路径真实入口 fallback（不注入 agent_memory_client）、Review agent_ready 矩阵、306/0 受影响面实测。验收通过后 finalize PR→步 5 全关闭发布（SSM contract v5 升级+Terraform task def 指针漂移重处理+五方回读）→步 6-10。",
+      "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。执行分支 codex/stage6-weknora-agent-bridge（Draft PR #1515，完整 HEAD 4938edd2）。步 0 基线冻结（r20261019-15f3602-argus-zac-r1，五停止条件不触发；Terraform refresh-only exit2=task def 指针滞后非配置漂移，持续披露步 5 前重处理）；步 1 合同确认（fork 有 publish/index/ready 能力=status=publish 经现有 create/update+ready=parse_status completed∧enable_status enabled；合同 v4 未暴露→已补 v5：status 语义绑定+readiness keys，工件入库，SSM 升级留步 5）。步 2 代码全量完成：客户端 v5（publish fail-closed 合同校验+status 未提供省略不上 wire+read 回执 lifecycle 首类化+weknora_readback_is_ready）；适配器 publish_on_write+requested_status+lifecycle_at_accept+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval（C4-C8：ready 过滤/lineage/降级仅 transport+timeout+auth+5xx+malformed/空结果不降级/双侧 escalate）；Agent 桥 WeKnora 优先+escalate=blocked+无配置保 v1；**B3 修复=AM fallback DI 全链穿透（allowlisted/plan executor/main 显式注入+惰性默认兜底）；B4=Review 路径共享 readiness 原语（HermesWeKnoraClient.read 补 lifecycle+collect 标记 agent_ready，决策流不变）**。首轮验收未过（B1 status null 上 wire/B2 缺回归→已修；二轮未过（B3 AM 未接真实链/B4 Review 漂移→已修）。实测（/tmp 隔离副本）：桥接+client+adapter/worker 124/0；知识面 19 文件 528/4（4 失败=origin/main 基线同样失败的存量问题，如实披露）。环境事件：本机新写文件间歇消失（com.apple 文件提供进程句柄；建议另立任务）。待：三轮增量独立验收（新完整 HEAD 4938edd2）→通过后 finalize→步 5 全关闭发布（含 SSM v5 升级+Terraform 指针重处理）→步 6-10。 三轮验收再发现两残留（B3 默认 AM 门方法名错 is_configured→configured；B4 Review 内联 readiness 判定未调共享 helper）→已修复+五项新回归（默认构造门/真实入口默认 fallback/Review agent_ready 正反例）；受影响面 306/0 直跑实测。 五轮：main 同步合并 c547b504（#1514/#1516 并入；唯一文本冲突=生成 Overview 已重生成；运行时零重叠共存核对）；合并后 469/0+隔离 PG 44/0 实测。",
+      "next_action": "五轮增量独立验收范围=PR #1515 @ 最终 HEAD（merge c547b504+记录提交）：合并后 469/0（含 main 侧 Team Agent/enablement/fraud 套件）+隔离 PG 44/0+agent 链 18/0；重点复验共存点（main.py:14552 显式注入、Team Agent renderer 门、零冲突标记）。通过后 finalize→步 5 全关闭发布（SSM v5+Terraform 指针重处理）→步 6-10。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18521,6 +18527,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "三轮残留修复（HEAD 4938edd2）",
           "command": "-r1 本机直跑：pytest test_weknora_knowledge_retrieval（24 passed 含 5 项新回归）+受影响面 12 文件 RUN_POSTGRES_INTEGRATION=1",
           "result": "306 passed / 0 failed（8 subtests）；B3=is_configured→configured()（agent_memory_delivery.py:111 真实方法）+默认路径真实入口 fallback 实证；B4=Review :813 直调 weknora_readback_is_ready+enabled/disabled/missing 矩阵。"
+        },
+        {
+          "type": "document",
+          "label": "五轮 main 同步合并（c547b504）",
+          "command": "git merge origin/main(301a39d8)；Overview 冲突重生成解决；合并后全套直跑",
+          "result": "唯一文本冲突=生成的 Overview；运行时自动合并零重叠（renderer 2 行/prompt 13 行/3 测试文件来自 main）；合并后 469/0+隔离 PG 44/0+agent 链 18/0；共存点核对（显式注入保留/Team Agent 门保留/无冲突标记）。"
         }
       ]
     },

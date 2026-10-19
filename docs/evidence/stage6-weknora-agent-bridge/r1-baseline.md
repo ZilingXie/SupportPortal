@@ -131,3 +131,11 @@ Python 3.12（/opt/homebrew/bin/python3.12）
 - **B4 残留**：Review `_collect_weknora_evidence` 内联复制 readiness 判定→改为直接调用共享 `weknora_readback_is_ready`（hermes_knowledge_workflow.py:813）；新增 Review `agent_ready` 正反例回归（enabled=True；completed+disabled=False；缺 lifecycle 字段=False——Review 仍看全部冲突候选，ok 不受影响）。
 - **实测（-r1 工作树本机直跑）**：桥接全套 24 passed；受影响面（含 engineer_execute_agent/hermes_knowledge_workflow/standalone/stage3-5/AM delivery/dual_write/PG）**306 passed / 0 failed**（8 subtests）。
 - **版本锚点统一（本轮 HEAD=4938edd2）**：PR body、p2-197、本证据文档同步以此为准（此前 22fa1679/e84d3044 为历史轮锚点）。
+
+
+## 五轮：main 同步合并（2026-10-19，merge c547b504）
+
+- `origin/main` 推进至 301a39d8（#1514 Team Agent renderer-owned secrets 过知识门 + #1516 native enablement App ID reply 自然化），共同祖先 f666a8cb。
+- **实际文本冲突仅生成的 Overview**（重新生成+--check 通过）；main 侧运行时增量（renderer 2 行=TEAM_AGENT_SECRET_NAMES/TEAM_AGENT_MODEL 入 verify 允许集；prompts/hermes_support_agent.py 13 行；3 个测试文件）与桥接改动**零重叠**，自动合并后逐点核对共存：main.py:14552 显式注入保留、Team Agent 门保留、无冲突标记残留。
+- **合并后回归（-r1 本机直跑）**：桥接+client+adapter/worker+review+stage3-5+AM+dual-write+deploy renderer+main 侧新套件（native enablement/fraud style/stage6 repair contract）**469 passed / 0 failed（8 subtests）**；隔离 PG 4 文件 **44 passed**；agent 链 18 passed。
+- 版本锚点更新：完整 HEAD=本合并后的最终 HEAD（见 PR/登记），行为代码=4938edd2+main 侧 301a39d8 之并集。
