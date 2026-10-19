@@ -139,3 +139,11 @@ Python 3.12（/opt/homebrew/bin/python3.12）
 - **实际文本冲突仅生成的 Overview**（重新生成+--check 通过）；main 侧运行时增量（renderer 2 行=TEAM_AGENT_SECRET_NAMES/TEAM_AGENT_MODEL 入 verify 允许集；prompts/hermes_support_agent.py 13 行；3 个测试文件）与桥接改动**零重叠**，自动合并后逐点核对共存：main.py:14552 显式注入保留、Team Agent 门保留、无冲突标记残留。
 - **合并后回归（-r1 本机直跑）**：桥接+client+adapter/worker+review+stage3-5+AM+dual-write+deploy renderer+main 侧新套件（native enablement/fraud style/stage6 repair contract）**469 passed / 0 failed（8 subtests）**；隔离 PG 4 文件 **44 passed**；agent 链 18 passed。
 - 版本锚点更新：完整 HEAD=本合并后的最终 HEAD（见 PR/登记），行为代码=4938edd2+main 侧 301a39d8 之并集。
+
+## 部署阶段完成（2026-10-19，r20261019-21c6eed）
+
+- **finalize**：PR #1515 经脚本拦截集成增量（#1517 纯测试 CLI/文档，零运行时重叠，291/0 复验含新测试）后重新提交，合入 main=`cd6d8e5f`；工具链行为日志补记（PR #1518=main `21c6eed1`）。
+- **SSM contract v5**：`weknora-api-contract-json` 升至版本 5（status 绑定+parse_status_key/enable_status_key，回读逐字验证）。
+- **Terraform 指针漂移**：确认 ecs.tf `ignore_changes=[task_definition]`（常规 plan 因此零漂移=发布门禁通过的原因）；`apply -refresh-only` 同步状态（api:159/route:155→worker:158 指针对齐），复验 refresh-only 零漂移（exit 0）。
+- **全关闭部署 `r20261019-21c6eed` 全阶段 passed**：两次预检失败均被门禁正确拦下（缺 `--automation-case-engine`；`legacy` 构成对并行线 hermes 引擎的降级需专项授权→改镜像 hermes 引擎）。部署后回读：api:**:161**/worker:**:160**/route:**:157** 运行 `21c6eed1`；master=0、七开关全 0、allowlist 空；双 verify 门部署日志两见；队列对账 intakes=304/summaries=42/promotions=64（历史保留）/deliveries=0；关闭态探针 503（no snapshot accepted）。
+- 并行线披露：存在暂停的管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（仅 codebuild passed、无进程、其 stage config 亦为全关）——若其恢复将部署旧于 21c6eed1 的代码，需协调。
