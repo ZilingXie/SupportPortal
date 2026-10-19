@@ -1,0 +1,53 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-205",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "title": "Hermes Native Enablement 首轮缺 App ID 回复自然化",
+  "summary": "仅优化 native Hermes Enablement 在服务端 basis 确认只缺 App ID 时的首轮 Persona 表达；保留事实、安全、翻译、称呼、ownership、delivery 与幂等门禁。",
+  "status": "active",
+  "next_action": "完成定向验证并提交 Draft PR，等待独立代码验收；通过前不 finalize、合并、发布 Prompt、部署或重放 14121。",
+  "owner": "codex",
+  "created_at": "2026-10-19",
+  "updated_at": "2026-10-19",
+  "acceptance_criteria": [
+    "Enablement 且 missing_fields=[app_id] 时只请求 App ID，并自然承接客户的开通诉求。",
+    "不得请求 payment/其他字段，不得声称已提交、已启用、审核完成或添加未经 basis 授权的时间承诺。",
+    "服务端 greeting、翻译、draft validator、ownership、delivery、幂等与模型档位不变。",
+    "不重放 14121、不触碰 Prompt catalog、Preproduction/Production、客户或内部消息。"
+  ],
+  "blockers": [
+    "独立代码验收尚未完成。",
+    "离线模型评估和真实 Preproduction/业务验证尚未执行。"
+  ],
+  "evidence": [
+    {
+      "type": "test",
+      "label": "Native Enablement and prompt safety regression",
+      "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
+      "result": "51 passed"
+    },
+    {
+      "type": "test",
+      "label": "Hermes agent/tool integration regression",
+      "path": "backend/tests/test_hermes_zendesk_agent_tools.py; backend/tests/test_hermes_zendesk_agent.py",
+      "result": "133 passed"
+    },
+    {
+      "type": "test",
+      "label": "Static verification",
+      "result": "compileall, JSON validation, Project Overview --check, and git diff --check passed"
+    },
+    {
+      "type": "decision",
+      "label": "Offline model evaluation",
+      "result": "waiting-for-evidence; no model evaluation or real customer/business message was executed in this turn"
+    }
+  ],
+  "source_refs": [
+    "docs/plans/hermes-native-enable-app-id-natural-v1.md",
+    "backend/services/prompts/hermes_support_agent.py",
+    "backend/tests/test_hermes_native_enablement_regression.py"
+  ]
+}

@@ -19,6 +19,40 @@ from backend.tests.test_hermes_zendesk_agent_tools import _guardrail_pass
 from backend.services.automation_ecs_contracts import IntakeEventType
 
 
+def test_native_enablement_persona_prompt_naturalizes_missing_app_id_request() -> None:
+    from backend.services.automation_hermes_agent import phase_instructions
+    from backend.services.prompt_runtime import _code_snapshot, use_prompt_runtime_snapshot
+
+    with use_prompt_runtime_snapshot(_code_snapshot()):
+        instructions, key = phase_instructions(
+            "persona",
+            direction="automation",
+            route="enablement",
+            persona_style="Warm, concise senior support engineer voice.",
+            persona_key="test-persona",
+        )
+    assert key == "hermes-persona-manual"
+    assert "naturally connect the requested feature to the next step" in instructions
+    assert "exactly [`app_id`]" in instructions
+    assert "canonical name" in instructions
+
+
+def test_native_enablement_prompt_keeps_missing_app_id_safety_boundaries() -> None:
+    import re
+
+    from backend.services.automation_hermes_agent import phase_instructions
+    from backend.services.prompt_runtime import _code_snapshot, use_prompt_runtime_snapshot
+
+    with use_prompt_runtime_snapshot(_code_snapshot()):
+        instructions, _ = phase_instructions(
+            "persona", direction="automation", route="enablement"
+        )
+    normalized = re.sub(r"\s+", " ", instructions)
+    assert "never imply the request was submitted" in normalized
+    assert "Never fabricate status, outcomes, causes, or timelines" in normalized
+    assert "No internal system names" in normalized
+
+
 @pytest.mark.parametrize("stale_workflow,completed,mode", [(False, False, "manual"), (True, False, "manual"), (False, True, "manual"), (False, True, "archer")])
 def test_missing_app_id_delivery_preserves_ownership_and_next_turn(stale_workflow, completed, mode):
     store, repository = harness._store(), InMemoryTicketRepository()

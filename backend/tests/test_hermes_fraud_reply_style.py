@@ -115,7 +115,7 @@ class PromptAssemblyTests(unittest.TestCase):
         from backend.services.automation_hermes_agent import phase_instructions
 
         self.assertEqual(HERMES_PERSONA_MANUAL_VERSION, "hermes-persona-manual-v6")
-        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v6")
+        self.assertEqual(HERMES_REPLY_CONTRACT_VERSION, "hermes-reply-contract-v7")
 
         instructions, key = phase_instructions(
             "persona",
