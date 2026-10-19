@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-16T01:36:38.046Z",
+  "capturedAt": "2026-10-19T01:31:52.007Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "1am2EuuDMV3RUwsJ",
     "workflowName": "[case]Intake|ECS Route",
     "snapshotKind": "published",
-    "versionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
-    "draftVersionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
-    "publishedVersionId": "82134172-f0c9-4ae4-9840-9e0e1c3dc35d",
-    "updatedAt": "2026-10-16T01:35:34.828Z",
+    "versionId": "95929fcc-d9b2-4b25-ada6-7ff9bfd31e8f",
+    "draftVersionId": "95929fcc-d9b2-4b25-ada6-7ff9bfd31e8f",
+    "publishedVersionId": "95929fcc-d9b2-4b25-ada6-7ff9bfd31e8f",
+    "updatedAt": "2026-10-19T01:31:02.165Z",
     "parentFolderId": "m6g0McsPdron3eH9"
   },
   "workflow": {
@@ -130,7 +130,7 @@
             "conditions": [
               {
                 "id": "c3932562-77da-4416-a27f-055abf322cb6",
-                "leftValue": "={{ $('Get_Case_Info').item.json.ticket.organization_id || $json.user?.organization_id || '' }}",
+                "leftValue": "={{ String($('Get_Case_Info').item.json.ticket.organization_id || $json.user?.organization_id || '') }}",
                 "rightValue": "",
                 "operator": {
                   "type": "string",
@@ -423,7 +423,7 @@
             "conditions": [
               {
                 "id": "b6c3bca6-8b2e-4ef2-9b55-6cf0b0f3aa31",
-                "leftValue": "={{ $('Prepare_Account_Data').item.json.organization_id }}",
+                "leftValue": "={{ String($('Prepare_Account_Data').item.json.organization_id || '') }}",
                 "rightValue": "",
                 "operator": {
                   "type": "string",
