@@ -394,6 +394,8 @@ def run_internal_knowledge_search_subagent(
     retrieval = None
     if weknora_client is None:
         weknora_client = _default_weknora_retrieval_client()
+    if agent_memory_client is None:
+        agent_memory_client = _default_agent_memory_client()
     if weknora_client is not None:
         from backend.services.weknora_knowledge_retrieval import (
             retrieve_knowledge_evidence,
@@ -473,6 +475,18 @@ def run_internal_knowledge_search_subagent(
         missing_information=missing_information,
         now_value=now_value,
     )
+
+
+def _default_agent_memory_client() -> Any:
+    """Construct the AgentMemory fallback client from env, or None when the
+    deployment carries no AgentMemory Wiki configuration."""
+    try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
+        client = AgentMemoryWikiClient()
+        return client if client.is_configured() else None
+    except Exception:  # noqa: BLE001 - unconfigured deployments escalate
+        return None
 
 
 def _default_weknora_retrieval_client() -> Any:
@@ -666,6 +680,8 @@ def run_allowlisted_subagent(
     *,
     previous_results: list[dict[str, Any]] | None = None,
     now_value: str = "",
+    weknora_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
     """Dispatch a single task to the matching allowlisted subagent runner.
 
@@ -701,6 +717,17 @@ def run_allowlisted_subagent(
     # synthesis needs previous_results
     if skill == "synthesis":
         return runner(task, previous_results=_clean_list(previous_results), now_value=now_value)
+
+    if skill == "internal_knowledge_search":
+        # WeKnora-primary retrieval with the AgentMemory migration fallback
+        # rides explicit DI from the execution entry points (review B3).
+        return runner(
+            task,
+            summary_packet,
+            now_value=now_value,
+            weknora_client=weknora_client,
+            agent_memory_client=agent_memory_client,
+        )
 
     return runner(task, summary_packet, now_value=now_value)
 
@@ -792,6 +819,8 @@ def execute_engineer_plan(
     engineer_agent_state: dict[str, Any] | None = None,
     execution_context: dict[str, Any] | None = None,
     now_value: str,
+    weknora_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
     """Execute an engineer investigation plan deterministically.
 
@@ -934,6 +963,8 @@ def execute_engineer_plan(
                 summary_packet,
                 previous_results=previous,
                 now_value=now_value,
+                weknora_client=weknora_client,
+                agent_memory_client=agent_memory_client,
             )
             task_results.append(result)
             results_by_id[tid] = result

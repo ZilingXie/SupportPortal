@@ -316,7 +316,11 @@ from backend.services.engineer_cases import (
 )
 from backend.services.engineer_summary_agent import build_engineer_summary_packet
 from backend.services.engineer_plan_agent import build_engineer_plan
-from backend.services.engineer_execute_agent import execute_engineer_plan
+from backend.services.engineer_execute_agent import (
+    _default_agent_memory_client,
+    _default_weknora_retrieval_client,
+    execute_engineer_plan,
+)
 from backend.services.engineer_review_agent import review_execution
 from backend.services.engineer_replay_eval_dataset import build_engineer_replay_eval_item
 from backend.services.investigation_flow import (
@@ -14541,6 +14545,12 @@ def ensure_engineer_multi_agent_run(
         engineer_agent_state=agent_state,
         execution_context=None,
         now_value=now_value,
+        # WeKnora-primary retrieval with AgentMemory migration fallback
+        # (stage6-weknora-agent-bridge): the main execution entry injects
+        # both clients explicitly so the allowlisted subagent never depends
+        # on implicit env construction on the live path.
+        weknora_client=_default_weknora_retrieval_client(),
+        agent_memory_client=_default_agent_memory_client(),
     )
 
     # 3. Review

@@ -211,3 +211,86 @@ def test_agent_bridge_without_weknora_keeps_v1_behavior(monkeypatch) -> None:
     assert result["status"] == "succeeded"
     kinds = [ref["kind"] for ref in result["evidence_refs"]]
     assert "rag_candidate" in kinds and "knowledge_weknora" not in kinds
+
+
+# -- Real-entry chain regressions (review B3) -------------------------------
+
+
+class _FailingWeKnora:
+    def knowledge_search(self, *, query, top_k):
+        from backend.services.wknora_client import WeKnoraError
+
+        raise WeKnoraError("boom", failure_kind="transport")
+
+    def knowledge_read(self, *, object_id):
+        raise AssertionError("read should not be called when search failed")
+
+
+class _WorkingAM:
+    def search_knowledge(self, query, *, top_k=None):
+        return {"hits": [{"title": "AM hit", "excerpt": "am evidence", "wiki_id": "w-9"}]}
+
+
+def _allowlisted_task() -> dict:
+    return {
+        "task_id": "ks-1",
+        "skill": "internal_knowledge_search",
+        "depends_on": [],
+    }
+
+
+def test_real_entry_weknora_down_am_up_returns_fallback() -> None:
+    from backend.services.engineer_execute_agent import run_allowlisted_subagent
+
+    result = run_allowlisted_subagent(
+        _allowlisted_task(),
+        {"question": "q"},
+        now_value="2026-10-19T00:00:00+00:00",
+        weknora_client=_FailingWeKnora(),
+        agent_memory_client=_WorkingAM(),
+    )
+    assert result["status"] == "succeeded"
+    kinds = [ref["kind"] for ref in result["evidence_refs"]]
+    assert "knowledge_agent_memory_fallback" in kinds
+    assert "knowledge_weknora" not in kinds
+
+
+def test_real_entry_both_down_returns_blocked() -> None:
+    from backend.services.engineer_execute_agent import run_allowlisted_subagent
+    from backend.services.wknora_client import WeKnoraError
+
+    class BrokenAM:
+        def search_knowledge(self, query, *, top_k=None):
+            raise RuntimeError("down")
+
+    result = run_allowlisted_subagent(
+        _allowlisted_task(),
+        {"question": "q"},
+        now_value="2026-10-19T00:00:00+00:00",
+        weknora_client=_FailingWeKnora(),
+        agent_memory_client=BrokenAM(),
+    )
+    assert result["status"] == "blocked"
+    assert any("escalated" in m for m in result["missing_information"])
+
+
+def test_execute_engineer_plan_passes_retrieval_clients() -> None:
+    from backend.services.engineer_execute_agent import execute_engineer_plan
+
+    plan = {
+        "plan_id": "plan-1",
+        "tasks": [_allowlisted_task()],
+    }
+    execution = execute_engineer_plan(
+        active_plan=plan,
+        summary_packet={"packet_id": "pkt-1", "question": "q"},
+        now_value="2026-10-19T00:00:00+00:00",
+        weknora_client=_FailingWeKnora(),
+        agent_memory_client=_WorkingAM(),
+    )
+    results = execution.get("task_results") or []
+    assert results, "expected at least one task result"
+    knowledge_results = [r for r in results if r.get("skill") == "internal_knowledge_search"]
+    assert knowledge_results
+    kinds = [ref["kind"] for ref in knowledge_results[0].get("evidence_refs") or []]
+    assert "knowledge_agent_memory_fallback" in kinds
