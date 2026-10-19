@@ -267,7 +267,8 @@ F1（fraud 追问）/S1（suspension 一段式）可在 Preproduction 上运行�
 
 > 2026-09-28 新增（Preproduction新链回归计划）。PP-* 剧本故意**不注册**进共享
 > `SCENARIOS`（legacy `/automation/test` 控制台会自动列举并把 API 指向旧 production 栈），
-> 只经 CLI 驱动：`.venv/bin/python -m scripts.testing.preproduction`。
+> 只经 CLI 驱动：`.venv/bin/python -m scripts.testing.preproduction`。误用系统
+> Python 时入口会先切换到仓库 `.venv`；`.venv` 或依赖缺失则直接失败并给出修复提示。
 
 ### PP-EN-QUICK：Media Relay 快速开通（真实全链）
 

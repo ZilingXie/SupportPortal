@@ -1,13 +1,15 @@
 """CLI for the Preproduction PP regression scenarios.
 
 Usage:
-    python -m scripts.testing.preproduction --check
-    python -m scripts.testing.preproduction --scenario PP-EN-QUICK [--yes]
+    .venv/bin/python -m scripts.testing.preproduction --check
+    .venv/bin/python -m scripts.testing.preproduction --scenario PP-EN-QUICK [--yes]
 
 The CLI never registers with the legacy /automation/test console. Relay
 credentials default to the Preproduction SSM parameters (agentrelay-base-url /
 agentrelay-token) and can be overridden via SUPPORTPORTAL_RELAY_API_BASE /
-SUPPORTPORTAL_RELAY_TOKEN.
+SUPPORTPORTAL_RELAY_TOKEN. If invoked with another Python interpreter, the
+entry point re-executes itself with the repository .venv interpreter so the
+declared runtime dependencies are used consistently.
 """
 
 from __future__ import annotations
@@ -27,6 +29,65 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 ENV_PATH = Path(os.environ.get("SUPPORTPORTAL_ENV_FILE") or REPO_ROOT / ".env")
+
+_REEXEC_ENV = "SUPPORTPORTAL_PREPRODUCTION_REEXEC"
+
+
+def _runtime_workspace_root() -> Path:
+    """Return the workspace that owns the shared local runtime environment."""
+    if (REPO_ROOT / ".venv").exists():
+        return REPO_ROOT
+    git_marker = REPO_ROOT / ".git"
+    if git_marker.is_file():
+        marker = git_marker.read_text(encoding="utf-8").strip()
+        if marker.startswith("gitdir:"):
+            gitdir = Path(marker.split(":", 1)[1].strip())
+            if not gitdir.is_absolute():
+                gitdir = (REPO_ROOT / gitdir).resolve()
+            shared_root = gitdir.parents[2]
+            if (shared_root / ".venv").exists():
+                return shared_root
+    return REPO_ROOT
+
+
+def _project_python() -> Path:
+    return _runtime_workspace_root() / ".venv" / "bin" / "python"
+
+
+def _reexec_with_project_python() -> None:
+    """Run the CLI with the repository interpreter before importing scenarios.
+
+    Scenario discovery happens while argparse builds the choices for
+    ``--scenario``. That discovery imports ``psycopg`` at module scope, so a
+    system Python without the project dependencies fails before ``--check``
+    can provide a useful preflight result. Re-exec here, before ``main()``,
+    while preserving the exact CLI arguments and environment.
+    """
+    target = _project_python()
+    if Path(sys.executable).resolve() == target.resolve():
+        return
+    if os.environ.get(_REEXEC_ENV) == "1":
+        raise SystemExit(
+            "Preproduction CLI could not start with the repository interpreter "
+            f"at {target}; refusing an interpreter re-exec loop."
+        )
+    if not target.is_file() or not os.access(target, os.X_OK):
+        raise SystemExit(
+            "Preproduction CLI requires the repository interpreter at "
+            f"{target}. Create the project .venv and install requirements.base.txt."
+        )
+    os.environ[_REEXEC_ENV] = "1"
+    os.execv(str(target), [str(target), "-m", "scripts.testing.preproduction", *sys.argv[1:]])
+
+
+def _verify_runtime_dependencies() -> None:
+    try:
+        import psycopg  # noqa: F401
+    except ModuleNotFoundError as exc:
+        raise SystemExit(
+            "Preproduction CLI requires psycopg in the repository .venv; "
+            f"run {_project_python()} -m pip install -r requirements.base.txt."
+        ) from exc
 
 PREPROD_RELEASE_URL = (
     "https://supportcenter.stellarix.space/automation/preproduction/health/release"
@@ -570,4 +631,6 @@ def _scenario_ids() -> list[str]:
 
 
 if __name__ == "__main__":
+    _reexec_with_project_python()
+    _verify_runtime_dependencies()
     sys.exit(main())
