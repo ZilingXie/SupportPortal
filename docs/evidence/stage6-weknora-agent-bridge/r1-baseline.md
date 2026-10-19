@@ -71,3 +71,10 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 2. **适配器**（weknora_promotion_adapter）：delivery 写入带 status=publish（新计划方向取代 draft 保持）；新增有界 readiness 轮询（read→parse_status=completed∧enable_status=enabled，间隔+上限+超时=failed fail-closed）。
 3. **统一检索服务**（新共享模块，Review 与 Agent 共用避免双实现漂移）：WeKnora hybrid-search（索引面=仅已发布对象，结构性满足 C3/C8）→ 逐 hit 按 ID readback → 严格结构校验（五层）→ 提取 object_id/metadata.version/metadata.lineage（source_type/source_id/candidate/promotion）→ 组装 evidence；`retrieval_source=weknora|agent_memory_fallback|escalate_human` 标记；Agent 侧入口=engineer_execute_agent.py internal_knowledge_search（现消费旧 rag_result）。
 4. 待实现时核实现行 main 的渲染器/运行时（并行线已新增第七开关 KNOWLEDGE_AI_EXECUTION_ENABLED——步 2 实现基于 5bfbd86a 重读，不沿用旧假设）。
+
+## 步 2 实施侦察（现行 main 5bfbd86a 实读，2026-10-19）
+
+- **入口现状**：engineer_execute_agent.py:367 `run_internal_knowledge_search_subagent(task, summary_packet, now_value)` 为 v1 占位——仅消费 summary_packet.rag_result（clues/candidate_answer/sources/citations），无真实检索；结果信封 `_make_result(task_id, skill, status, summary, evidence_refs, missing_information)`，status∈{succeeded,blocked}。改造点=此函数+其调用方（dispatcher 注入路径，续做首查）。
+- **第七开关已并入**：knowledge_dual_write.py 现 7 开关（新增 KNOWLEDGE_AI_EXECUTION_ENABLED=Summary/Review AI 消费）；renderer KNOWLEDGE_GOVERNANCE_SWITCHES 同步 7 项且依赖 AI_EXECUTION→SUMMARY_REVIEW（automation_ecs_deploy.py:200/227）。阶段配置入口与 verify 门沿用。
+- **底层客户端**：hermes_weknora.py HermesWeKnoraClient（search+read，硬编码 X-API-Key，search 响应严格 data-list 校验已在）=检索服务底层；weknora_client.py 合同驱面（v4 五操作）=补 status/parse_status_key/enable_status_key。
+- **检索服务落位**：新建 backend/services/weknora_knowledge_retrieval.py（共享，Review 与 Agent 共用）；Agent 侧 evidence 字段按计划 C4（retrieval_source/weknora_object_id/content_version/content_hash/source_type/source_id/evidence）。
