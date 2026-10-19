@@ -79,7 +79,7 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 - **底层客户端**：hermes_weknora.py HermesWeKnoraClient（search+read，硬编码 X-API-Key，search 响应严格 data-list 校验已在）=检索服务底层；weknora_client.py 合同驱面（v4 五操作）=补 status/parse_status_key/enable_status_key。
 - **检索服务落位**：新建 backend/services/weknora_knowledge_retrieval.py（共享，Review 与 Agent 共用）；Agent 侧 evidence 字段按计划 C4（retrieval_source/weknora_object_id/content_version/content_hash/source_type/source_id/evidence）。
 
-## 步 2 完成状态与环境阻断（2026-10-19，HEAD 040bbd35）
+## 步 2 完成状态与修复后独立验收准备（2026-10-19，代码/证据提交 9482469a）
 
 已实现并提交（全部内容经 git 提交保全）：B1 修复（status 未提供时省略字段不上 wire）；B2 wire 级回归 9 项（publish 携带/v4 无绑定 fail-closed 零外发/非法值拒绝/省略验证/read 回执 lifecycle 提取/readiness 九参数矩阵）；适配器 publish_on_write+requested_status+lifecycle_at_accept 回执+实际接线的 weknora_wait_until_ready 有界轮询（首次回读复用为 poll #1，超时/传输故障 outcome_unknown、parse failed 快败为 failed、5xx 瞬态重试）；共享检索服务 weknora_knowledge_retrieval.py（C4-C8：ready 过滤/lineage 提取/逐命中 malformed readback fallback/降级仅限 transport+timeout+auth+5xx+malformed/空结果不降级/双侧不可用 escalate）+Agent 桥（run_internal_knowledge_search_subagent WeKnora 优先+escalate 转 blocked+无配置保持 v1 行为）。
 
