@@ -14,9 +14,10 @@ _TODAY_RE = re.compile(r"(?<![A-Za-z])today(?:['’]s)?(?![A-Za-z])|今天")
 def _latest_customer_message(turn: dict[str, Any]) -> str:
     snapshot = turn.get("input_snapshot")
     conversation = snapshot.get("conversation") if isinstance(snapshot, dict) else None
-    if not isinstance(conversation, list):
-        return ""
-    for item in reversed(conversation):
+    event = snapshot.get("current_event") if isinstance(snapshot, dict) else None
+    trigger_id = event.get("trigger_comment_id") if isinstance(event, dict) else None
+    customer_messages: list[dict[str, Any]] = []
+    for item in conversation if isinstance(conversation, list) else []:
         if not isinstance(item, dict):
             continue
         author = item.get("author")
@@ -25,11 +26,39 @@ def _latest_customer_message(turn: dict[str, Any]) -> str:
             str(role or "").strip().lower() in {"customer", "user", "end-user", "end_user"}
             and not (isinstance(author, dict) and author.get("is_agent") is True)
         ):
-            return str(item.get("body") or "")
+            if trigger_id is None or str(item.get("id") or "") == str(trigger_id):
+                customer_messages.append(item)
+    if customer_messages:
+        return str(customer_messages[-1].get("body") or "")
+    # Zendesk's first ticket.created event carries the initial customer text
+    # in ticket.description; it is intentionally not copied into conversation.
+    event = snapshot.get("current_event") if isinstance(snapshot, dict) else None
+    ticket = snapshot.get("ticket") if isinstance(snapshot, dict) else None
+    if (
+        isinstance(event, dict)
+        and str(event.get("event_type") or "") == "ticket.created"
+        and not event.get("trigger_comment_id")
+        and isinstance(ticket, dict)
+    ):
+        return str(ticket.get("description") or "")
     return ""
 
 
 def _relative_today_window(turn: dict[str, Any], end: datetime) -> dict[str, Any] | None:
+    snapshot = turn.get("input_snapshot") if isinstance(turn.get("input_snapshot"), dict) else {}
+    conversation = snapshot.get("conversation") if isinstance(snapshot, dict) else []
+    if not isinstance(conversation, list):
+        conversation = []
+    has_customer_comment = any(
+        isinstance(item, dict)
+        and (
+            str((item.get("author") or {}).get("role") if isinstance(item.get("author"), dict) else item.get("author") or "").strip().lower()
+            in {"customer", "user", "end-user", "end_user"}
+        )
+        and not (isinstance(item.get("author"), dict) and item["author"].get("is_agent") is True)
+        for item in conversation if isinstance(conversation, list)
+    )
+    source = "current_turn_customer_comment" if has_customer_comment else "initial_ticket_description"
     if not _TODAY_RE.search(_latest_customer_message(turn)):
         return None
     local_end = end.astimezone(ZoneInfo(DEFAULT_TIMEZONE))
@@ -42,6 +71,7 @@ def _relative_today_window(turn: dict[str, Any], end: datetime) -> dict[str, Any
         "timezone": DEFAULT_TIMEZONE,
         "timezone_source": "service_default",
         "query_priority": "targeted_current_turn",
+        "window_source": source,
     }
 
 
