@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T04:02:42Z",
-  "source_base_commit": "15f3602cfe805b381a6c56f7644270747be498dd",
-  "registry_digest": "7d693cbcb564889ad5766b4dbee991bf43e1c3a0ba47e4103ca48e731dac612d",
+  "generated_at": "2026-10-19T04:09:40Z",
+  "source_base_commit": "27fd4e5a59d36ac95b1e3179ac787b83ea5a43f8",
+  "registry_digest": "4d31784facf44b2538b298f85e6eac371ef7a092b2461f8e3ccfbe1ae562578b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -18849,8 +18849,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "不重放 #14089，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
       ],
       "blockers": [
-        "独立代码验收尚未完成。",
-        "真实业务样本未授权，Preproduction 技术发布待代码验收通过后执行。"
+        "真实业务样本未授权；真实 Argus/Zac 查询、客户/Slack/Zendesk 消息和 #14089 重放保持未执行。"
       ],
       "evidence": [
         {

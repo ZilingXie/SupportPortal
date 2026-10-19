@@ -18,8 +18,7 @@
     "不重放 #14089，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
   ],
   "blockers": [
-    "独立代码验收尚未完成。",
-    "真实业务样本未授权，Preproduction 技术发布待代码验收通过后执行。"
+    "真实业务样本未授权；真实 Argus/Zac 查询、客户/Slack/Zendesk 消息和 #14089 重放保持未执行。"
   ],
   "evidence": [
     {
