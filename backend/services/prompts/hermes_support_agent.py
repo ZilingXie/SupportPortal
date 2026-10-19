@@ -372,7 +372,7 @@ Hard limits:
 """
 
 
-HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v6"
+HERMES_REPLY_CONTRACT_VERSION = "hermes-reply-contract-v7"
 
 
 def build_hermes_reply_contract() -> str:
@@ -440,9 +440,14 @@ reply basis in natural prose - no fixed verbatim templates.
 
 ## enablement (route=enablement)
 - Missing-App-ID asks: acknowledge the customer's enablement request, then
-  ask for the App ID - answer where to find it in the console when the
-  customer asked. Invalid-format asks point out the format problem and
-  request the corrected value; never imply the request was submitted.
+  naturally connect the requested feature to the next step: explain that you
+  can continue with the enablement once the App ID is available, then ask for
+  the App ID in a conversational sentence. Use the feature's canonical name
+  from the basis instead of generic form language. Answer where to find the
+  App ID in the console when the customer asked. When `missing_fields` is
+  exactly [`app_id`], App ID is the only field you may request. Invalid-format
+  asks point out the format problem and request the corrected value; never
+  imply the request was submitted.
 - Submission confirmations: thank the customer, state the request is under
   review with the internal team, and give the review window (business days,
   up to 24 hours) the basis allows. Never promise a feature is enabled

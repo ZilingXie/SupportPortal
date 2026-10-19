@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T07:00:58Z",
-  "source_base_commit": "326fa9bf8247828f6ebee122d1674399692588d7",
-  "registry_digest": "f3ebff54518f434de36b2ce1dce76a8d9ab6f4108d2077e78600de5e58f2aa94",
+  "generated_at": "2026-10-19T07:49:24Z",
+  "source_base_commit": "f412654bb227a05dc65b9939ad77e007b35cc63e",
+  "registry_digest": "f988a9dabcbea54b353fdccaa0cec10cfad281d4a52f6043db94d964c0e27685",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1740,6 +1740,29 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "Native Enablement and prompt safety regression",
+          "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
+          "result": "53 passed (including real tool_save_reply_draft extra-field negative control and fail-closed eval semantics)"
+        },
+        {
+          "type": "test",
+          "label": "Hermes agent/tool integration regression",
+          "path": "backend/tests/test_hermes_zendesk_agent_tools.py; backend/tests/test_hermes_zendesk_agent.py",
+          "result": "133 passed"
+        },
+        {
+          "type": "test",
+          "label": "Static verification",
+          "result": "compileall, JSON validation, Project Overview --check, and git diff --check passed"
+        },
+        {
+          "type": "decision",
+          "label": "Offline model evaluation",
+          "path": "scripts/testing/hermes_native_enablement_eval.py",
+          "result": "waiting-for-evidence; gated by HERMES_NATIVE_ENABLEMENT_EVAL=1 and model credentials; no model evaluation or real customer/business message was executed in this turn"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1845,7 +1868,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 49,
+      "task_count": 50,
       "done_count": 25,
       "blocked_count": 2
     },
@@ -18905,6 +18928,60 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/services/zac_consultation.py",
         "backend/scripts/automation_ecs_deploy.py",
         "backend/services/prompts/hermes_support_agent.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-205",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "Hermes Native Enablement 首轮缺 App ID 回复自然化",
+      "summary": "仅优化 native Hermes Enablement 在服务端 basis 确认只缺 App ID 时的首轮 Persona 表达；保留事实、安全、翻译、称呼、ownership、delivery 与幂等门禁。",
+      "status": "active",
+      "next_action": "完成定向验证并提交 Draft PR，等待独立代码验收；通过前不 finalize、合并、发布 Prompt、部署或重放 14121。",
+      "owner": "codex",
+      "created_at": "2026-10-19",
+      "updated_at": "2026-10-19",
+      "acceptance_criteria": [
+        "Enablement 且 missing_fields=[app_id] 时只请求 App ID，并自然承接客户的开通诉求。",
+        "不得请求 payment/其他字段，不得声称已提交、已启用、审核完成或添加未经 basis 授权的时间承诺。",
+        "服务端 greeting、翻译、draft validator、ownership、delivery、幂等与模型档位不变。",
+        "不重放 14121、不触碰 Prompt catalog、Preproduction/Production、客户或内部消息。"
+      ],
+      "blockers": [
+        "独立代码验收尚未完成。",
+        "离线模型评估和真实 Preproduction/业务验证尚未执行。"
+      ],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "Native Enablement and prompt safety regression",
+          "path": "backend/tests/test_hermes_native_enablement_regression.py; backend/tests/test_hermes_fraud_reply_style.py; backend/tests/test_prompt_modules.py",
+          "result": "53 passed (including real tool_save_reply_draft extra-field negative control and fail-closed eval semantics)"
+        },
+        {
+          "type": "test",
+          "label": "Hermes agent/tool integration regression",
+          "path": "backend/tests/test_hermes_zendesk_agent_tools.py; backend/tests/test_hermes_zendesk_agent.py",
+          "result": "133 passed"
+        },
+        {
+          "type": "test",
+          "label": "Static verification",
+          "result": "compileall, JSON validation, Project Overview --check, and git diff --check passed"
+        },
+        {
+          "type": "decision",
+          "label": "Offline model evaluation",
+          "path": "scripts/testing/hermes_native_enablement_eval.py",
+          "result": "waiting-for-evidence; gated by HERMES_NATIVE_ENABLEMENT_EVAL=1 and model credentials; no model evaluation or real customer/business message was executed in this turn"
+        }
+      ],
+      "source_refs": [
+        "docs/plans/hermes-native-enable-app-id-natural-v1.md",
+        "backend/services/prompts/hermes_support_agent.py",
+        "backend/tests/test_hermes_native_enablement_regression.py"
       ]
     },
     {
