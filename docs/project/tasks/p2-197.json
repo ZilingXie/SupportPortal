@@ -9,8 +9,8 @@
   "function_id": "weknora-dualwrite-governance",
   "created_at": "2026-10-12",
   "updated_at": "2026-10-19",
-  "summary": "阶段 6 WeKnora-Agent bridge 步 0/1 完成，步 2 修复轮完成待独立验收：HEAD 仍在 codex/stage6-weknora-agent-bridge，F1 模块导入、F2 畸形逐命中回读降级、F3 写入适配器 readiness 接线已修复；WeKnora 主检索、AgentMemory 迁移期 fallback、双侧不可用人工升级合同已实现。Python 3.13/3.12 同一 25 文件集合各 582 passed，含隔离 PostgreSQL；定向修复集合 125 passed。未 finalize、未部署、未重投业务样本；Terraform task definition 指针差异仍待正式部署前处理。",
-  "next_action": "以整合 HEAD 82fdf70e 提交步 2 修复后的独立增量验收：复核 F1-F3 diff、readiness 状态映射、malformed hit fallback、main 合并差异与两解释器/隔离 PG 证据；通过后才重新冻结发布基线并继续 Preproduction，验收门未释放。",
+  "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。执行分支 codex/stage6-weknora-agent-bridge（Draft PR #1515，完整 HEAD e84d3044）。步 0 基线冻结（r20261019-15f3602-argus-zac-r1，五停止条件不触发；Terraform refresh-only exit2=task def 指针滞后非配置漂移，持续披露步 5 前重处理）；步 1 合同确认（fork 有 publish/index/ready 能力=status=publish 经现有 create/update+ready=parse_status completed∧enable_status enabled；合同 v4 未暴露→已补 v5：status 语义绑定+readiness keys，工件入库，SSM 升级留步 5）。步 2 代码全量完成：客户端 v5（publish fail-closed 合同校验+status 未提供省略不上 wire+read 回执 lifecycle 首类化+weknora_readback_is_ready）；适配器 publish_on_write+requested_status+lifecycle_at_accept+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval（C4-C8：ready 过滤/lineage/降级仅 transport+timeout+auth+5xx+malformed/空结果不降级/双侧 escalate）；Agent 桥 WeKnora 优先+escalate=blocked+无配置保 v1；**B3 修复=AM fallback DI 全链穿透（allowlisted/plan executor/main 显式注入+惰性默认兜底）；B4=Review 路径共享 readiness 原语（HermesWeKnoraClient.read 补 lifecycle+collect 标记 agent_ready，决策流不变）**。首轮验收未过（B1 status null 上 wire/B2 缺回归→已修；二轮未过（B3 AM 未接真实链/B4 Review 漂移→已修）。实测（/tmp 隔离副本）：桥接+client+adapter/worker 124/0；知识面 19 文件 528/4（4 失败=origin/main 基线同样失败的存量问题，如实披露）。环境事件：本机新写文件间歇消失（com.apple 文件提供进程句柄；建议另立任务）。待：三轮增量独立验收（新完整 HEAD e84d3044）→通过后 finalize→步 5 全关闭发布（含 SSM v5 升级+Terraform 指针重处理）→步 6-10。",
+  "next_action": "三轮增量独立验收范围=PR #1515 增量提交 39fc358e（B3/B4 代码）+aba81a59（回归整理）+e84d3044（证据），重点复验：真实入口（run_allowlisted_subagent/execute_engineer_plan/main:14538）AM fallback 实跑、Review agent_ready 共享原语、/tmp 副本 124/0 与 528/4（4 存量失败已在 origin/main a217702e 基线证实）。验收通过后：finalize PR→步 5 全关闭发布（SSM contract v5 升级+Terraform task def 指针漂移重处理+五方回读）→步 6 受控样本（新来源）→步 7 WeKnora 生命周期→步 8 Agent 验证+两负例→步 9 观察窗口→步 10 全量前人工停点。本机文件系统异常（新写文件间歇消失）建议另立任务调查（疑似安全/DLP/文件提供代理）。",
   "acceptance_criteria": [
     "C0 发布源/digest/n8n version/SSM 引用可追溯",
     "C1 关闭态 fail-closed 零候选零写入",
@@ -116,6 +116,12 @@
       "label": "步 2 修复轮 F1-F4：检索、Agent、写入 readiness 与全套复跑",
       "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q（25 个阶段 6/知识面文件，详见 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md）；Python 3.13 与 /opt/homebrew/bin/python3.12 各执行一次",
       "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 582 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md 最新 main 已合入任务工作树，merge 82fdf70e；唯一 Overview 冲突已重生成，合并后计数按新基线登记。"
+    },
+    {
+      "type": "test",
+      "label": "B3/B4 修复+真实入口回归（HEAD e84d3044）",
+      "command": "/tmp/spwt 副本：pytest test_weknora_knowledge_retrieval+client+adapter+worker（124/0 含 4 subtests）；知识面 19 文件 528/4；origin/main a217702e 基线复跑 test_repository_configuration 同样 4 失败",
+      "result": "真实链回归：WeKnora transport 故障+AM 可用→knowledge_agent_memory_fallback 成功（经 run_allowlisted_subagent 与 execute_engineer_plan 双入口实证）；双侧故障→blocked+escalate；main.py 显式注入两 client。B4：HermesWeKnoraClient.read 增 parse/enable_status，Review collect 标记 agent_ready 同源判定。4 存量失败（account_reply 系列 IndexError）与本分支无关（main 基线同败）。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md。"
     }
   ]
 }
