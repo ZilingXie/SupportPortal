@@ -5,7 +5,10 @@ from typing import Any
 import pytest
 
 from backend.services.weknora_client import WeKnoraError
-from backend.services.weknora_promotion_adapter import WeKnoraPromotionAdapter
+from backend.services.weknora_promotion_adapter import (
+    WeKnoraPromotionAdapter,
+    weknora_wait_until_ready,
+)
 
 
 class FakeWeKnoraStore:
@@ -643,3 +646,113 @@ def test_skill_candidate_becomes_explicit_human_review_never_a_write() -> None:
     assert outcome.status == "human_review"
     assert outcome.failure_code == "skill_change_requires_human_review"
     assert client.calls == []
+
+
+# ---------------------------------------------------------------------------
+# stage6-weknora-agent-bridge: publish pass-through + bounded readiness poll
+# ---------------------------------------------------------------------------
+
+class _ReadinessClient:
+    """Records writes and replays a scripted readback lifecycle."""
+
+    def __init__(self, reads: list[dict] | None = None) -> None:
+        self.reads = list(reads or [])
+        self.write_status: list = []
+        self.read_count = 0
+
+    def knowledge_create(self, *, title, content, idempotency_key, metadata=None, status=None, **kw):
+        self.write_status.append(status)
+        receipt = {"object_id": "doc-1", "version": "1", "receipt": {}}
+        if status:
+            receipt["requested_status"] = status  # real-client contract
+        return receipt
+
+    def knowledge_update(self, *, object_id, base_version, title, content, idempotency_key, metadata=None, status=None, **kw):
+        self.write_status.append(status)
+        return {"object_id": object_id, "version": "2", "receipt": {}}
+
+    def knowledge_read(self, *, object_id):
+        self.read_count += 1
+        if self.read_count > len(self.reads):
+            return self.reads[-1]
+        return self.reads[self.read_count - 1]
+
+
+def _ready_task() -> dict:
+    return _task(payload={
+        "schema_version": "v1", "candidate_type": "knowledge", "decision": "new",
+        "title": "Title", "content": "Body",
+    })
+
+
+def test_adapter_passes_publish_status_to_write() -> None:
+    client = _ReadinessClient([{"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
+                                 "parse_status": "pending", "enable_status": "disabled"}])
+    adapter = WeKnoraPromotionAdapter(client)
+    outcome = adapter.execute(_ready_task())
+    assert client.write_status == ["publish"]
+    assert outcome.status == "accepted"
+    assert outcome.receipt["requested_status"] == "publish"
+    assert outcome.receipt["lifecycle_at_accept"] == {"parse_status": "pending", "enable_status": "disabled"}
+
+
+def test_adapter_can_disable_publish() -> None:
+    client = _ReadinessClient([{"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body"}])
+    adapter = WeKnoraPromotionAdapter(client, publish_on_write=False)
+    adapter.execute(_ready_task())
+    assert client.write_status == [None]
+
+
+def test_wait_until_ready_succeeds_after_pending() -> None:
+    client = _ReadinessClient([
+        {"parse_status": "pending", "enable_status": "disabled", "version": "1"},
+        {"parse_status": "processing", "enable_status": "disabled", "version": "1"},
+        {"parse_status": "completed", "enable_status": "enabled", "version": "1"},
+    ])
+    result = weknora_wait_until_ready(client, "doc-1", interval_seconds=0, sleep=lambda s: None)
+    assert result["ready"] is True
+    assert result["attempts_used"] == 3
+
+
+def test_wait_until_ready_times_out_fail_closed() -> None:
+    client = _ReadinessClient([
+        {"parse_status": "pending", "enable_status": "disabled", "version": "1"},
+    ])
+    with pytest.raises(WeKnoraError) as excinfo:
+        weknora_wait_until_ready(client, "doc-1", max_attempts=3, interval_seconds=0, sleep=lambda s: None)
+    assert excinfo.value.failure_kind == "timeout"
+
+
+def test_wait_until_ready_fails_fast_on_parse_failed() -> None:
+    client = _ReadinessClient([
+        {"parse_status": "failed", "enable_status": "disabled", "version": "1"},
+    ])
+    with pytest.raises(WeKnoraError) as excinfo:
+        weknora_wait_until_ready(client, "doc-1", interval_seconds=0, sleep=lambda s: None)
+    assert "parse failed" in str(excinfo.value)
+
+
+def test_wait_until_ready_retries_transient_transport() -> None:
+    class FlakyClient(_ReadinessClient):
+        def __init__(self):
+            super().__init__([{"parse_status": "completed", "enable_status": "enabled", "version": "1"}])
+            self.transport_errors = 1
+
+        def knowledge_read(self, *, object_id):
+            if self.transport_errors > 0:
+                self.transport_errors -= 1
+                raise WeKnoraError("boom", failure_kind="transport")
+            return super().knowledge_read(object_id=object_id)
+
+    result = weknora_wait_until_ready(FlakyClient(), "doc-1", interval_seconds=0, sleep=lambda s: None)
+    assert result["ready"] is True
+
+
+def test_wait_until_ready_non_transient_error_raises_immediately() -> None:
+    class AuthFailClient(_ReadinessClient):
+        def knowledge_read(self, *, object_id):
+            raise WeKnoraError("denied", failure_kind="auth")
+
+    with pytest.raises(WeKnoraError) as excinfo:
+        weknora_wait_until_ready(AuthFailClient(), "doc-1", interval_seconds=0, sleep=lambda s: None)
+    assert excinfo.value.failure_kind == "auth"

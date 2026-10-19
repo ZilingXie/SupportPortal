@@ -457,7 +457,7 @@ class WeKnoraClient:
                 self._field("idempotency_key_field", "idempotency_key"): str(idempotency_key or "").strip(),
                 "knowledge_base_id": self._require_knowledge_base(),
                 "metadata": metadata or {},
-                "status": normalized_status,
+                **({"status": normalized_status} if normalized_status else {}),
             },
         )
         receipt = self._normalize_write_receipt(payload, operation="knowledge_create")
@@ -497,8 +497,12 @@ class WeKnoraClient:
                 # Lineage metadata: on template contracts the pinned body owns
                 # the wire shape and only templated fields are sent (same rule
                 # as knowledge_create); legacy contracts carry it like create.
+                # The publish status rides the same rule and is OMITTED when
+                # the caller did not provide one: a template-less contract
+                # sends semantics verbatim, and `status: null` on the wire is
+                # a shape change the fork never agreed to.
                 "metadata": metadata or {},
-                "status": normalized_status,
+                **({"status": normalized_status} if normalized_status else {}),
             },
         )
         receipt = self._normalize_write_receipt(payload, operation="knowledge_update")
