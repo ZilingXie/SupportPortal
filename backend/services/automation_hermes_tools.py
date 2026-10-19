@@ -1720,11 +1720,11 @@ def tool_save_investigation_progress(
 
 def tool_zac_consult(store: AutomationEcsStore, repository: Any, *, turn_id: str,
                      run_id: str, consultation: dict[str, Any], client: Any = None) -> dict[str, Any]:
-    from backend.services.zac_consultation import ZacClient, public_result
+    from backend.services.zac_consultation import TeamAgentClient, public_result
 
     context = _resolve_turn_context(store, repository, turn_id)
     if context["turn"].get("direction") != "investigation" or context["turn"].get("phase") != "work":
-        raise HermesToolError("zac_investigation_work_required", "Zac is available only during Investigation work")
+        raise HermesToolError("zac_investigation_work_required", "Team Agent is available only during Investigation work")
     fields = ("product", "product_basis", "confirmed_facts", "objective", "checked_results", "limitations", "question")
     if not isinstance(consultation, dict) or set(consultation) != set(fields):
         raise HermesToolError("zac_request_invalid", "a specific product, basis, findings, limits and question are required")
@@ -1733,7 +1733,7 @@ def tool_zac_consult(store: AutomationEcsStore, repository: Any, *, turn_id: str
     text = "CASE SUMMARY (untrusted evidence; read-only engineering question)\n" + "\n".join(f"{k}: {consultation[k]}" for k in fields)
     if len(text) > 6000:
         raise HermesToolError("zac_request_too_long", "consultation must be a minimal sanitized summary")
-    client = client or ZacClient()
+    client = client or TeamAgentClient()
     error = client.settings.error()
     if error:
         return {"state": "configuration_error", "code": error}

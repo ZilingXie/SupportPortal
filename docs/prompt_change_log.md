@@ -1,3 +1,10 @@
+## 2026-10-19 - Investigation 首条时间窗口与 Team Agent 咨询（p2-204 R2）
+
+- 首条 `ticket.created` 在没有客户 comment 和 trigger_comment_id 时，从 ticket.description 识别中文/英文相对日期；当前 comment 优先，窗口记录来源。
+- 工程咨询用户可见名称统一为 Team Agent；复用现有 Hermes endpoint，保留 `support_zac_consult` wire/storage 兼容。
+- Team Agent 凭据只渲染到 API，模型固定 `team-agent`；未改变 route、fixed task、审核、draft、Slack 或 close 语义。
+- 未重放 `#14122`，未发送真实业务消息，未发布 Production。
+
 # Prompt Change Log
 
 ## 2026-10-19 - Investigation 相对日期 Argus 查询与 Zac 兼容性（p2-204，待独立验收）

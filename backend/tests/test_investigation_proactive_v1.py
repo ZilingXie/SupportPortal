@@ -1,12 +1,13 @@
 from datetime import datetime, timezone
 import json
 import urllib.error
+import pytest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 from backend.services.investigation_runtime_policy import investigation_policy, public_investigation
 from backend.services.automation_hermes_agent import toolsets_for_phase
-from backend.services.zac_consultation import ZacSettings, read_terminal, ZacClient
+from backend.services.zac_consultation import ZacSettings, TeamAgentSettings, read_terminal, ZacClient, TeamAgentClient
 from backend.services.investigation_consult_store import transition
 
 
@@ -63,6 +64,47 @@ def test_customer_says_today_in_english_adds_targeted_window():
     policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
     assert policy["relative_date_window"]["query_priority"] == "targeted_current_turn"
 
+def test_initial_ticket_description_today_adds_window_without_copying_description():
+    turn = {
+        **_turn(),
+        "created_at": "2026-10-15T16:30:00+00:00",
+        "input_snapshot": {
+            "current_event": {"event_type": "ticket.created", "trigger_comment_id": None},
+            "ticket": {"description": "Please inspect today's session"},
+            "conversation": [],
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    assert policy["relative_date_window"]["window_source"] == "initial_ticket_description"
+
+def test_initial_ticket_description_chinese_today_is_bounded():
+    turn = {
+        **_turn(),
+        "created_at": "2026-10-15T16:30:00+00:00",
+        "input_snapshot": {
+            "current_event": {"event_type": "ticket.created", "trigger_comment_id": None},
+            "ticket": {"description": "请检查今天早上的 session"},
+            "conversation": [],
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    window = policy["relative_date_window"]
+    assert window["fromTs"] == int(datetime.fromisoformat("2026-10-15T16:00:00+00:00").timestamp())
+    assert window["toTs"] == int(datetime.fromisoformat("2026-10-15T16:30:00+00:00").timestamp())
+
+def test_initial_description_does_not_override_customer_comment_or_agent_history():
+    base = {
+        **_turn(),
+        "input_snapshot": {
+            "current_event": {"event_type": "ticket.created", "trigger_comment_id": None},
+            "ticket": {"description": "today's session"},
+            "conversation": [{"author": {"role": "customer"}, "body": "channel only"}],
+        },
+    }
+    assert "relative_date_window" not in investigation_policy(base, {"case_task": {"direction": "investigation"}})
+    agent_only = {**base, "input_snapshot": {**base["input_snapshot"], "current_event": {"event_type": "ticket.updated", "trigger_comment_id": "c1"}, "conversation": [{"author": {"role": "agent"}, "body": "today"}]}}
+    assert "relative_date_window" not in investigation_policy(agent_only, {"case_task": {"direction": "investigation"}})
+
 
 def test_previous_today_in_history_does_not_trigger_current_turn_window():
     turn = {
@@ -77,6 +119,16 @@ def test_previous_today_in_history_does_not_trigger_current_turn_window():
     }
     policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
     assert "relative_date_window" not in policy
+
+def test_historical_customer_today_does_not_trigger_without_current_comment():
+    turn = {
+        **_turn(),
+        "input_snapshot": {
+            "current_event": {"event_type": "ticket.updated", "trigger_comment_id": "new-customer"},
+            "conversation": [{"id": "old-customer", "author": {"role": "customer"}, "body": "today"}],
+        },
+    }
+    assert "relative_date_window" not in investigation_policy(turn, {"case_task": {"direction": "investigation"}})
 
 
 def test_zendesk_snapshot_end_user_role_triggers_today_but_agent_flag_does_not():
@@ -106,8 +158,16 @@ def test_zendesk_snapshot_end_user_role_triggers_today_but_agent_flag_does_not()
 
 def test_zac_settings_fail_closed_and_private_recovery_is_not_public():
     assert ZacSettings("https://zac", "secret", "team-agent").error() is None
-    assert ZacSettings("https://zac", "secret", "other").error() == "zac_agent_model_not_configured"
+    assert TeamAgentSettings("https://zac", "secret", "other").error() == "team_agent_model_not_configured"
+    assert ZacSettings("https://zac", "", "team-agent").error() == "team_agent_not_configured"
     assert public_investigation({"summary":"x", "_zac_user_id":"opaque"}) == {"summary":"x"}
+
+def test_team_agent_settings_and_endpoint_normalization():
+    assert TeamAgentSettings("https://hermes.example/v1", "secret", "team-agent").error() is None
+    assert TeamAgentSettings("http://hermes.preproduction.supportportal.local:8642", "secret", "team-agent").error() is None
+    assert TeamAgentSettings("https://hermes.example/v1?x=1", "secret", "team-agent").error() == "team_agent_not_configured"
+    assert TeamAgentSettings("http://hermes.example", "secret", "team-agent").error() == "team_agent_not_configured"
+    assert TeamAgentSettings("https://user:pass@hermes.example", "secret", "team-agent").error() == "team_agent_not_configured"
 
 def test_zac_completed_requires_response_completed():
     lines=[b"event: response.completed\n", b'data: {"response":{"metadata":{"conversation_id":"c1","conversation_status":"active"},"output":[{"content":[{"type":"output_text","text":"answer"}]}]}}\n', b"\n"]
@@ -119,7 +179,12 @@ def test_zac_stream_done_without_completed_is_unknown():
     assert result["state"] == "outcome_unknown"
 
 
-def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
+@pytest.mark.parametrize("base_url,expected_url", [
+    ("https://zac.example", "https://zac.example/v1/responses"),
+    ("https://zac.example/v1", "https://zac.example/v1/responses"),
+    ("http://hermes.preproduction.supportportal.local:8642", "http://hermes.preproduction.supportportal.local:8642/v1/responses"),
+])
+def test_team_agent_client_sends_bound_request_contract_and_reads_completed_sse(base_url, expected_url):
     seen = []
 
     class Response:
@@ -137,7 +202,7 @@ def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
         seen.append((request, timeout))
         return Response()
 
-    client = ZacClient(ZacSettings("https://zac.example", "token", "team-agent"), opener=opener, clock=lambda: 0)
+    client = TeamAgentClient(TeamAgentSettings(base_url, "token", "team-agent"), opener=opener, clock=lambda: 0)
     result = client.consult({
         "request_body": '{"model":"team-agent","input":"sanitized","stream":true}',
         "user_id": "user-opaque",
@@ -145,7 +210,7 @@ def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
     })
     assert result["state"] == "completed"
     request, _ = seen[0]
-    assert request.full_url == "https://zac.example/v1/responses"
+    assert request.full_url == expected_url
     assert request.get_header("Authorization") == "Bearer token"
     assert request.get_header("X-api-user-id") == "user-opaque"
     assert request.get_header("Idempotency-key") == "idem-1"

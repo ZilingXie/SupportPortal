@@ -467,6 +467,27 @@ def test_render_task_definition_attaches_hermes_agent_secrets_to_both_roles(
         "parameter/supportportal/preproduction/hermes-api-server-key"
     )
 
+def test_team_agent_credentials_are_api_only_and_fixed_model(tmp_path: Path) -> None:
+    for role in ("api", "route", "worker"):
+        (tmp_path / role).mkdir()
+        current = _task_definition(tmp_path / role, role)
+        _as_preproduction(current)
+        rendered = render_task_definition(
+            role=role, current_path=current, manifest_path=_manifest(tmp_path / role),
+            registry_id="123456789012", region="us-east-1", environment="preproduction",
+            repository="supportportal/preproduction", agent_model="gpt-6-sol",
+            hermes_agent_enabled=True,
+        )
+        container = rendered["containerDefinitions"][0]
+        names = {item["name"] for item in container["secrets"]}
+        values = {item["name"]: item["value"] for item in container["environment"]}
+        if role == "api":
+            assert {"TEAM_AGENT_BASE_URL", "TEAM_AGENT_REST_TOKEN"} <= names
+            assert values["TEAM_AGENT_MODEL"] == "team-agent"
+        else:
+            assert not ({"TEAM_AGENT_BASE_URL", "TEAM_AGENT_REST_TOKEN"} & names)
+            assert "TEAM_AGENT_MODEL" not in values
+
 
 def test_render_task_definition_without_agent_enabled_drops_agent_secrets(
     tmp_path: Path,

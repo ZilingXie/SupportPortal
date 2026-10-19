@@ -49,6 +49,11 @@ HERMES_AGENT_SECRET_SUFFIXES = {
     "HERMES_AGENT_BASE_URL": "hermes-agent-base-url",
     "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
 }
+TEAM_AGENT_SECRET_NAMES = {"TEAM_AGENT_BASE_URL", "TEAM_AGENT_REST_TOKEN"}
+TEAM_AGENT_SECRET_SUFFIXES = {
+    "TEAM_AGENT_BASE_URL": "hermes-agent-base-url",
+    "TEAM_AGENT_REST_TOKEN": "hermes-api-server-key",
+}
 # Zendesk readback credentials required by the API-role hermes-review approve
 # path when it falls back to the live ownership snapshot for comments_revision.
 API_ZENDESK_READBACK_SECRET_SUFFIXES = {
@@ -978,6 +983,8 @@ def render_initial_task_definition(
                 "HERMES_AGENT_API_TOKEN": "hermes-api-server-key",
             }
         )
+    if hermes_agent_enabled and role == "api":
+        secret_names[role].update(TEAM_AGENT_SECRET_SUFFIXES)
     if role == "worker":
         secret_names[role].update(AGENTRELAY_SECRET_SUFFIXES)
     container: dict[str, Any] = {
@@ -1011,6 +1018,8 @@ def render_initial_task_definition(
             },
         },
     }
+    if hermes_agent_enabled and role == "api":
+        container["environment"].append({"name": "TEAM_AGENT_MODEL", "value": "team-agent"})
     if role == "api":
         container["portMappings"] = [
             {
@@ -1305,6 +1314,17 @@ def render_task_definition(
                     name,
                     _parameter_arn(prefix_arn, HERMES_AGENT_SECRET_SUFFIXES[name]),
                 )
+        _remove_secret_references(container, TEAM_AGENT_SECRET_NAMES)
+        _remove_environment_values(container, TEAM_AGENT_SECRET_NAMES)
+        if effective_agent_enabled and role == "api":
+            prefix_arn = _parameter_prefix_arn(container, environment=environment)
+            for name in sorted(TEAM_AGENT_SECRET_NAMES):
+                _set_secret_reference(
+                    container,
+                    name,
+                    _parameter_arn(prefix_arn, TEAM_AGENT_SECRET_SUFFIXES[name]),
+                )
+            _set_environment_value(container, "TEAM_AGENT_MODEL", "team-agent")
     if role == "api":
         # The dashboard hermes-review approve path resolves the current Zendesk
         # comments revision on the API role when no comment-sync row exists yet
