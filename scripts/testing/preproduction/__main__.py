@@ -3,6 +3,8 @@
 Usage:
     python -m scripts.testing.preproduction --check
     python -m scripts.testing.preproduction --scenario PP-EN-QUICK [--yes]
+    python -m scripts.testing.preproduction --create-ticket \
+        --ticket-subject "..." --ticket-body-file ./body.txt [--yes]
 
 The CLI never registers with the legacy /automation/test console. Relay
 credentials default to the Preproduction SSM parameters (agentrelay-base-url /
@@ -354,9 +356,62 @@ def _build_hermes_run_fetcher():
     return _fetch
 
 
+def _create_preproduction_ticket(engine, *, subject: str, body: str) -> dict:
+    """Create and bind one PP test ticket through the E3 transport contract.
+
+    The initial customer message must use ``ScenarioEngine.start_ticket`` so
+    the dedicated test mailbox, ``[zac test]`` subject tag, and Zendesk intake
+    path stay identical to E3.  This helper intentionally has no Zendesk API
+    or browser fallback; later customer turns may use the scenario's existing
+    transport rules after the ticket is bound.
+    """
+    from backend.services.automation_test_scenarios import (
+        AutomationTestScenarioError,
+        ScenarioContext,
+        ZENDESK_TICKET_URL,
+    )
+
+    if engine.processing_profile != "preproduction":
+        raise AutomationTestScenarioError(
+            "ticket creation requires processing_profile=preproduction"
+        )
+    if engine.db_schema != "supportportal_preproduction":
+        raise AutomationTestScenarioError(
+            "ticket creation requires TICKET_DB_SCHEMA=supportportal_preproduction"
+        )
+    if not str(subject or "").strip() or not str(body or "").strip():
+        raise AutomationTestScenarioError("ticket subject and body are required")
+
+    ctx = ScenarioContext("PP-CREATE-TICKET")
+    engine.start_ticket(ctx, str(subject).strip(), str(body).strip())
+    engine.find_case(ctx)
+    return {
+        "transport": "e3_smtp",
+        "processing_profile": engine.processing_profile,
+        "db_schema": engine.db_schema,
+        "sender": engine.sender,
+        "subject": ctx.subject,
+        "zendesk_ticket_id": ctx.zendesk_ticket_id,
+        "account_case_id": ctx.account_case_id,
+        "client_ticket_id": ctx.client_ticket_id,
+        "zendesk_ticket_url": f"{ZENDESK_TICKET_URL}/{ctx.zendesk_ticket_id}",
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--scenario", choices=sorted(_scenario_ids()))
+    parser.add_argument(
+        "--create-ticket",
+        action="store_true",
+        help="create one Preproduction test ticket through the E3 SMTP intake path",
+    )
+    parser.add_argument("--ticket-subject", help="initial test-ticket subject")
+    ticket_body = parser.add_mutually_exclusive_group()
+    ticket_body.add_argument("--ticket-body", help="initial test-ticket body")
+    ticket_body.add_argument(
+        "--ticket-body-file", help="read the initial test-ticket body from this UTF-8 file"
+    )
     parser.add_argument("--yes", action="store_true", help="skip the confirmation prompt")
     parser.add_argument("--check", action="store_true", help="preflight only; no ticket is created")
     parser.add_argument(
@@ -416,12 +471,54 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.create_ticket and args.scenario:
+        parser.error("--create-ticket cannot be combined with --scenario")
+    if args.create_ticket and args.check:
+        parser.error("--create-ticket cannot be combined with --check")
+    if args.create_ticket and not args.ticket_subject:
+        parser.error("--create-ticket requires --ticket-subject")
+    if args.create_ticket and not (args.ticket_body or args.ticket_body_file):
+        parser.error("--create-ticket requires --ticket-body or --ticket-body-file")
+    if not args.create_ticket and (args.ticket_subject or args.ticket_body or args.ticket_body_file):
+        parser.error("--ticket-* options require --create-ticket")
+
     load_env_into_process()
     _ensure_preprod_db_env()
     from backend.services.automation_test_scenarios import ScenarioEngine
 
-    if args.check or not args.scenario:
+    if args.check or (not args.scenario and not args.create_ticket):
         return run_check(args.scenario)
+
+    if args.create_ticket:
+        from scripts.testing.preproduction import scenarios as pp
+
+        body = args.ticket_body
+        if args.ticket_body_file:
+            try:
+                body = Path(args.ticket_body_file).read_text(encoding="utf-8")
+            except OSError as exc:
+                parser.error(f"cannot read --ticket-body-file: {exc}")
+        engine = ScenarioEngine.from_env()
+        engine.listener = _build_listener(log, app_id=pp.PP_APP_ID, email=engine.sender)
+        print(
+            "This will send one REAL initial email from "
+            f"{pp.redact_email(engine.sender)} and create one REAL Preproduction Zendesk "
+            "test ticket through the E3 SMTP intake path. No browser or Zendesk API "
+            "ticket creation is used."
+        )
+        if not args.yes:
+            if input("Continue? [yes/N] ").strip().lower() != "yes":
+                print("aborted.")
+                return 1
+        try:
+            report = _create_preproduction_ticket(
+                engine, subject=args.ticket_subject, body=body or ""
+            )
+        except Exception as exc:  # noqa: BLE001 - CLI reports a clean failure
+            log(f"ticket creation failed: {type(exc).__name__}: {exc}")
+            return 1
+        _print_redacted_json(pp.redact_report(report, app_id=pp.PP_APP_ID, email=engine.sender))
+        return 0
 
     from scripts.testing.preproduction import scenarios as pp
 
