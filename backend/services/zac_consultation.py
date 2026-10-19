@@ -40,9 +40,9 @@ class TeamAgentSettings:
             or parsed.fragment
             or not self.token
         ):
-            return "zac_agent_not_configured"
+            return "team_agent_not_configured"
         if self.model != "team-agent":
-            return "zac_agent_model_not_configured"
+            return "team_agent_model_not_configured"
         return None
 
 ZacSettings = TeamAgentSettings

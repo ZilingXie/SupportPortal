@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T06:31:28Z",
-  "source_base_commit": "5bfbd86a6564afc9f5d1c7aab0f4dfb2ad5184d1",
-  "registry_digest": "c1eb945142c9cdc1021fa6763da501bee2b36f63afd241b5ef8128d9dcb700a2",
+  "generated_at": "2026-10-19T07:00:58Z",
+  "source_base_commit": "326fa9bf8247828f6ebee122d1674399692588d7",
+  "registry_digest": "f3ebff54518f434de36b2ce1dce76a8d9ab6f4108d2077e78600de5e58f2aa94",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5360,7 +5360,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Investigation policy and Team Agent client",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "17 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, endpoint validation, SSE and HTTP failure compatibility"
+          "result": "20 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, Team Agent endpoint validation, /v1 normalization, SSE and HTTP failure compatibility"
         },
         {
           "type": "test",
@@ -5382,7 +5382,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Combined focused regression",
-          "result": "215 passed"
+          "result": "217 passed (20 policy/client + 107 deploy renderer + 90 Prompt/Agent)"
         },
         {
           "type": "decision",
@@ -18864,7 +18864,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Investigation policy and Team Agent client",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "17 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, endpoint validation, SSE and HTTP failure compatibility"
+          "result": "20 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, Team Agent endpoint validation, /v1 normalization, SSE and HTTP failure compatibility"
         },
         {
           "type": "test",
@@ -18886,7 +18886,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "Combined focused regression",
-          "result": "215 passed"
+          "result": "217 passed (20 policy/client + 107 deploy renderer + 90 Prompt/Agent)"
         },
         {
           "type": "decision",

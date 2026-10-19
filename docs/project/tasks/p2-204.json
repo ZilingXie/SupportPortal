@@ -31,7 +31,7 @@
       "type": "test",
       "label": "Investigation policy and Team Agent client",
       "path": "backend/tests/test_investigation_proactive_v1.py",
-      "result": "17 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, endpoint validation, SSE and HTTP failure compatibility"
+      "result": "20 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, Team Agent endpoint validation, /v1 normalization, SSE and HTTP failure compatibility"
     },
     {
       "type": "test",
@@ -53,7 +53,7 @@
     {
       "type": "test",
       "label": "Combined focused regression",
-      "result": "215 passed"
+      "result": "217 passed (20 policy/client + 107 deploy renderer + 90 Prompt/Agent)"
     },
     {
       "type": "decision",

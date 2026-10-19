@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 import json
 import urllib.error
+import pytest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -157,15 +158,16 @@ def test_zendesk_snapshot_end_user_role_triggers_today_but_agent_flag_does_not()
 
 def test_zac_settings_fail_closed_and_private_recovery_is_not_public():
     assert ZacSettings("https://zac", "secret", "team-agent").error() is None
-    assert ZacSettings("https://zac", "secret", "other").error() == "zac_agent_model_not_configured"
+    assert TeamAgentSettings("https://zac", "secret", "other").error() == "team_agent_model_not_configured"
+    assert ZacSettings("https://zac", "", "team-agent").error() == "team_agent_not_configured"
     assert public_investigation({"summary":"x", "_zac_user_id":"opaque"}) == {"summary":"x"}
 
 def test_team_agent_settings_and_endpoint_normalization():
     assert TeamAgentSettings("https://hermes.example/v1", "secret", "team-agent").error() is None
     assert TeamAgentSettings("http://hermes.preproduction.supportportal.local:8642", "secret", "team-agent").error() is None
-    assert TeamAgentSettings("https://hermes.example/v1?x=1", "secret", "team-agent").error() == "zac_agent_not_configured"
-    assert TeamAgentSettings("http://hermes.example", "secret", "team-agent").error() == "zac_agent_not_configured"
-    assert TeamAgentSettings("https://user:pass@hermes.example", "secret", "team-agent").error() == "zac_agent_not_configured"
+    assert TeamAgentSettings("https://hermes.example/v1?x=1", "secret", "team-agent").error() == "team_agent_not_configured"
+    assert TeamAgentSettings("http://hermes.example", "secret", "team-agent").error() == "team_agent_not_configured"
+    assert TeamAgentSettings("https://user:pass@hermes.example", "secret", "team-agent").error() == "team_agent_not_configured"
 
 def test_zac_completed_requires_response_completed():
     lines=[b"event: response.completed\n", b'data: {"response":{"metadata":{"conversation_id":"c1","conversation_status":"active"},"output":[{"content":[{"type":"output_text","text":"answer"}]}]}}\n', b"\n"]
@@ -177,7 +179,12 @@ def test_zac_stream_done_without_completed_is_unknown():
     assert result["state"] == "outcome_unknown"
 
 
-def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
+@pytest.mark.parametrize("base_url,expected_url", [
+    ("https://zac.example", "https://zac.example/v1/responses"),
+    ("https://zac.example/v1", "https://zac.example/v1/responses"),
+    ("http://hermes.preproduction.supportportal.local:8642", "http://hermes.preproduction.supportportal.local:8642/v1/responses"),
+])
+def test_team_agent_client_sends_bound_request_contract_and_reads_completed_sse(base_url, expected_url):
     seen = []
 
     class Response:
@@ -195,7 +202,7 @@ def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
         seen.append((request, timeout))
         return Response()
 
-    client = ZacClient(ZacSettings("https://zac.example", "token", "team-agent"), opener=opener, clock=lambda: 0)
+    client = TeamAgentClient(TeamAgentSettings(base_url, "token", "team-agent"), opener=opener, clock=lambda: 0)
     result = client.consult({
         "request_body": '{"model":"team-agent","input":"sanitized","stream":true}',
         "user_id": "user-opaque",
@@ -203,7 +210,7 @@ def test_zac_client_sends_bound_request_contract_and_reads_completed_sse():
     })
     assert result["state"] == "completed"
     request, _ = seen[0]
-    assert request.full_url == "https://zac.example/v1/responses"
+    assert request.full_url == expected_url
     assert request.get_header("Authorization") == "Bearer token"
     assert request.get_header("X-api-user-id") == "user-opaque"
     assert request.get_header("Idempotency-key") == "idem-1"
