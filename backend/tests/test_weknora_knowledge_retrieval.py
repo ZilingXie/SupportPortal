@@ -218,8 +218,6 @@ def test_agent_bridge_without_weknora_keeps_v1_behavior(monkeypatch) -> None:
 
 class _FailingWeKnora:
     def knowledge_search(self, *, query, top_k):
-        from backend.services.wknora_client import WeKnoraError
-
         raise WeKnoraError("boom", failure_kind="transport")
 
     def knowledge_read(self, *, object_id):
@@ -257,7 +255,6 @@ def test_real_entry_weknora_down_am_up_returns_fallback() -> None:
 
 def test_real_entry_both_down_returns_blocked() -> None:
     from backend.services.engineer_execute_agent import run_allowlisted_subagent
-    from backend.services.wknora_client import WeKnoraError
 
     class BrokenAM:
         def search_knowledge(self, query, *, top_k=None):
