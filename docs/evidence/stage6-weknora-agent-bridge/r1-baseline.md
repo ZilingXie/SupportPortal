@@ -130,7 +130,7 @@ Python 3.12（/opt/homebrew/bin/python3.12）
 - **B3 残留**：`_default_agent_memory_client()` 误调 `is_configured()`（真实方法=`configured()`，agent_memory_delivery.py:111）→异常被吞→默认 fallback 恒 None。已改 `configured()`；新增回归：①默认构造走 configured 门（is_configured 即抛 AssertionError 断错方法）；②真实入口不注入 agent_memory_client、仅环境默认构造+WeKnora transport 故障→`knowledge_agent_memory_fallback` 成功。
 - **B4 残留**：Review `_collect_weknora_evidence` 内联复制 readiness 判定→改为直接调用共享 `weknora_readback_is_ready`（hermes_knowledge_workflow.py:813）；新增 Review `agent_ready` 正反例回归（enabled=True；completed+disabled=False；缺 lifecycle 字段=False——Review 仍看全部冲突候选，ok 不受影响）。
 - **实测（-r1 工作树本机直跑）**：桥接全套 24 passed；受影响面（含 engineer_execute_agent/hermes_knowledge_workflow/standalone/stage3-5/AM delivery/dual_write/PG）**306 passed / 0 failed**（8 subtests）。
-- **版本锚点统一（本轮 HEAD=4938edd2）**：PR body、p2-197、本证据文档同步以此为准（此前 22fa1679/e84d3044 为历史轮锚点）。
+- **版本锚点统一（当前完整 HEAD=0514209e）**：PR body、p2-197、本证据文档同步以 0514209e 为准（=merge c547b504：行为 4938edd2 ⊕ main 301a39d8，+记录提交）；4938edd2/22fa1679/e84d3044/32a10aca/1bce9bb4 均为并入前历史轮锚点。
 
 
 ## 五轮：main 同步合并（2026-10-19，merge c547b504）
