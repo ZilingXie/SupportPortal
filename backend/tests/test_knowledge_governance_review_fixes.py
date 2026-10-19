@@ -722,9 +722,12 @@ class RecordingWeKnoraClient:
                 "version": stored["version"],
                 "title": stored["title"],
                 "content": stored["content"],
+                "parse_status": "completed",
+                "enable_status": "enabled",
             }
         return {"object_id": object_id, "version": "5", "title": "Existing",
-                "content": "existing content"}
+                "content": "existing content", "parse_status": "completed",
+                "enable_status": "enabled"}
 
     def knowledge_create(self, **kwargs) -> dict:
         self.calls.append(("knowledge_create", dict(kwargs)))

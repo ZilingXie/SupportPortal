@@ -113,6 +113,22 @@ def test_weknora_unavailable_falls_back_to_agent_memory(kind, status) -> None:
     assert entry["evidence"] == "am evidence"
 
 
+def test_malformed_per_hit_readback_falls_back_to_agent_memory() -> None:
+    """A search hit whose detail response is malformed is unavailable, not empty."""
+    am = FakeAgentMemory(result={"hits": [{"title": "AM doc", "excerpt": "fallback", "wiki_id": "w-2"}]})
+    out = retrieve_knowledge_evidence(
+        "q",
+        weknora_client=FakeWeKnora(
+            hits=[{"object_id": "doc-1"}],
+            reads={"doc-1": WeKnoraError("malformed", failure_kind="invalid_response")},
+        ),
+        agent_memory_client=am,
+    )
+    assert out["retrieval_source"] == RETRIEVAL_SOURCE_FALLBACK
+    assert out["results"][0]["evidence"] == "fallback"
+    assert "invalid_response" in out["fallback_reason"]
+
+
 def test_weknora_4xx_is_raised_not_hidden_as_fallback() -> None:
     error = WeKnoraError("nope", failure_kind="http", status_code=404)
     with pytest.raises(WeKnoraError):
@@ -165,7 +181,7 @@ def test_agent_bridge_consumes_weknora_evidence(monkeypatch) -> None:
         "backend.services.engineer_execute_agent._default_weknora_retrieval_client",
         lambda: FakeWeKnora(hits=[{"object_id": "doc-1"}], reads={"doc-1": READY_READ}),
     )
-    result = _agent({"question": "v2v subtitle loss"})
+    result = _agent_run({"question": "v2v subtitle loss"})
     assert result["status"] == "succeeded"
     kinds = [ref["kind"] for ref in result["evidence_refs"]]
     assert "knowledge_weknora" in kinds
@@ -181,7 +197,7 @@ def test_agent_bridge_escalation_blocks_with_missing_information(monkeypatch) ->
         "backend.services.engineer_execute_agent._default_weknora_retrieval_client",
         lambda: FakeWeKnora(search_error=error),
     )
-    result = _agent({"question": "q"})  # no fallback client -> escalate
+    result = _agent_run({"question": "q"})  # no fallback client -> escalate
     assert result["status"] == "blocked"
     assert any("escalated" in m for m in result["missing_information"])
 
@@ -191,7 +207,7 @@ def test_agent_bridge_without_weknora_keeps_v1_behavior(monkeypatch) -> None:
         "backend.services.engineer_execute_agent._default_weknora_retrieval_client",
         lambda: None,
     )
-    result = _agent({"rag_result": {"candidate_answer": "legacy", "sources": ["s1"]}})
+    result = _agent_run({"rag_result": {"candidate_answer": "legacy", "sources": ["s1"]}})
     assert result["status"] == "succeeded"
     kinds = [ref["kind"] for ref in result["evidence_refs"]]
     assert "rag_candidate" in kinds and "knowledge_weknora" not in kinds

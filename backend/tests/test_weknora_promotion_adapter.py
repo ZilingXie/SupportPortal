@@ -58,6 +58,8 @@ class FakeWeKnoraStore:
             "version": record["version"],
             "title": record["title"],
             "content": record["content"],
+            "parse_status": "completed",
+            "enable_status": "enabled",
         }
 
     def knowledge_create(self, *, title: str, content: str, idempotency_key: str, **kwargs) -> dict[str, Any]:
@@ -424,6 +426,8 @@ def test_completed_targeted_task_reconciles_before_base_version_check() -> None:
         "operation": "reconciled_existing",
         "object_id": "doc-7",
         "version": "6",
+        "lifecycle_at_ready": {"parse_status": "completed", "enable_status": "enabled"},
+        "readiness_attempts": 1,
     }
     # Reconciliation proved the earlier write landed: no second update.
     assert [name for name, _ in client.calls] == ["knowledge_read"]
@@ -475,6 +479,8 @@ def _tamper_read(client: FakeWeKnoraStore, transform) -> None:
             "version": record["version"],
             "title": record["title"],
             "content": record["content"],
+            "parse_status": "completed",
+            "enable_status": "enabled",
         }
         return transform(base)
 
@@ -540,6 +546,8 @@ def test_requeued_task_with_matching_object_reconciles_without_second_create() -
         "operation": "reconciled_existing",
         "object_id": "doc-1",
         "version": "101",
+        "lifecycle_at_ready": {"parse_status": "completed", "enable_status": "enabled"},
+        "readiness_attempts": 1,
     }
     # Reconciliation proved the earlier write landed: no write of any kind.
     assert [name for name, _ in client.calls] == ["knowledge_read"]
@@ -687,13 +695,19 @@ def _ready_task() -> dict:
 
 def test_adapter_passes_publish_status_to_write() -> None:
     client = _ReadinessClient([{"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
-                                 "parse_status": "pending", "enable_status": "disabled"}])
+                                 "parse_status": "pending", "enable_status": "disabled"},
+                                {"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
+                                 "parse_status": "processing", "enable_status": "disabled"},
+                                {"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
+                                 "parse_status": "completed", "enable_status": "enabled"}])
     adapter = WeKnoraPromotionAdapter(client)
     outcome = adapter.execute(_ready_task())
     assert client.write_status == ["publish"]
     assert outcome.status == "accepted"
     assert outcome.receipt["requested_status"] == "publish"
     assert outcome.receipt["lifecycle_at_accept"] == {"parse_status": "pending", "enable_status": "disabled"}
+    assert outcome.receipt["lifecycle_at_ready"] == {"parse_status": "completed", "enable_status": "enabled"}
+    assert outcome.receipt["readiness_attempts"] == 3
 
 
 def test_adapter_can_disable_publish() -> None:
@@ -701,6 +715,30 @@ def test_adapter_can_disable_publish() -> None:
     adapter = WeKnoraPromotionAdapter(client, publish_on_write=False)
     adapter.execute(_ready_task())
     assert client.write_status == [None]
+
+
+def test_adapter_readiness_timeout_is_outcome_unknown() -> None:
+    client = _ReadinessClient([
+        {"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
+         "parse_status": "pending", "enable_status": "disabled"},
+    ])
+    outcome = WeKnoraPromotionAdapter(
+        client, readiness_max_attempts=2, readiness_interval_seconds=0, readiness_sleep=lambda _: None
+    ).execute(_ready_task())
+    assert outcome.status == "outcome_unknown"
+    assert outcome.failure_code == "weknora_readiness_timeout"
+
+
+def test_adapter_parse_failure_is_failed() -> None:
+    client = _ReadinessClient([
+        {"object_id": "doc-1", "version": "1", "title": "Title", "content": "Body",
+         "parse_status": "failed", "enable_status": "disabled"},
+    ])
+    outcome = WeKnoraPromotionAdapter(
+        client, readiness_max_attempts=2, readiness_interval_seconds=0, readiness_sleep=lambda _: None
+    ).execute(_ready_task())
+    assert outcome.status == "failed"
+    assert outcome.failure_code == "weknora_parse_failed"
 
 
 def test_wait_until_ready_succeeds_after_pending() -> None:
@@ -746,6 +784,23 @@ def test_wait_until_ready_retries_transient_transport() -> None:
 
     result = weknora_wait_until_ready(FlakyClient(), "doc-1", interval_seconds=0, sleep=lambda s: None)
     assert result["ready"] is True
+
+
+def test_wait_until_ready_retries_transient_http_5xx() -> None:
+    class ServerFlakyClient(_ReadinessClient):
+        def __init__(self):
+            super().__init__([{"parse_status": "completed", "enable_status": "enabled", "version": "1"}])
+            self.server_errors = 1
+
+        def knowledge_read(self, *, object_id):
+            if self.server_errors > 0:
+                self.server_errors -= 1
+                raise WeKnoraError("server error", failure_kind="http", status_code=503)
+            return super().knowledge_read(object_id=object_id)
+
+    result = weknora_wait_until_ready(ServerFlakyClient(), "doc-1", interval_seconds=0, sleep=lambda s: None)
+    assert result["ready"] is True
+    assert result["attempts_used"] == 2
 
 
 def test_wait_until_ready_non_transient_error_raises_immediately() -> None:

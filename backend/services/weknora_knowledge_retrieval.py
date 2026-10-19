@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.services.wknora_client import (
+from backend.services.weknora_client import (
     WeKnoraClient,
     WeKnoraError,
     weknora_readback_is_ready,
@@ -93,9 +93,13 @@ def retrieve_knowledge_evidence(
             try:
                 read = weknora_client.knowledge_read(object_id=object_id)
             except WeKnoraError as exc:
-                if _weknora_unavailable(exc):
+                if _weknora_unavailable(exc) or exc.failure_kind == "invalid_response":
+                    # A malformed per-hit readback makes the WeKnora surface
+                    # unverifiable.  It is not evidence of a valid empty
+                    # result, so route the whole query through the migration
+                    # fallback (or human escalation).
                     raise
-                continue  # per-hit anomaly: skip, do not poison the answer
+                continue  # an absent/non-ready hit can be skipped safely
             if not weknora_readback_is_ready(read):
                 continue
             if not str(read.get("content") or "").strip():

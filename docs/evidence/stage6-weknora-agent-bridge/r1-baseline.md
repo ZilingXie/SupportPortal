@@ -68,7 +68,7 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 ## 合同 v5 + 适配器设计（步 2 实施蓝本）
 
 1. **合同 v5**（SSM weknora-api-contract-json 升 v5）：create/update body 增 `"status": {"$":"status"}` 语义绑定；read 增根级 `parse_status_key=data.parse_status`、`enable_status_key=data.enable_status` 显式提取。
-2. **适配器**（weknora_promotion_adapter）：delivery 写入带 status=publish（新计划方向取代 draft 保持）；新增有界 readiness 轮询（read→parse_status=completed∧enable_status=enabled，间隔+上限+超时=failed fail-closed）。
+2. **适配器**（weknora_promotion_adapter）：delivery 写入带 status=publish（新计划方向取代 draft 保持）；写后首次回读复用为轮询第 1 次，适配器实际调用有界 readiness 轮询（read→parse_status=completed∧enable_status=enabled），超时/传输故障为 outcome_unknown，明确解析失败为 failed，均 fail-closed。
 3. **统一检索服务**（新共享模块，Review 与 Agent 共用避免双实现漂移）：WeKnora hybrid-search（索引面=仅已发布对象，结构性满足 C3/C8）→ 逐 hit 按 ID readback → 严格结构校验（五层）→ 提取 object_id/metadata.version/metadata.lineage（source_type/source_id/candidate/promotion）→ 组装 evidence；`retrieval_source=weknora|agent_memory_fallback|escalate_human` 标记；Agent 侧入口=engineer_execute_agent.py internal_knowledge_search（现消费旧 rag_result）。
 4. 待实现时核实现行 main 的渲染器/运行时（并行线已新增第七开关 KNOWLEDGE_AI_EXECUTION_ENABLED——步 2 实现基于 5bfbd86a 重读，不沿用旧假设）。
 
@@ -81,8 +81,37 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 
 ## 步 2 完成状态与环境阻断（2026-10-19，HEAD 040bbd35）
 
-已实现并提交（全部内容经 git 提交保全）：B1 修复（status 未提供时省略字段不上 wire）；B2 wire 级回归 9 项（publish 携带/v4 无绑定 fail-closed 零外发/非法值拒绝/省略验证/read 回执 lifecycle 提取/readiness 九参数矩阵）；适配器 publish_on_write+requested_status+lifecycle_at_accept 回执+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval.py（C4-C8：ready 过滤/lineage 提取/降级仅限 transport+timeout+auth+5xx+malformed/空结果不降级/双侧不可用 escalate）+Agent 桥（run_internal_knowledge_search_subagent WeKnora 优先+escalate 转 blocked+无配置保持 v1 行为）+14 项检索/桥接测试。
+已实现并提交（全部内容经 git 提交保全）：B1 修复（status 未提供时省略字段不上 wire）；B2 wire 级回归 9 项（publish 携带/v4 无绑定 fail-closed 零外发/非法值拒绝/省略验证/read 回执 lifecycle 提取/readiness 九参数矩阵）；适配器 publish_on_write+requested_status+lifecycle_at_accept 回执+实际接线的 weknora_wait_until_ready 有界轮询（首次回读复用为 poll #1，超时/传输故障 outcome_unknown、parse failed 快败为 failed、5xx 瞬态重试）；共享检索服务 weknora_knowledge_retrieval.py（C4-C8：ready 过滤/lineage 提取/逐命中 malformed readback fallback/降级仅限 transport+timeout+auth+5xx+malformed/空结果不降级/双侧不可用 escalate）+Agent 桥（run_internal_knowledge_search_subagent WeKnora 优先+escalate 转 blocked+无配置保持 v1 行为）。
 
-**本地验证状态（如实）**：client 49 passed、adapter+worker+PG-skip 101 passed（损坏发生前实测）；检索服务+Agent 桥 14 项测试**因环境阻断未能本地运行**——.backend/services 目录出现 inode 级损坏（同进程 os.path.exists=False 而 listdir 可见；跨两个全新 git worktree 路径复现；仅命中本会话新写文件名；hermes_weknora 等既有文件正常）。git 读写全程正常（提交/diff/checkout），内容完整性由 040bbd35 保全。判定为本机 Desktop/iCloud 文件系统层异常，非代码缺陷（同解释器同目录 hermes_weknora 可导入）。
+**初次提交的验证状态（历史记录）**：client 49 passed、adapter+worker+PG-skip 101 passed；检索服务+Agent 桥 14 项测试当时因 Desktop/iCloud 路径的 inode 级文件系统异常未能收集。内容由 040bbd35 保全；该环境阻断已在本轮健康工作树中解除并复跑，当前结果见下方修复轮记录。
 
-**待续**：在健康环境（重启后/非 Desktop 路径 worktree）复跑 14 项检索/桥接测试+全套知识面回归 → 更新 p2-197 登记 → 新完整 HEAD 提交独立验收。验收门保持：不 finalize 不部署不重投业务样本。Terraform exit-2（task def 指针滞后）持续作为披露限制，步 5 前重处理。
+**修复后状态（2026-10-19）**：F1 模块导入、F2 逐命中 malformed readback fallback、F3 适配器 readiness 接线均已修复；新增回归与知识面全套已在本机健康工作树用 Python 3.13/3.12 各复跑通过。完整命令和结果见下节。独立验收门仍保持：不 finalize、不部署、不重投业务样本。Terraform exit-2（task definition 指针滞后）仍是正式部署前的运行证据限制。
+
+
+## 修复轮：独立验收阻断 F1–F3（2026-10-19）
+
+| Finding | 分类 | 修复与可观察合同 | 关闭证据 |
+|---|---|---|---|
+| F1 共享检索模块导入 `wknora_client` 不存在 | implementation | 改为现有 `weknora_client`，Agent 真实入口可收集并执行 | 检索/Agent 测试收集通过 |
+| F2 单个 hit 的 `invalid_response` 被吞成合法空结果 | implementation | 逐命中畸形回读提升为 WeKnora 不可用，进入 AgentMemory fallback；无 fallback 时人工升级 | `test_malformed_per_hit_readback_falls_back_to_agent_memory` |
+| F3 readiness helper 未接入写入适配器 | implementation | knowledge publish 写入完成首次回读后调用有界 readiness；首次回读作为 poll #1；`completed+enabled` 才 accepted；timeout/transport/5xx 为 `outcome_unknown`，parse failed 为 `failed`；已知对象重试同样守卫 | 适配器 readiness 成功/超时/解析失败、重试与 5xx 瞬态回归 |
+| F4 关键测试此前未执行 | evidence-gap/test-carrier | 修复测试载体后在健康工作树、两解释器、隔离 PostgreSQL 复跑 | 下方两次完整命令 |
+
+### 本轮实际验证
+
+```text
+Python 3.13（/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python）
+RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q
+  25 个阶段 6/知识面文件（含 test_weknora_knowledge_retrieval.py 与
+  test_weknora_promotion_adapter.py）
+结果：581 passed / 0 failed / 8 subtests passed，62.98s
+
+Python 3.12（/opt/homebrew/bin/python3.12）
+同一 25 文件命令与隔离 PostgreSQL
+结果：581 passed / 0 failed / 8 subtests passed，80.11s
+
+定向修复集合（5 个工作流/适配器/检索文件）：125 passed / 0 failed。
+静态：git diff --check 通过；未改 n8n、未部署、未重投业务样本。
+```
+
+本轮提交前的代码验证不释放独立验收门；下一步是以新完整 HEAD 提交增量独立验收。部署前仍需重新冻结实时基线并重新处理 Terraform task definition 指针差异。

@@ -906,10 +906,15 @@ class FakeWeKnoraWriteClient:
 
     def knowledge_read(self, *, object_id: str) -> dict:
         self.calls.append(("knowledge_read", {"object_id": object_id}))
-        return dict(self.objects[object_id])
+        return {
+            **self.objects[object_id],
+            "parse_status": "completed",
+            "enable_status": "enabled",
+        }
 
     def knowledge_create(
-        self, *, title: str, content: str, idempotency_key: str, metadata: dict | None = None
+        self, *, title: str, content: str, idempotency_key: str,
+        metadata: dict | None = None, status: str | None = None,
     ) -> dict:
         self.calls.append((
             "knowledge_create",
@@ -923,7 +928,7 @@ class FakeWeKnoraWriteClient:
 
     def knowledge_update(
         self, *, object_id: str, base_version: str, title: str, content: str,
-        idempotency_key: str, metadata: dict | None = None,
+        idempotency_key: str, metadata: dict | None = None, status: str | None = None,
     ) -> dict:
         self.calls.append((
             "knowledge_update",

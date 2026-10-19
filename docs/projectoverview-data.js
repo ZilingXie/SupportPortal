@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T04:09:40Z",
-  "source_base_commit": "27fd4e5a59d36ac95b1e3179ac787b83ea5a43f8",
-  "registry_digest": "4d31784facf44b2538b298f85e6eac371ef7a092b2461f8e3ccfbe1ae562578b",
+  "generated_at": "2026-10-19T07:12:58Z",
+  "source_base_commit": "4607753f5ae44292885878fc8d3da71077c48efb",
+  "registry_digest": "a6c1b4efbdd9fd299177229ec94e43c4116ba87c9f989b34bd243b9896737a35",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6074,6 +6074,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "I1 main 0124173b 集成（待增量复验）",
           "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
           "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 修复轮 F1-F4：检索、Agent、写入 readiness 与全套复跑",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q（25 个阶段 6/知识面文件，详见 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md）；Python 3.13 与 /opt/homebrew/bin/python3.12 各执行一次",
+          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 581 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md"
         }
       ],
       "source_refs": [
@@ -18358,9 +18364,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-13",
-      "summary": "I1 集成修复完成待增量复验：独立报告已关闭 F1-F6；同步 main 0124173b，唯一 Overview 冲突由合并源重生成，双方登记/Prompt 日志保留；76 项 F5/F6 + 213 项含隔离 PG 集成回归通过。未部署/未在线写入。F5/F6 本地修复完成，待同 Draft PR #1490 独立复验：前轮 HEAD 266e7209 验收未通过，F1-F4 核心证据保留；修复两链 SHA padding 与完整 Build 边界回归，六历史快照恢复原文，新增无远端版本 ID 的未发布候选及内部身份校验。未在线发布/未重投。当前修订 r4-stage6-repair-A（2026-10-13）：层 2 发布独立验收未通过，用户授权三项修复并选择 A：native typed disabled；知识生产就绪与旧 Case mode 解耦；新增默认关闭 KNOWLEDGE_AI_EXECUTION_ENABLED，层 2 pending、层 3 AI。原独立验收/人工 Slack Review/全量停点保留。F1 沿用 main engine 显式/降级门禁并补知识发布共享配置差异门；F2 buildx/digest 失败立即停止、新 immutable release suffix 与严格 resume；F3 生产和消费独立门。旧阶段历史：计划名称：WeKnora 并行双写与人工治理链（阶段二），修订 r3-stage6-deploy。基线 main 含 c4f71c50。授权=用户方案 A（2026-10-12）+ r3 十步计划（人工停点仅步 8 受控 Slack 样本与步 10 观察后全量；技术前置验收与首次全关闭部署可按序推进）。已完成：步 1 基线冻结+方案 A allowlist（PR#1478）+PR#1481 CloudWatch 门禁 scoping（c4f71c50）。步 2 代码完成（待独立验收）：（a）WeKnora 客户端合同 v4 实弹验证——合同根级 results_key=object_id_key=data.id、version/content_key=data.metadata.*、knowledge_read 改单条 GET /api/v1/knowledge/{object_id}、knowledge_update 改 PUT /api/v1/knowledge/manual/{object_id}+conditional_update=true、create/update body 钉 idempotency_key/base_version/metadata 语义绑定（fork 的 SupportPortal governance write contract 原生支持）；实弹 15/16 过（health/search 2 hits/lineage 持久化/幂等重放同 id/version 1→2/412 conflict 拒绝陈旧 base_version/读回内容标题 lineage 全对），唯一未过=search 找不到新建条目=fork 对 draft（EnableStatus disabled）不索引，属预期（publish 会触发 fork 侧 embedding/summary 模型消耗，全量期再决策）。（b）SSM 四参数就绪：weknora-base-url/api-token(SecureString)/knowledge-base-id(008d2bab 测试库)/api-contract-json v4（回读一致）。（c）发布渲染器分阶段入口：--knowledge-stage-config（master+六开关+source_allowlist；默认全关；未知键/非 0|1 字符串/死 allowlist 条目/master 关+子开关开/delivery|slack 开而 worker 关=渲染时拒绝；Preproduction 专用；与 --knowledge-source-allowlist 互斥）；配置进入 pipeline checkpoint identity.mode.knowledge_stage（开关变化=新 release）+状态目录自包含副本；部署脚本渲染后与激活前双点 verify-knowledge-stage-config；Worker 渲染 WeKnora 客户端 7 个 SSM 引用+X-API-Key/空 scheme，MEMORY_IDENTITY 与 WEKNORA_PROMOTION_ENABLED=1 自动剔除，重复渲染幂等。专项新增 30 项（loader 矩阵/双路径渲染/verify 漂移/管线 identity/壳脚本布线），知识面 21 套件 575 passed/0 failed 含隔离 PG。步 2 独立验收发现 B1（七 WeKnora SSM 引用仅校验存在性、旧 WEKNORA_MEMORY_IDENTITY 未拒环境变量形式）→B1 修复完成（5937c9e7：逐引用精确 valueFrom 全路径比对+非规范引用拒绝+identity 双形式拒绝+三项回归）。v2-A 计划收到：步 9 受控样本保持 draft（hybrid search 延后步 10）为已定产品选择。待执行：步 2 独立复验→合入→步 3 重新冻结发布基线→步 4-7 全关闭部署→步 8 n8n→步 9 关闭态/人工 Review→步 10 A 方案受控样本（draft）→步 11 观察窗口后再确认全量。",
-      "next_action": "同 PR #1490 新 HEAD 增量复验 I1 集成差异与 GitHub MERGEABLE 回读；F1-F6 保留关闭，门禁尚未释放。通过后才按原授权推进。",
+      "updated_at": "2026-10-19",
+      "summary": "阶段 6 WeKnora-Agent bridge 步 0/1 完成，步 2 修复轮完成待独立验收：HEAD 仍在 codex/stage6-weknora-agent-bridge，F1 模块导入、F2 畸形逐命中回读降级、F3 写入适配器 readiness 接线已修复；WeKnora 主检索、AgentMemory 迁移期 fallback、双侧不可用人工升级合同已实现。Python 3.13/3.12 同一 25 文件集合各 581 passed，含隔离 PostgreSQL；定向修复集合 125 passed。未 finalize、未部署、未重投业务样本；Terraform task definition 指针差异仍待正式部署前处理。",
+      "next_action": "以当前完整 HEAD 提交步 2 修复后的独立增量验收：复核 F1-F3 diff、readiness 状态映射、malformed hit fallback、两解释器与隔离 PG 证据；通过后才重新冻结发布基线并继续 Preproduction，验收门未释放。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18372,7 +18378,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C7 双目标独立成功失败重试回读",
         "C8 超时/重复/重启/版本冲突 fail-closed",
         "C9 页面只读可显异常",
-        "C10 Hermes 继续用 AgentMemory",
+        "C10 WeKnora 为调查 Agent 主检索；WeKnora 不可用时仅 fallback AgentMemory；两侧不可用则人工介入",
         "C11 全量期无重复写入/旧版本覆盖/审计缺失"
       ],
       "blockers": [],
@@ -18460,6 +18466,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "I1 main 0124173b 集成（待增量复验）",
           "command": "F5/F6 两套 + native/知识八套隔离 PG；完整命令见 stage6-layer2-repair-A.md",
           "result": "76 passed；集成 213 passed/0 failed/0 skipped/4 subtests；唯一 Overview 冲突从合并登记重生成，双方 Prompt 日志保留；F1-F6 核心 diff 为空。未部署/未重投。"
+        },
+        {
+          "type": "test",
+          "label": "步 2 修复轮 F1-F4：检索、Agent、写入 readiness 与全套复跑",
+          "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql://xieziling@/postgres pytest -q（25 个阶段 6/知识面文件，详见 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md）；Python 3.13 与 /opt/homebrew/bin/python3.12 各执行一次",
+          "result": "F1 模块导入、逐命中 invalid_response fallback、publish 写后有界 readiness（含已知对象重试）已修复；两解释器各 581 passed / 0 failed / 8 subtests passed，定向修复集合 125 passed；仅代码与离线验证，独立验收门仍未释放。证据 docs/evidence/stage6-weknora-agent-bridge/r1-baseline.md"
         }
       ]
     },
