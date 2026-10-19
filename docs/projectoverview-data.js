@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T02:15:35Z",
-  "source_base_commit": "d872144a94e99b35692ad8ef969fa757708e029c",
-  "registry_digest": "c5f98084afe58994cbeed48c159b6a676b6d2ed71d642c70fd3e49f8af29f43f",
+  "generated_at": "2026-10-19T04:09:40Z",
+  "source_base_commit": "27fd4e5a59d36ac95b1e3179ac787b83ea5a43f8",
+  "registry_digest": "4d31784facf44b2538b298f85e6eac371ef7a092b2461f8e3ccfbe1ae562578b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5372,6 +5372,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Python 3.11 compatibility",
           "result": "compileall and import of Zac, investigation policy and Hermes prompt modules passed with python3.11"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release",
+          "release_id": "r20261019-15f3602-argus-zac-r1",
+          "source_commit": "15f3602cfe805b381a6c56f7644270747be498dd",
+          "prompt_release_id": "pr-88298d4e0a3f",
+          "components": {
+            "api": "sha256:2388e4fa814d4cb8cee105519bdc8ef7f0d8ea4fe2832d783ab10974da8b4924",
+            "route": "sha256:11fb8e8b4b3d0e850f8c2f726470d46242b3e4f6d122df04ea2e7ea6fe3d2c2e",
+            "worker": "sha256:f8d474d9b87235954d9d1ee17136b36546f06b6838a6304bd56ccbe6d078c627"
+          },
+          "result": "complete; provider_probe, public_health, CloudWatch, Target Health, Terraform zero-drift and prompt activation passed",
+          "evidence_path": ".deployments/ecs-pipeline-r20261019-15f3602-argus-zac-r1/preproduction-deploy/evidence.json"
+        },
+        {
+          "type": "decision",
+          "label": "真实业务样本",
+          "result": "waiting-for-evidence; 未重放 #14089，未发送真实客户、Slack/Zendesk/Argus/Zac 消息"
         }
       ],
       "source_refs": [
@@ -18819,7 +18838,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation Argus 相对日期与 Zac 咨询修复",
       "summary": "R1：修复 Zac Python 3.11 兼容性与 HTTP 500 失败语义；客户当前回合说 today/今天时生成 Asia/Shanghai 服务默认时区的当天有界 Argus 查询窗口。",
       "status": "active",
-      "next_action": "提交独立代码验收；验收通过后再按授权发布 Preproduction 并做技术回读。",
+      "next_action": "代码验收通过，Preproduction 技术发布与回读完成；提交指定线程复审，真实业务样本保持 waiting-for-evidence。",
       "owner": "codex",
       "created_at": "2026-10-19",
       "updated_at": "2026-10-19",
@@ -18830,8 +18849,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "不重放 #14089，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
       ],
       "blockers": [
-        "独立代码验收尚未完成。",
-        "真实业务样本未授权，Preproduction 技术发布待代码验收通过后执行。"
+        "真实业务样本未授权；真实 Argus/Zac 查询、客户/Slack/Zendesk 消息和 #14089 重放保持未执行。"
       ],
       "evidence": [
         {
@@ -18855,6 +18873,25 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Python 3.11 compatibility",
           "result": "compileall and import of Zac, investigation policy and Hermes prompt modules passed with python3.11"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction release",
+          "release_id": "r20261019-15f3602-argus-zac-r1",
+          "source_commit": "15f3602cfe805b381a6c56f7644270747be498dd",
+          "prompt_release_id": "pr-88298d4e0a3f",
+          "components": {
+            "api": "sha256:2388e4fa814d4cb8cee105519bdc8ef7f0d8ea4fe2832d783ab10974da8b4924",
+            "route": "sha256:11fb8e8b4b3d0e850f8c2f726470d46242b3e4f6d122df04ea2e7ea6fe3d2c2e",
+            "worker": "sha256:f8d474d9b87235954d9d1ee17136b36546f06b6838a6304bd56ccbe6d078c627"
+          },
+          "result": "complete; provider_probe, public_health, CloudWatch, Target Health, Terraform zero-drift and prompt activation passed",
+          "evidence_path": ".deployments/ecs-pipeline-r20261019-15f3602-argus-zac-r1/preproduction-deploy/evidence.json"
+        },
+        {
+          "type": "decision",
+          "label": "真实业务样本",
+          "result": "waiting-for-evidence; 未重放 #14089，未发送真实客户、Slack/Zendesk/Argus/Zac 消息"
         }
       ],
       "source_refs": [
