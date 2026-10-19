@@ -4,69 +4,73 @@
   "phase_id": "phase-2",
   "module_id": "engineer-workspace",
   "function_id": "engineer-investigation-reply",
-  "title": "Investigation Argus 相对日期与 Zac 咨询修复",
-  "summary": "R1：修复 Zac Python 3.11 兼容性与 HTTP 500 失败语义；客户当前回合说 today/今天时生成 Asia/Shanghai 服务默认时区的当天有界 Argus 查询窗口。",
+  "title": "Investigation 首条时间窗口与 Team Agent 咨询修复",
+  "summary": "R2：首条 ticket.created 正文 today/今天进入有界相对日期窗口；工程咨询统一为 API 侧 Team Agent，复用 Hermes endpoint，保留 Zac wire/storage 兼容。",
   "status": "active",
-  "next_action": "代码验收通过，Preproduction 技术发布与回读完成；提交指定线程复审，真实业务样本保持 waiting-for-evidence。",
+  "next_action": "提交独立代码验收；验收通过后按授权发布 Preproduction 并做技术回读。",
   "owner": "codex",
   "created_at": "2026-10-19",
   "updated_at": "2026-10-19",
   "acceptance_criteria": [
-    "Zac 模块在 Python 3.11 可编译、导入；HTTP 500 返回 zac_http_500 failed，不误报 outcome_unknown 或 completed/handoff。",
-    "当前 turn 最新客户消息包含 today/今天时，policy 输出 relative_date_window，使用 Asia/Shanghai 服务默认时区从当天零点到当前 turn 时间。",
-    "Prompt 要求优先执行定向窗口，原候选关联、截断、空结果和最多三次查询边界保持不变。",
-    "不重放 #14089，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
+    "首条 ticket.created 且无客户 comment/trigger_comment_id 时，ticket.description 中中英文 today/今天生成 Asia/Shanghai 当天窗口；当前 comment 优先，代理/历史消息不触发。",
+    "Team Agent settings/env 使用现有 Hermes endpoint，endpoint 规范化与 fail-closed、SSE completed/failed/unknown/in-flight 语义保持不变；Zac wire/storage alias 兼容。",
+    "Team Agent secret/env 仅注入 API，Route/Worker 不注入，模型固定 team-agent；不改变 route、fixed task、Investigation 审核、draft、Slack 或 close 语义。",
+    "不重放 #14122，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
   ],
   "blockers": [
-    "真实业务样本未授权；真实 Argus/Zac 查询、客户/Slack/Zendesk 消息和 #14089 重放保持未执行。"
+    "独立 R2 代码验收尚未完成。",
+    "真实业务样本未授权；真实 Argus/Team Agent 查询、客户/Slack/Zendesk 消息和 #14122 重放保持未执行。"
   ],
   "evidence": [
     {
       "type": "document",
-      "label": "R1 plan and evidence ledger",
-      "path": "docs/plans/investigation-argus-zac-r1.md"
+      "label": "R2 plan and evidence ledger",
+      "path": "docs/plans/investigation-argus-team-agent-r2.md"
     },
     {
       "type": "test",
-      "label": "Zac and relative-date investigation entry tests",
+      "label": "Investigation policy and Team Agent client",
       "path": "backend/tests/test_investigation_proactive_v1.py",
-      "result": "13 passed in project .venv"
+      "result": "17 passed in project .venv; initial description Chinese/English, current-comment priority, historical/agent exclusion, endpoint validation, SSE and HTTP failure compatibility"
     },
     {
       "type": "test",
-      "label": "Prompt/Agent focused regression",
+      "label": "ECS renderer and API-only Team Agent credentials",
+      "path": "backend/tests/test_automation_ecs_deploy.py",
+      "result": "107 passed in project .venv; Team Agent secrets/model only API, Route/Worker excluded"
+    },
+    {
+      "type": "test",
+      "label": "Prompt/Agent regression",
       "path": "backend/tests/test_prompt_modules.py; backend/tests/test_hermes_zendesk_agent.py",
-      "result": "18 passed, 72 deselected"
+      "result": "90 passed"
     },
     {
       "type": "test",
-      "label": "Python 3.11 compatibility",
-      "result": "compileall and import of Zac, investigation policy and Hermes prompt modules passed with python3.11"
+      "label": "Python compatibility",
+      "result": "backend compileall and git diff --check passed"
     },
     {
-      "type": "deployment",
-      "label": "Preproduction release",
-      "release_id": "r20261019-15f3602-argus-zac-r1",
-      "source_commit": "15f3602cfe805b381a6c56f7644270747be498dd",
-      "prompt_release_id": "pr-88298d4e0a3f",
-      "components": {
-        "api": "sha256:2388e4fa814d4cb8cee105519bdc8ef7f0d8ea4fe2832d783ab10974da8b4924",
-        "route": "sha256:11fb8e8b4b3d0e850f8c2f726470d46242b3e4f6d122df04ea2e7ea6fe3d2c2e",
-        "worker": "sha256:f8d474d9b87235954d9d1ee17136b36546f06b6838a6304bd56ccbe6d078c627"
-      },
-      "result": "complete; provider_probe, public_health, CloudWatch, Target Health, Terraform zero-drift and prompt activation passed",
-      "evidence_path": ".deployments/ecs-pipeline-r20261019-15f3602-argus-zac-r1/preproduction-deploy/evidence.json"
+      "type": "test",
+      "label": "Combined focused regression",
+      "result": "215 passed"
+    },
+    {
+      "type": "decision",
+      "label": "PostgreSQL专项",
+      "result": "尚未执行；需隔离 PostgreSQL 环境，未将 skipped 计为通过。"
     },
     {
       "type": "decision",
       "label": "真实业务样本",
-      "result": "waiting-for-evidence; 未重放 #14089，未发送真实客户、Slack/Zendesk/Argus/Zac 消息"
+      "result": "waiting-for-evidence; 未重放 #14122，未发送真实客户、Slack/Zendesk/Argus/Team Agent 消息"
     }
   ],
   "source_refs": [
-    "docs/plans/investigation-argus-zac-r1.md",
-    "backend/services/zac_consultation.py",
+    "docs/plans/investigation-argus-team-agent-r2.md",
     "backend/services/investigation_runtime_policy.py",
+    "backend/services/zac_consultation.py",
+    "backend/scripts/automation_ecs_deploy.py",
     "backend/services/prompts/hermes_support_agent.py"
   ]
 }

@@ -261,7 +261,7 @@ For video discoloration separately evaluate send/encoding, network/receive,
 decode/render and evidence limits. Normal bitrate/FPS/render statistics cannot
 prove correct pixel color or locate the discoloration cause.
 
-If engineering knowledge is needed, identify product with evidence, perform
+If Team Agent engineering consultation is needed, identify product with evidence, perform
 available investigation (or state a concrete capability gap), and formulate a
 specific question. Read hermes-zac-engineering-handoff and use ONLY
 support_zac_consult; backend owns credentials, request identity and recovery.

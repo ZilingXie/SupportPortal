@@ -7,28 +7,45 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from typing import Any
 
+_INTERNAL_TEAM_AGENT_HOST = "hermes.preproduction.supportportal.local"
+
 
 @dataclass(frozen=True)
-class ZacSettings:
+class TeamAgentSettings:
     base_url: str
     token: str
     model: str
 
     @classmethod
-    def from_env(cls) -> "ZacSettings":
-        return cls(str(os.getenv("ZAC_AGENT_BASE_URL") or "").rstrip("/"),
-                   str(os.getenv("ZAC_AGENT_REST_TOKEN") or ""),
-                   str(os.getenv("ZAC_AGENT_MODEL") or ""))
+    def from_env(cls) -> "TeamAgentSettings":
+        return cls(str(os.getenv("TEAM_AGENT_BASE_URL") or os.getenv("ZAC_AGENT_BASE_URL") or "").rstrip("/"),
+                   str(os.getenv("TEAM_AGENT_REST_TOKEN") or os.getenv("ZAC_AGENT_REST_TOKEN") or ""),
+                   str(os.getenv("TEAM_AGENT_MODEL") or os.getenv("ZAC_AGENT_MODEL") or ""))
 
     def error(self) -> str | None:
-        if not self.base_url.startswith("https://") or not self.token:
+        parsed = urlsplit(self.base_url)
+        if (
+            not (
+                parsed.scheme == "https"
+                or (parsed.scheme == "http" and parsed.hostname == _INTERNAL_TEAM_AGENT_HOST)
+            )
+            or not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
+            or not self.token
+        ):
             return "zac_agent_not_configured"
         if self.model != "team-agent":
             return "zac_agent_model_not_configured"
         return None
+
+ZacSettings = TeamAgentSettings
 
 
 def public_result(record: dict[str, Any]) -> dict[str, Any]:
@@ -72,9 +89,9 @@ def read_terminal(response: Any, *, deadline: float, clock=time.monotonic) -> di
     return {"state": "outcome_unknown", "code": "zac_stream_incomplete"}
 
 
-class ZacClient:
-    def __init__(self, settings: ZacSettings | None = None, *, opener=urllib.request.urlopen, clock=time.monotonic):
-        self.settings = settings or ZacSettings.from_env()
+class TeamAgentClient:
+    def __init__(self, settings: TeamAgentSettings | None = None, *, opener=urllib.request.urlopen, clock=time.monotonic):
+        self.settings = settings or TeamAgentSettings.from_env()
         self.opener, self.clock = opener, clock
 
     def consult(self, record: dict[str, Any]) -> dict[str, Any]:
@@ -83,7 +100,10 @@ class ZacClient:
             remaining = deadline - self.clock()
             if remaining <= 0:
                 break
-            request = urllib.request.Request(self.settings.base_url + "/v1/responses",
+            base_url = self.settings.base_url.rstrip("/")
+            if base_url.endswith("/v1"):
+                base_url = base_url[:-3].rstrip("/")
+            request = urllib.request.Request(base_url + "/v1/responses",
                 data=record["request_body"].encode(), method="POST", headers={
                     "Authorization": "Bearer " + self.settings.token,
                     "Content-Type": "application/json", "Accept": "text/event-stream",
@@ -104,3 +124,5 @@ class ZacClient:
             if result["state"] != "outcome_unknown":
                 return {**result, "attempts": attempt}
         return {"state": "outcome_unknown", "code": "zac_outcome_unknown", "attempts": attempt}
+
+ZacClient = TeamAgentClient
