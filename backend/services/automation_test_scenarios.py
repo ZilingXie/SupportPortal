@@ -253,6 +253,12 @@ class AutomationTestScenarioError(RuntimeError):
     """Raised when the scenario engine is unusable (bad/missing config)."""
 
 
+class ScenarioDatabaseConnectivityError(AutomationTestScenarioError):
+    """Raised after the bounded database connectivity budget is exhausted."""
+
+    failure_kind = "database_connectivity"
+
+
 class ScenarioCancelled(Exception):
     """Raised inside run_scenario when the caller requested cancellation."""
 
@@ -312,6 +318,10 @@ class ScenarioContext:
 
 
 class ScenarioEngine:
+    DB_CONNECT_ATTEMPTS = 3
+    DB_CONNECT_RETRY_DELAY_SECONDS = 1.0
+    DB_POLL_FAILURE_LIMIT = 3
+
     def __init__(
         self,
         *,
@@ -353,6 +363,7 @@ class ScenarioEngine:
         self.listener = listener
         self.should_cancel = should_cancel or (lambda: False)
         self.steps: list[ScenarioStep] = []
+        self.last_ticket_id = ""
 
     # -- construction ----------------------------------------------------
 
@@ -437,6 +448,8 @@ class ScenarioEngine:
     # -- observability -----------------------------------------------------
 
     def emit(self, kind: str, data: dict[str, Any]) -> None:
+        if kind == "ticket_linked":
+            self.last_ticket_id = str(data.get("zendesk_ticket_id") or "")
         if self.listener is not None:
             self.listener(kind, data)
 
@@ -459,15 +472,26 @@ class ScenarioEngine:
         time.sleep(seconds)
 
     def db_query(self, sql: str, params: tuple) -> list[dict]:
-        with psycopg.connect(
-            self.db_dsn,
-            connect_timeout=10,
-            options=f"-c search_path={self.db_schema},public",
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, params)
-                names = [item.name for item in cursor.description]
-                return [dict(zip(names, row)) for row in cursor.fetchall()]
+        last_error: Exception | None = None
+        for attempt in range(1, self.DB_CONNECT_ATTEMPTS + 1):
+            try:
+                with psycopg.connect(
+                    self.db_dsn,
+                    connect_timeout=10,
+                    options=f"-c search_path={self.db_schema},public",
+                ) as connection:
+                    with connection.cursor() as cursor:
+                        cursor.execute(sql, params)
+                        names = [item.name for item in cursor.description]
+                        return [dict(zip(names, row)) for row in cursor.fetchall()]
+            except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+                last_error = exc
+                if attempt < self.DB_CONNECT_ATTEMPTS:
+                    self.sleep(self.DB_CONNECT_RETRY_DELAY_SECONDS * attempt)
+        assert last_error is not None
+        raise ScenarioDatabaseConnectivityError(
+            f"database connection failed after {self.DB_CONNECT_ATTEMPTS} attempts: {last_error}"
+        ) from last_error
 
     def send_email(
         self, subject: str, body: str, to_address: str, headers: dict[str, str] | None = None
@@ -552,6 +576,7 @@ class ScenarioEngine:
         deadline = time.monotonic() + timeout_seconds
         last_error = ""
         attempt = 0
+        transport_failures = 0
         while time.monotonic() < deadline:
             if self.should_cancel():
                 raise ScenarioCancelled(description)
@@ -561,7 +586,20 @@ class ScenarioEngine:
                 if value is not None:
                     return value
                 last_error = ""
+                transport_failures = 0
             except ScenarioCancelled:
+                raise
+            except ScenarioDatabaseConnectivityError as exc:
+                transport_failures += 1
+                last_error = str(exc)
+                if transport_failures >= self.DB_POLL_FAILURE_LIMIT:
+                    raise ScenarioDatabaseConnectivityError(
+                        f"database connectivity unavailable while waiting for {description} "
+                        f"after {transport_failures} poll failures: {exc}"
+                    ) from exc
+            except psycopg.Error:
+                # SQL/schema/authentication errors are deterministic and must
+                # not be hidden behind a polling timeout.
                 raise
             except Exception as exc:  # noqa: BLE001 - keep polling on transient errors
                 last_error = f"{type(exc).__name__}: {exc}"

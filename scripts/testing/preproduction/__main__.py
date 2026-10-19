@@ -590,11 +590,23 @@ def main() -> int:
             "app_id": pp.redact_app_id(pp.PP_APP_ID),
             "sender": pp.redact_email(engine.sender),
         }
+    except KeyboardInterrupt:
+        log(f"scenario {args.scenario} interrupted by operator")
+        report = {
+            "scenario": args.scenario,
+            "aborted": "operator interrupted",
+            "failure_kind": "operator_interrupt",
+            "ticket_id": getattr(engine, "last_ticket_id", ""),
+            "steps": [step.as_dict() for step in engine.steps],
+        }
+        exit_code = 130
     except Exception as exc:  # noqa: BLE001 - report and fail with the matrix
         log(f"scenario {args.scenario} aborted: {pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400]}")
         report = {
             "scenario": args.scenario,
             "aborted": pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400],
+            "failure_kind": getattr(exc, "failure_kind", "scenario"),
+            "ticket_id": getattr(engine, "last_ticket_id", ""),
             "steps": [step.as_dict() for step in engine.steps],
         }
         exit_code = 2
