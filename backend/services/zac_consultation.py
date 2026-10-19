@@ -91,8 +91,9 @@ class ZacClient:
                 })
             try:
                 with self.opener(request, timeout=min(45, remaining)) as response:
-                    if getattr(response, "status", 200) != 200:
-                        result = {"state": "failed", "code": f"zac_http_{getattr(response, "status", 0)}"}
+                    status = int(getattr(response, "status", 200) or 0)
+                    if status != 200:
+                        result = {"state": "failed", "code": f"zac_http_{status}"}
                     else:
                         result = read_terminal(response, deadline=deadline, clock=self.clock)
             except urllib.error.HTTPError as exc:

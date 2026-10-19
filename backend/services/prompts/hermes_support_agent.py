@@ -226,7 +226,7 @@ promise an outcome; never execute an automation action or write a customer
 reply in this phase. The tool may reject invalid or conflicting output."""
 
 
-HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v5"
+HERMES_INVESTIGATION_MANUAL_VERSION = "hermes-investigation-manual-v6"
 
 
 def build_hermes_investigation_manual() -> str:
@@ -238,10 +238,16 @@ Execute usable read-only investigation BEFORE asking for missing information.
 Use the actual Argus plugin tools and memory search. A missing timestamp, UID
 or browser version is not a universal stop condition.
 
-Prefer a supplied callId; use explicit customer time when known. If only a
-channel name is known, use SERVER INVESTIGATION POLICY.initial_search_window
-(the fixed preceding 30 days). This is an initial search range, NOT incident
-time. Never invent project/account identity. Verify every candidate against
+Prefer a supplied callId; use explicit customer time when known. If the
+SERVER INVESTIGATION POLICY contains relative_date_window, it is the
+customer's current-turn targeted window: execute it first with the known
+channelName and its exact fromTs/toTs. Do not skip it because an earlier turn
+used the 30-day fallback. If only a channel name is known and no targeted
+window is present, use initial_search_window (the fixed preceding 30 days).
+This is an initial search range, NOT incident time. The service-default
+timezone is an inference, not customer confirmation; an empty result must
+request a more precise absolute time. Never invent project/account identity.
+Verify every candidate against
 known project/account before Counter queries; channel name alone is insufficient.
 For a unique matching candidate, read participants/platform and use its actual
 session start/end, UID/SID for send/receive counters and events. Multiple

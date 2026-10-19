@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 import json
+import urllib.error
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -28,6 +29,80 @@ def test_channel_only_policy_is_fixed_30_day_window_and_close_is_false():
     assert policy["allow_close"] is False
     assert "supportportal_work" not in toolsets_for_phase("work", direction="investigation")
     assert "supportportal_work" in toolsets_for_phase("work", direction="investigation", allow_close=True)
+
+
+def test_customer_says_today_adds_bounded_service_default_window():
+    turn = {
+        **_turn(),
+        "created_at": "2026-10-15T16:30:00+00:00",  # 2026-10-16 00:30 Asia/Shanghai
+        "input_snapshot": {
+            "conversation": [
+                {"author": {"role": "agent"}, "body": "earlier"},
+                {"author": {"role": "customer"}, "body": "这是今天的 session，channel name=zilingtest"},
+            ]
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    window = policy["relative_date_window"]
+    assert window["window_basis"] == "relative_customer_date"
+    assert window["timezone"] == "Asia/Shanghai"
+    assert window["timezone_source"] == "service_default"
+    assert window["fromTs"] == int(datetime.fromisoformat("2026-10-15T16:00:00+00:00").timestamp())
+    assert window["toTs"] == int(datetime.fromisoformat("2026-10-15T16:30:00+00:00").timestamp())
+
+
+def test_customer_says_today_in_english_adds_targeted_window():
+    turn = {
+        **_turn(),
+        "input_snapshot": {
+            "conversation": [
+                {"author": {"role": "customer"}, "body": "I mean today's session"},
+            ]
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    assert policy["relative_date_window"]["query_priority"] == "targeted_current_turn"
+
+
+def test_previous_today_in_history_does_not_trigger_current_turn_window():
+    turn = {
+        **_turn(),
+        "input_snapshot": {
+            "conversation": [
+                {"author": {"role": "customer"}, "body": "今天的 session"},
+                {"author": {"role": "agent"}, "body": "请提供更多信息"},
+                {"author": {"role": "customer"}, "body": "channel name=zilingtest"},
+            ]
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    assert "relative_date_window" not in policy
+
+
+def test_zendesk_snapshot_end_user_role_triggers_today_but_agent_flag_does_not():
+    turn = {
+        **_turn(),
+        "input_snapshot": {
+            "schema": "hermes-case-snapshot-v2",
+            "conversation": [
+                {"author": {"role": "end-user", "is_agent": False}, "body": "是今天的 session"},
+            ],
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    assert policy["relative_date_window"]["window_basis"] == "relative_customer_date"
+
+    agent_turn = {
+        **turn,
+        "input_snapshot": {
+            **turn["input_snapshot"],
+            "conversation": [
+                {"author": {"role": "end-user", "is_agent": True}, "body": "是今天的 session"},
+            ],
+        },
+    }
+    agent_policy = investigation_policy(agent_turn, {"case_task": {"direction": "investigation"}})
+    assert "relative_date_window" not in agent_policy
 
 def test_zac_settings_fail_closed_and_private_recovery_is_not_public():
     assert ZacSettings("https://zac", "secret", "team-agent").error() is None
@@ -93,6 +168,21 @@ def test_zac_client_retries_transport_with_same_key_and_body_then_unknown():
     })
     assert result["state"] == "outcome_unknown" and result["attempts"] == 2
     assert len(seen) == 2 and seen[0] == seen[1]
+
+
+def test_zac_client_http_500_is_structured_failed_result():
+    def opener(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, 500, "upstream", {}, None)
+
+    client = ZacClient(ZacSettings("https://zac.example", "token", "team-agent"), opener=opener, clock=lambda: 0)
+    result = client.consult({
+        "request_body": '{"model":"team-agent","input":"sanitized","stream":true}',
+        "user_id": "user-opaque",
+        "idempotency_key": "idem-500",
+    })
+    assert result == {"state": "failed", "code": "zac_http_500", "attempts": 1}
+    assert result["state"] != "outcome_unknown"
+    assert "completed" not in result and "handoff_status" not in result
 
 
 def test_zac_transition_is_idempotent_and_preserves_opaque_request():

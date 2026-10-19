@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "task_id": "p2-204",
+  "phase_id": "phase-2",
+  "module_id": "engineer-workspace",
+  "function_id": "engineer-investigation-reply",
+  "title": "Investigation Argus 相对日期与 Zac 咨询修复",
+  "summary": "R1：修复 Zac Python 3.11 兼容性与 HTTP 500 失败语义；客户当前回合说 today/今天时生成 Asia/Shanghai 服务默认时区的当天有界 Argus 查询窗口。",
+  "status": "active",
+  "next_action": "提交独立代码验收；验收通过后再按授权发布 Preproduction 并做技术回读。",
+  "owner": "codex",
+  "created_at": "2026-10-19",
+  "updated_at": "2026-10-19",
+  "acceptance_criteria": [
+    "Zac 模块在 Python 3.11 可编译、导入；HTTP 500 返回 zac_http_500 failed，不误报 outcome_unknown 或 completed/handoff。",
+    "当前 turn 最新客户消息包含 today/今天时，policy 输出 relative_date_window，使用 Asia/Shanghai 服务默认时区从当天零点到当前 turn 时间。",
+    "Prompt 要求优先执行定向窗口，原候选关联、截断、空结果和最多三次查询边界保持不变。",
+    "不重放 #14089，不发送真实客户/Slack/Zendesk/Argus/Zac 消息，不发布 Production。"
+  ],
+  "blockers": [
+    "独立代码验收尚未完成。",
+    "真实业务样本未授权，Preproduction 技术发布待代码验收通过后执行。"
+  ],
+  "evidence": [
+    {
+      "type": "document",
+      "label": "R1 plan and evidence ledger",
+      "path": "docs/plans/investigation-argus-zac-r1.md"
+    },
+    {
+      "type": "test",
+      "label": "Zac and relative-date investigation entry tests",
+      "path": "backend/tests/test_investigation_proactive_v1.py",
+      "result": "13 passed in project .venv"
+    },
+    {
+      "type": "test",
+      "label": "Prompt/Agent focused regression",
+      "path": "backend/tests/test_prompt_modules.py; backend/tests/test_hermes_zendesk_agent.py",
+      "result": "18 passed, 72 deselected"
+    },
+    {
+      "type": "test",
+      "label": "Python 3.11 compatibility",
+      "result": "compileall and import of Zac, investigation policy and Hermes prompt modules passed with python3.11"
+    }
+  ],
+  "source_refs": [
+    "docs/plans/investigation-argus-zac-r1.md",
+    "backend/services/zac_consultation.py",
+    "backend/services/investigation_runtime_policy.py",
+    "backend/services/prompts/hermes_support_agent.py"
+  ]
+}
