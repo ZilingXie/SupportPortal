@@ -61,6 +61,7 @@ from backend.services.hermes_weknora import (
     WeKnoraUnavailable,
     build_weknora_submissions,
 )
+from backend.services.weknora_client import weknora_readback_is_ready
 from backend.services.prompt_runtime import resolve_system_prompt
 
 LOGGER = logging.getLogger("supportportal.hermes_knowledge_workflow")
@@ -802,6 +803,14 @@ def _collect_weknora_evidence(
                         entry["full_content"] = str(full.get("content") or "")
                         entry["content_version"] = str(full.get("content_version") or "")
                         entry["target_lineage"] = full.get("lineage") or {}
+                        # stage6-weknora-agent-bridge: the shared readiness
+                        # primitive marks whether this object is consumable
+                        # by the Agent path. Review duplicate detection still
+                        # sees every indexed object (a still-parsing entry is
+                        # exactly a conflict candidate), but the flag keeps
+                        # the two paths from disagreeing about what "ready"
+                        # means.
+                        entry["agent_ready"] = weknora_readback_is_ready(full)
                         enriched.append(entry)
                     knowledge_results[candidate_id] = enriched
                 else:

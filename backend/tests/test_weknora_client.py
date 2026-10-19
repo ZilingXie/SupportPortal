@@ -542,3 +542,167 @@ class MemoryPaginationTests(unittest.TestCase):
             with self.assertRaises(WeKnoraError) as ctx:
                 client.memory_list()
         self.assertEqual(ctx.exception.failure_kind, "invalid_response")
+
+
+# ---------------------------------------------------------------------------
+# stage6-weknora-agent-bridge: publish semantics + readiness readback
+# ---------------------------------------------------------------------------
+
+V4_LIKE_CREATE = {
+    "method": "POST",
+    "path": "/api/kb/create",
+    "body": {
+        "title": {"$": "title"},
+        "content": {"$": "content"},
+        "idempotency_key": {"$": "idempotency_key"},
+    },
+}
+V5_LIKE_CREATE = {
+    "method": "POST",
+    "path": "/api/kb/create",
+    "body": {
+        "title": {"$": "title"},
+        "content": {"$": "content"},
+        "idempotency_key": {"$": "idempotency_key"},
+        "status": {"$": "status"},
+    },
+}
+
+
+def _capture_client(contract: dict) -> tuple[WeKnoraClient, dict]:
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"object_id": "doc-9", "version": "1"})
+
+    client = _client(contract={**CONTRACT, "knowledge_create": contract})
+    client._captured = captured  # type: ignore[attr-defined]
+    client._patch = patch("urllib.request.urlopen", side_effect=fake_urlopen)  # type: ignore[attr-defined]
+    return client, captured
+
+
+def test_create_omits_status_on_wire_when_not_provided() -> None:
+    """Legacy (template-less) contracts send semantics verbatim; a missing
+    status must NOT become `status: null` on the wire (review B1)."""
+    client, captured = _capture_client(
+        {"method": "POST", "path": "/api/kb/create"}
+    )
+    with client._patch:  # type: ignore[attr-defined]
+        client.knowledge_create(title="T", content="C", idempotency_key="wk-1")
+    assert "status" not in captured["body"]
+
+
+def test_update_omits_status_on_wire_when_not_provided() -> None:
+    client = _client(
+        contract={
+            **CONTRACT,
+            "knowledge_update": {"method": "PUT", "path": "/api/kb/update"},
+        }
+    )
+    captured: dict = {}
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = json.loads(request.data.decode("utf-8"))
+        return _Response({"object_id": "doc-9", "version": "2"})
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        client.knowledge_update(
+            object_id="doc-9", base_version="1", title="T", content="C", idempotency_key="wk-2"
+        )
+    assert "status" not in captured["body"]
+
+
+def test_create_publish_carries_status_on_wire_with_binding() -> None:
+    client, captured = _capture_client(V5_LIKE_CREATE)
+    with client._patch:  # type: ignore[attr-defined]
+        receipt = client.knowledge_create(
+            title="T", content="C", idempotency_key="wk-1", status="publish"
+        )
+    assert captured["body"]["status"] == "publish"
+    assert receipt["requested_status"] == "publish"
+
+
+def test_create_publish_fails_closed_without_status_binding() -> None:
+    """v4 contract: no status binding in the template — a publish request
+    must be refused BEFORE any wire call (the template would silently drop
+    the field and the fork would store a draft)."""
+    client, captured = _capture_client(V4_LIKE_CREATE)
+    with client._patch:  # type: ignore[attr-defined]
+        with pytest.raises(WeKnoraError) as excinfo:
+            client.knowledge_create(
+                title="T", content="C", idempotency_key="wk-1", status="publish"
+            )
+    assert excinfo.value.failure_kind == "not_configured"
+    assert "body" not in captured  # nothing reached the wire
+
+
+def test_invalid_status_value_rejected_without_wire_call() -> None:
+    client, captured = _capture_client(V5_LIKE_CREATE)
+    with client._patch:  # type: ignore[attr-defined]
+        with pytest.raises(WeKnoraError) as excinfo:
+            client.knowledge_create(
+                title="T", content="C", idempotency_key="wk-1", status="archived"
+            )
+    assert excinfo.value.failure_kind == "not_configured"
+    assert "body" not in captured
+
+
+def test_read_receipt_extracts_parse_and_enable_status() -> None:
+    client = _client(
+        contract={
+            **CONTRACT,
+            "knowledge_read": {"method": "GET", "path": "/api/kb/read"},
+            # Extraction keys live at the CONTRACT ROOT (same shape as the
+            # live v4/v5 SSM contract): _field reads self._contract[key].
+            "object_id_key": "data.id",
+            "content_key": "data.metadata.content",
+            "title_key": "data.title",
+            "version_key": "data.metadata.version",
+            "parse_status_key": "data.parse_status",
+            "enable_status_key": "data.enable_status",
+        }
+    )
+
+    def fake_urlopen(request, timeout=None):
+        return _Response(
+            {
+                "data": {
+                    "id": "doc-9",
+                    "title": "T",
+                    "parse_status": "Completed",
+                    "enable_status": "Enabled",
+                    "metadata": {"content": "C", "version": 4},
+                }
+            }
+        )
+
+    with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        receipt = client.knowledge_read(object_id="doc-9")
+    assert receipt["parse_status"] == "completed"
+    assert receipt["enable_status"] == "enabled"
+    assert receipt["version"] == "4"
+    assert receipt["content"] == "C"
+
+
+@pytest.mark.parametrize(
+    "parse,enable,expected",
+    [
+        ("completed", "enabled", True),
+        ("draft", "enabled", False),
+        ("pending", "enabled", False),
+        ("processing", "enabled", False),
+        ("completed", "disabled", False),
+        ("completed", None, False),
+        (None, "enabled", False),
+        ("failed", "enabled", False),
+        (None, None, False),
+    ],
+)
+def test_readback_readiness_matrix(parse, enable, expected) -> None:
+    from backend.services.weknora_client import weknora_readback_is_ready
+
+    assert weknora_readback_is_ready({"parse_status": parse, "enable_status": enable}) is expected
+    assert weknora_readback_is_ready({}) is False

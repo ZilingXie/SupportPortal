@@ -1,0 +1,77 @@
+{
+  "results_key": "data",
+  "object_id_key": "data.id",
+  "version_key": "data.metadata.version",
+  "content_key": "data.metadata.content",
+  "title_key": "data.title",
+  "idempotency_key_field": "idempotency_key",
+  "base_version_field": "base_version",
+  "health": {
+    "method": "GET",
+    "path": "/health"
+  },
+  "knowledge_search": {
+    "method": "POST",
+    "path": "/api/v1/knowledge-bases/{knowledge_base_id}/hybrid-search",
+    "body": {
+      "query_text": {
+        "$": "query"
+      },
+      "top_k": {
+        "$": "top_k"
+      }
+    }
+  },
+  "knowledge_read": {
+    "method": "GET",
+    "path": "/api/v1/knowledge/{object_id}"
+  },
+  "knowledge_create": {
+    "method": "POST",
+    "path": "/api/v1/knowledge-bases/{knowledge_base_id}/knowledge/manual",
+    "body": {
+      "title": {
+        "$": "title"
+      },
+      "content": {
+        "$": "content"
+      },
+      "idempotency_key": {
+        "$": "idempotency_key"
+      },
+      "metadata": {
+        "$": "metadata"
+      },
+      "status": {
+        "$": "status"
+      }
+    }
+  },
+  "knowledge_update": {
+    "method": "PUT",
+    "path": "/api/v1/knowledge/manual/{object_id}",
+    "conditional_update": true,
+    "body": {
+      "title": {
+        "$": "title"
+      },
+      "content": {
+        "$": "content"
+      },
+      "idempotency_key": {
+        "$": "idempotency_key"
+      },
+      "base_version": {
+        "$": "base_version"
+      },
+      "metadata": {
+        "$": "metadata"
+      },
+      "status": {
+        "$": "status"
+      }
+    }
+  },
+  "parse_status_key": "data.parse_status",
+  "enable_status_key": "data.enable_status"
+}

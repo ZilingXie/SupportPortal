@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from backend.services.weknora_client import WeKnoraClient, WeKnoraError
+from backend.services.weknora_client import WeKnoraClient, WeKnoraError, weknora_readback_is_ready
 
 WRITE_DECISIONS = frozenset({"new", "supplement", "replace", "merge"})
 TARGETED_DECISIONS = frozenset({"supplement", "replace", "merge"})
@@ -64,9 +64,96 @@ def _item_object_id(item: dict[str, Any]) -> str:
     return str(item.get("object_id") or item.get("id") or "").strip()
 
 
+import time
+
+
+def weknora_wait_until_ready(
+    client: WeKnoraClient,
+    object_id: str,
+    *,
+    max_attempts: int = 30,
+    interval_seconds: float = 2.0,
+    sleep=time.sleep,
+    initial_read: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Bounded poll until the fork marks the object ready (C10 fail-closed).
+
+    Ready = parse_status=completed AND enable_status=enabled. The poll is
+    strictly bounded: exhausting attempts, or any read error other than
+    transient timeout/transport, raises WeKnoraError (timeout/transport
+    retry up to the same bound; everything else fails immediately). The
+    caller records the outcome — this helper never reports success without
+    a ready readback."""
+    last: dict[str, Any] = {}
+    attempts_left = max_attempts
+    while attempts_left > 0:
+        attempts_left -= 1
+        if initial_read is not None:
+            receipt = initial_read
+            initial_read = None
+        else:
+            try:
+                receipt = client.knowledge_read(object_id=object_id)
+            except WeKnoraError as exc:
+                retryable_server_error = (
+                    exc.failure_kind == "http"
+                    and exc.status_code is not None
+                    and exc.status_code >= 500
+                )
+                if (
+                    exc.failure_kind not in {"timeout", "transport"}
+                    and not retryable_server_error
+                ) or attempts_left == 0:
+                    raise
+                sleep(interval_seconds)
+                continue
+        last = receipt
+        if weknora_readback_is_ready(receipt):
+            return {
+                "ready": True,
+                "attempts_used": max_attempts - attempts_left,
+                "parse_status": receipt.get("parse_status"),
+                "enable_status": receipt.get("enable_status"),
+                "version": receipt.get("version"),
+            }
+        # A terminal failed parse can never become ready; stop early.
+        if str(receipt.get("parse_status") or "") == "failed":
+            raise WeKnoraError(
+                f"WeKnora object {object_id} parse failed; it will never become ready",
+                failure_kind="parse_failed",
+                payload=receipt.get("payload"),
+            )
+        sleep(interval_seconds)
+    raise WeKnoraError(
+        f"WeKnora object {object_id} not ready after {max_attempts} polls "
+        f"(last parse_status={last.get('parse_status')!r}, enable_status={last.get('enable_status')!r})",
+        failure_kind="timeout",
+        payload=last.get("payload"),
+    )
+
+
 class WeKnoraPromotionAdapter:
-    def __init__(self, client: WeKnoraClient) -> None:
+    def __init__(
+        self,
+        client: WeKnoraClient,
+        *,
+        publish_on_write: bool = True,
+        readiness_max_attempts: int = 30,
+        readiness_interval_seconds: float = 2.0,
+        readiness_sleep=time.sleep,
+    ) -> None:
         self._client = client
+        # stage6-weknora-agent-bridge: knowledge writes request publish so the
+        # fork enqueues parse+index immediately. The client refuses publish
+        # against a contract without a status binding (fail closed), so a v4
+        # pinned deployment never silently stores drafts it calls published.
+        self._publish_on_write = publish_on_write
+        self._readiness_max_attempts = readiness_max_attempts
+        self._readiness_interval_seconds = readiness_interval_seconds
+        self._readiness_sleep = readiness_sleep
+
+    def _write_status(self) -> str | None:
+        return "publish" if self._publish_on_write else None
 
     def execute(self, task: dict[str, Any]) -> WeKnoraPromotionOutcome:
         candidate = task.get("candidate_payload") if isinstance(task.get("candidate_payload"), dict) else {}
@@ -338,6 +425,32 @@ class WeKnoraPromotionAdapter:
         read_version = str(read.get("version") or "").strip()
         version_matches = not known_version or not read_version or known_version == read_version
         if content_matches and version_matches:
+            if candidate_type == "knowledge" and self._publish_on_write:
+                try:
+                    readiness = weknora_wait_until_ready(
+                        self._client,
+                        known_object_id,
+                        max_attempts=self._readiness_max_attempts,
+                        interval_seconds=self._readiness_interval_seconds,
+                        sleep=self._readiness_sleep,
+                        initial_read=read,
+                    )
+                except WeKnoraError as exc:
+                    if exc.failure_kind == "parse_failed":
+                        return WeKnoraPromotionOutcome(
+                            status="failed",
+                            failure_code="weknora_parse_failed",
+                            failure_detail=str(exc),
+                            weknora_object_id=known_object_id,
+                            weknora_version=read_version or known_version or None,
+                        )
+                    return WeKnoraPromotionOutcome(
+                        status="outcome_unknown",
+                        failure_code=f"weknora_readiness_{exc.failure_kind}",
+                        failure_detail=str(exc),
+                        weknora_object_id=known_object_id,
+                        weknora_version=read_version or known_version or None,
+                    )
             return WeKnoraPromotionOutcome(
                 status="accepted",
                 weknora_object_id=known_object_id,
@@ -346,6 +459,13 @@ class WeKnoraPromotionAdapter:
                     "operation": "reconciled_existing",
                     "object_id": known_object_id,
                     "version": read_version or known_version or None,
+                    **({
+                        "lifecycle_at_ready": {
+                            "parse_status": readiness.get("parse_status"),
+                            "enable_status": readiness.get("enable_status"),
+                        },
+                        "readiness_attempts": readiness.get("attempts_used"),
+                    } if candidate_type == "knowledge" and self._publish_on_write else {}),
                 },
             )
         return WeKnoraPromotionOutcome(
@@ -377,7 +497,7 @@ class WeKnoraPromotionAdapter:
                 if decision == "new":
                     write = self._client.knowledge_create(
                         title=title, content=content, idempotency_key=idempotency_key,
-                        metadata=metadata,
+                        metadata=metadata, status=self._write_status(),
                     )
                 else:
                     write = self._client.knowledge_update(
@@ -386,7 +506,7 @@ class WeKnoraPromotionAdapter:
                         title=title,
                         content=content,
                         idempotency_key=idempotency_key,
-                        metadata=metadata,
+                        metadata=metadata, status=self._write_status(),
                     )
             else:
                 if decision == "new":
@@ -459,9 +579,57 @@ class WeKnoraPromotionAdapter:
                 weknora_version=version,
                 receipt=write.get("receipt") if isinstance(write.get("receipt"), dict) else None,
             )
+        # Lifecycle snapshot at the first successful readback.  A published
+        # knowledge write is not accepted until the same object is proven
+        # ready for retrieval (C10); the first read is reused as poll #1.
+        lifecycle = {
+            "parse_status": str((read or {}).get("parse_status") or "") or None,
+            "enable_status": str((read or {}).get("enable_status") or "") or None,
+        } if isinstance(read, dict) else {}
+        readiness: dict[str, Any] | None = None
+        if candidate_type == "knowledge" and self._publish_on_write:
+            try:
+                readiness = weknora_wait_until_ready(
+                    self._client,
+                    object_id,
+                    max_attempts=self._readiness_max_attempts,
+                    interval_seconds=self._readiness_interval_seconds,
+                    sleep=self._readiness_sleep,
+                    initial_read=read,
+                )
+            except WeKnoraError as exc:
+                if exc.failure_kind == "parse_failed":
+                    return WeKnoraPromotionOutcome(
+                        status="failed",
+                        failure_code="weknora_parse_failed",
+                        failure_detail=str(exc),
+                        weknora_object_id=object_id or None,
+                        weknora_version=version,
+                    )
+                return WeKnoraPromotionOutcome(
+                    status="outcome_unknown",
+                    failure_code=f"weknora_readiness_{exc.failure_kind}",
+                    failure_detail=str(exc),
+                    weknora_object_id=object_id or None,
+                    weknora_version=version,
+                    receipt=write.get("receipt") if isinstance(write.get("receipt"), dict) else None,
+                )
+        receipt = write.get("receipt") if isinstance(write.get("receipt"), dict) else None
         return WeKnoraPromotionOutcome(
             status="accepted",
             weknora_object_id=object_id,
             weknora_version=version,
-            receipt=write.get("receipt") if isinstance(write.get("receipt"), dict) else None,
+            receipt={
+                **(receipt or {}),
+                **({"lifecycle_at_accept": lifecycle} if lifecycle else {}),
+                **({
+                    "lifecycle_at_ready": {
+                        "parse_status": readiness.get("parse_status"),
+                        "enable_status": readiness.get("enable_status"),
+                    },
+                    "readiness_attempts": readiness.get("attempts_used"),
+                } if readiness else {}),
+                **({"requested_status": write["requested_status"]}
+                   if write.get("requested_status") else {}),
+            },
         )

@@ -369,17 +369,68 @@ def run_internal_knowledge_search_subagent(
     summary_packet: dict[str, Any],
     *,
     now_value: str,
+    weknora_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
-    """Use existing clues and RAG results as internal knowledge (v1: no real search)."""
+    """WeKnora-first internal knowledge search (stage6-weknora-agent-bridge).
+
+    The unified retrieval service (C4-C8) is consulted FIRST: WeKnora is the
+    primary source and only published/indexed/ready objects are consumed;
+    AgentMemory is a migration-period fallback on WeKnora unavailability; an
+    explicit escalate verdict surfaces as a blocked result asking for human
+    involvement instead of an evidence-free answer. The legacy v1 clue/RAG
+    packet keeps contributing context alongside whatever the retrieval layer
+    returns."""
     task_id = _clean_text(task.get("task_id"))
     clues = _clean_list(summary_packet.get("current_clues"))
     rag_result = summary_packet.get("rag_result") if isinstance(summary_packet.get("rag_result"), dict) else {}
     candidate_answer = _clean_text(rag_result.get("candidate_answer"))
     sources = _clean_list(rag_result.get("sources"))
-    citations = _clean_list(rag_result.get("citations"))
 
     evidence_refs: list[dict[str, Any]] = []
     summary_parts: list[str] = []
+    missing_information: list[str] = []
+
+    retrieval = None
+    if weknora_client is None:
+        weknora_client = _default_weknora_retrieval_client()
+    if agent_memory_client is None:
+        agent_memory_client = _default_agent_memory_client()
+    if weknora_client is not None:
+        from backend.services.weknora_knowledge_retrieval import (
+            retrieve_knowledge_evidence,
+        )
+
+        retrieval = retrieve_knowledge_evidence(
+            _clean_text(summary_packet.get("question")) or task_id,
+            weknora_client=weknora_client,
+            agent_memory_client=agent_memory_client,
+        )
+        for entry in retrieval.get("results") or []:
+            if not isinstance(entry, dict):
+                continue
+            source = entry.get("retrieval_source")
+            ref: dict[str, Any] = {"kind": f"knowledge_{source}", "summary": _clean_text(entry.get("evidence"))}
+            for key in (
+                "weknora_object_id",
+                "content_version",
+                "content_hash",
+                "source_type",
+                "source_id",
+                "title",
+            ):
+                value = _clean_text(entry.get(key))
+                if value:
+                    ref[key] = value
+            evidence_refs.append(ref)
+            summary_parts.append(
+                f"Knowledge [{source}] {_clean_text(entry.get('title')) or _clean_text(entry.get('weknora_object_id'))}: "
+                f"{_clean_text(entry.get('evidence'))[:400]}"
+            )
+        if retrieval.get("retrieval_source") == "escalate_human":
+            missing_information.append(
+                f"Knowledge retrieval escalated: {_clean_text(retrieval.get('fallback_reason'))}"
+            )
 
     for clue in clues:
         if isinstance(clue, dict) and _clean_text(clue.get("summary")):
@@ -394,6 +445,16 @@ def run_internal_knowledge_search_subagent(
         summary_parts.append(f"Sources available: {len(sources)} document(s).")
         evidence_refs.append({"kind": "rag_sources", "count": len(sources)})
 
+    if missing_information and not summary_parts:
+        return _make_result(
+            task_id=task_id,
+            skill="internal_knowledge_search",
+            status="blocked",
+            summary="Knowledge retrieval is unavailable; human involvement is required.",
+            evidence_refs=evidence_refs,
+            missing_information=missing_information or ["Internal evidence is not available yet."],
+            now_value=now_value,
+        )
     if not summary_parts:
         return _make_result(
             task_id=task_id,
@@ -411,9 +472,34 @@ def run_internal_knowledge_search_subagent(
         status="succeeded",
         summary=" ".join(summary_parts),
         evidence_refs=evidence_refs,
-        missing_information=[],
+        missing_information=missing_information,
         now_value=now_value,
     )
+
+
+def _default_agent_memory_client() -> Any:
+    """Construct the AgentMemory fallback client from env, or None when the
+    deployment carries no AgentMemory Wiki configuration."""
+    try:
+        from backend.services.agent_memory_delivery import AgentMemoryWikiClient
+
+        client = AgentMemoryWikiClient()
+        return client if client.configured() else None
+    except Exception:  # noqa: BLE001 - unconfigured deployments escalate
+        return None
+
+
+def _default_weknora_retrieval_client() -> Any:
+    """Construct the WeKnora retrieval client from env, or None when the
+    deployment carries no WeKnora configuration (the legacy v1 packet path
+    then stays the only evidence source)."""
+    try:
+        from backend.services.weknora_client import WeKnoraClient
+
+        client = WeKnoraClient()
+        return client if client.is_configured() else None
+    except Exception:  # noqa: BLE001 - unconfigured deployments keep v1 behavior
+        return None
 
 
 def run_official_docs_fallback_subagent(
@@ -594,6 +680,8 @@ def run_allowlisted_subagent(
     *,
     previous_results: list[dict[str, Any]] | None = None,
     now_value: str = "",
+    weknora_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
     """Dispatch a single task to the matching allowlisted subagent runner.
 
@@ -629,6 +717,17 @@ def run_allowlisted_subagent(
     # synthesis needs previous_results
     if skill == "synthesis":
         return runner(task, previous_results=_clean_list(previous_results), now_value=now_value)
+
+    if skill == "internal_knowledge_search":
+        # WeKnora-primary retrieval with the AgentMemory migration fallback
+        # rides explicit DI from the execution entry points (review B3).
+        return runner(
+            task,
+            summary_packet,
+            now_value=now_value,
+            weknora_client=weknora_client,
+            agent_memory_client=agent_memory_client,
+        )
 
     return runner(task, summary_packet, now_value=now_value)
 
@@ -720,6 +819,8 @@ def execute_engineer_plan(
     engineer_agent_state: dict[str, Any] | None = None,
     execution_context: dict[str, Any] | None = None,
     now_value: str,
+    weknora_client: Any = None,
+    agent_memory_client: Any = None,
 ) -> dict[str, Any]:
     """Execute an engineer investigation plan deterministically.
 
@@ -862,6 +963,8 @@ def execute_engineer_plan(
                 summary_packet,
                 previous_results=previous,
                 now_value=now_value,
+                weknora_client=weknora_client,
+                agent_memory_client=agent_memory_client,
             )
             task_results.append(result)
             results_by_id[tid] = result
