@@ -1,5 +1,11 @@
 # Prompt Change Log
 
+## 2026-10-19 - Investigation 相对日期 Argus 查询与 Zac 兼容性（p2-204，待独立验收）
+
+- Investigation Work 当前回合若最新客户消息明确说 `today`/`今天`，server policy 增加 `relative_date_window`：按服务默认 `Asia/Shanghai` 从当天零点到当前 turn 时间，并要求 Hermes 优先执行该定向窗口；服务时区只作为推断，不冒充客户确认时间，空结果仍需请求更精确时间。
+- 修复 Zac consultation HTTP 状态码处理的 Python 3.11 语法错误；上游 HTTP 500 保持 `state=failed` / `zac_http_500`，不转为未知或完成。
+- 无 managed Prompt catalog 变更；未调用真实 Argus/Zac，未重放 `#14089`，未发送客户或 Slack 消息，未发布 Production。计划与证据见 `docs/plans/investigation-argus-zac-r1.md`。
+
 ## 2026-10-14 - Investigation 文件工具与 Skill（p2-192，R2，待验收未部署）
 
 - 绑定 Investigation Work 新增 `supportportal_files` 五工具与 `support-case-files` Skill；私有运行 metadata 注入可信 case/turn/session/request，工具参数不接受切换 case 或 URL。Automation、Route、adhoc 不可列举或直接加载此 Skill。
