@@ -78,6 +78,32 @@ def test_previous_today_in_history_does_not_trigger_current_turn_window():
     policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
     assert "relative_date_window" not in policy
 
+
+def test_zendesk_snapshot_end_user_role_triggers_today_but_agent_flag_does_not():
+    turn = {
+        **_turn(),
+        "input_snapshot": {
+            "schema": "hermes-case-snapshot-v2",
+            "conversation": [
+                {"author": {"role": "end-user", "is_agent": False}, "body": "是今天的 session"},
+            ],
+        },
+    }
+    policy = investigation_policy(turn, {"case_task": {"direction": "investigation"}})
+    assert policy["relative_date_window"]["window_basis"] == "relative_customer_date"
+
+    agent_turn = {
+        **turn,
+        "input_snapshot": {
+            **turn["input_snapshot"],
+            "conversation": [
+                {"author": {"role": "end-user", "is_agent": True}, "body": "是今天的 session"},
+            ],
+        },
+    }
+    agent_policy = investigation_policy(agent_turn, {"case_task": {"direction": "investigation"}})
+    assert "relative_date_window" not in agent_policy
+
 def test_zac_settings_fail_closed_and_private_recovery_is_not_public():
     assert ZacSettings("https://zac", "secret", "team-agent").error() is None
     assert ZacSettings("https://zac", "secret", "other").error() == "zac_agent_model_not_configured"

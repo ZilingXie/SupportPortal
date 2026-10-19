@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T02:04:39Z",
-  "source_base_commit": "8df03512910e889e9dbf79c5b79ced4c59b96996",
-  "registry_digest": "c169cf9da7056789e8c35c0cd842cf0c151dcde2cfa144fac861f70a392f06b1",
+  "generated_at": "2026-10-19T02:15:35Z",
+  "source_base_commit": "d872144a94e99b35692ad8ef969fa757708e029c",
+  "registry_digest": "c5f98084afe58994cbeed48c159b6a676b6d2ed71d642c70fd3e49f8af29f43f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5360,7 +5360,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Zac and relative-date investigation entry tests",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "12 passed in project .venv"
+          "result": "13 passed in project .venv"
         },
         {
           "type": "test",
@@ -18843,7 +18843,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Zac and relative-date investigation entry tests",
           "path": "backend/tests/test_investigation_proactive_v1.py",
-          "result": "12 passed in project .venv"
+          "result": "13 passed in project .venv"
         },
         {
           "type": "test",

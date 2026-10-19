@@ -31,7 +31,7 @@
       "type": "test",
       "label": "Zac and relative-date investigation entry tests",
       "path": "backend/tests/test_investigation_proactive_v1.py",
-      "result": "12 passed in project .venv"
+      "result": "13 passed in project .venv"
     },
     {
       "type": "test",

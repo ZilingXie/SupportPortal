@@ -25,7 +25,7 @@
 ## 当前证据
 
 - 基线：`origin/main` @ `8df03512910e889e9dbf79c5b79ced4c59b96996`。
-- 专项回归：`backend/tests/test_investigation_proactive_v1.py` 12 passed（项目 `.venv`）。
+- 专项回归：`backend/tests/test_investigation_proactive_v1.py` 13 passed（项目 `.venv`）。
 - 相关 Prompt/Agent 回归：18 passed，72 deselected。
 - Python 3.11：三个关键模块 `compileall` 和导入通过。
 - `git diff --check`：通过。

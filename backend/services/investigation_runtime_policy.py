@@ -21,7 +21,10 @@ def _latest_customer_message(turn: dict[str, Any]) -> str:
             continue
         author = item.get("author")
         role = author.get("role") if isinstance(author, dict) else author
-        if str(role or "").strip().lower() in {"customer", "user", "end_user"}:
+        if (
+            str(role or "").strip().lower() in {"customer", "user", "end-user", "end_user"}
+            and not (isinstance(author, dict) and author.get("is_agent") is True)
+        ):
             return str(item.get("body") or "")
     return ""
 
