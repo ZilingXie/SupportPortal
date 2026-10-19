@@ -7,6 +7,16 @@
 
 # Prompt Change Log
 
+## 2026-10-19 - 调查 Agent 内部知识检索切换 WeKnora 主源（p2-197 stage6-weknora-agent-bridge）
+
+- `internal_knowledge_search` 子代理从仅消费 summary packet 的 `rag_result` 占位实现，切换为 WeKnora 主检索：经共享检索服务（`weknora_knowledge_retrieval`）先查 WeKnora hybrid-search，逐命中按对象 ID 回读全文，仅 `parse_status=completed ∧ enable_status=enabled` 的已发布对象进入 Agent 上下文（Draft/未索引/版本缺失一律过滤）。
+- Agent 证据引用新增可追溯字段：`retrieval_source`/`weknora_object_id`/`content_version`/`content_hash`/`source_type`/`source_id`（来自对象 lineage）。
+- WeKnora 传输失败/5xx/畸形响应/认证失败时降级 AgentMemory wiki 检索（`retrieval_source=agent_memory_fallback`）；合法空结果=无命中不降级；双侧不可用返回 blocked+人工介入 missing_information。
+- WeKnora 客户端合同升级 v5：create/update 增 `status` 语义绑定（publish 触发 fork 异步解析+索引；无绑定的合同对 publish 请求 fail-closed 拒发）；read 回执首类化 `parse_status`/`enable_status`。
+- 双写适配器默认 `publish_on_write`：knowledge 写入携带 status=publish，接受回执记录 `lifecycle_at_accept`；`weknora_wait_until_ready` 有界轮询（超时/解析失败 fail-closed）。
+- Review 侧证据收集（`_collect_weknora_evidence`）对每命中标记 `agent_ready`（共享同一 readiness 原语 `weknora_readback_is_ready`）；Review 冲突检测决策流不变。
+- 旧行为兜底：部署未配置 WeKnora 时 Agent 保持 v1 rag_result 行为。未部署 Preproduction（合同 v5 SSM 升级与全关闭发布属后续部署步骤）。
+
 ## 2026-10-19 - Hermes Native Enablement 缺 App ID 首轮自然回复（p2-205，待独立验收）
 
 - `hermes-reply-contract-v6` → `v7`：Enablement 且仅缺 `app_id` 时，Persona 先自然承接客户的开通诉求，再以功能名称和下一步语义请求 App ID；禁止请求 payment/其他字段、虚构提交或启用状态、审核完成或未授权时间承诺。
