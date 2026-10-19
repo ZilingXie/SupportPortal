@@ -78,3 +78,11 @@ exit=2：**唯一漂移=三个 aws_ecs_service.account 的 task_definition 指�
 - **第七开关已并入**：knowledge_dual_write.py 现 7 开关（新增 KNOWLEDGE_AI_EXECUTION_ENABLED=Summary/Review AI 消费）；renderer KNOWLEDGE_GOVERNANCE_SWITCHES 同步 7 项且依赖 AI_EXECUTION→SUMMARY_REVIEW（automation_ecs_deploy.py:200/227）。阶段配置入口与 verify 门沿用。
 - **底层客户端**：hermes_weknora.py HermesWeKnoraClient（search+read，硬编码 X-API-Key，search 响应严格 data-list 校验已在）=检索服务底层；weknora_client.py 合同驱面（v4 五操作）=补 status/parse_status_key/enable_status_key。
 - **检索服务落位**：新建 backend/services/weknora_knowledge_retrieval.py（共享，Review 与 Agent 共用）；Agent 侧 evidence 字段按计划 C4（retrieval_source/weknora_object_id/content_version/content_hash/source_type/source_id/evidence）。
+
+## 步 2 完成状态与环境阻断（2026-10-19，HEAD 040bbd35）
+
+已实现并提交（全部内容经 git 提交保全）：B1 修复（status 未提供时省略字段不上 wire）；B2 wire 级回归 9 项（publish 携带/v4 无绑定 fail-closed 零外发/非法值拒绝/省略验证/read 回执 lifecycle 提取/readiness 九参数矩阵）；适配器 publish_on_write+requested_status+lifecycle_at_accept 回执+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval.py（C4-C8：ready 过滤/lineage 提取/降级仅限 transport+timeout+auth+5xx+malformed/空结果不降级/双侧不可用 escalate）+Agent 桥（run_internal_knowledge_search_subagent WeKnora 优先+escalate 转 blocked+无配置保持 v1 行为）+14 项检索/桥接测试。
+
+**本地验证状态（如实）**：client 49 passed、adapter+worker+PG-skip 101 passed（损坏发生前实测）；检索服务+Agent 桥 14 项测试**因环境阻断未能本地运行**——.backend/services 目录出现 inode 级损坏（同进程 os.path.exists=False 而 listdir 可见；跨两个全新 git worktree 路径复现；仅命中本会话新写文件名；hermes_weknora 等既有文件正常）。git 读写全程正常（提交/diff/checkout），内容完整性由 040bbd35 保全。判定为本机 Desktop/iCloud 文件系统层异常，非代码缺陷（同解释器同目录 hermes_weknora 可导入）。
+
+**待续**：在健康环境（重启后/非 Desktop 路径 worktree）复跑 14 项检索/桥接测试+全套知识面回归 → 更新 p2-197 登记 → 新完整 HEAD 提交独立验收。验收门保持：不 finalize 不部署不重投业务样本。Terraform exit-2（task def 指针滞后）持续作为披露限制，步 5 前重处理。
