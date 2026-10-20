@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T04:25:31Z",
-  "source_base_commit": "49e968cdee6313f3be81265fbbe22cfc92d7ee03",
-  "registry_digest": "0dae498840d2c536ad3a0d97ae2087b51e55ae029d0126cf39a4ced5a40450b7",
+  "generated_at": "2026-10-20T06:47:57Z",
+  "source_base_commit": "7855b9361d2d56ca20abd716fc94df56372b8a4b",
+  "registry_digest": "43ccb57a8e019aa0bf2f5956d39413a46352652258f4a01e690e5337552d1476",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1586,6 +1586,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
           "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable.md",
+          "label": "启用前证据轮 v1（2026-10-20）：阶段一/二+Hermes 只读回读；overlay 覆盖风险、并发车辆、陈旧在途行、case workflow disabled 四项启用前置；停在 waiting-for-evidence"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence.json",
+          "label": "启用前回读数值：r20261019-21c6eed 全关闭复核（live 422×3、Map 0、Hermes td46 无文件能力）、主套件 290/0 含隔离 PG、bundle 五门禁、baseline 四文件 MATCH 但 live 插件领先"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
+          "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
         },
         {
           "type": "document",
@@ -6134,6 +6149,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "五轮 main 同步合并（c547b504）",
           "command": "git merge origin/main(301a39d8)；Overview 冲突重生成解决；合并后全套直跑",
           "result": "唯一文本冲突=生成的 Overview；运行时自动合并零重叠（renderer 2 行/prompt 13 行/3 测试文件来自 main）；合并后 469/0+隔离 PG 44/0+agent 链 18/0；共存点核对（显式注入保留/Team Agent 门保留/无冲突标记）。"
+        },
+        {
+          "type": "deployment",
+          "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
+          "command": "独立核对 ECS/SSM/Terraform/checkpoint",
+          "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
         }
       ],
       "source_refs": [
@@ -17977,12 +17998,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。",
       "status": "blocked",
-      "next_action": "关闭状态 Preproduction v2 发布与 synthetic 14057 C1-C6 独立验收已通过，文件保持关闭。后续单独处理原 R1 发布复审/真实业务门禁、Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7 和 Zac 协议；开启文件与 Production 各自需要单独授权。",
+      "next_action": "启用轮（investigation-case-files-r2-preprod-file-enable v1）停在 waiting-for-evidence：待用户提供 Zac 真实文件接口与获准合成样本；并行车辆 r20261020-8e8e495 完成后从新 main 重建；构建前先把 bundle 插件输入重定到 p2-203 世代源（a49f64b4）并重新验收，收口陈旧非终态行（991000183-1/13872/13904），随显式发布参数恢复 HERMES_CASE_WORKFLOW_MODE。原 R1 发布复审/真实业务门禁继续单独保留；开启文件后的 C1-C7 云端回读与 Production 各自另行授权。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-14",
+      "updated_at": "2026-10-20",
       "acceptance_criteria": [
         "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
         "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
@@ -17990,7 +18011,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
         "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。",
+        "R2-ENABLE-PREP（2026-10-20）：①overlay 插件输入需重定到 p2-203 世代源，否则 COPY 覆盖 live zac consult；②并发车辆 r20261020-8e8e495-hermes-appid-pp-a1-r2 已建未发需让行；③切换开关/签名前须收口陈旧非终态行 991000183-1/13872/13904；④HERMES_CASE_WORKFLOW_MODE 当前 disabled，文件闭环需随显式参数恢复。"
       ],
       "evidence": [
         {
@@ -18057,6 +18079,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
           "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable.md",
+          "label": "启用前证据轮 v1（2026-10-20）：阶段一/二+Hermes 只读回读；overlay 覆盖风险、并发车辆、陈旧在途行、case workflow disabled 四项启用前置；停在 waiting-for-evidence"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence.json",
+          "label": "启用前回读数值：r20261019-21c6eed 全关闭复核（live 422×3、Map 0、Hermes td46 无文件能力）、主套件 290/0 含隔离 PG、bundle 五门禁、baseline 四文件 MATCH 但 live 插件领先"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
+          "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
         }
       ]
     },
@@ -18418,9 +18455,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-19",
-      "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。执行分支 codex/stage6-weknora-agent-bridge（Draft PR #1515，**完整 HEAD 0514209e**=merge c547b504[行为 4938edd2 ⊕ main 301a39d8]+记录提交；4938edd2 为并入前行为提交=历史轮锚点）。步 0 基线冻结（r20261019-15f3602-argus-zac-r1，五停止条件不触发；Terraform refresh-only exit2=task def 指针滞后非配置漂移，持续披露步 5 前重处理）；步 1 合同确认（fork 有 publish/index/ready 能力=status=publish 经现有 create/update+ready=parse_status completed∧enable_status enabled；合同 v4 未暴露→已补 v5：status 语义绑定+readiness keys，工件入库，SSM 升级留步 5）。步 2 代码全量完成：客户端 v5（publish fail-closed 合同校验+status 未提供省略不上 wire+read 回执 lifecycle 首类化+weknora_readback_is_ready）；适配器 publish_on_write+requested_status+lifecycle_at_accept+weknora_wait_until_ready 有界轮询（超时/parse failed 快败/瞬态重试/非瞬态即抛）；共享检索服务 weknora_knowledge_retrieval（C4-C8：ready 过滤/lineage/降级仅 transport+timeout+auth+5xx+malformed/空结果不降级/双侧 escalate）；Agent 桥 WeKnora 优先+escalate=blocked+无配置保 v1；**B3 修复=AM fallback DI 全链穿透（allowlisted/plan executor/main 显式注入+惰性默认兜底）；B4=Review 路径共享 readiness 原语（HermesWeKnoraClient.read 补 lifecycle+collect 标记 agent_ready，决策流不变）**。首轮验收未过（B1 status null 上 wire/B2 缺回归→已修；二轮未过（B3 AM 未接真实链/B4 Review 漂移→已修）。实测（/tmp 隔离副本）：桥接+client+adapter/worker 124/0；知识面 19 文件 528/4（4 失败=origin/main 基线同样失败的存量问题，如实披露）。环境事件：本机新写文件间歇消失（com.apple 文件提供进程句柄；建议另立任务）。（该轮行为提交 4938edd2 已并入 merge c547b504。） 三轮验收再发现两残留（B3 默认 AM 门方法名错 is_configured→configured；B4 Review 内联 readiness 判定未调共享 helper）→已修复+五项新回归（默认构造门/真实入口默认 fallback/Review agent_ready 正反例）；受影响面 306/0 直跑实测。 五轮：main 同步合并 c547b504（#1514/#1516 并入；唯一文本冲突=生成 Overview 已重生成；运行时零重叠共存核对）；合并后 469/0+隔离 PG 44/0 实测。",
-      "next_action": "五轮增量独立验收范围=PR #1515 @ 最终 HEAD（merge c547b504+记录提交）：合并后 469/0（含 main 侧 Team Agent/enablement/fraud 套件）+隔离 PG 44/0+agent 链 18/0；重点复验共存点（main.py:14552 显式注入、Team Agent renderer 门、零冲突标记）。通过后 finalize→步 5 全关闭发布（SSM v5+Terraform 指针重处理）→步 6-10。",
+      "updated_at": "2026-10-20",
+      "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。**代码与 Preproduction 全关闭部署已完成并通过独立验收**（2026-10-19/20）：PR#1515 合入 main=cd6d8e5f（六轮验收：B1/B2→B3/B4→残留→main 同步→文档锚点→集成增量 #1517 复验 291/0）；changelog #1518+证据 #1519→main=8e8e4952。SSM weknora-api-contract-json 升 **v5**（status 绑定+parse_status_key/enable_status_key，回读验证）。Terraform：ignore_changes 之谜解开+apply -refresh-only 同步指针后零漂移。**全关闭部署 r20261019-21c6eed 全阶段 passed**（api:161/worker:160/route:157 运行 21c6eed1；master=0 七开关全 0+allowlist 空；双 verify 门；hermes 引擎镜像并行线；队列 intakes=304/summaries=42/promotions=64/deliveries=0；关闭态探针 503）。实现：客户端合同 v5（publish fail-closed+status 省略+readiness 回执）；适配器 publish_on_write+lifecycle_at_accept+有界 readiness 轮询；共享检索服务 C4-C8；Agent 桥 DI 全链（含默认构造 configured() 门）；Review 共享 readiness 原语。★边界：**业务闭环证据不足**——无真实知识进入 WeKnora、无 Agent WeKnora 检索成功证据、受控样本/Slack Review/Agent 检索验证未做。★待处理：并行线暂停管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（仅 codebuild、其恢复会部署旧代码需协调）。",
+      "next_action": "①协调/处理暂停的旧管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（避免恢复后以旧代码覆盖 r20261019-21c6eed；建议向用户确认放弃或让其同步新 main 后重建）；②受控样本阶段（计划步 6 分层开启，每层=新发布：intake→精确 allowlist→Summary/Review→AI execution→Slack notify→dual-write worker→双 delivery；Summary/Review 层须同 hermes real mode+--hermes-agent-enabled+--bootstrap-account-schema——层 2c 教训）；③步 7 WeKnora 生命周期验证（publish/index/ready 双方式回读）；④步 8 Agent 检索验证+两负例；⑤步 9 观察窗口（≥48h 或≥10 候选）；⑥步 10 全量放开前人工停点。样本须新的唯一 Preproduction 真实来源，不复用历史已处理样本。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18544,6 +18581,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "五轮 main 同步合并（c547b504）",
           "command": "git merge origin/main(301a39d8)；Overview 冲突重生成解决；合并后全套直跑",
           "result": "唯一文本冲突=生成的 Overview；运行时自动合并零重叠（renderer 2 行/prompt 13 行/3 测试文件来自 main）；合并后 469/0+隔离 PG 44/0+agent 链 18/0；共存点核对（显式注入保留/Team Agent 门保留/无冲突标记）。"
+        },
+        {
+          "type": "deployment",
+          "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
+          "command": "独立核对 ECS/SSM/Terraform/checkpoint",
+          "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
         }
       ]
     },

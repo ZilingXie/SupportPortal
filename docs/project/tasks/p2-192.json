@@ -5,12 +5,12 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。",
+  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。",
   "status": "blocked",
-  "next_action": "关闭状态 Preproduction v2 发布与 synthetic 14057 C1-C6 独立验收已通过，文件保持关闭。后续单独处理原 R1 发布复审/真实业务门禁、Hermes 文件 Skill/overlay、Slack/Zendesk 文件 C1-C7 和 Zac 协议；开启文件与 Production 各自需要单独授权。",
+  "next_action": "启用轮（investigation-case-files-r2-preprod-file-enable v1）停在 waiting-for-evidence：待用户提供 Zac 真实文件接口与获准合成样本；并行车辆 r20261020-8e8e495 完成后从新 main 重建；构建前先把 bundle 插件输入重定到 p2-203 世代源（a49f64b4）并重新验收，收口陈旧非终态行（991000183-1/13872/13904），随显式发布参数恢复 HERMES_CASE_WORKFLOW_MODE。原 R1 发布复审/真实业务门禁继续单独保留；开启文件后的 C1-C7 云端回读与 Production 各自另行授权。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-14",
+  "updated_at": "2026-10-20",
   "acceptance_criteria": [
     "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
     "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
@@ -18,7 +18,8 @@
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
     "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
-    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。"
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。",
+    "R2-ENABLE-PREP（2026-10-20）：①overlay 插件输入需重定到 p2-203 世代源，否则 COPY 覆盖 live zac consult；②并发车辆 r20261020-8e8e495-hermes-appid-pp-a1-r2 已建未发需让行；③切换开关/签名前须收口陈旧非终态行 991000183-1/13872/13904；④HERMES_CASE_WORKFLOW_MODE 当前 disabled，文件闭环需随显式参数恢复。"
   ],
   "evidence": [
     {
@@ -85,6 +86,21 @@
       "type": "deployment",
       "url": "docs/plans/investigation-case-files-r2-preprod-closed-evidence.json",
       "label": "关闭状态 Preproduction v2：7800b8ee、schema 016、三角色 digest、API 负向入口、无附件 synthetic 14057 审批回执/幂等/终态；关闭状态与无附件 synthetic C1-C6 独立验收通过（文档 e237d536）"
+    },
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-case-files-r2-preprod-file-enable.md",
+      "label": "启用前证据轮 v1（2026-10-20）：阶段一/二+Hermes 只读回读；overlay 覆盖风险、并发车辆、陈旧在途行、case workflow disabled 四项启用前置；停在 waiting-for-evidence"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence.json",
+      "label": "启用前回读数值：r20261019-21c6eed 全关闭复核（live 422×3、Map 0、Hermes td46 无文件能力）、主套件 290/0 含隔离 PG、bundle 五门禁、baseline 四文件 MATCH 但 live 插件领先"
+    },
+    {
+      "type": "document",
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
+      "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
     }
   ]
 }
