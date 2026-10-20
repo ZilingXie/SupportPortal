@@ -540,7 +540,19 @@ class TestDraftTools:
         tool_record_direction(
             store, repository, turn_id=turn_id, direction="automation", reason="enablement", route="enablement"
         )
-        draft = self._persona_draft(store, repository, turn_id, content="Please share your App ID.")
+        # The ask reply must be authorized by the server basis: this turn
+        # is the enablement missing-App-ID ask, so the basis's missing
+        # fields include app_id (layout/unauthorized-request contracts).
+        store._hermes_turns[turn_id]["work_result"] = {
+            "status": "missing_fields",
+            "route": "enablement",
+            "collected_fields": {},
+            "missing_fields": ["app_id"],
+            "allowed_claims": ["state:missing_fields"],
+        }
+        draft = self._persona_draft(
+            store, repository, turn_id, content="Please share your App ID."
+        )
         result = publication_decision_for_turn(
             store, repository, turn_id=turn_id, environment="preproduction"
         )
@@ -548,6 +560,36 @@ class TestDraftTools:
         # the worker translates before the ledger entry.
         assert result["status"] == "preparing"
         assert store.get_hermes_draft(draft["draft_id"])["status"] == "preparing"
+
+    def test_publication_gate_rejects_unauthorized_field_request(self) -> None:
+        # Negative control: a reply requesting a field the basis does NOT
+        # list as missing is rejected (unauthorized_field_request) and the
+        # draft never enters delivery.
+        store, repository, turn_id = _setup_case()
+        tool_record_direction(
+            store, repository, turn_id=turn_id, direction="automation", reason="enablement", route="enablement"
+        )
+        store._hermes_turns[turn_id]["work_result"] = {
+            "status": "missing_fields",
+            "route": "enablement",
+            "collected_fields": {},
+            "missing_fields": [],
+            "allowed_claims": ["state:missing_fields"],
+        }
+        store._hermes_turns[turn_id]["phase"] = "persona"
+        with patch(
+            "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
+        ):
+            with pytest.raises(HermesToolError) as excinfo:
+                tool_save_reply_draft(
+                    store,
+                    repository,
+                    turn_id=turn_id,
+                    content="Please share your App ID.",
+                    basis={},
+                )
+        assert excinfo.value.code == "unauthorized_field_request"
 
     def test_publication_gate_manual_waits_for_approval(self) -> None:
         store, repository, turn_id = _setup_case()

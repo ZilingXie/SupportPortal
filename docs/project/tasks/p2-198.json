@@ -10,7 +10,7 @@
   "created_at": "2026-10-11",
   "updated_at": "2026-10-13",
   "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
-  "next_action": "双轨 v1 验收轮 1 修复完成（B1 逐 bullet 全等覆盖+B2 原始异常+app_name 实际断言）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
+  "next_action": "双轨 v1 验收轮 2 修复完成（fixture 对齐+负控+stash 证明零新增回归）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
   "acceptance_criteria": [
     "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
     "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -25,6 +25,12 @@
     "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "双轨 v1 验收轮 2 修复：入口 fixture 与新 basis 合同对齐+未授权字段负控",
+      "command": "pytest Hermes 全套 261（含 zendesk_agent_tools 62）+worker stash 对照（14 失败与父提交完全一致，零新增回归）",
+      "result": "阻断（test_publication_gate_auto_queues_ledger_delivery）：fixture 的 server basis 无 missing_fields，而回复请求 App ID——新 validator 正确拒绝 unauthorized_field_request（这是合同生效的证据而非实现错误）。修复：fixture 补 work_result{status:missing_fields, missing_fields:[app_id]}（该 turn 本就是 enablement 缺 App ID ask 场景）+ 新增负控测试 test_publication_gate_rejects_unauthorized_field_request（basis 无缺失字段时请求 App ID 被 unauthorized_field_request 拒绝且不入投递）。worker 14 项失败经 stash 对照与父提交逐项一致（IDENTICAL），零新增回归。"
+    },
     {
       "type": "test",
       "label": "双轨 v1 验收轮 1 修复（B1/B2+app_name 负控）",
