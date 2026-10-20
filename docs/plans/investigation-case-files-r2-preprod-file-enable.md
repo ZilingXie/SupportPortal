@@ -4,6 +4,8 @@
 
 状态：阶段一（前置证据）、阶段二（本地/隔离验证）与阶段三的只读回读部分完成。未构建或发布 Hermes 镜像、未开启文件开关、未部署、未修改 n8n、未触碰 Production。文件启用阶段停在 `waiting-for-evidence`，恢复事件见下文。
 
+2026-10-20 用户独立验收：**通过（仅限本启用前证据轮）**，验收对象为合并提交 `95b1d7b4` / PR #1521、计划记录、机器证据、任务登记与 Git 状态；确认 Preproduction 关闭状态记录一致、测试与检查属实、p2-192 维持 blocked/waiting-for-evidence。本通过不包含文件传输上线验收，剩余门禁：Zac 真实文件接口证据、获准 synthetic 样本与受控 Slack thread、Hermes overlay 输入重定到含 p2-203 能力的插件源并重新验收、并行车辆 `r20261020-8e8e495` 完成后重新冻结基线、陈旧非终态记录（991000183-1/13872/13904）收口、显式恢复 `HERMES_CASE_WORKFLOW_MODE`、镜像/profile 发布后的 Slack/Zendesk/Zac C1-C7 云端闭环。
+
 ## 本轮执行的验证
 
 | 项 | 结果 |
