@@ -13,6 +13,10 @@ from backend.repositories.ticket_repository import (
 )
 from backend.services.prompt_versioning import PromptVersionService
 
+# Only connection establishment to the sync target is bounded; the sync
+# transaction keeps server defaults so a slow healthy write is never cut off.
+SYNC_TARGET_CONNECT_TIMEOUT_SECONDS = 10
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Manage deployment-bound Prompt Releases.")
@@ -61,6 +65,7 @@ def _create_sync_target_repository(
     return PostgresTicketRepository(
         dsn=normalized,
         schema=schema,
+        connect_timeout=SYNC_TARGET_CONNECT_TIMEOUT_SECONDS,
         migration_dsn=normalized,
         application_name="supportportal-prompt-release-sync",
     )
@@ -228,7 +233,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         payload = _execute(args)
     except Exception as exc:
-        print(json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=True), file=sys.stderr)
+        # The deploy classifier reads the class and SQLSTATE; the raw message
+        # stays on stderr and is redacted before it reaches any artifact.
+        detail: dict[str, Any] = {"ok": False, "error": str(exc), "exception_type": type(exc).__name__}
+        sqlstate = getattr(exc, "sqlstate", None)
+        if sqlstate:
+            detail["sqlstate"] = str(sqlstate)
+        print(json.dumps(detail, ensure_ascii=True, sort_keys=True), file=sys.stderr)
         return 1
     if args.command == "current" and args.output == "shell":
         release = payload["release"]

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import psycopg
-from psycopg.conninfo import make_conninfo
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from backend.services.automation_release_manifest import (
     read_manifest,
@@ -53,6 +53,118 @@ SAFE_NUMERIC_TOKEN_CONFIG_SUFFIX = "_MAX_OUTPUT_TOKENS"
 # inputs to an immutable ECS release, and must not cross any release child
 # process boundary when a caller has loaded the repository .env.
 LOCAL_ONLY_ENV_PREFIX = "LOCAL_"
+# Prompt Release target operations issued by the deploy shell. Only connection
+# establishment is bounded; the sync transaction itself keeps the server
+# defaults so a slow but healthy write is never interrupted.
+PROMPT_DB_CONNECT_TIMEOUT_SECONDS = 10
+PROMPT_OPERATION_MAX_ATTEMPTS = 3
+PROMPT_OPERATION_RETRY_BACKOFF_SECONDS = (1, 3)
+PROMPT_OPERATION_ERROR_SCHEMA = "automation-prompt-operation-error-v1"
+PROMPT_OPERATION_PREFIXES = {
+    "prompt-target-state": "prompt_target_state",
+    "prompt-sync": "prompt_sync",
+}
+PROMPT_OPERATION_MESSAGE_LIMIT = 2000
+# Failure kinds. Only the two connection kinds are retryable, and for the sync
+# write only while the read-only readback proves the release row never landed.
+PROMPT_FAILURE_CONNECTION_TIMEOUT = "connection_timeout"
+PROMPT_FAILURE_TRANSIENT_CONNECTION = "transient_connection"
+PROMPT_FAILURE_PERMISSION_DENIED = "permission_denied"
+PROMPT_FAILURE_SCHEMA_MISSING = "schema_missing"
+PROMPT_FAILURE_VALIDATION_FAILED = "validation_failed"
+PROMPT_FAILURE_WRITE_RESULT_UNKNOWN = "write_result_unknown"
+PROMPT_FAILURE_UNKNOWN = "unknown"
+PROMPT_RETRYABLE_FAILURES = {PROMPT_FAILURE_CONNECTION_TIMEOUT, PROMPT_FAILURE_TRANSIENT_CONNECTION}
+# psycopg exception class names (priority 1). Generic OperationalError and
+# InterfaceError carry no verdict on their own and fall through to SQLSTATE.
+PROMPT_TIMEOUT_EXCEPTIONS = {"TimeoutError", "timeout", "PoolTimeout"}
+PROMPT_TRANSIENT_EXCEPTIONS = {
+    "ConnectionException",
+    "ConnectionFailure",
+    "ConnectionDoesNotExist",
+    "SqlclientUnableToEstablishSqlconnection",
+    "SqlserverRejectedEstablishmentOfSqlconnection",
+    "AdminShutdown",
+    "CrashShutdown",
+    "CannotConnectNow",
+    "TooManyConnections",
+    "ConnectionRefusedError",
+    "ConnectionResetError",
+    "ConnectionAbortedError",
+    "BrokenPipeError",
+}
+PROMPT_WRITE_UNKNOWN_EXCEPTIONS = {"TransactionResolutionUnknown"}
+PROMPT_PERMISSION_EXCEPTIONS = {
+    "InsufficientPrivilege",
+    "InvalidAuthorizationSpecification",
+    "InvalidPassword",
+}
+PROMPT_SCHEMA_MISSING_EXCEPTIONS = {"UndefinedTable", "InvalidSchemaName"}
+# SQLSTATE codes (priority 2).
+PROMPT_TRANSIENT_SQLSTATES = {"08000", "08001", "08003", "08004", "08006", "57P01", "57P02", "57P03", "53300"}
+PROMPT_WRITE_UNKNOWN_SQLSTATES = {"08007"}
+PROMPT_PERMISSION_SQLSTATES = {"42501", "28000", "28P01"}
+PROMPT_SCHEMA_MISSING_SQLSTATES = {"42P01", "3F000"}
+# Exact libpq / PostgreSQL phrases (priority 3). A bare "timeout" never counts.
+PROMPT_TIMEOUT_PHRASES = (
+    "connection timeout expired",
+    "timeout expired",
+    "connection timed out",
+    "operation timed out",
+)
+PROMPT_TRANSIENT_PHRASES = (
+    "could not connect to server",
+    "connection refused",
+    "connection reset by peer",
+    "server closed the connection unexpectedly",
+    "ssl syscall error",
+    "ssl connection has been closed unexpectedly",
+    "the connection is lost",
+    "the database system is starting up",
+    "the database system is shutting down",
+    "terminating connection due to administrator command",
+    "too many connections",
+    "remaining connection slots are reserved",
+    "could not translate host name",
+    "temporary failure in name resolution",
+    "name or service not known",
+    "nodename nor servname provided",
+    "network is unreachable",
+    "no route to host",
+)
+PROMPT_PERMISSION_PHRASES = (
+    "permission denied",
+    "password authentication failed",
+    "no pg_hba.conf entry",
+    "authentication failed",
+)
+PROMPT_PERMISSION_ROLE_PATTERN = re.compile(r'\brole "[^"]*" does not exist')
+PROMPT_SCHEMA_MISSING_PATTERN = re.compile(r'\b(?:relation|table|schema) "[^"]*" does not exist')
+# ValueError texts raised by backend.scripts.prompt_release and the repository
+# sync path. They prove a content/identity verdict, never a connection fault.
+PROMPT_SYNC_VALIDATION_PHRASES = (
+    "prompt release not found",
+    "prompt release is not deployable",
+    "source release is missing",
+    "source release references unknown prompt keys",
+    "target prompt release is not deployable",
+    "target prompt release not found after sync",
+    "prompt release build_ref mismatch",
+    "prompt release content fingerprint mismatch",
+    "existing prompt release is not deployable",
+    "synced version does not match the release items",
+    "content_sha256 is required for synced version",
+    "content hash mismatch for synced payload",
+)
+DSN_URI_PATTERN = re.compile(r"\bpostgres(?:ql)?://[^\s\"'<>]+", re.I)
+KEY_VALUE_SECRET_PATTERN = re.compile(
+    r"\b(password|passwd|pwd|sslpassword|secret|token|api[_-]?key|access[_-]?key|"
+    r"session[_-]?token|authorization)\b\s*[=:]\s*(\"[^\"]*\"|'[^']*'|\S+)",
+    re.I,
+)
+BEARER_PATTERN = re.compile(r"\bbearer\s+\S+", re.I)
+AWS_ACCESS_KEY_ID_PATTERN = re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")
+TRACEBACK_TAIL_PATTERN = re.compile(r"^(?:[\w]+\.)*([A-Z][A-Za-z0-9]*):\s*(.*)$")
 
 
 def _utc_now() -> datetime:
@@ -475,6 +587,7 @@ def collect_prompt_target_state(schema: str, release_id: str) -> dict[str, Any]:
     repository = PostgresTicketRepository(
         dsn=readonly_dsn,
         schema=schema,
+        connect_timeout=PROMPT_DB_CONNECT_TIMEOUT_SECONDS,
         migration_dsn=readonly_dsn,
         application_name="supportportal-prompt-release-readback",
     )
@@ -485,6 +598,214 @@ def collect_prompt_target_state(schema: str, release_id: str) -> dict[str, Any]:
     if release is None:
         return {"release_id": release_id, "status": "missing"}
     return {"release_id": release_id, "status": str(release.get("status") or "")}
+
+
+def _environment_secret_literals(environment: Mapping[str, str]) -> list[str]:
+    """Literal secret values present in the environment, longest first.
+
+    A DSN also contributes its password component so a bare password echoed
+    without the URI is still removed."""
+    literals: set[str] = set()
+    for name, raw in environment.items():
+        value = str(raw or "")
+        if not value or value.isdecimal() or not _is_secret_bearing_environment_value(str(name), value):
+            continue
+        if len(value) >= 6:
+            literals.add(value)
+        if "DSN" not in str(name).upper():
+            continue
+        try:
+            password = str(conninfo_to_dict(value).get("password") or "")
+        except Exception:
+            password = ""
+        if len(password) >= 4:
+            literals.add(password)
+    return sorted(literals, key=len, reverse=True)
+
+
+def redact_sensitive_text(
+    text: str,
+    *,
+    environment: Mapping[str, str] | None = None,
+    limit: int = PROMPT_OPERATION_MESSAGE_LIMIT,
+) -> str:
+    """Strip DSNs, credential assignments and known secret values from CLI output.
+
+    The placeholder never repeats the URI scheme so the result passes
+    ``assert_evidence_secret_free``. Only the tail is kept past ``limit``
+    because the final line of a capture names the failure."""
+    source = os.environ if environment is None else environment
+    redacted = str(text or "")
+    for literal in _environment_secret_literals(source):
+        redacted = redacted.replace(literal, "[redacted]")
+    redacted = DSN_URI_PATTERN.sub("[redacted:dsn]", redacted)
+    # Bearer first: the key=value rule would otherwise consume the scheme word
+    # and leave the token itself in place.
+    redacted = BEARER_PATTERN.sub("Bearer [redacted]", redacted)
+    redacted = KEY_VALUE_SECRET_PATTERN.sub(lambda match: f"{match.group(1)}=[redacted]", redacted)
+    redacted = AWS_ACCESS_KEY_ID_PATTERN.sub("[redacted:aws-access-key-id]", redacted)
+    redacted = redacted.strip()
+    if len(redacted) > limit:
+        redacted = "..." + redacted[-(limit - 3):]
+    return redacted
+
+
+def parse_prompt_cli_failure(stderr_text: str) -> dict[str, str]:
+    """Exception class, SQLSTATE and message from a Prompt CLI stderr capture.
+
+    Both Prompt CLIs end their stderr with a ``{"ok": false, ...}`` detail line;
+    an uncaught traceback tail is the fallback and only yields the class name."""
+    detail = {"exception_type": "", "sqlstate": "", "message": ""}
+    lines = [line.strip() for line in str(stderr_text or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        if not (line.startswith("{") and line.endswith("}")):
+            continue
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            detail["exception_type"] = str(payload.get("exception_type") or "")
+            detail["sqlstate"] = str(payload.get("sqlstate") or "")
+            detail["message"] = str(payload.get("error") or "")
+            return detail
+    if lines:
+        match = TRACEBACK_TAIL_PATTERN.match(lines[-1])
+        if match:
+            detail["exception_type"] = match.group(1)
+            detail["message"] = match.group(2)
+        else:
+            detail["message"] = "\n".join(lines)
+    return detail
+
+
+def _prompt_failure_kind(exception_type: str, sqlstate: str, message: str) -> str:
+    exception_type = str(exception_type or "").strip()
+    sqlstate = str(sqlstate or "").strip().upper()
+    lowered = str(message or "").lower()
+    if exception_type in PROMPT_TIMEOUT_EXCEPTIONS:
+        return PROMPT_FAILURE_CONNECTION_TIMEOUT
+    if exception_type in PROMPT_TRANSIENT_EXCEPTIONS:
+        return PROMPT_FAILURE_TRANSIENT_CONNECTION
+    if exception_type in PROMPT_WRITE_UNKNOWN_EXCEPTIONS:
+        return PROMPT_FAILURE_WRITE_RESULT_UNKNOWN
+    if exception_type in PROMPT_PERMISSION_EXCEPTIONS:
+        return PROMPT_FAILURE_PERMISSION_DENIED
+    if exception_type in PROMPT_SCHEMA_MISSING_EXCEPTIONS:
+        return PROMPT_FAILURE_SCHEMA_MISSING
+    if exception_type == "ValueError":
+        if any(phrase in lowered for phrase in PROMPT_SYNC_VALIDATION_PHRASES):
+            return PROMPT_FAILURE_VALIDATION_FAILED
+        return PROMPT_FAILURE_UNKNOWN
+    if sqlstate in PROMPT_WRITE_UNKNOWN_SQLSTATES:
+        return PROMPT_FAILURE_WRITE_RESULT_UNKNOWN
+    if sqlstate in PROMPT_TRANSIENT_SQLSTATES:
+        return PROMPT_FAILURE_TRANSIENT_CONNECTION
+    if sqlstate in PROMPT_PERMISSION_SQLSTATES:
+        return PROMPT_FAILURE_PERMISSION_DENIED
+    if sqlstate in PROMPT_SCHEMA_MISSING_SQLSTATES:
+        return PROMPT_FAILURE_SCHEMA_MISSING
+    if any(phrase in lowered for phrase in PROMPT_PERMISSION_PHRASES) or PROMPT_PERMISSION_ROLE_PATTERN.search(lowered):
+        return PROMPT_FAILURE_PERMISSION_DENIED
+    if PROMPT_SCHEMA_MISSING_PATTERN.search(lowered):
+        return PROMPT_FAILURE_SCHEMA_MISSING
+    if any(phrase in lowered for phrase in PROMPT_TIMEOUT_PHRASES):
+        return PROMPT_FAILURE_CONNECTION_TIMEOUT
+    if any(phrase in lowered for phrase in PROMPT_TRANSIENT_PHRASES):
+        return PROMPT_FAILURE_TRANSIENT_CONNECTION
+    return PROMPT_FAILURE_UNKNOWN
+
+
+def classify_prompt_operation_failure(
+    operation: str,
+    *,
+    exception_type: str = "",
+    sqlstate: str = "",
+    message: str = "",
+    target_readback_status: str = "",
+) -> dict[str, Any]:
+    """Stable classification code and retry verdict for one failed attempt.
+
+    Priority is the psycopg exception class, then SQLSTATE, then exact libpq
+    phrases; anything else is ``unknown`` and never retried. The sync write is
+    only replayable while the read-only readback proves the release row is
+    still missing; any other readback turns a lost connection into
+    ``write_result_unknown``."""
+    prefix = PROMPT_OPERATION_PREFIXES.get(operation)
+    if prefix is None:
+        raise ValueError(f"unknown Prompt operation: {operation}")
+    kind = _prompt_failure_kind(exception_type, sqlstate, message)
+    if operation == "prompt-sync":
+        if kind in PROMPT_RETRYABLE_FAILURES and str(target_readback_status or "") != "missing":
+            kind = PROMPT_FAILURE_WRITE_RESULT_UNKNOWN
+    elif kind == PROMPT_FAILURE_WRITE_RESULT_UNKNOWN:
+        kind = PROMPT_FAILURE_TRANSIENT_CONNECTION
+    return {
+        "classification": f"{prefix}_{kind}",
+        "kind": kind,
+        "retryable": kind in PROMPT_RETRYABLE_FAILURES,
+    }
+
+
+def prompt_cli_failure_detail(exc: BaseException) -> dict[str, Any]:
+    """The stderr detail line both Prompt CLIs print: class, SQLSTATE, message."""
+    detail: dict[str, Any] = {"ok": False, "error": str(exc), "exception_type": type(exc).__name__}
+    sqlstate = getattr(exc, "sqlstate", None)
+    if sqlstate:
+        detail["sqlstate"] = str(sqlstate)
+    return detail
+
+
+def record_prompt_operation_failure(
+    *,
+    operation: str,
+    stderr_text: str,
+    exit_code: int,
+    release_id: str,
+    prompt_release_id: str,
+    attempt: int,
+    max_attempts: int = PROMPT_OPERATION_MAX_ATTEMPTS,
+    target_readback_status: str = "",
+    output: str | Path | None = None,
+    environment: Mapping[str, str] | None = None,
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Classify one failed attempt and persist the secret-free record.
+
+    The record is refused outright when redaction still leaves a DSN or a
+    secret-bearing field, so a leaking artifact can never reach the checkpoint."""
+    detail = parse_prompt_cli_failure(stderr_text)
+    verdict = classify_prompt_operation_failure(
+        operation,
+        exception_type=detail["exception_type"],
+        sqlstate=detail["sqlstate"],
+        message=detail["message"],
+        target_readback_status=target_readback_status,
+    )
+    record: dict[str, Any] = {
+        "schema_version": PROMPT_OPERATION_ERROR_SCHEMA,
+        "operation": operation,
+        "release_id": release_id,
+        "prompt_release_id": prompt_release_id,
+        "attempts": int(attempt),
+        "max_attempts": int(max_attempts),
+        "exit_code": int(exit_code),
+        "classification": verdict["classification"],
+        "retryable": verdict["retryable"],
+        "exception_type": detail["exception_type"],
+        "sqlstate": detail["sqlstate"],
+        "target_readback_status": str(target_readback_status or ""),
+        "redacted_message": redact_sensitive_text(detail["message"] or stderr_text, environment=environment),
+        "outcome": "failed",
+        "generated_at": _iso(now or _utc_now()),
+    }
+    assert_evidence_secret_free(record, "prompt_operation_error")
+    if output is not None:
+        path = Path(output)
+        _write_json_atomic(path, record)
+        with path.with_name(path.stem + "-attempts.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    return record
 
 
 def make_preflight_evidence(
@@ -1215,6 +1536,17 @@ def build_parser() -> argparse.ArgumentParser:
     prompt_state.add_argument("--schema", required=True)
     prompt_state.add_argument("--release-id", required=True)
 
+    prompt_failure = subparsers.add_parser("classify-prompt-operation-failure")
+    prompt_failure.add_argument("--operation", required=True, choices=sorted(PROMPT_OPERATION_PREFIXES))
+    prompt_failure.add_argument("--stderr-file", required=True)
+    prompt_failure.add_argument("--exit-code", type=int, required=True)
+    prompt_failure.add_argument("--release-id", required=True)
+    prompt_failure.add_argument("--prompt-release-id", required=True)
+    prompt_failure.add_argument("--attempt", type=int, required=True)
+    prompt_failure.add_argument("--max-attempts", type=int, default=PROMPT_OPERATION_MAX_ATTEMPTS)
+    prompt_failure.add_argument("--target-readback-status", default="")
+    prompt_failure.add_argument("--output", required=True)
+
     cloudwatch = subparsers.add_parser("collect-cloudwatch-evidence")
     for field in ("region", "cluster", "service", "role", "task-definition", "log-group", "output"):
         cloudwatch.add_argument(f"--{field}", required=True)
@@ -1303,6 +1635,22 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
         return collect_prompt_target_identity(args.schema)
     if args.command == "prompt-target-state":
         return collect_prompt_target_state(args.schema, args.release_id)
+    if args.command == "classify-prompt-operation-failure":
+        stderr_path = Path(args.stderr_file)
+        stderr_text = (
+            stderr_path.read_text(encoding="utf-8", errors="replace") if stderr_path.is_file() else ""
+        )
+        return record_prompt_operation_failure(
+            operation=args.operation,
+            stderr_text=stderr_text,
+            exit_code=args.exit_code,
+            release_id=args.release_id,
+            prompt_release_id=args.prompt_release_id,
+            attempt=args.attempt,
+            max_attempts=args.max_attempts,
+            target_readback_status=args.target_readback_status,
+            output=args.output,
+        )
     if args.command == "collect-cloudwatch-evidence":
         return collect_cloudwatch_evidence(
             region=args.region, cluster=args.cluster, service=args.service, role=args.role,
@@ -1315,8 +1663,9 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
 def main(argv: list[str] | None = None) -> int:
     try:
         print(json.dumps(run(argv), sort_keys=True))
-    except (ValueError, OSError, subprocess.CalledProcessError) as exc:
+    except (ValueError, OSError, subprocess.CalledProcessError, psycopg.Error) as exc:
         print(f"automation ECS release pipeline failed: {exc}", file=sys.stderr)
+        print(json.dumps(prompt_cli_failure_detail(exc), ensure_ascii=True, sort_keys=True), file=sys.stderr)
         return 1
     return 0
 
