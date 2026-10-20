@@ -27,3 +27,14 @@
 ## 停止条件（沿用计划）
 
 >10 条/未审批即写 WeKnora/Slack 链接缺失/reject 仍写入/重复写入/回读版本 hash 不一致/active 与预期不一致/endpoint 漂移。
+
+## 快照对齐修复（2026-10-20，B1/B2/B3）
+
+根因：2026-10-13 的 D1-D4 n8n 链修复只推在未合入 main 的旧分支（origin/codex/stage6-deploy@dbcae60a），main 的快照仍是修复前状态。本轮以 dbcae60a 的 D 修复后 draft 为基（含纯 JS SHA-256+supportcenter 端点+bearer 凭据+显式 Jira 字段）重建四件套：
+
+- **active**：版本锚定 6511c2e9（source-only 12 节点，supportcenter+httpBearerAuth automation_production，无 Wiki/旧 KB 直写——B1）；
+- **draft**：86f9fb06=active+Limit 节点+重接（endpoint/凭据同 active——B2）；
+- **candidate**：local_candidate 结构（含 Limit maxItems=10+Url_list→Cap→Loop 重接+现行 endpoint/认证+publicationStatus=unpublished_local_candidate，不携带远程版本声明——B3）；
+- **manifest**：published=6511c2e9/draft=86f9fb06/candidateBase=86f9fb06/nodeCount=12。
+
+验证：validator 通过（15+4+56）；**B1/B2/B3 断言脚本全过**（active 版本+端点+凭据+无直写；draft 端点+凭据+版本；candidate 含 Limit+重接+端点+凭据；三文件均单一 source endpoint）。validator 局限（内部一致性≠线上一致性）已由断言脚本补足——断言对照的是线上回读值（6511c2e9/86f9fb06/supportcenter/bearer）。
