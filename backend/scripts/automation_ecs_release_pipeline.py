@@ -49,6 +49,10 @@ SAFE_SECRET_NAMED_TASK_ENV = {
     "BILLING_AUTOMATION_GRAPH_TOKEN_CACHE": "/app/.msgraph/billing-automation-token.json",
 }
 SAFE_NUMERIC_TOKEN_CONFIG_SUFFIX = "_MAX_OUTPUT_TOKENS"
+# These variables belong to the local Compose database only.  They are never
+# inputs to an immutable ECS release, and must not cross any release child
+# process boundary when a caller has loaded the repository .env.
+LOCAL_ONLY_ENV_PREFIX = "LOCAL_"
 
 
 def _utc_now() -> datetime:
@@ -556,6 +560,9 @@ def write_preflight_evidence(evidence: Mapping[str, Any], destination: str | Pat
 
 def sanitized_aws_environment(source: Mapping[str, str] | None = None) -> dict[str, str]:
     env = dict(source or os.environ)
+    for name in list(env):
+        if name.startswith(LOCAL_ONLY_ENV_PREFIX):
+            env.pop(name, None)
     for name in STATIC_AWS_ENV:
         env.pop(name, None)
     profile = env.get("AUTOMATION_AWS_PROFILE") or env.get("AWS_PROFILE") or "default"

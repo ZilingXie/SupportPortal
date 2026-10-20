@@ -66,6 +66,11 @@ Preproduction-only运行兼容现有`PROMPT_RELEASE_TARGET_DSN`；正式入口�
 `PRODUCTION_PROMPT_RELEASE_TARGET_DSN`，不允许把通用变量跨环境复用。两个DSN都只经
 环境传递，不进入argv、checkpoint或evidence。
 
+发布入口会在启动 Python、CodeBuild 和 deploy 子进程前移除 `LOCAL_*` 本地
+Compose 配置（包括 `LOCAL_POSTGRES_PASSWORD`）。这些变量不属于 ECS 发布输入；
+源 Prompt 校验仍使用显式的只读 `TICKET_DB_DSN`，Preproduction 迁移 DSN 仍由已校验
+的 AWS login provider 从 SSM 读取，并只在需要的 deploy 子进程环境中传递。
+
 pipeline使用当前main上的部署工具，同时创建clean detached release worktree证明构建
 来源。release commit必须可从`origin/main`到达，worktree HEAD与Manifest commit完全
 相等，Manifest/tag/digest/Publish Record必须一致。release commit之后只允许

@@ -473,6 +473,10 @@ def test_preflight_tamper_and_non_reusable_evidence_fail_closed(tmp_path: Path) 
 def test_aws_environment_rotates_without_static_credentials_or_secret_argv() -> None:
     source = {
         "PATH": os.environ["PATH"],
+        "LOCAL_POSTGRES_PASSWORD": "local-password-sentinel",
+        "LOCAL_POSTGRES_USER": "local-user-sentinel",
+        "LOCAL_POSTGRES_DB": "local-db-sentinel",
+        "LOCAL_POSTGRES_HOST_PORT": "15432",
         "AWS_ACCESS_KEY_ID": "AKIA_SENTINEL",
         "AWS_SECRET_ACCESS_KEY": "secret-sentinel",
         "AWS_SESSION_TOKEN": "token-sentinel",
@@ -482,6 +486,7 @@ def test_aws_environment_rotates_without_static_credentials_or_secret_argv() -> 
     result = sanitized_aws_environment(source)
     assert result["AWS_PROFILE"] == "zac-login"
     assert result["AWS_REGION"] == "us-east-1"
+    assert not any(name.startswith("LOCAL_") for name in result)
     assert not ({"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"} & result.keys())
     with pytest.raises(ValueError, match="must not enter argv"):
         assert_secret_free_argv(["deploy", source["PROMPT_RELEASE_TARGET_DSN"]], source)
@@ -497,6 +502,73 @@ def test_aws_environment_rotates_without_static_credentials_or_secret_argv() -> 
             ["deploy", "not-a-number"],
             {"CLIENT_ACK_MAX_OUTPUT_TOKENS": "not-a-number"},
         )
+
+
+def test_pipeline_stage_environment_excludes_local_compose_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, release = _repo(tmp_path)
+    source = {
+        "PATH": os.environ["PATH"],
+        "LOCAL_POSTGRES_PASSWORD": "local-password-sentinel",
+        "LOCAL_POSTGRES_USER": "local-user-sentinel",
+        "LOCAL_POSTGRES_DB": "local-db-sentinel",
+        "LOCAL_POSTGRES_HOST_PORT": "15432",
+        "PROMPT_RELEASE_TARGET_DSN": "target-sentinel",
+    }
+    monkeypatch.setattr(pipeline, "sanitized_aws_environment", lambda: sanitized_aws_environment(source))
+    monkeypatch.setattr(pipeline, "verify_aws_identity", lambda env: None)
+    monkeypatch.setattr(pipeline, "check_live_case_engine", lambda engine, env: None)
+    monkeypatch.setattr(pipeline, "read_preproduction_prompt_target_dsn", lambda env: "target-sentinel")
+    stages: list[tuple[str, dict[str, str]]] = []
+
+    def record_stage(state, name, command, *, env, **kwargs):
+        stages.append((name, dict(env)))
+        if name == "codebuild":
+            release_dir = Path(command[command.index("--output-dir") + 1])
+            release_dir.mkdir(parents=True)
+            _published_release(release_dir, release, state.path.name.removeprefix("ecs-pipeline-"))
+        state.append({"stage": name, "status": "passed", "duration_seconds": 0})
+
+    monkeypatch.setattr(pipeline, "_run_stage", record_stage)
+    args = pipeline.build_parser().parse_args([
+        "run", "--automation-case-engine", "legacy", "--project-root", str(repo),
+        "--release-commit", release, "--prompt-release-id", "prompt-test",
+    ])
+    pipeline.run_pipeline(args)
+
+    assert [name for name, _ in stages] == ["codebuild", "preproduction_preflight", "preproduction_deploy"]
+    for _, child_env in stages:
+        assert not any(name.startswith("LOCAL_") for name in child_env)
+    assert all(child_env["PROMPT_RELEASE_TARGET_DSN"] == "target-sentinel" for name, child_env in stages if name != "codebuild")
+
+
+def test_release_wrapper_removes_local_compose_credentials_before_python_child(tmp_path: Path) -> None:
+    fake_python = tmp_path / "fake-python"
+    env_report = tmp_path / "env-report"
+    fake_python.write_text(
+        "#!/usr/bin/env bash\n"
+        "for name in LOCAL_POSTGRES_PASSWORD LOCAL_POSTGRES_USER LOCAL_POSTGRES_DB LOCAL_POSTGRES_HOST_PORT; do\n"
+        "  if [[ -n \"${!name+x}\" ]]; then printf '%s\\n' \"$name\"; fi\n"
+        "done >\"${FAKE_ENV_REPORT}\"\n",
+        encoding="utf-8",
+    )
+    fake_python.chmod(0o700)
+    env = dict(os.environ)
+    env.update(
+        {
+            "AUTOMATION_RELEASE_PYTHON": str(fake_python),
+            "FAKE_ENV_REPORT": str(env_report),
+            "LOCAL_POSTGRES_PASSWORD": "local-password-sentinel",
+            "LOCAL_POSTGRES_USER": "local-user-sentinel",
+            "LOCAL_POSTGRES_DB": "local-db-sentinel",
+            "LOCAL_POSTGRES_HOST_PORT": "15432",
+        }
+    )
+    wrapper = Path(__file__).resolve().parents[2] / "deployment" / "release_automation_ecs_pipeline.sh"
+    result = subprocess.run(["bash", str(wrapper), "--help"], env=env, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+    assert env_report.read_text(encoding="utf-8") == ""
 
 
 def test_checkpoint_attempts_are_append_only_and_resume_keeps_failures(tmp_path: Path) -> None:

@@ -5,6 +5,10 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
+# Direct deploy invocations can also be launched from a shell that sourced
+# the repository .env.  Local Compose credentials are never deploy inputs.
+unset LOCAL_POSTGRES_PASSWORD LOCAL_POSTGRES_USER LOCAL_POSTGRES_DB LOCAL_POSTGRES_HOST_PORT
+unset LOCAL_TICKET_DB_POOL_MAX_SIZE LOCAL_TICKET_DB_POOL_MIN_SIZE LOCAL_TICKET_DB_POOL_TIMEOUT_SECONDS LOCAL_TICKET_DB_SCHEMA
 MANIFEST_PATH=""
 PROMOTION_RECORD=""
 PUBLISH_RECORD=""

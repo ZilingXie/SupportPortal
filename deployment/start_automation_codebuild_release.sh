@@ -6,6 +6,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 source "${SCRIPT_DIR}/lib/release_aws_provider.sh"
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
+# Local Compose credentials are unrelated to CodeBuild and must not cross the
+# wrapper's child-process boundary when .env was loaded by the caller.
+unset LOCAL_POSTGRES_PASSWORD LOCAL_POSTGRES_USER LOCAL_POSTGRES_DB LOCAL_POSTGRES_HOST_PORT
+unset LOCAL_TICKET_DB_POOL_MAX_SIZE LOCAL_TICKET_DB_POOL_MIN_SIZE LOCAL_TICKET_DB_POOL_TIMEOUT_SECONDS LOCAL_TICKET_DB_SCHEMA
 REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-us-east-1}}"
 PROJECT_NAME="${AUTOMATION_CODEBUILD_PROJECT_NAME:-supportportal-automation-release}"
 EVIDENCE_BUCKET="${AUTOMATION_RELEASE_EVIDENCE_BUCKET:-}"
