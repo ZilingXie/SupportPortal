@@ -83,3 +83,10 @@
 ## 停止点
 
 停在独立代码验收（Draft PR）。未合并、未部署、未触碰真实业务系统。验收通过后按项目正常 finalize 流程合入 main；本改动不触发应用 ECS 部署：`backend/scripts/prompt_release.py` 与 `backend/scripts/automation_ecs_release_pipeline.py` 仅被 `deployment/*.sh` 与测试引用、无运行时导入（2026-10-20 `rg` 核对），属部署工具/诊断路径，随下一次正常发布自然进入 release worktree 生效。
+
+## 收口记录（2026-10-20）
+
+- 独立代码验收：**通过**，评审 HEAD `7855b9361d2d56ca20abd716fc94df56372b8a4b`（PR #1523）；评审方复跑 335 passed 与全部静态检查，确认 C1-C6 与两项破坏性负控；已知限制如上表所列，含先前 `d579b035` 随 PR 合入已披露并被接受。
+- 集成评估：合入 `origin/main`（`12357b29`…`0bd735ea`，p2-192/p2-197 登记与 p2-192 修复）得 `42e71f7107cfb6a899434e86fd51af2857123b34`；评审文件与 7855b936 逐字节一致，仅生成的 `docs/projectoverview-data.js` 重建；新 SHA 复检 335 passed、bash -n/compileall/diff --check 通过。
+- finalize：`--reviewed-head 42e71f71` + 同一 verify 集通过，squash 合并提交 **`2856b178d16d0eafdab3f1b2ec4103bc6ba12bec`**；根区 main 快进、CodeGraph 同步、根区复跑 257 passed、CodeSight wiki 刷新；worktree/分支已清理。
+- 边界：代码验收完成；部署验收与业务验收不属本计划。下一次正常 Preproduction 发布若产生 `prompt-*-error.json`，回读其分类与脱敏（waiting-for-evidence）。
