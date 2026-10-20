@@ -579,6 +579,7 @@ class PromptReleaseSyncTests(unittest.TestCase):
         repository_class.assert_called_once_with(
             dsn="postgresql://target.example/db",
             schema="automation_production",
+            connect_timeout=10,
             migration_dsn="postgresql://target.example/db",
             application_name="supportportal-prompt-release-sync",
         )

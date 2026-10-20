@@ -940,6 +940,9 @@ def test_resume_prompt_state_readback_forces_read_only_connection() -> None:
         result = collect_prompt_target_state("supportportal_preproduction", "prompt-1")
     assert result == {"release_id": "prompt-1", "status": "active"}
     assert "default_transaction_read_only=on" in constructor.call_args.kwargs["dsn"]
+    # Connection establishment is bounded explicitly; the repository default
+    # must not be the only thing standing between a hung target and the release.
+    assert constructor.call_args.kwargs["connect_timeout"] == 10
     repository.get_prompt_release.assert_called_once_with("prompt-1")
     repository.close.assert_called_once_with()
 

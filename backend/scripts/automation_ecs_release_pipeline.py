@@ -738,8 +738,13 @@ def classify_prompt_operation_failure(
     if operation == "prompt-sync":
         if kind in PROMPT_RETRYABLE_FAILURES and str(target_readback_status or "") != "missing":
             kind = PROMPT_FAILURE_WRITE_RESULT_UNKNOWN
-    elif kind == PROMPT_FAILURE_WRITE_RESULT_UNKNOWN:
-        kind = PROMPT_FAILURE_TRANSIENT_CONNECTION
+    else:
+        # The read-only readback writes nothing and validates nothing: 08007 is
+        # just a lost connection and a content verdict cannot occur here.
+        if kind == PROMPT_FAILURE_WRITE_RESULT_UNKNOWN:
+            kind = PROMPT_FAILURE_TRANSIENT_CONNECTION
+        elif kind == PROMPT_FAILURE_VALIDATION_FAILED:
+            kind = PROMPT_FAILURE_UNKNOWN
     return {
         "classification": f"{prefix}_{kind}",
         "kind": kind,
