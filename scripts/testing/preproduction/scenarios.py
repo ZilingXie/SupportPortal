@@ -32,6 +32,7 @@ from typing import Any, Callable
 from backend.services.automation_test_scenarios import (
     AutomationTestScenarioError,
     ScenarioContext,
+    ScenarioDatabaseUnavailable,
     _ask_appid_content_check,
     _enablement_enabled_content_check,
     _progress_answer_content_check,

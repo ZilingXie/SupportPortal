@@ -482,14 +482,20 @@ class ScenarioEngine:
     _DB_RETRY_BACKOFF_SECONDS = 1.5
 
     def _open_db_connection(self):
-        return psycopg.connect(
+        connection = psycopg.connect(
             self.db_dsn,
             connect_timeout=10,
+            # Read-only, autocommit: every db_query() finishes its implicit
+            # transaction on return, so the reused connection never holds
+            # locks or lingers as idle-in-transaction between polls (R3-F2).
             options=(
                 f"-c search_path={self.db_schema},public "
-                f"-c application_name={self._DB_APPLICATION_NAME}"
+                f"-c application_name={self._DB_APPLICATION_NAME} "
+                f"-c default_transaction_read_only=on"
             ),
         )
+        connection.autocommit = True
+        return connection
 
     def close_db_connection(self) -> None:
         connection = self._db_connection
@@ -643,6 +649,12 @@ class ScenarioEngine:
                     return value
                 last_error = ""
             except ScenarioCancelled:
+                raise
+            except ScenarioDatabaseUnavailable:
+                # The db_query layer already exhausted its retry budget:
+                # polling cannot recover and must surface the infrastructure
+                # boundary to the runner instead of degrading into a
+                # TimeoutError (R3-F1).
                 raise
             except Exception as exc:  # noqa: BLE001 - keep polling on transient errors
                 last_error = f"{type(exc).__name__}: {exc}"

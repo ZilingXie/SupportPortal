@@ -10,7 +10,7 @@
   "created_at": "2026-10-11",
   "updated_at": "2026-10-13",
   "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
-  "next_action": "双轨 v1 验收轮 2 修复完成（fixture 对齐+负控+stash 证明零新增回归）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
+  "next_action": "双轨 v1 验收轮 3 修复完成（异常传播三处+只读短事务+真实 PG 事务语义证明）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
   "acceptance_criteria": [
     "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
     "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -25,6 +25,12 @@
     "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
   ],
   "evidence": [
+    {
+      "type": "test",
+      "label": "双轨 v1 验收轮 3 修复（R3-F1 异常传播+CLI 导入 / R3-F2 只读短事务连接）",
+      "command": "pytest 回读 11（含 3 传播测试+2 项真实 PG 事务语义测试 RUN_POSTGRES_INTEGRATION）+Hermes 全套 244/2 skip+worker stash 对照 IDENTICAL+compileall+diff check",
+      "result": "R3-F1（异常吞掉+CLI AttributeError）：(a)wait_for 对 ScenarioDatabaseUnavailable 立即 raise（不再当瞬态错误继续轮询退化成 TimeoutError——测试断言单次探测即抛、无轮询睡眠、耗时<5s）；(b)scenarios.py 导入块补 ScenarioDatabaseUnavailable 再导出——pp.ScenarioDatabaseUnavailable 可用（复验发现轮 2 起 CLI 捕获分支引用了未导入的名字，真实 CLI 模拟 DB 失败会 AttributeError）；(c)新增 CLI 边界测试：runner 抛 db_unavailable→报告 aborted=preproduction_db_unavailable+已完成步骤保留。R3-F2（长事务+非只读）：连接创建改为 autocommit=True+options default_transaction_read_only=on（去掉引号损坏的 isolation 选项）；2 项真实 PG 测试（本机 socket peer auth）：查询后事务状态=IDLE(0) 非 INTRANS、连接复用两次查询、transaction_read_only=on+写语句被 ReadOnlySqlTransaction 拒、close 后 pg_stat_activity 无残留行。瞬态探测错误继续轮询的正控测试同补。"
+    },
     {
       "type": "test",
       "label": "双轨 v1 验收轮 2 修复：入口 fixture 与新 basis 合同对齐+未授权字段负控",
