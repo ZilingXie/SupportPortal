@@ -44,3 +44,10 @@
 Draft 验收通过：三份快照与线上回读一致（Active 6511c2e9/12 节点；Draft 86f9fb06/13 节点含 Cap 10）、endpoint/认证/重接/未发布标记/manifest 元数据全部确认；validator 15+4+56 通过；B1/B2/B3+元数据断言通过；两树干净。validator 的 13 条 LEGACY-EXPOSED 属历史 Solved 快照与本 Draft 无关（复核确认）。
 
 **验收边界**：仅释放 Draft 验收门。发布、自然每日执行、治理开关开启=三个后续单独授权，均未释放。
+
+## 发布记录（2026-10-20，用户授权）
+
+- 发布执行：publish_workflow → 回读确认 `versionId=activeVersionId=86f9fb06`（13 节点含 Cap 10）。**回滚基线=6511c2e9**（版本历史保留）。
+- 发布后快照刷新：active=86f9fb06；draft/candidate 文件移除（已无分歧）；manifest（published=86f9fb06/nodeCount=13/draftMatchesPublished/描述更新为已发布+回滚基线）；validator 通过（15 published+3 drafts+53 redactions——drafts 4→3=CSD 不再分歧）。
+- n8n 侧 workflow description 字段仍写"Draft 未发布"（陈旧文案，仅元数据；更新它会生成新 draft 版本扰动 versionId，留待下次实质变更一并处理——已在此披露）。
+- **下一步**：等待下一次自然每日执行（CSD 调度=每日 12:00 北京/04:00 UTC，不手工重放）。预期：JQL 结果→Cap 10→≤10 条投递→SP intake 503（治理仍全关闭，快照不接收）或如已开 intake 则 202 受执。结果观察点：n8n execution（≤10 条/第 11 条不存在）+SP intakes 表计数+error 告警。

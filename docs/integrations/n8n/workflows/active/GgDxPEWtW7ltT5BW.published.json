@@ -1,7 +1,7 @@
 {
   "capturedAt": "2026-10-10T00:00:00Z",
   "restoreNotes": {
-    "notes": "Active 6511c2e9 (=D1-D4 修复后 source-only 链：纯 JS SHA-256+supportcenter 端点+bearer 凭据+显式 Jira 字段)。回滚基线。",
+    "notes": "Active 86f9fb06（2026-10-20 发布）=6511c2e9+Cap 10 Limit（stage6-csd-governance-cap-10）。回滚基线 6511c2e9。",
     "redactedValues": [
       {
         "field": "=client_secret",
@@ -27,8 +27,8 @@
   "source": {
     "snapshotKind": "published",
     "sourceOnly": true,
-    "updatedAt": "2026-10-10T11:28:20.145Z",
-    "versionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
+    "updatedAt": "2026-10-20T03:06:05.205Z",
+    "versionId": "86f9fb06-fe07-4e9f-96cb-5090b597c066",
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD"
   },
@@ -112,7 +112,7 @@
           [
             {
               "index": 0,
-              "node": "Loop Over Items",
+              "node": "Cap 10 sources (stage6-csd-governance-cap-10)",
               "type": "main"
             }
           ]
@@ -147,6 +147,17 @@
               "index": 0,
               "node": "Query_CSD_list",
               "type": "main"
+            }
+          ]
+        ]
+      },
+      "Cap 10 sources (stage6-csd-governance-cap-10)": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Items",
+              "type": "main",
+              "index": 0
             }
           ]
         ]
@@ -436,6 +447,19 @@
         ],
         "type": "n8n-nodes-base.noOp",
         "typeVersion": 1
+      },
+      {
+        "parameters": {
+          "maxItems": 10,
+          "options": {}
+        },
+        "type": "n8n-nodes-base.limit",
+        "typeVersion": 1,
+        "position": [
+          -1632,
+          1232
+        ],
+        "name": "Cap 10 sources (stage6-csd-governance-cap-10)"
       }
     ],
     "settings": {
@@ -446,7 +470,7 @@
       "executionOrder": "v1",
       "timeSavedMode": "fixed"
     },
-    "versionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
-    "activeVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36"
+    "versionId": "86f9fb06-fe07-4e9f-96cb-5090b597c066",
+    "activeVersionId": "86f9fb06-fe07-4e9f-96cb-5090b597c066"
   }
 }
