@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T06:47:57Z",
-  "source_base_commit": "7855b9361d2d56ca20abd716fc94df56372b8a4b",
-  "registry_digest": "43ccb57a8e019aa0bf2f5956d39413a46352652258f4a01e690e5337552d1476",
+  "generated_at": "2026-10-20T07:02:31Z",
+  "source_base_commit": "5ed27583eb9ea96cafe28dac0545cfa928b030da",
+  "registry_digest": "f0c8b73012294dbccac5e507c143176fc1a876cb9cc40777aeee1ed855e20f45",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3425,6 +3425,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "2026-10-20：新模块 59 passed（source 部署脚本 + 伪 Prompt CLI：瞬时恢复、三次即停并落 evidence、非瞬时单次、sync 按回读 fail-closed、分类器失败回退、resume 已 active 跳过 sync/activation、resume 回读恢复后 sync）；受影响 9 个模块 335 passed；突变负控（MAX=5、去回读门）10 项失败后复原转绿；强制泄漏负控拒写 artifact；bash -n / compileall / git diff --check 通过。"
         },
         {
+          "type": "pr",
+          "label": "独立代码验收",
+          "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
+          "result": "2026-10-20 通过：评审 HEAD 7855b9361d2d56ca20abd716fc94df56372b8a4b；复跑 335 passed、bash -n、compileall、git diff --check、Overview 校验；确认 C1-C6 与两项破坏性负控；已知限制=真实 Preproduction 样本 waiting-for-evidence、terraform 既有失败与本 PR 无关、shellcheck 未装、含先前 d579b035 已披露。"
+        },
+        {
+          "type": "pr",
+          "label": "finalize 合入 main",
+          "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
+          "result": "集成合并 42e71f7107cfb6a899434e86fd51af2857123b34（评审文件与 7855b936 逐字节一致，仅生成的 Overview 重建）；--reviewed-head 42e71f71 + 同一 335 项 verify 通过；squash 合并提交 2856b178d16d0eafdab3f1b2ec4103bc6ba12bec；根区 main 快进、CodeGraph 同步、根区复跑 257 passed、CodeSight wiki 刷新；worktree 与分支已清理。未部署（部署工具链变更、无运行时导入）。"
+        },
+        {
           "type": "decision",
           "label": "执行侧等价选择",
           "details": "脱敏字段命名 redacted_message（保留 PR#1054 的 last_error 守卫）；validation_failed 仅属 prompt_sync_*；evidence 对称增加 prompt_target_state* 字段；prompt_schema 阶段抽为 run_prompt_release_phase 仅为真实入口测试、阶段体不变；仓库层 _run_with_connection_retry 单次重试为既有层不改。基线既有失败 test_automation_ecs_terraform::test_preproduction_network_and_runtime_identity_are_explicit 在根区 main 同样失败，与本任务无关。"
@@ -3441,7 +3453,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 13,
-      "done_count": 10,
+      "done_count": 11,
       "blocked_count": 0
     },
     {
@@ -19094,8 +19106,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "ecs-environment-migration",
       "title": "Prompt Release Sync 可观测性与瞬时连接恢复 v1",
       "summary": "计划 preproduction-prompt-sync-resilience v1：ECS deploy 的 prompt-target-state 回读与 Prompt sync 不再丢弃 stderr，失败按 psycopg 异常类型→SQLSTATE→明确 libpq 文本→unknown 分类并保存脱敏 artifact；仅瞬时连接错误有限重试（3 次，1s/3s），sync 失败先只读回读目标状态、release 非 missing 一律 write_result_unknown fail-closed；两条目标连接显式 connect_timeout=10；evidence checks 记录分类/尝试次数/可重试。仅部署工具链，不改 Prompt 内容、数据模型或业务逻辑。",
-      "status": "active",
-      "next_action": "Draft PR 等待独立代码验收；通过后按正常 finalize 流程合入 main。本计划不部署、不触碰真实数据库或业务系统；首个真实 Preproduction 失败样本出现时回读 prompt-*-error.json 分类是否与实际原因一致（waiting-for-evidence）。",
+      "status": "done",
+      "next_action": "代码已独立验收通过并合入 main（PR#1523 → 2856b178）。本计划不部署；下一次正常 Preproduction 发布中，若出现 prompt-target-state-error.json / prompt-sync-error.json，回读其分类与实际原因是否一致、是否无敏感信息（waiting-for-evidence，恢复事件=任一真实发布产生该 artifact）。部署验收与业务验收不属本任务。",
       "owner": "codex",
       "created_at": "2026-10-20",
       "updated_at": "2026-10-20",
@@ -19111,6 +19123,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "2026-10-20：新模块 59 passed（source 部署脚本 + 伪 Prompt CLI：瞬时恢复、三次即停并落 evidence、非瞬时单次、sync 按回读 fail-closed、分类器失败回退、resume 已 active 跳过 sync/activation、resume 回读恢复后 sync）；受影响 9 个模块 335 passed；突变负控（MAX=5、去回读门）10 项失败后复原转绿；强制泄漏负控拒写 artifact；bash -n / compileall / git diff --check 通过。"
         },
         {
+          "type": "pr",
+          "label": "独立代码验收",
+          "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
+          "result": "2026-10-20 通过：评审 HEAD 7855b9361d2d56ca20abd716fc94df56372b8a4b；复跑 335 passed、bash -n、compileall、git diff --check、Overview 校验；确认 C1-C6 与两项破坏性负控；已知限制=真实 Preproduction 样本 waiting-for-evidence、terraform 既有失败与本 PR 无关、shellcheck 未装、含先前 d579b035 已披露。"
+        },
+        {
+          "type": "pr",
+          "label": "finalize 合入 main",
+          "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
+          "result": "集成合并 42e71f7107cfb6a899434e86fd51af2857123b34（评审文件与 7855b936 逐字节一致，仅生成的 Overview 重建）；--reviewed-head 42e71f71 + 同一 335 项 verify 通过；squash 合并提交 2856b178d16d0eafdab3f1b2ec4103bc6ba12bec；根区 main 快进、CodeGraph 同步、根区复跑 257 passed、CodeSight wiki 刷新；worktree 与分支已清理。未部署（部署工具链变更、无运行时导入）。"
+        },
+        {
           "type": "decision",
           "label": "执行侧等价选择",
           "details": "脱敏字段命名 redacted_message（保留 PR#1054 的 last_error 守卫）；validation_failed 仅属 prompt_sync_*；evidence 对称增加 prompt_target_state* 字段；prompt_schema 阶段抽为 run_prompt_release_phase 仅为真实入口测试、阶段体不变；仓库层 _run_with_connection_retry 单次重试为既有层不改。基线既有失败 test_automation_ecs_terraform::test_preproduction_network_and_runtime_identity_are_explicit 在根区 main 同样失败，与本任务无关。"
@@ -19122,6 +19146,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "backend/scripts/automation_ecs_release_pipeline.py",
         "backend/scripts/prompt_release.py",
         "docs/deploy_automation_ecs_release.md"
+      ],
+      "history": [
+        {
+          "at": "2026-10-20",
+          "event": "completed",
+          "summary": "preproduction-prompt-sync-resilience v1 独立验收通过（评审 HEAD 7855b936），集成 42e71f71 后 finalize 合入 main 2856b178（PR#1523）；代码验收完成，部署观察 waiting-for-evidence。"
+        }
       ]
     },
     {

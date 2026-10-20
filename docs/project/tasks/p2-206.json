@@ -23,13 +23,13 @@
       "result": "2026-10-20：新模块 59 passed（source 部署脚本 + 伪 Prompt CLI：瞬时恢复、三次即停并落 evidence、非瞬时单次、sync 按回读 fail-closed、分类器失败回退、resume 已 active 跳过 sync/activation、resume 回读恢复后 sync）；受影响 9 个模块 335 passed；突变负控（MAX=5、去回读门）10 项失败后复原转绿；强制泄漏负控拒写 artifact；bash -n / compileall / git diff --check 通过。"
     },
     {
-      "type": "review",
+      "type": "pr",
       "label": "独立代码验收",
       "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
       "result": "2026-10-20 通过：评审 HEAD 7855b9361d2d56ca20abd716fc94df56372b8a4b；复跑 335 passed、bash -n、compileall、git diff --check、Overview 校验；确认 C1-C6 与两项破坏性负控；已知限制=真实 Preproduction 样本 waiting-for-evidence、terraform 既有失败与本 PR 无关、shellcheck 未装、含先前 d579b035 已披露。"
     },
     {
-      "type": "merge",
+      "type": "pr",
       "label": "finalize 合入 main",
       "path": "https://github.com/ZilingXie/SupportPortal/pull/1523",
       "result": "集成合并 42e71f7107cfb6a899434e86fd51af2857123b34（评审文件与 7855b936 逐字节一致，仅生成的 Overview 重建）；--reviewed-head 42e71f71 + 同一 335 项 verify 通过；squash 合并提交 2856b178d16d0eafdab3f1b2ec4103bc6ba12bec；根区 main 快进、CodeGraph 同步、根区复跑 257 passed、CodeSight wiki 刷新；worktree 与分支已清理。未部署（部署工具链变更、无运行时导入）。"
