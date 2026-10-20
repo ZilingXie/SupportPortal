@@ -1713,6 +1713,7 @@ def test_verify_preproduction_heartbeats_require_preproduction_identity(
 def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_sync() -> None:
     script = DEPLOY_SCRIPT.read_text(encoding="utf-8")
     main_script = script[script.index("main() {") :]
+    phase_script = script[script.index("run_prompt_release_phase() {") : script.index("main() {")]
     cleanup_script = script[script.index("cleanup() {") : script.index("run_terraform_zero_plan() {")]
     assert "DEPLOY_PRODUCTION_APPROVED" in script
     assert "--check-only" in script
@@ -1728,8 +1729,14 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert "PROMPT_RELEASE_TARGET_DSN=" in script
     assert '[[ -n "${TICKET_DB_DSN:-}" ]] || fail "TICKET_DB_DSN is required"' in script
     assert '(cd -- "${RELEASE_SOURCE_ROOT}"' in script
-    assert main_script.count("run_release_prompt_cli") == 5
+    # Source validate, activate and the post-activation validate stay in main;
+    # sync and the pre-activation validate run inside the Prompt release phase.
+    assert main_script.count("run_release_prompt_cli") == 3
+    assert phase_script.count("run_release_prompt_cli") == 2
+    assert "run_prompt_operation_with_recovery prompt-sync" in phase_script
+    assert "run_release_prompt_cli sync" in phase_script
     assert "backend.scripts.prompt_release" not in main_script
+    assert "backend.scripts.prompt_release" not in phase_script
     assert 'mkdir -p -- "${PROJECT_ROOT}/.deployments"' in script
     assert "validate-suspension-recipients" in script
     assert main_script.index("validate-suspension-recipients") < main_script.index(
@@ -1776,13 +1783,14 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     # behavior is covered by test_automation_ecs_cloudwatch_gate via the shell gate.
     assert 'collect-cloudwatch-evidence --region "${REGION}" --cluster "${CLUSTER}"' in script
     check_only = main_script.index('if [[ "${CHECK_ONLY}" = "1" ]]')
-    prompt_sync = main_script.index("run_release_prompt_cli sync")
-    schema_bootstrap = main_script.index("run_schema_bootstrap")
+    prompt_phase = main_script.index("run_prompt_release_phase")
+    prompt_sync = phase_script.index("run_prompt_operation_with_recovery prompt-sync")
+    schema_bootstrap = phase_script.index("run_schema_bootstrap")
     assert "schema_is_current" in script
     assert 'SCHEMA_BOOTSTRAP_STATUS="skipped_current"' in script
     assert "backend.scripts.automation_ecs_bootstrap check" in script
     assert '"${observed_revision}" = "${expected_revision}"' in script
-    service_registration = main_script.index("for role in api route worker", schema_bootstrap)
+    service_registration = main_script.index("for role in api route worker", prompt_phase)
     reconcile_bootstrap = script.index("reconcile_schema_bootstrap_checkpoint")
     run_bootstrap = script.index("run_schema_bootstrap()")
     register = script.index("aws ecs register-task-definition")
@@ -1790,9 +1798,9 @@ def test_formal_deploy_script_enforces_order_rollback_and_secret_safe_prompt_syn
     assert 'jq \'length\' "${tags_path}"' in script
     assert optional_tags < register
     update_service = main_script.index("update_role_if_needed")
-    assert check_only < schema_bootstrap
+    assert check_only < prompt_phase
     assert schema_bootstrap < prompt_sync
-    assert schema_bootstrap < service_registration
+    assert prompt_phase < service_registration
     assert reconcile_bootstrap < run_bootstrap < register
     assert "Schema bootstrap checkpoint task definition family mismatch" in script
     assert "Schema bootstrap checkpoint task definition mismatch" in script

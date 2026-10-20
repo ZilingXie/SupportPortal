@@ -5,6 +5,10 @@ umask 077
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${AUTOMATION_RELEASE_PYTHON:-python3}"
+# Direct deploy invocations can also be launched from a shell that sourced
+# the repository .env.  Local Compose credentials are never deploy inputs.
+unset LOCAL_POSTGRES_PASSWORD LOCAL_POSTGRES_USER LOCAL_POSTGRES_DB LOCAL_POSTGRES_HOST_PORT
+unset LOCAL_TICKET_DB_POOL_MAX_SIZE LOCAL_TICKET_DB_POOL_MIN_SIZE LOCAL_TICKET_DB_POOL_TIMEOUT_SECONDS LOCAL_TICKET_DB_SCHEMA
 MANIFEST_PATH=""
 PROMOTION_RECORD=""
 PUBLISH_RECORD=""
@@ -57,6 +61,19 @@ PROMOTION_REPOSITORY=""
 PROMPT_SYNC_STATUS="not_started"
 PROMPT_ACTIVATION_STATUS="not_started"
 SOURCE_PROMPT_STATUS="not_started"
+# Prompt target operations (state readback, sync): bounded recovery state that
+# write_evidence reports next to the operation status. Raw CLI stderr only ever
+# lives in PROMPT_SCRATCH_DIR, outside the checkpoint, and is removed on exit.
+PROMPT_TARGET_STATE_STATUS="not_started"
+PROMPT_TARGET_STATE_CLASSIFICATION=""
+PROMPT_TARGET_STATE_ATTEMPTS=0
+PROMPT_TARGET_STATE_RETRYABLE="false"
+PROMPT_SYNC_CLASSIFICATION=""
+PROMPT_SYNC_ATTEMPTS=0
+PROMPT_SYNC_RETRYABLE="false"
+PROMPT_OPERATION_MAX_ATTEMPTS=3
+PROMPT_OPERATION_RETRY_BACKOFF_SECONDS=(1 3)
+PROMPT_SCRATCH_DIR=""
 TERRAFORM_STATUS="not_started"
 TERRAFORM_POST_DEPLOY_STATUS="not_started"
 PROVIDER_PROBE_STATUS="not_started"
@@ -581,6 +598,13 @@ write_evidence() {
     --arg registry_id "${REGISTRY_ID}" \
     --arg repository "${PROMOTION_REPOSITORY}" \
     --arg prompt_sync "${PROMPT_SYNC_STATUS}" \
+    --arg prompt_sync_classification "${PROMPT_SYNC_CLASSIFICATION}" \
+    --argjson prompt_sync_attempts "${PROMPT_SYNC_ATTEMPTS}" \
+    --argjson prompt_sync_retryable "${PROMPT_SYNC_RETRYABLE}" \
+    --arg prompt_target_state "${PROMPT_TARGET_STATE_STATUS}" \
+    --arg prompt_target_state_classification "${PROMPT_TARGET_STATE_CLASSIFICATION}" \
+    --argjson prompt_target_state_attempts "${PROMPT_TARGET_STATE_ATTEMPTS}" \
+    --argjson prompt_target_state_retryable "${PROMPT_TARGET_STATE_RETRYABLE}" \
     --arg prompt_activation "${PROMPT_ACTIVATION_STATUS}" \
     --arg source_prompt "${SOURCE_PROMPT_STATUS}" \
     --arg terraform "${TERRAFORM_STATUS}" \
@@ -610,7 +634,7 @@ write_evidence() {
     --argjson provider_probe "${provider_probe}" \
     --slurpfile cloudwatch_reports "${cloudwatch_summary}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{case_engine:$case_engine,agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_sync:$prompt_sync,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{case_engine:$case_engine,agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_target_state:$prompt_target_state,prompt_target_state_classification:$prompt_target_state_classification,prompt_target_state_attempts:$prompt_target_state_attempts,prompt_target_state_retryable:$prompt_target_state_retryable,prompt_sync:$prompt_sync,prompt_sync_classification:$prompt_sync_classification,prompt_sync_attempts:$prompt_sync_attempts,prompt_sync_retryable:$prompt_sync_retryable,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
   mkdir -p -- "${STATE_DIR}/evidence-attempts"
@@ -765,6 +789,9 @@ cleanup() {
       fi
     fi
   fi
+  if [[ -n "${PROMPT_SCRATCH_DIR}" && -d "${PROMPT_SCRATCH_DIR}" ]]; then
+    rm -rf -- "${PROMPT_SCRATCH_DIR}"
+  fi
   if [[ "${REMOVE_TEMP_DIR}" = "1" && -n "${TEMP_DIR}" && -d "${TEMP_DIR}" ]]; then
     rm -rf -- "${TEMP_DIR}"
   fi
@@ -797,6 +824,127 @@ read_secret_value() {
 run_release_prompt_cli() {
   (cd -- "${RELEASE_SOURCE_ROOT}" && \
     "${PYTHON_BIN}" -m backend.scripts.prompt_release "$@")
+}
+
+# Raw Prompt CLI stderr can carry connection details, so it is captured in a
+# private directory outside the checkpoint that cleanup removes. Only the
+# classifier's redacted record reaches STATE_DIR or evidence.
+ensure_prompt_scratch_dir() {
+  if [[ -z "${PROMPT_SCRATCH_DIR}" || ! -d "${PROMPT_SCRATCH_DIR}" ]]; then
+    PROMPT_SCRATCH_DIR="$(mktemp -d "${TMPDIR:-/tmp}/ecs-deploy-prompt-scratch.XXXXXX")"
+    chmod 700 "${PROMPT_SCRATCH_DIR}"
+  fi
+}
+
+record_prompt_operation_outcome() {
+  local operation="$1" status="$2" attempts="$3" classification="$4" retryable="$5"
+  case "${operation}" in
+    prompt-target-state)
+      PROMPT_TARGET_STATE_STATUS="${status}"
+      PROMPT_TARGET_STATE_ATTEMPTS="${attempts}"
+      PROMPT_TARGET_STATE_CLASSIFICATION="${classification}"
+      PROMPT_TARGET_STATE_RETRYABLE="${retryable}"
+      ;;
+    prompt-sync)
+      # The deployable status (candidate/active) comes from the sync result
+      # read by the caller; only a failure is recorded here.
+      [[ "${status}" != "failed" ]] || PROMPT_SYNC_STATUS="failed"
+      PROMPT_SYNC_ATTEMPTS="${attempts}"
+      PROMPT_SYNC_CLASSIFICATION="${classification}"
+      PROMPT_SYNC_RETRYABLE="${retryable}"
+      ;;
+    *) fail "Unknown Prompt operation: ${operation}" ;;
+  esac
+}
+
+# Single read-only readback used by the sync recovery gate. Prints the target
+# release status (missing/candidate/active/...), or "unavailable" when the
+# readback itself fails; an unavailable readback keeps the sync result unknown.
+prompt_sync_target_readback_status() {
+  local readback_path="${PROMPT_SCRATCH_DIR}/prompt-sync.readback.json" status=""
+  if PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
+      "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
+      prompt-target-state --schema "${PROMPT_TARGET_SCHEMA}" --release-id "${PROMPT_RELEASE_ID}" \
+      >"${readback_path}" 2>"${readback_path}.stderr"; then
+    status="$(jq -r '.status // ""' "${readback_path}" 2>/dev/null || true)"
+  fi
+  printf '%s\n' "${status:-unavailable}"
+}
+
+# Classifies one failed attempt from its captured stderr and writes the
+# redacted record to <operation>-error.json. When the classifier itself fails
+# (for example its secret-free gate rejects the text) the attempt is recorded
+# as a non-retryable unknown failure without any message.
+classify_prompt_operation_failure() {
+  local operation="$1" stderr_path="$2" exit_code="$3" attempt="$4" readback_status="$5" error_path="$6"
+  local verdict
+  if verdict="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
+      classify-prompt-operation-failure --operation "${operation}" \
+      --stderr-file "${stderr_path}" --exit-code "${exit_code}" \
+      --release-id "${RELEASE_ID}" --prompt-release-id "${PROMPT_RELEASE_ID}" \
+      --attempt "${attempt}" --max-attempts "${PROMPT_OPERATION_MAX_ATTEMPTS}" \
+      --target-readback-status "${readback_status}" --output "${error_path}" \
+      2>"${stderr_path}.classify")"; then
+    printf '%s\n' "${verdict}"
+    return 0
+  fi
+  jq -cn --arg operation "${operation}" --arg release_id "${RELEASE_ID}" \
+    --arg prompt_release_id "${PROMPT_RELEASE_ID}" --argjson attempts "${attempt}" \
+    --argjson max_attempts "${PROMPT_OPERATION_MAX_ATTEMPTS}" --argjson exit_code "${exit_code}" \
+    --arg classification "${operation//-/_}_unknown" \
+    --arg target_readback_status "${readback_status}" \
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '{schema_version:"automation-prompt-operation-error-v1",operation:$operation,release_id:$release_id,prompt_release_id:$prompt_release_id,attempts:$attempts,max_attempts:$max_attempts,exit_code:$exit_code,classification:$classification,retryable:false,exception_type:"",sqlstate:"",target_readback_status:$target_readback_status,redacted_message:"classification unavailable",outcome:"failed",generated_at:$generated_at}' \
+    | tee "${error_path}"
+}
+
+# run_prompt_operation_with_recovery <operation> <output-json> <command...>
+# Runs one Prompt target operation. stdout becomes <output-json> only on
+# success. Each failure is classified from its captured stderr and recorded in
+# the checkpoint; only a transient connection failure is retried, at most
+# PROMPT_OPERATION_MAX_ATTEMPTS times with the fixed backoff. The sync write
+# additionally reads the target state back first: unless the release row is
+# still missing, the result counts as unknown and is never replayed.
+run_prompt_operation_with_recovery() {
+  local operation="$1" output_path="$2"
+  shift 2
+  local attempt=0 status verdict classification="" retryable="false" readback_status="" delay
+  local stderr_path error_path="${STATE_DIR}/${operation}-error.json"
+  ensure_prompt_scratch_dir
+  rm -f -- "${error_path}"
+  while :; do
+    attempt=$((attempt + 1))
+    stderr_path="${PROMPT_SCRATCH_DIR}/${operation}.attempt-${attempt}.stderr"
+    set +e
+    "$@" >"${output_path}.tmp" 2>"${stderr_path}"
+    status=$?
+    set -e
+    if [[ ${status} -eq 0 ]]; then
+      mv -- "${output_path}.tmp" "${output_path}"
+      if [[ -f "${error_path}" ]]; then
+        jq --argjson attempts "${attempt}" '. + {outcome:"recovered",attempts:$attempts}' \
+          "${error_path}" >"${error_path}.tmp"
+        mv -- "${error_path}.tmp" "${error_path}"
+      fi
+      record_prompt_operation_outcome "${operation}" passed "${attempt}" "${classification}" "${retryable}"
+      return 0
+    fi
+    rm -f -- "${output_path}.tmp"
+    readback_status=""
+    if [[ "${operation}" = "prompt-sync" ]]; then
+      readback_status="$(prompt_sync_target_readback_status)"
+    fi
+    verdict="$(classify_prompt_operation_failure "${operation}" "${stderr_path}" "${status}" "${attempt}" "${readback_status}" "${error_path}")"
+    classification="$(jq -r '.classification // "unknown"' <<<"${verdict}")"
+    retryable="$(jq -r 'if .retryable == true then "true" else "false" end' <<<"${verdict}")"
+    log "${operation} attempt ${attempt}/${PROMPT_OPERATION_MAX_ATTEMPTS} failed: ${classification}"
+    if [[ "${retryable}" != "true" || ${attempt} -ge ${PROMPT_OPERATION_MAX_ATTEMPTS} ]]; then
+      record_prompt_operation_outcome "${operation}" failed "${attempt}" "${classification}" "${retryable}"
+      return 1
+    fi
+    delay="${PROMPT_OPERATION_RETRY_BACKOFF_SECONDS[attempt - 1]:-${PROMPT_OPERATION_RETRY_BACKOFF_SECONDS[${#PROMPT_OPERATION_RETRY_BACKOFF_SECONDS[@]} - 1]}}"
+    sleep "${delay}"
+  done
 }
 
 render_role_task_definition() {
@@ -1434,6 +1582,51 @@ wait_and_verify_role() {
   verify_role_and_record "${role}"
 }
 
+# Prompt Release phase. On --resume the target state is read back first so an
+# already active release is neither synced nor activated again; otherwise the
+# release is synced as a deferred candidate. Both target operations run through
+# the bounded recovery wrapper and leave a redacted record on failure.
+run_prompt_release_phase() {
+  start_phase prompt_schema
+  if [[ "${RESUME}" = "1" ]]; then
+    PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
+      run_prompt_operation_with_recovery prompt-target-state "${TEMP_DIR}/prompt-current.json" \
+        "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
+        prompt-target-state --schema "${PROMPT_TARGET_SCHEMA}" --release-id "${PROMPT_RELEASE_ID}" \
+      || fail "Target Prompt Release state readback failed (${PROMPT_TARGET_STATE_CLASSIFICATION})"
+  fi
+  run_schema_bootstrap
+  if [[ "${RESUME}" = "1" && "$(jq -r '.status // ""' "${TEMP_DIR}/prompt-current.json")" = "active" ]]; then
+    if [[ ! -f "${TEMP_DIR}/prompt-sync.json" ]]; then
+      jq -n --slurpfile source "${TEMP_DIR}/source-prompt.json" \
+        '{sync:{status:"active"},identity:$source[0].identity}' >"${TEMP_DIR}/prompt-sync.json"
+    fi
+    PROMPT_SYNC_STATUS="active"
+    PROMPT_ACTIVATION_STATUS="active"
+    log "Target Prompt Release is already active; sync and activation will not be repeated"
+  else
+    verify_aws_mutation_ready
+    PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
+      PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
+      run_prompt_operation_with_recovery prompt-sync "${TEMP_DIR}/prompt-sync.json" \
+        run_release_prompt_cli sync --release-id "${PROMPT_RELEASE_ID}" --defer-activation \
+      || fail "Target Prompt Release sync failed (${PROMPT_SYNC_CLASSIFICATION})"
+    PROMPT_SYNC_STATUS="$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")"
+  fi
+  [[ "${PROMPT_SYNC_STATUS}" = "candidate" || "${PROMPT_SYNC_STATUS}" = "active" ]] \
+    || fail "Target Prompt Release is not deployable"
+  TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
+    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
+    run_release_prompt_cli validate \
+      --release-id "${PROMPT_RELEASE_ID}" >/dev/null 2>&1
+  log "Target Prompt Release activation preflight passed without schema initialization"
+  if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then
+    PROMPT_ACTIVATION_STATUS="active"
+    log "Target Prompt Release was already active before deployment; pre-activation failures remain rollback-safe"
+  fi
+  finish_phase passed
+}
+
 main() {
   parse_args "$@"
   trap cleanup EXIT
@@ -1670,44 +1863,7 @@ main() {
   # A fresh Preproduction identity has an empty schema. Create the runtime
   # tables before attempting to persist the target Prompt Release candidate.
   # No ECS service has been updated at this point.
-  start_phase prompt_schema
-  if [[ "${RESUME}" = "1" ]]; then
-    PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-      "${PYTHON_BIN}" -m backend.scripts.automation_ecs_release_pipeline \
-      prompt-target-state --schema "${PROMPT_TARGET_SCHEMA}" \
-      --release-id "${PROMPT_RELEASE_ID}" >"${TEMP_DIR}/prompt-current.json" 2>/dev/null
-  fi
-  run_schema_bootstrap
-  if [[ "${RESUME}" = "1" && "$(jq -r '.status // ""' "${TEMP_DIR}/prompt-current.json")" = "active" ]]; then
-    if [[ ! -f "${TEMP_DIR}/prompt-sync.json" ]]; then
-      jq -n --slurpfile source "${TEMP_DIR}/source-prompt.json" \
-        '{sync:{status:"active"},identity:$source[0].identity}' >"${TEMP_DIR}/prompt-sync.json"
-    fi
-    PROMPT_SYNC_STATUS="active"
-    PROMPT_ACTIVATION_STATUS="active"
-    log "Target Prompt Release is already active; sync and activation will not be repeated"
-  else
-    verify_aws_mutation_ready
-    PROMPT_RELEASE_TARGET_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-      PROMPT_RELEASE_TARGET_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-      run_release_prompt_cli sync \
-        --release-id "${PROMPT_RELEASE_ID}" --defer-activation \
-        >"${TEMP_DIR}/prompt-sync.json" 2>/dev/null \
-      || fail "Target Prompt Release sync failed"
-    PROMPT_SYNC_STATUS="$(jq -r '.sync.status' "${TEMP_DIR}/prompt-sync.json")"
-  fi
-  [[ "${PROMPT_SYNC_STATUS}" = "candidate" || "${PROMPT_SYNC_STATUS}" = "active" ]] \
-    || fail "Target Prompt Release is not deployable"
-  TICKET_DB_DSN="${PROMPT_RELEASE_TARGET_DSN}" \
-    TICKET_DB_SCHEMA="${PROMPT_TARGET_SCHEMA}" \
-    run_release_prompt_cli validate \
-      --release-id "${PROMPT_RELEASE_ID}" >/dev/null 2>&1
-  log "Target Prompt Release activation preflight passed without schema initialization"
-  if [[ "${PROMPT_SYNC_STATUS}" = "active" ]]; then
-    PROMPT_ACTIVATION_STATUS="active"
-    log "Target Prompt Release was already active before deployment; pre-activation failures remain rollback-safe"
-  fi
-  finish_phase passed
+  run_prompt_release_phase
 
   for role in api route worker; do
     register_task_definition "${role}"

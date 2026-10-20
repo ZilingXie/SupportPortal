@@ -66,6 +66,52 @@ Preproduction-only运行兼容现有`PROMPT_RELEASE_TARGET_DSN`；正式入口�
 `PRODUCTION_PROMPT_RELEASE_TARGET_DSN`，不允许把通用变量跨环境复用。两个DSN都只经
 环境传递，不进入argv、checkpoint或evidence。
 
+发布入口会在启动 Python、CodeBuild 和 deploy 子进程前移除 `LOCAL_*` 本地
+Compose 配置（包括 `LOCAL_POSTGRES_PASSWORD`）。这些变量不属于 ECS 发布输入；
+源 Prompt 校验仍使用显式的只读 `TICKET_DB_DSN`，Preproduction 迁移 DSN 仍由已校验
+的 AWS login provider 从 SSM 读取，并只在需要的 deploy 子进程环境中传递。
+
+### Prompt 目标操作的分类诊断与有限恢复（2026-10-20，preproduction-prompt-sync-resilience v1）
+
+deploy 的 `prompt_schema` 阶段（`run_prompt_release_phase`）里两条目标数据库操作——
+`--resume` 时的 `prompt-target-state` 只读回读与 `prompt_release sync --defer-activation`——
+都经 `run_prompt_operation_with_recovery` 执行，不再以 `2>/dev/null` 丢弃 stderr：
+
+- 原始 stderr 只写入 checkpoint 之外的私有 scratch 目录（`mktemp -d`，0700），`cleanup`
+  退出时删除；checkpoint、evidence 与日志只保留脱敏结果。
+- 每次失败由 `automation_ecs_release_pipeline classify-prompt-operation-failure` 按
+  **psycopg 异常类型 → SQLSTATE → 明确 libpq 文本 → `unknown`** 的顺序分类（两个 Prompt CLI 的
+  stderr 末行现为 `{"ok": false, "error", "exception_type", "sqlstate"}` 结构化明细），写入
+  `<STATE_DIR>/prompt-target-state-error.json` / `prompt-sync-error.json`（最新一次）与同名
+  `-attempts.jsonl`（追加历史）。记录字段：`operation`、`release_id`、`prompt_release_id`、
+  `attempts`、`max_attempts`、`exit_code`、`classification`、`retryable`、`exception_type`、
+  `sqlstate`、`target_readback_status`、`redacted_message`、`outcome`（failed/recovered）、
+  `generated_at`。写出前经 `assert_evidence_secret_free`；脱敏后仍含 DSN 则拒绝写出，shell 按
+  `*_unknown` 不可重试落盘且不带消息。
+- 只有 `*_connection_timeout` 与 `*_transient_connection` 可重试：最多 3 次，固定退避 1s、3s；
+  权限、schema 缺失、Prompt 校验与 unknown 一律 1 次即停。模糊的 `timeout` 字样不构成重试依据。
+- sync 是数据库事务写入：每次失败先做一次只读 `prompt-target-state` 回读，**只有目标 release 仍为
+  `missing` 才允许重放**；回读为 candidate/active/其他或回读本身失败，一律归为
+  `prompt_sync_write_result_unknown`，不自动重试、不自动激活，等待人工回读后再 `--resume`。
+  `sync_prompt_release` 对已存在且 build_ref/内容指纹一致的 release 幂等返回，因此人工 resume 安全。
+- 两条目标连接路径显式 `connect_timeout=10`（只限制连接建立，不设置 statement timeout）。
+- evidence `checks` 新增 `prompt_target_state`、`prompt_target_state_classification`、
+  `prompt_target_state_attempts`、`prompt_target_state_retryable` 与 `prompt_sync_classification`、
+  `prompt_sync_attempts`、`prompt_sync_retryable`；失败时 `prompt_sync`/`prompt_target_state` 为 `failed`，
+  重试后成功时保留最后一次失败的分类与总尝试次数。
+- 分类码：`prompt_target_state_{connection_timeout,transient_connection,permission_denied,schema_missing,unknown}`；
+  `prompt_sync_{connection_timeout,transient_connection,write_result_unknown,validation_failed,permission_denied,schema_missing,unknown}`。
+- 边界：`PostgresTicketRepository._run_with_connection_retry` 对连接错误保留既有的仓库级单次重试；
+  Prompt activation/validate 的 stderr 处理与重试不在本机制范围内。
+
+源码：`deployment/deploy_automation_ecs_release.sh`（`run_prompt_operation_with_recovery`、
+`run_prompt_release_phase`、`write_evidence`）、`backend/scripts/automation_ecs_release_pipeline.py`
+（`classify_prompt_operation_failure`、`redact_sensitive_text`、`record_prompt_operation_failure`）、
+`backend/scripts/prompt_release.py`（结构化 stderr、`SYNC_TARGET_CONNECT_TIMEOUT_SECONDS`）。
+验证：`backend/tests/test_prompt_sync_resilience.py`（真实 source 部署脚本 + 伪 Prompt CLI，
+2026-10-20）；合同与证据见 `docs/plans/preproduction-prompt-sync-resilience-v1.md`。本机制随代码
+交付，尚未在 Preproduction 发布中观察。
+
 pipeline使用当前main上的部署工具，同时创建clean detached release worktree证明构建
 来源。release commit必须可从`origin/main`到达，worktree HEAD与Manifest commit完全
 相等，Manifest/tag/digest/Publish Record必须一致。release commit之后只允许
