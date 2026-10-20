@@ -58,9 +58,9 @@
     {
       "workflowId": "GgDxPEWtW7ltT5BW",
       "name": "[kb]Build|CSD",
-      "description": "AgentMemory 恢复（p2-186）：定时扫描已解决 CSD issue，具名字段取完整快照（含 OS/Category 自定义字段），PostgreSQL csd 去重，AI 判定原因/方案清晰后生成英文 KB，经 AgentMemory Wiki create/raw-write/ingest 入库；治理投递链已移除，Zendesk KB/2_rag 不恢复。",
+      "description": "阶段二 source-only（p2-194，D1-D4 修复后现役 Active=6511c2e9）：JQL 扫 RESOLVED（updated ASC）→显式字段详情→完整性校验→纯 JS SHA-256 快照→投递 SP preproduction 来源接口（supportcenter.stellarix.space/.../knowledge/sources，httpBearerAuth）→三态回执校验。Draft 86f9fb06=Active+Cap 10 Limit 节点（stage6-csd-governance-cap-10，未发布）。",
       "parentFolderId": "SLMnELm0z3huA2Cr",
-      "updatedAt": "2026-10-06T09:28:56.387Z",
+      "updatedAt": "2026-10-20T03:06:05.205Z",
       "publishedVersionId": "6511c2e9-2d68-44f0-b3f6-00e9060bbc36",
       "draftVersionId": "86f9fb06-fe07-4e9f-96cb-5090b597c066",
       "draftMatchesPublished": false,

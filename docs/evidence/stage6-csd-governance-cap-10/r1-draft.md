@@ -4,7 +4,7 @@
 
 ## 基线（修改前）
 
-- CSD workflow `GgDxPEWtW7ltT5BW`，active=versionId=**6511c2e9**（与仓库快照逐字一致，回读验证）；回滚版本=6511c2e9。
+- CSD workflow `GgDxPEWtW7ltT5BW` 线上回读：顶层 `versionId=86f9fb06`（=当前 Draft）；`activeVersionId=6511c2e9`（=线上 Active，回滚基线）。仓库 active 快照与 6511c2e9 的 12 节点图一致。
 - 节点图 12 节点；Url_list（Code，issues→{index,url}）→ Loop Over Items（batchSize=1）；JQL `updated ASC`。
 
 ## Draft 变更（versionId **86f9fb06**，activeVersionId 仍=6511c2e9）
