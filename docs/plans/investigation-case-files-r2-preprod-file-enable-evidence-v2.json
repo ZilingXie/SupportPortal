@@ -1,6 +1,6 @@
 {
   "plan_name": "investigation-case-files-r2-preprod-file-enable",
-  "revision": "v2",
+  "revision": "v2-r2",
   "captured_at": "2026-10-20T09:00:00Z",
   "scope": "Preproduction enable round: three-way Hermes overlay, two SP releases (including one repair), representative engineer file loop with controlled Zendesk attachment delivery, live negatives. No Production, no real customer data, no n8n mutation, C7 Zac files remain waiting-for-evidence.",
   "baseline_freeze": {
@@ -47,14 +47,39 @@
   "file_loop_live": {
     "ticket": "14147",
     "subject": "[zac test] RTC audio stall investigation CF2R4 20261020-161739",
-    "binding": {"channel": "C0BS0N61D1R", "thread_ts": "1792484454.036359", "direction": "investigation (promoted by fix)"},
+    "binding": {
+      "channel": "C0BS0N61D1R",
+      "thread_ts": "1792484454.036359",
+      "direction": "investigation (promoted by fix)"
+    },
     "slack_file_id": "F0CAF30RV7F",
-    "map_row": {"id": 2, "managed_filename": "14147-engineer-2.txt", "state": "available", "size_bytes": 1083, "source": "engineer", "original": "rtc-file-transfer-test.txt"},
-    "hermes_tool_calls": {"case_files_list": 1, "case_files_read": 1, "case_files_search": 3},
+    "map_row": {
+      "id": 2,
+      "managed_filename": "14147-engineer-2.txt",
+      "state": "available",
+      "size_bytes": 1083,
+      "source": "engineer",
+      "original": "rtc-file-transfer-test.txt"
+    },
+    "hermes_tool_calls": {
+      "case_files_list": 1,
+      "case_files_read": 1,
+      "case_files_search": 3
+    },
     "search_results": "CF2-SEARCH-ALPHA-7741 at lines 6 and 14 (truncated=false); CF2-SEARCH-BRAVO-9937 at line 10; matches the uploaded file byte-for-byte",
     "draft": "draft-0614394408c043b8804451fd9c150a7d approved by dashboard-admin",
     "draft_snapshot": "basis.attachments contains map_id=2 frozen snapshot (slack_file_id, state, map_version)",
-    "delivery": {"zendesk_comment_id": "54778303456916", "public": true, "attachment": {"id": "54778318315924", "file_name": "14147-engineer-2.txt", "size": 1083, "content_type": "text/plain"}, "ticket_status_after": "open"},
+    "delivery": {
+      "zendesk_comment_id": "54778303456916",
+      "public": true,
+      "attachment": {
+        "id": "54778318315924",
+        "file_name": "14147-engineer-2.txt",
+        "size": 1083,
+        "content_type": "text/plain"
+      },
+      "ticket_status_after": "open"
+    },
     "earlier_tickets": {
       "14142": "files-disabled round: investigation ran, zac consult completed after one 504; case concluded without the promised log (never uploaded) — live proof that the file gate contract mismatched deterministic routing",
       "14144": "burned by case auto-solve racing manual upload",
@@ -63,20 +88,39 @@
     "transport_boundary": "the engineer file message was delivered to the SP API directly with real Slack file/message/thread metadata; the Slack->n8n transport hop was not exercised for the file because the only available credential is the engineer bot token and the n8n filter intentionally excludes bot-authored events (R1-verified transport; disclosed)"
   },
   "live_negatives": [
-    {"probe": "case_files_list/read/download_stream without scope", "http": 422, "code": "file_scope_invalid (was case_files_disabled before enable)"},
-    {"probe": "forged capability (valid-shape base64, zero signature)", "http": 422, "code": "file_scope_invalid"},
-    {"probe": "tampered signature", "http": 422, "code": "file_scope_invalid"},
-    {"probe": "duplicate file event (same source_event_id, changed text)", "http": 422, "code": "hermes turn Slack event identity conflict; Map stayed 2 rows / 2 distinct file ids; no new turn"},
-    {"probe": "delivery to solved ticket", "result": "cancelled (zendesk_ticket_closed) — worker refuses public send"}
+    {
+      "probe": "case_files_list/read/download_stream without scope",
+      "http": 422,
+      "code": "file_scope_invalid (was case_files_disabled before enable)"
+    },
+    {
+      "probe": "forged capability (valid-shape base64, zero signature)",
+      "http": 422,
+      "code": "file_scope_invalid"
+    },
+    {
+      "probe": "tampered signature",
+      "http": 422,
+      "code": "file_scope_invalid"
+    },
+    {
+      "probe": "duplicate file event (same source_event_id, changed text)",
+      "http": 422,
+      "code": "hermes turn Slack event identity conflict; Map stayed 2 rows / 2 distinct file ids; no new turn"
+    },
+    {
+      "probe": "delivery to solved ticket",
+      "result": "cancelled (zendesk_ticket_closed) — worker refuses public send"
+    }
   ],
   "offline_negatives_note": "deletion, permission denial, size limit, unknown upload result, stale snapshot, cross-case access, revision/session mismatch, automation/route/adhoc isolation are covered by the R2 suite (290/290 green on 0bd735ea line) and the merged-overlay verification; not re-driven live this round",
   "gates": {
     "C1": "PASS live: managed names 14145-engineer-1.txt / 14147-engineer-2.txt (global map id sequence); duplicate event rejected with zero re-registration",
     "C2": "PASS (capability negatives live: forged/tampered/absent scope all 422; cross-case/revision/session offline suite green)",
-    "C3": "PASS live: list/read/search executed by the model with marker hits at exact lines 6/10/14, no truncation; content cited verbatim in the customer reply",
+    "C3": "PASS live (14147 and re-verified 14151 on td54): list/read/search with exact marker lines; content cited in customer replies",
     "C4": "PASS (ticket-closed delivery cancellation live; deletion/limit/unknown offline suite)",
-    "C5": "PASS live: approved draft froze map snapshot (map_id/version/slack id); attachment delivered with the public reply to Zendesk 14147; file-anomaly blocking covered offline",
-    "C6": "PASS (toolset narrowing code + offline route/adhoc suites + merged skills gates; no live automation-path file attempt this round)",
+    "C5": "PASS live (14147 and re-verified 14151 on td54): frozen snapshot + attachment delivered to Zendesk; closed-ticket delivery cancelled (14145)",
+    "C6": "PASS: combined profile+file scope now lists/loads support-case-files only inside a work-phase file scope (td54 in-container real functions); profile-only and no-scope paths deny; automation/route/adhoc isolation by toolsets code + offline suites; live automation-path reverse call still not driven (disclosed)",
     "C7": "waiting-for-evidence (unchanged; zac consult capability itself preserved and exercised live once with a completed answer after one 504)"
   },
   "known_findings_for_review": [
@@ -84,5 +128,50 @@
     "binding.direction promotion fix is new behavior on the routing state machine; escalation overwrite semantics covered by tests",
     "concurrent appid thread rebuilt hermes (td52/180e2c98) on top of the merged overlay during the round; capability markers re-verified in-container after that deploy",
     "draft table shows 'queued' after delivery completes (14057-known display quirk; delivery ledger is authoritative)"
+  ],
+  "r2_v2_b1_repair": {
+    "finding": "R2-V2-B1 (independent acceptance): with both supportportal_skill_profile and supportportal_file_scope bound, skills_list/skill_view short-circuited into the Investigation profile branch, so support-case-files was neither listed nor loadable (skill_profile_denied); verify_merged_overlay.py only tested the two scopes separately",
+    "fix": "supportportal_file_context.file_skill_visible(name) (true only for the case-file skill inside a work-phase file scope); skills_list profile branch appends the file skill entry when visible; skill_view and _skill_view_with_bump exempt the file skill from the profile shortcut and the skill_visible gate; shared _supportportal_listing_visible predicate = (skill_visible or file_skill_visible) and skill_allowed applied at the three _find_all_skills return filters (the first attempt td53 missed these filters: view worked, list still hid the skill)",
+    "artifacts": "deployment/hermes-case-files/supportportal_file_context.py (helper), deployment/hermes-case-files/v2-merge/{merge_b1_fix.py,verify_b1.py,Dockerfile.overlay-b1}; inputs extracted from live image 180e2c98, tree built under /tmp (host filesystem inode corruption required cat-based re-materialization)",
+    "offline_matrix": "B1_VERIFY_OK: profile-only unchanged (2 entries, file skill denied); combined work scope -> list [hermes-zac-engineering-handoff, supportportal-investigation, support-case-files], view/wrapper pass gates, argus still denied, profile entries still viewable; combined persona-phase -> file skill hidden/denied; file-only unchanged; stub _find_all_skills now routes through the shared predicate so the harness cannot hide a listing regression",
+    "images": [
+      {
+        "td": 53,
+        "digest": "sha256:e44d51b75744a1827810fb501aad9e7acb73941753d569a85ed771cda4c575bb",
+        "result": "partial: combined view success, combined list still missing the skill (superseded)"
+      },
+      {
+        "td": 54,
+        "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+        "result": "LIVE in-container with real skills_tool + EFS skills dir: combined_list includes support-case-files, combined_view_success=true with real SKILL.md content, profile_only_view=skill_profile_denied, no_scope_view=case_file_scope_required"
+      }
+    ],
+    "live_reverify_14151": {
+      "ticket": "14151",
+      "slack_file_id": "F0CA5RAUYBZ",
+      "map": "id=4 14151-engineer-4.txt available",
+      "tool_calls": {
+        "case_files_list": 2,
+        "case_files_read": 5,
+        "case_files_search": 2
+      },
+      "markers": "ALPHA x3 / BRAVO x3 in evidence",
+      "skill_evidence": "investigation evidence cites \"support-case-files skill\" as a consulted source in the real Investigation Work run",
+      "delivery": {
+        "zendesk_comment_id": "54779760112148",
+        "attachment": {
+          "id": "54779773301652",
+          "file_name": "14151-engineer-4.txt",
+          "size": 1083
+        }
+      },
+      "ticket_status_after": "open"
+    },
+    "offline_regression": "bundle verify five gates passed; test_investigation_case_files + test_investigation_attachments 62 passed with isolated PostgreSQL on the fixed bundle"
+  },
+  "open_boundaries": [
+    "Slack->n8n transport hop for human file_share not exercised (bot token excluded by design); keep open until a human-upload path is verified",
+    "live automation-path reverse call of file tools not driven",
+    "C7 Zac files waiting-for-evidence"
   ]
 }

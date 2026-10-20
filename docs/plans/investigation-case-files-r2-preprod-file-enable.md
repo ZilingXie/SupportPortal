@@ -65,3 +65,11 @@
 
 - C7 Zac 文件：`waiting-for-evidence` 不变（真实文件接口/样本仍缺）。
 - Production：未触碰；启用与业务写入仅限 Preproduction。
+
+### 修复轮 R2-V2-B1（2026-10-20 独立验收未通过后）
+
+- **发现**（验收方）：真实 Work scope 同时绑定 `supportportal_skill_profile` 与 `supportportal_file_scope` 时，`skills_list/skill_view` 先命中 profile 分支返回 Investigation profile 结果，`support-case-files` 不在列且加载返回 `skill_profile_denied`；原 `verify_merged_overlay.py` 只分别测两种 scope。
+- **修复**：`supportportal_file_context.file_skill_visible(name)`（仅文件技能且仅 work 相位文件 scope 为真）；`skills_list` profile 分支在可见时追加文件技能条目；`skill_view` 与 `_skill_view_with_bump` 对文件技能豁免 profile 短路与 `skill_visible` 门；新增共享谓词 `_supportportal_listing_visible=(skill_visible or file_skill_visible) and skill_allowed` 用于 `_find_all_skills` 三处返回过滤（首次尝试 td53 漏了这三处：view 通过但 list 仍缺，已被 td54 取代）。
+- **验证**：离线矩阵 `verify_b1.py` B1_VERIFY_OK（profile-only 不变 / 组合 work 列出并可加载 / 组合 persona 隐藏 / file-only 不变；stub `_find_all_skills` 改为经同一谓词，堵住离线绕过真实过滤的缺口）；bundle 五门禁 + case files/attachments 套件 62/0（隔离 PG）；**td54（镜像 `7df5f3a3`）容器内以真实 `skills_tool`+真实 EFS 技能目录复核**：组合 list 含 `support-case-files`、view 返回真实 SKILL.md 内容，profile-only 与无 scope 负向不变。
+- **live 复验 14151**：Map `14151-engineer-4.txt`、list×2/read×5/search×2、标记命中、调查证据显式引用 "support-case-files skill"、审批快照、Zendesk 评论 54779760112148 + 附件 54779773301652、工单 open。C3/C5/C6 重新验证通过。
+- **保持开放的边界**：Slack→n8n 人类上传传输跳未演练（bot token 事件按设计被过滤）；Automation 路径反向调用无 live 证据；C7 Zac 文件 waiting-for-evidence。

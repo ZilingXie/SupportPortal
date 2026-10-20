@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T08:51:01Z",
-  "source_base_commit": "5ff9e9f903006c6cb57f72244d95f77caa77dbe2",
-  "registry_digest": "ff4726263b2e682067ac6292f2837aa23251ad17ce5d6bdaa0b606df682abdfe",
+  "generated_at": "2026-10-20T10:28:35Z",
+  "source_base_commit": "3bd6da447633c616670c7c33c7aae55a6fdc157a",
+  "registry_digest": "734499b6dfe0c42bdd411adbb8fb198ccc4fa322eab70f495877f0d53a684da7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1611,6 +1611,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
           "label": "v2 机器证据：overlay a40faeca、r20261020-0bd735e-r2、Map/工具调用/Zendesk 回执、live 负向、C1-C6 判定"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "R2-V2-B1 修复：组合 scope 技能可见性（td54/7df5f3a3 容器内真实函数复核 + 14151 live 复验 C3/C5/C6）"
         },
         {
           "type": "document",
@@ -18022,7 +18027,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。",
       "status": "blocked",
-      "next_action": "v2 执行轮等待独立验收（Draft PR 携证据）。验收通过后：收口文档与工作区；Zac 真实文件接口/样本仍是 C7 独立门禁；Production 另行授权。遗留观察：reply turn 完成后自动 solve 与人工审批的时序竞争（14145 证据）；工单 14147 保持 open 待处置。",
+      "next_action": "v2 执行轮 R2-V2-B1 修复完成（td54 镜像 7df5f3a3，14151 复验闭环），Draft PR#1527 等待重新独立验收。通过后收口文档与工作区；Zac 真实文件接口/样本仍是 C7 独立门禁；Slack→n8n 人类上传路径另需验证；Production 另行授权。遗留观察：reply turn 完成后自动 solve 与人工审批的时序竞争；工单 14147/14151 保持 open 待处置。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-20",
@@ -18033,7 +18038,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
         "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
-        "R2-V2-ACCEPT：v2 启用轮待独立验收（C1-C6 证据就绪；含修复轮 PR#1524 与并行线程交互披露）。"
+        "R2-V2-ACCEPT：v2 首轮独立验收未通过（R2-V2-B1 组合 scope 技能不可见）；修复已部署 td54 并 live 复验（14151），等待重新验收。开放边界：Slack→n8n 人类上传传输跳、Automation 路径 live 反向调用。"
       ],
       "evidence": [
         {
@@ -18125,6 +18130,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
           "label": "v2 机器证据：overlay a40faeca、r20261020-0bd735e-r2、Map/工具调用/Zendesk 回执、live 负向、C1-C6 判定"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "R2-V2-B1 修复：组合 scope 技能可见性（td54/7df5f3a3 容器内真实函数复核 + 14151 live 复验 C3/C5/C6）"
         }
       ]
     },
