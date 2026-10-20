@@ -311,6 +311,15 @@ class ScenarioContext:
         self.baseline_comment_ids = set(self.seen_comment_ids)
 
 
+class ScenarioDatabaseUnavailable(RuntimeError):
+    """The scenario tester's read-only database connection is unavailable.
+
+    Raised only after bounded retries on transient connection-pool errors;
+    distinct from Hermes/business failures so the runner can report the
+    infrastructure problem without misreporting the business outcome.
+    """
+
+
 class ScenarioEngine:
     def __init__(
         self,
@@ -342,6 +351,10 @@ class ScenarioEngine:
         self.imap_port = imap_port
         self.db_dsn = db_dsn
         self.db_schema = db_schema
+        # Lazy persistent read-only connection (plan: PP-A1 readback
+        # stability): one connection per scenario run instead of one per
+        # db_query(), with bounded reconnect on transient pool exhaustion.
+        self._db_connection: Any = None
         self.processing_profile = processing_profile
         self.subject_tag = subject_tag
         self.turn_timeout_min = turn_timeout_min
@@ -458,16 +471,78 @@ class ScenarioEngine:
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
-    def db_query(self, sql: str, params: tuple) -> list[dict]:
-        with psycopg.connect(
+    _DB_RETRYABLE_SQLSTATES = {
+        psycopg.errors.ConnectionTimeout.sqlstate if hasattr(psycopg.errors, "ConnectionTimeout") else None,
+        psycopg.errors.TooManyConnections.sqlstate if hasattr(psycopg.errors, "TooManyConnections") else None,
+        psycopg.errors.ConnectionException.sqlstate if hasattr(psycopg.errors, "ConnectionException") else None,
+        psycopg.errors.OperationalError.sqlstate if hasattr(psycopg.errors, "OperationalError") else None,
+    } - {None}
+    _DB_APPLICATION_NAME = "supportportal-scenario-tester"
+    _DB_MAX_RETRIES = 3
+    _DB_RETRY_BACKOFF_SECONDS = 1.5
+
+    def _open_db_connection(self):
+        return psycopg.connect(
             self.db_dsn,
             connect_timeout=10,
-            options=f"-c search_path={self.db_schema},public",
-        ) as connection:
-            with connection.cursor() as cursor:
-                cursor.execute(sql, params)
-                names = [item.name for item in cursor.description]
-                return [dict(zip(names, row)) for row in cursor.fetchall()]
+            options=(
+                f"-c search_path={self.db_schema},public "
+                f"-c application_name={self._DB_APPLICATION_NAME}"
+            ),
+        )
+
+    def close_db_connection(self) -> None:
+        connection = self._db_connection
+        self._db_connection = None
+        if connection is not None:
+            try:
+                connection.close()
+            except Exception:
+                pass
+
+    def _is_retryable_db_error(self, exc: Exception) -> bool:
+        sqlstate = getattr(exc, "sqlstate", None)
+        if sqlstate and sqlstate in self._DB_RETRYABLE_SQLSTATES:
+            return True
+        message = str(exc).casefold()
+        return any(
+            marker in message
+            for marker in (
+                "connection timeout expired",
+                "remaining connection slots are reserved",
+                "connection reset",
+                "server closed the connection",
+                "terminating connection",
+            )
+        )
+
+    def db_query(self, sql: str, params: tuple) -> list[dict]:
+        import time as _time
+
+        last_error = None
+        for attempt in range(self._DB_MAX_RETRIES + 1):
+            connection = self._db_connection
+            try:
+                if connection is None:
+                    connection = self._open_db_connection()
+                    self._db_connection = connection
+                with connection.cursor() as cursor:
+                    cursor.execute(sql, params)
+                    names = [item.name for item in cursor.description]
+                    return [dict(zip(names, row)) for row in cursor.fetchall()]
+            except psycopg.Error as exc:
+                if not self._is_retryable_db_error(exc) or attempt >= self._DB_MAX_RETRIES:
+                    raise ScenarioDatabaseUnavailable(
+                        f"preproduction_db_unavailable: {exc}"
+                    ) from exc
+                last_error = exc
+                self.close_db_connection()
+                _time.sleep(self._DB_RETRY_BACKOFF_SECONDS)
+            except Exception:
+                raise
+        raise ScenarioDatabaseUnavailable(
+            f"preproduction_db_unavailable: {last_error}"
+        )
 
     def send_email(
         self, subject: str, body: str, to_address: str, headers: dict[str, str] | None = None

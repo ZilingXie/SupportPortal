@@ -171,3 +171,128 @@ def test_validator_requires_unknown_requested_field_to_be_server_missing_field()
             "Hi Customer,\n\nPlease provide your passport number.", _basis(missing_fields=[])
         )
     assert exc.value.code == "unauthorized_field_request"
+
+
+class MissingInformationLayoutTests:
+    """Plan v1 track 2: layout by missing-field count (structure only)."""
+
+    @staticmethod
+    def _ask_basis(missing):
+        return _basis(
+            missing_fields=list(missing),
+            collected_facts={},
+            trusted_conclusion={"status": "missing_fields"},
+            allowed_claims=["state:missing_fields"],
+        )
+
+    def test_single_field_natural_sentence_passes(self):
+        basis = self._ask_basis(["app_id"])
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nThanks for reaching out. To enable Media Relay, we need your App ID.",
+            basis,
+        )["decision"] == "pass"
+
+    def test_single_field_bullet_rejected(self):
+        basis = self._ask_basis(["app_id"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nPlease share:\n\n- Your App ID", basis
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_single_field_colon_bare_field_rejected(self):
+        basis = self._ask_basis(["app_id"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nTo identify the project for this request, please provide:\n\nThe project's App ID.",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_single_field_no_request_semantics_rejected(self):
+        basis = self._ask_basis(["app_id"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nYour App ID is important for this request.", basis
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_two_fields_and_sentence_passes(self):
+        basis = self._ask_basis(["office_address", "contact_number"])
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nWe need your office address and official contact number.",
+            basis,
+        )["decision"] == "pass"
+
+    def test_two_fields_list_rejected(self):
+        basis = self._ask_basis(["office_address", "contact_number"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nPlease share:\n- Office address\n- Official contact number",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_three_fields_bullets_pass(self):
+        basis = self._ask_basis(
+            ["account_type", "name", "office_address"]
+        )
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nTo continue, we need the following information:\n"
+            "- Account type\n- Name\n- Office address",
+            basis,
+        )["decision"] == "pass"
+
+    def test_three_fields_flat_sentence_rejected(self):
+        basis = self._ask_basis(
+            ["account_type", "name", "office_address"]
+        )
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nWe need account type, name, and office address.", basis
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_three_fields_missing_bullet_rejected(self):
+        basis = self._ask_basis(
+            ["account_type", "name", "office_address"]
+        )
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nTo continue:\n- Account type\n- Name", basis
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_numbered_list_rejected(self):
+        basis = self._ask_basis(
+            ["account_type", "name", "office_address"]
+        )
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nPlease provide:\n1. Account type\n2. Name\n3. Office address",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_non_ask_reply_skips_layout(self):
+        # A progress/negative reply mentioning none of the missing fields
+        # skips the layout contract (narrow-scope gate).
+        basis = self._ask_basis(["office_address"])
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nNo credit card information is needed. We checked the network route.",
+            basis,
+        )["decision"] == "pass"
+
+    def test_ask_without_naming_missing_field_skips_layout(self):
+        # Narrow-scope gate: a reply with request semantics that never
+        # names any missing field skips the layout contract (the
+        # unauthorized-request pass polices its content instead).
+        basis = self._ask_basis(["app_id"])
+        result = validate_customer_reply_draft(
+            "Hi Customer,\n\nPlease check your project settings.", basis
+        )
+        assert result["decision"] == "pass"
+
+
+class TestMissingInformationLayout(MissingInformationLayoutTests):
+    pass

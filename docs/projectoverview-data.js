@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T04:15:32Z",
-  "source_base_commit": "95b1d7b42ba40f977fedee78a9c1fef511422c1a",
-  "registry_digest": "6d382bf7c8d82514c8509a6087aff0e98a95836f0d76a740c96caf7db3a53004",
+  "generated_at": "2026-10-20T06:54:29Z",
+  "source_base_commit": "dd37c4d36200247b8a9d8ded077e60949ed60d67",
+  "registry_digest": "06a6cc1e0e2ffb5b3acdc70fdbb4b363ce5d4bf5c1aa4aff9711f502bfc024c3",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1628,6 +1628,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "PP-A1 回读稳定性+缺资料回复布局双轨 v1 实施（Draft PR 待独立验收）",
+          "command": "pytest test_hermes_customer_reply_basis.py(39 含 12 布局新测试)+test_scenario_engine_db_resilience.py(6)+定向回归 174+worker 153(14 存量)+compileall",
+          "result": "轨道一（回读稳定性，14140 根因）：ScenarioEngine db_query 从每查一连接改为懒加载持久只读连接（application_name=supportportal-scenario-tester 便于 pg_stat_activity 定位）；瞬态错误（connection timeout expired/remaining connection slots are reserved/connection reset/server closed）有限重连（≤3 次 1.5s 退避），普通 SQL 错误立即抛出不重试；持续耗尽抛 ScenarioDatabaseUnavailable（'preproduction_db_unavailable: ...'）；CLI 三处 engine 站点全部 try/finally 显式 close，场景 runner 捕获 db_unavailable 单独报告（aborted=preproduction_db_unavailable）不判业务失败。6 项回读测试：瞬态恢复/持续耗尽预算内失败/非重试立即抛/close 幂等/连接复用（1 开 2 查）/app_name 常量。轨道二（布局规则）：persona 手册计数布局——1 项=单句（禁列表禁冒号裸字段）、2 项=and 并列句、3+项=引导句+每项一条 '- ' bullet 禁编号；明确禁止 'To identify the project for this request, please provide:'+裸字段句式。basis validator 新增窄范围 _validate_missing_information_layout（missing_information_layout_invalid）：仅在回复确实命名了至少一个缺失字段时生效（进度/否认类回复跳过）；1-2 项禁 bullet/编号/冒号裸字段+须有请求语义（need/provide/share 等）；3+ 项必须有 bullet 覆盖全部缺失字段禁编号；新增 app_id 字段别名。12 项布局测试（单句过/单 bullet 拒/冒号裸字段拒/无请求语义拒/双 and 过/双列表拒/三 bullet 过/三平铺拒/三缺 bullet 拒/编号拒/非 ask 跳过/无名 ask 跳过）。既有 27 项 basis 测试零回归（含中文字段名+技术名豁免）。"
         },
         {
           "type": "test",
@@ -18591,7 +18597,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
       "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
-      "next_action": "独立验收 reviewed HEAD 0de4868ef1624e619255cff87a6b0808ccfb2fe3（base c9722399daa347a7a24e0f15fafb8fddaedebe39）并确认失败转人工/发布竞态 CAS 修复；通过后按既有授权 finalize、刷新 CodeSight、发布 Preproduction。当前不回放14037、不强制释放邮件/relay。",
+      "next_action": "双轨 v1 实施完成（回读韧性+布局规则+检查器）：Draft PR 待独立验收；通过后 Prompt Release+Preprod 部署+新 enablement 最小工单首轮验证（不重跑 14140）。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18606,6 +18612,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "PP-A1 回读稳定性+缺资料回复布局双轨 v1 实施（Draft PR 待独立验收）",
+          "command": "pytest test_hermes_customer_reply_basis.py(39 含 12 布局新测试)+test_scenario_engine_db_resilience.py(6)+定向回归 174+worker 153(14 存量)+compileall",
+          "result": "轨道一（回读稳定性，14140 根因）：ScenarioEngine db_query 从每查一连接改为懒加载持久只读连接（application_name=supportportal-scenario-tester 便于 pg_stat_activity 定位）；瞬态错误（connection timeout expired/remaining connection slots are reserved/connection reset/server closed）有限重连（≤3 次 1.5s 退避），普通 SQL 错误立即抛出不重试；持续耗尽抛 ScenarioDatabaseUnavailable（'preproduction_db_unavailable: ...'）；CLI 三处 engine 站点全部 try/finally 显式 close，场景 runner 捕获 db_unavailable 单独报告（aborted=preproduction_db_unavailable）不判业务失败。6 项回读测试：瞬态恢复/持续耗尽预算内失败/非重试立即抛/close 幂等/连接复用（1 开 2 查）/app_name 常量。轨道二（布局规则）：persona 手册计数布局——1 项=单句（禁列表禁冒号裸字段）、2 项=and 并列句、3+项=引导句+每项一条 '- ' bullet 禁编号；明确禁止 'To identify the project for this request, please provide:'+裸字段句式。basis validator 新增窄范围 _validate_missing_information_layout（missing_information_layout_invalid）：仅在回复确实命名了至少一个缺失字段时生效（进度/否认类回复跳过）；1-2 项禁 bullet/编号/冒号裸字段+须有请求语义（need/provide/share 等）；3+ 项必须有 bullet 覆盖全部缺失字段禁编号；新增 app_id 字段别名。12 项布局测试（单句过/单 bullet 拒/冒号裸字段拒/无请求语义拒/双 and 过/双列表拒/三 bullet 过/三平铺拒/三缺 bullet 拒/编号拒/非 ask 跳过/无名 ask 跳过）。既有 27 项 basis 测试零回归（含中文字段名+技术名豁免）。"
+        },
         {
           "type": "test",
           "label": "rev v3.2 runtime compatibility scheduler repair at reviewed HEAD (pending independent review)",

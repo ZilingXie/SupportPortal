@@ -1,3 +1,17 @@
+## 2026-10-20 - persona-manual v6 布局规则收紧 + basis 布局检查器（p2-198 双轨 v1，未发布）
+
+- `hermes-persona-manual`（v6 内容内修订，未升版本号——发布时随本轮 Prompt Release 一起激活）：
+  缺失字段按计数定布局——1 项=自然完整单句（禁列表/禁冒号裸字段）；2 项=and 并列句；3+ 项=引导句+
+  每项一条 `- ` bullet（禁编号）；明确禁止 14140 出现的流程化句式（"To identify the project for this
+  request, please provide:" + 裸字段）。不固定逐字模板、允许自然开场（Thanks for reaching out 等）。
+- `hermes_customer_reply_basis.validate_customer_reply_draft` 新增窄范围检查器
+  `missing_information_layout_invalid`：仅在回复确实命名至少一个缺失字段时生效；1-2 项禁
+  bullet/编号/冒号裸字段且须含请求语义；3+ 项须 bullet 覆盖全部缺失字段且禁编号。新增 app_id 别名。
+  结构失败由现有 guardrail/draft 链承载重写与 fail-closed，本计划未改重写次数。
+- 触发证据：工单 14140 首轮缺 App ID 回复 "To identify the project for this request, please provide:\nThe
+  project's App ID."（单字段被渲染成流程化冒号+裸字段）。Production 14084 的 submission_confirmation
+  仅作语气参考。
+
 ## 2026-10-19 - Investigation 首条时间窗口与 Team Agent 咨询（p2-204 R2）
 
 - 首条 `ticket.created` 在没有客户 comment 和 trigger_comment_id 时，从 ticket.description 识别中文/英文相对日期；当前 comment 优先，窗口记录来源。

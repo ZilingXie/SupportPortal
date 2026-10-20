@@ -60,6 +60,7 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "contact_number": {"contact number", "official contact number", "phone number", "联系电话"},
     "contact_email": {"contact email", "official contact email", "email address", "联系邮箱"},
     "tax_id": {"tax id", "tax number", "tax identification number", "vat number", "vat id", "税号", "税务登记号"},
+    "app_id": {"app id", "application id", "application's app id", "project app id"},
     "passport_number": {"passport number", "passport id", "护照号"},
     "social_security_number": {"social security number", "ssn", "社保号"},
 }
@@ -447,6 +448,7 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
         raise HermesReplyBasisError("unsupported_account_state_claim")
     if _contains_authorized_claim(text, basis, _TIME_COMMITMENT_RE) is False:
         raise HermesReplyBasisError("unsupported_time_commitment")
+    _validate_missing_information_layout(text, basis)
     # A handoff basis may never ask for new customer data.
     return {
         "decision": "pass",
@@ -454,6 +456,73 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
         "basis_version": HERMES_CUSTOMER_REPLY_BASIS_VERSION,
         "basis_values": _basis_field_values(basis),
     }
+
+
+_LAYOUT_BULLET_RE = re.compile(r"^\s*[-*•]\s+\S", re.M)
+_LAYOUT_NUMBERED_RE = re.compile(r"^\s*\d+[.)]\s+\S", re.M)
+_LAYOUT_COLON_BARE_RE = re.compile(r":\s*\n+\s*(?:[-*•]\s*)?the\s+", re.I)
+_LAYOUT_REQUEST_SEMANTICS_RE = re.compile(
+    r"\b(?:need|provide|share|send|confirm|supply)\b|please", re.I
+)
+
+
+def _field_present_in(text: str, field_key: str) -> bool:
+    # _field_matches yields matches; an unevaluated generator is always
+    # truthy, so consume it with any().
+    try:
+        return any(True for _ in _field_matches(text, field_key))
+    except KeyError:
+        return field_key in text
+
+
+def _validate_missing_information_layout(text: str, basis: dict[str, Any]) -> None:
+    """Narrow layout check for missing-information asks (plan v1 track 2).
+
+    Structure only - no fixed opener wording.  1-2 missing fields must read
+    as natural sentences (no bullets/numbering/bare field after a colon)
+    and carry request semantics; 3+ must present at least one bullet per
+    missing field with no numbering.  Bases without missing fields skip.
+    """
+    missing_keys = _basis_missing_keys(basis)
+    if not missing_keys:
+        return
+    lowered = text.casefold()
+    # Narrow scope gate: the layout contract applies only when this reply
+    # actually IS the missing-information ask (at least one missing field
+    # appears).  Replies that mention none of the missing fields (progress
+    # notes, sensitive-data denials on the same basis) are policed by the
+    # other passes and skip the layout contract entirely.
+    if not any(_field_present_in(lowered, key) for key in missing_keys):
+        # Replies that never name a missing field are either not the ask
+        # (progress/denial notes) or out of the layout contract's narrow
+        # scope; the unauthorized-request pass polices their content.
+        return
+    has_bullets = bool(_LAYOUT_BULLET_RE.search(text))
+    has_numbered = bool(_LAYOUT_NUMBERED_RE.search(text))
+    missing_list = sorted(missing_keys)
+    if len(missing_list) <= 2:
+        if has_bullets or has_numbered:
+            raise HermesReplyBasisError("missing_information_layout_invalid")
+        if _LAYOUT_COLON_BARE_RE.search(text):
+            raise HermesReplyBasisError("missing_information_layout_invalid")
+        if not _LAYOUT_REQUEST_SEMANTICS_RE.search(text):
+            raise HermesReplyBasisError("missing_information_layout_invalid")
+        for key in missing_list:
+            if not _field_present_in(lowered, key):
+                raise HermesReplyBasisError("missing_information_layout_invalid")
+    else:
+        if not has_bullets or has_numbered:
+            raise HermesReplyBasisError("missing_information_layout_invalid")
+        bullet_lines = [
+            ln.strip().lstrip("-*•").strip().casefold()
+            for ln in text.splitlines()
+            if _LAYOUT_BULLET_RE.match(ln)
+        ]
+        if len(bullet_lines) < len(missing_list):
+            raise HermesReplyBasisError("missing_information_layout_invalid")
+        # Numbered list check covered above; extra-field authorization is
+        # enforced by the unauthorized_field_request pass using the full
+        # text - the layout pass only proves per-field bullet coverage.
 
 
 def project_greeting(content: str, greeting_name: str | None) -> str:

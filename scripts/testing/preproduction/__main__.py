@@ -219,6 +219,12 @@ def run_check(selected_scenario: str | None = None) -> int:
                 report["connectivity"]["smtp"] = f"error: {str(exc)[:120]}"
     except Exception as exc:  # noqa: BLE001
         report["engine_error"] = str(exc)[:300]
+    finally:
+        if engine is not None:
+            try:
+                engine.close_db_connection()
+            except Exception:
+                pass
     if requires.get("relay"):
         try:
             from scripts.testing.preproduction.scenarios import load_relay_client_identity
@@ -514,9 +520,20 @@ def main() -> int:
             report = _create_preproduction_ticket(
                 engine, subject=args.ticket_subject, body=body or ""
             )
+        except pp.ScenarioDatabaseUnavailable as exc:
+            log(
+                "ticket creation readback failed from database unavailability "
+                f"(preproduction_db_unavailable): {exc}"
+            )
+            return 1
         except Exception as exc:  # noqa: BLE001 - CLI reports a clean failure
             log(f"ticket creation failed: {type(exc).__name__}: {exc}")
             return 1
+        finally:
+            try:
+                engine.close_db_connection()
+            except Exception:
+                pass
         _print_redacted_json(pp.redact_report(report, app_id=pp.PP_APP_ID, email=engine.sender))
         return 0
 
@@ -541,6 +558,9 @@ def main() -> int:
     engine = ScenarioEngine.from_env()
     if args.relay_timeout_min:
         engine.relay_timeout_min = args.relay_timeout_min
+    # The engine now holds one persistent read-only DB connection; the
+    # except/finally below guarantees it is released on any outcome
+    # (plan: PP-A1 readback stability).
 
     print(
         "This will send a REAL email from "
@@ -604,15 +624,27 @@ def main() -> int:
                     runner_kwargs["fetch_run"] = lambda rid, _t=trace_payload: _t
                 else:
                     runner_kwargs["fetch_run"] = _build_hermes_run_fetcher()
-            report = runner(
-                engine,
-                skill_script=_default_skill(),
-                pilot_bin=args.pilot_bin or _pilot_bin(),
-                relay_base=relay_base,
-                relay_token=relay_token,
-                ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
-                **runner_kwargs,
-            )
+            try:
+                report = runner(
+                    engine,
+                    skill_script=_default_skill(),
+                    pilot_bin=args.pilot_bin or _pilot_bin(),
+                    relay_base=relay_base,
+                    relay_token=relay_token,
+                    ecs_agent_id=_ssm_value("/supportportal/preproduction/agentrelay-agent-id"),
+                    **runner_kwargs,
+                )
+            except pp.ScenarioDatabaseUnavailable as exc:
+                log(
+                    "scenario readback failed from database unavailability "
+                    f"(preproduction_db_unavailable); business outcome not judged: {exc}"
+                )
+                report = {
+                    "scenario": args.scenario,
+                    "aborted": "preproduction_db_unavailable",
+                    "steps": [step.as_dict() for step in engine.steps],
+                }
+                exit_code = 2
         if report.get("complete") is False:
             # PP-A1 progress mode (and any future partial mode): a run that
             # skipped its completion leg is never a full pass, regardless of
@@ -634,6 +666,11 @@ def main() -> int:
             "steps": [step.as_dict() for step in engine.steps],
         }
         exit_code = 2
+
+    try:
+        engine.close_db_connection()
+    except Exception:
+        pass
 
     # Redact the whole report (steps detail included) before printing/saving:
     # shared engine waiters embed the full App ID and sender email in their
