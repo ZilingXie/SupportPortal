@@ -3,12 +3,14 @@ from unittest.mock import Mock, patch
 import pytest
 
 from backend.services.automation_ecs_store import HermesTurnStateError
+from backend.services.automation_ecs_contracts import JobKind
 from backend.services.automation_hermes_slack_actions import handle_slack_hermes_message
 from backend.services.automation_native_notifications import deliver_customer_attachment
 from backend.services.engineer_slack import EngineerSlackDeliveryError
 from backend.services.investigation_attachments import download_slack_attachment
 from backend.repositories.ticket_repository import InMemoryTicketRepository
-from backend.tests.test_investigation_route_status_fix import route_store, pg_store, finish_initial
+from backend.tests.test_investigation_route_status_fix import route_store, pg_store, finish_initial, route
+from backend.tests.test_hermes_zendesk_agent import _event
 from backend.tests.test_native_hermes_notifications import repository, seed, TIME
 
 
@@ -278,3 +280,65 @@ def test_slack_file_api_uses_form_encoding_including_completion_file_array():
     assert req.get_header("Content-type") == "application/x-www-form-urlencoded"
     fields = urllib.parse.parse_qs(req.data.decode())
     assert json.loads(fields["files"][0]) == [{"id": "F123"}]
+
+
+INVESTIGATION_CASE_TASK = {
+    "direction": "investigation",
+    "reason_code": "technical_request",
+    "route": "investigation",
+    "route_family": "technical",
+    "route_target": "rag",
+    "execution_action": "investigation",
+    "hermes_eligible": True,
+    "prompt_release_id": "prompt-1",
+    "prompt_snapshot": {"investigation": "prompt"},
+    "source_event_id": "zendesk:ticket:123:created",
+}
+
+
+def _promote_case_task_investigation(store):
+    """Hand a new-case route job off with an investigation case task (real entry)."""
+    receipt = store.accept_intake(_event(), store.settings.provenance())
+    route_job = store.claim_job(JobKind.ROUTE, worker_id="route", lease_seconds=300)
+    assert route_job is not None
+    store.hand_off_to_hermes_agent(route_job, prompt_release_id="prompt-1",
+                                   case_task=dict(INVESTIGATION_CASE_TASK))
+    agent_job = store.claim_job(JobKind.AGENT_TURN, worker_id="worker", lease_seconds=300)
+    assert agent_job is not None
+    turn_id = agent_job.payload["turn_id"]
+    # Complete the initial work turn the way the real worker does before an
+    # engineer can post thread feedback with files.
+    store.start_hermes_agent_turn(turn_id, run_id=None)
+    store.record_hermes_turn_work(turn_id, work_result={"summary": "Investigation ongoing"})
+    store.complete_hermes_agent_turn(turn_id, result={"status": "awaiting_investigation_review"})
+    return turn_id
+
+
+def test_investigation_case_task_promotes_binding_direction_and_files_pass_gate(route_store):
+    store = route_store
+    turn_id = _promote_case_task_investigation(store)
+    binding = store.get_hermes_case_binding("123")
+    assert binding["direction"] == "investigation"
+    assert binding["direction_reason"] == "technical_request"
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    with patch("backend.services.investigation_attachments._slack", return_value={"file": FILE}), patch("backend.services.investigation_attachments._download", return_value=b"png"):
+        result = send(store)
+    assert result["status"] == "feedback_turn_created", result
+    turn = store.get_hermes_turn(result["turn_id"])
+    refs = (turn.get("input_snapshot") or {}).get("attachments") or (turn.get("work_result") or {}).get("attachments") or []
+    assert refs and refs[0]["file_name"] == "screen.png"
+
+
+def test_escalation_after_case_task_promotion_still_rejects_files(route_store):
+    store = route_store
+    turn_id = _promote_case_task_investigation(store)
+    store.record_hermes_case_direction(turn_id, direction="human", reason="escalated_to_human")
+    binding = store.get_hermes_case_binding("123")
+    assert binding["direction"] == "human"
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    before = len(store.list_hermes_case_turns("123"))
+    with patch("backend.services.investigation_attachments._slack", return_value={"file": FILE}), patch("backend.services.investigation_attachments._download", return_value=b"png"):
+        result = send(store)
+    assert result["ok"] is False
+    assert result["detail"] == "attachments require a bound Investigation case"
+    assert len(store.list_hermes_case_turns("123")) == before
