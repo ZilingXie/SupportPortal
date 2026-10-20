@@ -409,9 +409,46 @@ class WeKnoraClient:
             json_body={"object_id": normalized_id, "knowledge_base_id": self._require_knowledge_base()},
         )
 
+    def _require_publish_capable_contract(self, operation: str) -> None:
+        """Fail closed when a publish status is requested but the pinned
+        contract's body template cannot carry it.
+
+        On template contracts the body fully owns the wire shape: a ``status``
+        semantic absent from the template is silently dropped, and the caller
+        would believe an object was published while the fork stored a draft.
+        The request never goes out in that state (C10: unknown/unverifiable
+        states fail closed)."""
+        entry = self._operation(operation) or {}
+        body_template = entry.get("body") if isinstance(entry.get("body"), dict) else None
+        if not body_template:
+            return
+        for spec in body_template.values():
+            if isinstance(spec, dict) and spec.get("$") == "status":
+                return
+        raise WeKnoraError(
+            f"the pinned WeKnora contract cannot publish via {operation}: "
+            "the body template has no status binding",
+            failure_kind="not_configured",
+        )
+
     def knowledge_create(
-        self, *, title: str, content: str, idempotency_key: str, metadata: dict[str, Any] | None = None
+        self,
+        *,
+        title: str,
+        content: str,
+        idempotency_key: str,
+        metadata: dict[str, Any] | None = None,
+        status: str | None = None,
     ) -> dict[str, Any]:
+        normalized_status = str(status or "").strip().lower() or None
+        if normalized_status is not None:
+            if normalized_status not in {"draft", "publish"}:
+                raise WeKnoraError(
+                    f"WeKnora knowledge status must be 'draft' or 'publish', got {status!r}",
+                    failure_kind="not_configured",
+                )
+            if normalized_status == "publish":
+                self._require_publish_capable_contract("knowledge_create")
         payload = self._request(
             "knowledge_create",
             json_body={
@@ -420,9 +457,13 @@ class WeKnoraClient:
                 self._field("idempotency_key_field", "idempotency_key"): str(idempotency_key or "").strip(),
                 "knowledge_base_id": self._require_knowledge_base(),
                 "metadata": metadata or {},
+                **({"status": normalized_status} if normalized_status else {}),
             },
         )
-        return self._normalize_write_receipt(payload, operation="knowledge_create")
+        receipt = self._normalize_write_receipt(payload, operation="knowledge_create")
+        if normalized_status:
+            receipt["requested_status"] = normalized_status
+        return receipt
 
     def knowledge_update(
         self,
@@ -433,7 +474,17 @@ class WeKnoraClient:
         content: str,
         idempotency_key: str,
         metadata: dict[str, Any] | None = None,
+        status: str | None = None,
     ) -> dict[str, Any]:
+        normalized_status = str(status or "").strip().lower() or None
+        if normalized_status is not None:
+            if normalized_status not in {"draft", "publish"}:
+                raise WeKnoraError(
+                    f"WeKnora knowledge status must be 'draft' or 'publish', got {status!r}",
+                    failure_kind="not_configured",
+                )
+            if normalized_status == "publish":
+                self._require_publish_capable_contract("knowledge_update")
         payload = self._request(
             "knowledge_update",
             json_body={
@@ -446,10 +497,18 @@ class WeKnoraClient:
                 # Lineage metadata: on template contracts the pinned body owns
                 # the wire shape and only templated fields are sent (same rule
                 # as knowledge_create); legacy contracts carry it like create.
+                # The publish status rides the same rule and is OMITTED when
+                # the caller did not provide one: a template-less contract
+                # sends semantics verbatim, and `status: null` on the wire is
+                # a shape change the fork never agreed to.
                 "metadata": metadata or {},
+                **({"status": normalized_status} if normalized_status else {}),
             },
         )
-        return self._normalize_write_receipt(payload, operation="knowledge_update")
+        receipt = self._normalize_write_receipt(payload, operation="knowledge_update")
+        if normalized_status:
+            receipt["requested_status"] = normalized_status
+        return receipt
 
     # -- memory operations --------------------------------------------------
 
@@ -721,11 +780,19 @@ class WeKnoraClient:
                 failure_kind="invalid_response",
                 payload=payload,
             )
+        parse_status = _extract(
+            payload, self._field("parse_status_key", "data.parse_status")
+        )
+        enable_status = _extract(
+            payload, self._field("enable_status_key", "data.enable_status")
+        )
         return {
             "object_id": self._extract_object_id(payload) or object_id,
             "version": version or None,
             "title": str(title or ""),
             "content": str(content),
+            "parse_status": str(parse_status).strip().lower() if parse_status is not None else None,
+            "enable_status": str(enable_status).strip().lower() if enable_status is not None else None,
             "payload": payload,
         }
 
@@ -762,6 +829,19 @@ def _json_loads(raw: bytes) -> Any:
         return json.loads(text)
     except json.JSONDecodeError:
         return {"message": text}
+
+
+def weknora_readback_is_ready(receipt: dict[str, Any]) -> bool:
+    """Ready = parse completed AND enabled (fork lifecycle contract).
+
+    Draft/pending/processing/failed parse or a disabled entry is NOT ready:
+    such objects must never enter Agent context (stage6-weknora-agent-bridge
+    C3/C8). Unknown/missing status values are treated as not ready — the
+    fail-closed direction (C10)."""
+    return (
+        str((receipt or {}).get("parse_status") or "").strip().lower() == "completed"
+        and str((receipt or {}).get("enable_status") or "").strip().lower() == "enabled"
+    )
 
 
 def weknora_promotion_enabled() -> bool:

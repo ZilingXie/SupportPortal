@@ -230,6 +230,11 @@
 
 - **前置**：n8n 路由就绪（同 E1P）+ **Mac relay 客户端在线**，且审批人在窗口期内执行
   两次 `approve_execution`（relay 任务在确认回复送达后派发）。
+- **初始工单创建**：必须复用 `ScenarioEngine.start_ticket()` 的 E3 SMTP 入口，使用
+  `BILLING_AUTOMATION_SMTP_USERNAME` 发到 `support@agoraio.zendesk.com`，主题保留
+  `[zac test]`；Preproduction 可用 `python -m scripts.testing.preproduction --create-ticket`
+  创建并回读绑定。不得用 Chrome/Zendesk UI 或 Zendesk API 创建首票，后者只用于 E3 的
+  后续客户续轮。
 - **AppID 夹具**（模块常量）：`8cb7...0247`（31 位，格式错）/ `8cb7...2475`（32 位，
   预期 project_not_found，但以真实预检结果为准）/ `fcd0...36fd`（跨账号，
   预期 ownership_mismatch）/ `4b7634a0d0f1418b8135918292f6a507`（真实可开通测试项目，

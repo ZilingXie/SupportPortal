@@ -47,7 +47,14 @@ class FakeAdapterClient:
         return {"object_id": "doc-1", "version": "2", "receipt": {"ok": True}}
 
     def knowledge_read(self, *, object_id):
-        return {"object_id": object_id, "version": "2", "title": "T", "content": "C"}
+        return {
+            "object_id": object_id,
+            "version": "2",
+            "title": "T",
+            "content": "C",
+            "parse_status": "completed",
+            "enable_status": "enabled",
+        }
 
     def memory_list(self, *, top_k=None):
         return []

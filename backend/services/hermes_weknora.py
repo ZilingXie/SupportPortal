@@ -170,6 +170,11 @@ class HermesWeKnoraClient:
             "content": content,
             "content_version": content_version,
             "lineage": metadata.get("lineage") if isinstance(metadata.get("lineage"), dict) else {},
+            # stage6-weknora-agent-bridge: the fork always serializes the
+            # lifecycle fields; exposing them lets every consumer apply the
+            # SAME readiness primitive instead of re-deriving its own.
+            "parse_status": str(data.get("parse_status") or "").strip().lower() or None,
+            "enable_status": str(data.get("enable_status") or "").strip().lower() or None,
         }
 
 

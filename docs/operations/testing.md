@@ -84,6 +84,21 @@ rtk proxy python -m pytest -q -rs backend/tests/test_automation_ecs_store_postgr
 
 ECS Preproduction 的 PP 剧本（PP-EN-QUICK、PP-EN-DUP）不走上述 legacy 链路，而是独立 CLI `python -m scripts.testing.preproduction`（故意不注册进 `/automation/test` 控制台）；前置按场景分档（DUP 不需要 pilot/relay 客户端），命令与通过标准见同一 Runbook §9。
 
+创建 Preproduction 测试工单时，必须复用 E3 的初始入口：
+
+```bash
+python -m scripts.testing.preproduction --create-ticket \
+  --ticket-subject "Investigation test" \
+  --ticket-body-file ./ticket-body.txt --yes
+```
+
+该入口强制 `processing_profile=preproduction` 和
+`TICKET_DB_SCHEMA=supportportal_preproduction`，通过
+`ScenarioEngine.start_ticket()` 从 `BILLING_AUTOMATION_SMTP_USERNAME` 发信到
+`support@agoraio.zendesk.com`，并保留 `[zac test]` 主题标记，然后按 n8n Intake
+回读并绑定 Account Case。它不提供浏览器或 Zendesk API 的首票创建回退；后续客户
+续轮仍按对应剧本已经声明的传输方式执行。Chrome/Zendesk UI 只可用于只读查看。
+
 运行前明确目标入口、测试数据和允许的外部动作。结果检查 reply intent、内部邮件状态、工作流状态、Zendesk readback 等结构化证据，人工批准或附件回复的等待点保留人工。模拟结果、连通检查、API 接受请求和业务完成是不同的验证结论。
 
 ## 自动执行与报告
