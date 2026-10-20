@@ -2,6 +2,8 @@
 
 核验日期：2026-10-14。文件启用链路仍仅有本地代码/隔离数据库/补丁构建检查；关闭状态 Preproduction 已部署并通过关闭状态及无附件 synthetic 范围的独立验收。[合同](../plans/investigation-case-files-r2.md)。
 
+2026-10-20 启用前证据轮：[计划与证据](../plans/investigation-case-files-r2-preprod-file-enable.md)。当前线上 `r20261019-21c6eed` 维持全关闭（三入口 live 422、Map 0、Hermes 无文件 Skill/toolset）。两个启用前置事实：①`source-baseline.json` 对本地 agent-infra（bc9a0f7d）仍四文件 MATCH，但 live 插件已含 p2-203 的 `supportportal_investigation`/`support_zac_consult`——overlay 的插件目录 COPY 会覆盖 live 差异，构建前必须先把 bundle 插件输入重定到 p2-203 世代源并重新验收；②启用轮还需让行并发发布车辆、收口陈旧非终态行（991000183-1/13872/13904）、并随显式发布参数恢复 `HERMES_CASE_WORKFLOW_MODE`。
+
 2026-10-14 关闭状态发布门禁修复：[发布计划与证据](../plans/investigation-case-files-r2-preprod-closed.md)。配置保留检查只将缺失文件开关与显式 `0` 视为等价；涉及 `1` 的状态改变、模型、凭据引用及其他配置改变仍拒绝。真实 renderer/CLI 回归与旧逻辑逆向验证见该计划；补丁验收不等于 schema 016 或线上发布已通过。
 
 ## 启用顺序
