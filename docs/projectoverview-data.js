@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T04:01:38Z",
-  "source_base_commit": "12357b29742b886dba64ad175dd46ca537d1f174",
-  "registry_digest": "d375a64981816bc0a46ecfd9c85a1bd1321190af15cba4bc73a6015ddbdb7f82",
+  "generated_at": "2026-10-20T04:15:32Z",
+  "source_base_commit": "95b1d7b42ba40f977fedee78a9c1fef511422c1a",
+  "registry_digest": "6d382bf7c8d82514c8509a6087aff0e98a95836f0d76a740c96caf7db3a53004",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1596,6 +1596,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence.json",
           "label": "启用前回读数值：r20261019-21c6eed 全关闭复核（live 422×3、Map 0、Hermes td46 无文件能力）、主套件 290/0 含隔离 PG、bundle 五门禁、baseline 四文件 MATCH 但 live 插件领先"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
+          "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
         },
         {
           "type": "document",
@@ -18073,6 +18078,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence.json",
           "label": "启用前回读数值：r20261019-21c6eed 全关闭复核（live 422×3、Map 0、Hermes td46 无文件能力）、主套件 290/0 含隔离 PG、bundle 五门禁、baseline 四文件 MATCH 但 live 插件领先"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
+          "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
         }
       ]
     },
