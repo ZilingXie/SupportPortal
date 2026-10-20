@@ -459,20 +459,32 @@ class TestDraftTools:
             )
         assert excinfo.value.code == "unsupported_time_commitment"
 
-    def test_investigation_draft_over_1200_chars_is_rejected_before_guardrail(self) -> None:
+    def test_investigation_draft_over_1200_chars_saves_and_reaches_guardrail(self) -> None:
+        # p2-207 C1: the Investigation draft has no length gate — a legal
+        # over-budget draft WITH a code block saves and flows into the
+        # guardrail like any other draft (reverse check: the old behavior
+        # rejected before the guardrail; this test fails on the old code).
         store, repository, turn_id = _setup_case()
         store._hermes_turns[turn_id]["phase"] = "persona"
         store._hermes_turns[turn_id]["direction"] = "investigation"
-        long_content = "Hi Customer,\n\n" + ("The verified finding remains unchanged. " * 40)
+        long_content = (
+            "Hi Customer,\n\n"
+            + ("The verified finding remains unchanged. " * 40)
+            + "\n\n```\n2026-10-20T12:00:00Z join ok\n2026-10-20T12:00:05Z error 1090 PERMISSION_DENIED\n```\n"
+        )
+        assert len(long_content) > 1200
         with patch(
             "backend.services.automation_hermes_tools.run_engineer_guardrail_final",
+            side_effect=_guardrail_pass,
         ) as guardrail:
-            with pytest.raises(HermesToolError) as excinfo:
-                tool_save_reply_draft(
-                    store, repository, turn_id=turn_id, content=long_content, basis={}
-                )
-        assert excinfo.value.code == "reply_too_long"
-        guardrail.assert_not_called()
+            draft = tool_save_reply_draft(
+                store, repository, turn_id=turn_id, content=long_content, basis={}
+            )
+        guardrail.assert_called_once()
+        saved = store.get_hermes_draft(draft["draft_id"])
+        assert saved is not None
+        # The save path strips a trailing newline; the body is otherwise verbatim.
+        assert saved["content"] == long_content.rstrip()
 
     def test_draft_readiness_derives_from_recorded_work(self) -> None:
         captured: dict[str, Any] = {}

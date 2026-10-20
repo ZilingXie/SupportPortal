@@ -1860,11 +1860,9 @@ def tool_save_reply_draft(
     def validate_candidate() -> dict[str, Any]:
         if not str(content or "").strip():
             raise HermesToolError("content_required", "draft content is required")
-        if turn.get("direction") == "investigation" and len(normalized_content) > ENGINEER_CUSTOMER_DRAFT_MAX_CHARS:
-            raise HermesToolError(
-                "reply_too_long", "customer reply draft exceeds the 1200-character limit",
-                details={"actual_chars": len(normalized_content), "max_chars": ENGINEER_CUSTOMER_DRAFT_MAX_CHARS},
-            )
+        # p2-207: the Investigation customer draft has no length gate. Brevity
+        # is a prompt-level expression requirement reviewed by a human; safety
+        # rejections (guardrail/basis) below still block the draft as before.
         if native_reply:
             try:
                 validation = validate_customer_reply_draft(normalized_content, candidate_basis)

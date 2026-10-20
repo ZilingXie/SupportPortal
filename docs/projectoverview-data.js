@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T07:02:31Z",
-  "source_base_commit": "5ed27583eb9ea96cafe28dac0545cfa928b030da",
-  "registry_digest": "f0c8b73012294dbccac5e507c143176fc1a876cb9cc40777aeee1ed855e20f45",
+  "generated_at": "2026-10-20T10:20:41Z",
+  "source_base_commit": "5ff9e9f903006c6cb57f72244d95f77caa77dbe2",
+  "registry_digest": "7bc06c56994171618403bdf66b3270bf2854cd5ff8eb7502b26b8da2ab279532",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5454,6 +5454,22 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "真实业务样本",
           "result": "waiting-for-evidence; 未重放 #14122，未发送真实客户、Slack/Zendesk/Argus/Team Agent 消息"
+        },
+        {
+          "type": "test",
+          "label": "test_investigation_reply_display.py 19 项（C3 问候语幂等/英文不变；C4 section 顺序/无损分片/代码块闭合/无省略号；C5 嵌套 event_refs 的 API/success/errorCode 实显 + source-only 退化反向 + 上游截断标注；C6 账本确认-第二片失败首片不重发-outcome_unknown 停清单不自动重发不弹按钮-adhoc 无按钮）"
+        },
+        {
+          "type": "test",
+          "label": "test_native_hermes_draft_save.py 重写为无长度门契约：长草稿含代码块首次保存即达 guardrail（C1 反向：旧 reply_too_long 测试翻转）、1201 边缘与 references 投影保存完整、guardrail 杠杆保留两次候选预算与 draft_rewrite_exhausted；memory 18 + 隔离 PostgreSQL 34 全过"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 281 passed + 92 subtests（zendesk_agent/tools/persona/alerts/handoff/draft-save）+ compileall + git diff --check"
+        },
+        {
+          "type": "pr",
+          "label": "Draft PR（待独立验收后 finalize）：分支 codex/investigation-reply-display-v1"
         }
       ],
       "source_refs": [
@@ -5462,7 +5478,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -19152,6 +19168,49 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-20",
           "event": "completed",
           "summary": "preproduction-prompt-sync-resilience v1 独立验收通过（评审 HEAD 7855b936），集成 42e71f71 后 finalize 合入 main 2856b178（PR#1523）；代码验收完成，部署观察 waiting-for-evidence。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-207",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
+      "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
+      "status": "active",
+      "next_action": "实施完成，Draft 待独立验收：全量回归 281 passed + 隔离 PG 34 passed；C1-C7 合同测试与反向验证齐备；prompt v2→v3、prompt_change_log 已记。验收通过后进入已授权的合并与 Preproduction 发布（正式 pipeline，全门禁）",
+      "owner": "agent",
+      "created_at": "2026-10-20",
+      "updated_at": "2026-10-20",
+      "acceptance_criteria": [
+        "C1 超过原 1200 字符、含代码块的合法草稿可保存并完整展示到 Slack，无长度拒绝",
+        "C2 表达类问题不阻断审核（安全拒绝仍阻断）；未批准不投递",
+        "C3 中文首行规范化为「{name}您好，」取服务端身份，无重复问候语；英文不受影响",
+        "C4 各 section 独立分条、顺序固定、换行正确；分片可还原全部正文；代码块跨消息正确闭合",
+        "C5 Evidence 嵌套结构中的 API/success/errorCode/来源实际显示；其他结构完整 JSON，不退化成仅 source",
+        "C6 第二条失败后首条不重复；outcome_unknown 不自动重发；任一正文未确认则按钮不出现",
+        "C7 展示前后数据库完整调查记录一致；route、审批、附件绑定不变",
+        "反向验证：原长度拒绝、Evidence 丢字段、重复发送问题可被测试检出"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "test_investigation_reply_display.py 19 项（C3 问候语幂等/英文不变；C4 section 顺序/无损分片/代码块闭合/无省略号；C5 嵌套 event_refs 的 API/success/errorCode 实显 + source-only 退化反向 + 上游截断标注；C6 账本确认-第二片失败首片不重发-outcome_unknown 停清单不自动重发不弹按钮-adhoc 无按钮）"
+        },
+        {
+          "type": "test",
+          "label": "test_native_hermes_draft_save.py 重写为无长度门契约：长草稿含代码块首次保存即达 guardrail（C1 反向：旧 reply_too_long 测试翻转）、1201 边缘与 references 投影保存完整、guardrail 杠杆保留两次候选预算与 draft_rewrite_exhausted；memory 18 + 隔离 PostgreSQL 34 全过"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 281 passed + 92 subtests（zendesk_agent/tools/persona/alerts/handoff/draft-save）+ compileall + git diff --check"
+        },
+        {
+          "type": "pr",
+          "label": "Draft PR（待独立验收后 finalize）：分支 codex/investigation-reply-display-v1"
         }
       ]
     },
