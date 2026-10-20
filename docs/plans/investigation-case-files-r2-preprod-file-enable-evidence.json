@@ -1,0 +1,160 @@
+{
+  "plan_name": "investigation-case-files-r2-preprod-file-enable",
+  "revision": "v1",
+  "captured_at": "2026-10-20T03:55:42Z",
+  "scope": "Preproduction readback, Hermes capability readback, and local/isolated verification only. No switch change, no Hermes image build or publish, no deployment, no n8n change, no Production, no real attachment transfer.",
+  "executor": {
+    "aws_identity": "arn:aws:iam::891612554546:user/Zac",
+    "read_source_head": "12357b29742b886dba64ad175dd46ca537d1f1746 (root main, kept clean)",
+    "docs_branch": "codex/case-files-r2-file-enable"
+  },
+  "preproduction_readback": {
+    "captured_window": "2026-10-20 11:30-12:00 +08",
+    "services": {
+      "api": {
+        "task_definition": "supportportal-preproduction-api:161",
+        "running_digest": "sha256:77c81bb1bea894e826ed1d296a87682278e0a2c46ff899696f03670e7e81c457",
+        "single_completed_deployment": "PRIMARY since 2026-10-19 19:06 +08",
+        "file_switch": "INVESTIGATION_CASE_FILES_ENABLED=0 (explicit)"
+      },
+      "route": {
+        "task_definition": "supportportal-preproduction-route:157",
+        "running_digest": "sha256:9a6be487f947c247bc7d2987019209158dd02d95b0b768c6500b623c84c4bf9e",
+        "single_completed_deployment": "PRIMARY since 2026-10-19 19:00 +08",
+        "file_switch": "unset, runtime default 0"
+      },
+      "worker": {
+        "task_definition": "supportportal-preproduction-worker:160",
+        "running_digest": "sha256:ca49df9344a38182d36f2015e1c12b4e3e0f19249abdf3c7ad4b9fa388c9cec0",
+        "single_completed_deployment": "PRIMARY since 2026-10-19 19:01 +08",
+        "file_switch": "INVESTIGATION_CASE_FILES_ENABLED=0 (explicit)"
+      },
+      "hermes": {
+        "task_definition": "supportportal-preproduction-hermes:46 (registered 2026-10-15 13:12 +08)",
+        "container_digests": {
+          "hermes": "sha256:6198ca25c0ceb93c83562830394e9fe6af4348d3e369eb69ff5d2a974a051824",
+          "memory-core": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+          "memory-panel": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+          "ui-proxy": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+          "knowledge": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0"
+        }
+      }
+    },
+    "health_release": {
+      "url": "https://supportcenter.stellarix.space/automation/preproduction/health/release",
+      "release_id": "r20261019-21c6eed",
+      "git_commit": "21c6eed1bc9ba54a361f7d9ea55a9cd240d52dcf",
+      "schema_revision": "automation-ecs-016",
+      "prompt_release_id": "pr-88298d4e0a3f",
+      "hermes_case_workflow_mode": "disabled"
+    },
+    "hermes_capability_readback": {
+      "method": "serial ECS execute-command sessions into running hermes container task ac6c1089994c4ce3a1bb1c23de72063d",
+      "profile": {
+        "config_path": "/opt/data/config.yaml",
+        "_config_version": 41,
+        "toolsets": "absent",
+        "platform_toolsets": "absent",
+        "plugins_enabled": []
+      },
+      "skills": {
+        "/opt/data/skills": "69 skills, no support-case-files",
+        "/opt/hermes/skills": "no case/file skill entries",
+        "/opt/hermes/case-files-skill": "absent"
+      },
+      "live_plugin": {
+        "module": "/opt/hermes/plugins/supportportal_agent_tools/__init__.py",
+        "toolsets": ["common", "supportportal_route", "supportportal_work", "supportportal_investigation", "supportportal_persona"],
+        "file_tools": [],
+        "note": "supportportal_investigation + support_zac_consult were introduced by the p2-203 Preproduction deploy (td46, 2026-10-15)"
+      },
+      "conclusion": "cloud has NO support-case-files skill, NO supportportal_files toolset, NO file tools; file capability is absent as expected"
+    },
+    "database_readback": {
+      "dsn_source": "SSM /supportportal/preproduction/automation-db-migration-dsn (value never recorded)",
+      "schema": "supportportal_preproduction, coordination revision automation-ecs-016",
+      "investigation_case_files_map_count": 0,
+      "notification_ledger_states": {"completed": 177, "failed": 163, "pending_or_sending_or_outcome_unknown": 0},
+      "stale_nonterminal_hermes_rows": [
+        {"kind": "queued turn request", "case": "991000183-1", "created_at": "2026-10-02T04:02:16Z", "note": "synthetic-era leftover, never claimed"},
+        {"kind": "pending runs", "ticket": "13872", "created_at": "2026-10-06", "count": 2},
+        {"kind": "outcome_unknown run", "ticket": "13904", "phase": "route", "created_at": "2026-10-07", "error_code": "hermes_agent_outcome_unknown"}
+      ],
+      "case_bindings_total": 1
+    },
+    "parallel_release_vehicle": {
+      "codebuild": "supportportal-automation-release:3748aae9-d28a-43c5-a664-cb7bd424e24a, SUCCEEDED 2026-10-20 09:19:06-09:20:18 +08, initiator Zac, no source version, 57s BUILD phase",
+      "ecr_images_pushed": [
+        {"tag": "api-r20261020-8e8e495-hermes-appid-pp-a1-r2", "digest": "sha256:159cae9f201294760725a10b86463ee90cbbc1a47377b76e939fa3d865bea110", "pushed": "2026-10-20T09:19:51+08"},
+        {"tag": "route-r20261020-8e8e495-hermes-appid-pp-a1-r2", "digest": "sha256:723cf123c491589ffa3a90f3b704179ec57469f7b3be98b1f3d7785c5a1afcad", "pushed": "2026-10-20T09:19:57+08"},
+        {"tag": "worker-r20261020-8e8e495-hermes-appid-pp-a1-r2", "digest": "sha256:e093e93094907d1b73640364ad46a83333627b4e645d1e02a30a7488dcd0974f", "pushed": "2026-10-20T09:20:03+08"}
+      ],
+      "deployed": false,
+      "observed_at_last_check": "services still single PRIMARY at r20261019-21c6eed (checked 2026-10-20 ~12:00 +08)",
+      "implication": "file-enable release must queue behind this vehicle; rebuild from newer main after it completes per concurrent-release convention"
+    }
+  },
+  "local_verification": {
+    "main_suite": {
+      "command": "RUN_POSTGRES_INTEGRATION=1 TICKET_DB_DSN=postgresql:///p2192_case_files_test NATIVE_NOTIFICATION_TEST_DSN=postgresql:///p2192_case_files_test .venv/bin/python -m pytest -q backend/tests/test_investigation_case_files.py backend/tests/test_investigation_case_files_deploy.py backend/tests/test_investigation_attachments.py backend/tests/test_investigation_attachment_followup_repair.py backend/tests/test_native_hermes_draft_save.py backend/tests/test_automation_ecs_deploy.py",
+      "result": "290 passed, 4 existing FastAPI deprecation warnings, 98.24s, exit 0",
+      "source_head": "12357b29742b886dba64ad175dd46ca537d1f1746",
+      "database": "p2192_case_files_test dropped and recreated before run",
+      "delta_vs_r2": "289 -> 290 passed (one test added by intervening merges); no failures"
+    },
+    "closed_release_guard": "backend/tests/test_case_files_closed_release_guard.py: 38 passed",
+    "bundle_verify": {
+      "command": ".venv/bin/python scripts/testing/verify_case_files_hermes_bundle.py /Users/xieziling/Desktop/personal_proj/agent-infra",
+      "result": "patch_apply=passed core_compile=passed skills_list_gate=passed skill_view_gate=passed session_negative=passed (disposable tree)"
+    },
+    "skill_validate": "quick_validate.py deployment/hermes-case-files/skills/support-case-files: Skill is valid",
+    "deploy_script_syntax": "bash -n deployment/deploy_automation_ecs_release.sh: ok",
+    "live_closed_probes": {
+      "url": "https://supportcenter.stellarix.space/automation/preproduction/v1/agent/tools/{tool}",
+      "auth": "intake Bearer via SSM /supportportal/preproduction/automation-intake-shared-token (value never recorded)",
+      "probes": [
+        {"tool": "case_files_list", "http_status": 422, "code": "case_files_disabled"},
+        {"tool": "case_files_read", "http_status": 422, "code": "case_files_disabled"},
+        {"tool": "case_files_download_stream", "http_status": 422, "code": "case_files_disabled"}
+      ],
+      "against_release": "r20261019-21c6eed",
+      "note": "disabled check fires before capability validation; no valid scope needed"
+    }
+  },
+  "hermes_baseline_comparison": {
+    "agent_infra_git_root": "/Users/xieziling/Desktop/personal_proj/agent-infra/hermes-agent",
+    "head": "bc9a0f7d3aa1bbee4600195f91e0f9bb7f1cfabe (equals source-baseline.json hermes_source_head)",
+    "baseline_files": "4/4 sha256 MATCH (gateway api_server_runs.py, tools/skills_tool.py, plugin __init__.py, plugin.yaml); no textual drift, patch applies cleanly",
+    "live_ahead_of_baseline": {
+      "fact": "live plugin registers supportportal_investigation toolset and support_zac_consult; the baseline tree contains neither (grep count 0)",
+      "introduced_by": "p2-203 Preproduction deploy (td46, 2026-10-15), recorded source head a49f64b47d4b547c584e5c776f1f6180ff696dd6",
+      "local_clone_gap": "a49f64b4 object is absent from the local hermes-agent clone"
+    },
+    "clobber_risk": "Dockerfile.overlay COPYs deploy-ecs/supportportal_agent_tools over /opt/hermes/plugins/supportportal_agent_tools; building the overlay from the current baseline inputs would revert the live zac consult capability, which the runbook forbids",
+    "required_before_build": "rebase the bundle plugin inputs onto the p2-203-era plugin source (fetch/locate a49f64b4 or successor), re-run bundle verification, and re-accept affected contracts before any image build"
+  },
+  "zac_evidence": {
+    "status": "waiting-for-evidence",
+    "verified_repo_facts": {
+      "consult_protocol": "backend/services/zac_consultation.py: POST {base}/v1/responses, Bearer token + X-API-User-Id + Idempotency-Key, SSE terminal read; no file endpoints exist in this client",
+      "acquire_seam": "backend/services/investigation_case_files.py import_zac_file: acquire(session_id, message_id, file_id) must return {data: bytes, filename, content_type}; source='zac' requires session_id and source_message_id; dedup key uses operation_id=source_file_id; case binding stores zac_session_id",
+      "live_tooling": "support_zac_consult tool is live in the Preproduction plugin (consultation only, not files)"
+    },
+    "missing_external_evidence": [
+      "actual Zac file endpoints (list/download/upload/generate)",
+      "authentication model for file acquisition",
+      "response formats and pagination",
+      "file size/type limits",
+      "how sessions/conversations associate with files"
+    ]
+  },
+  "switch_enable_preconditions_open": [
+    "R2-ZAC: real authenticated acquisition protocol/sample (user-provided); C7 stays waiting-for-evidence without it",
+    "approved synthetic file sample and controlled Slack thread for the representative file loop (user approval)",
+    "parallel vehicle r20261020-8e8e495-hermes-appid-pp-a1-r2 completes its deployment; file-enable release then rebuilds from newer main",
+    "reconcile stale non-terminal rows before any switch/signature change per runbook: 991000183-1 queued request, 13872 pending runs, 13904 outcome_unknown run",
+    "HERMES_CASE_WORKFLOW_MODE is currently disabled (stage6 all-off); the representative file loop requires restoring it through the explicit deploy flag",
+    "Hermes overlay plugin-input rebase (clobber risk) plus re-acceptance of affected contracts",
+    "map_count stays 0; schema 016 already deployed, no migration needed for enable"
+  ]
+}
