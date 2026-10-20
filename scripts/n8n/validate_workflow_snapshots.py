@@ -56,6 +56,7 @@ SOURCE_ONLY_ALLOWED_NODE_TYPES = frozenset(
         "n8n-nodes-base.if",
         "n8n-nodes-base.set",
         "n8n-nodes-base.splitInBatches",
+        "n8n-nodes-base.limit",
         "n8n-nodes-base.splitOut",
         "n8n-nodes-base.merge",
         "n8n-nodes-base.noOp",

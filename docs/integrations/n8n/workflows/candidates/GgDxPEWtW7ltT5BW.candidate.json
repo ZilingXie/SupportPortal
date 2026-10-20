@@ -30,7 +30,7 @@
     "sourceOnly": true,
     "workflowId": "GgDxPEWtW7ltT5BW",
     "workflowName": "[kb]Build|CSD",
-    "baseVersionId": "6fed47a6-0192-4356-af03-c8c5820b2cb9",
+    "baseVersionId": "86f9fb06-fe07-4e9f-96cb-5090b597c066",
     "baseSnapshotGitCommit": "4ecea0431f1b84490bab4bf51220faeef815e6b2"
   },
   "workflow": {
