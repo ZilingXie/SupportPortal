@@ -656,6 +656,15 @@ class ScenarioEngine:
                 # boundary to the runner instead of degrading into a
                 # TimeoutError (R3-F1).
                 raise
+            except psycopg.Error as exc:
+                # A non-retryable database error raised straight from a
+                # probe (SQL bug, schema mismatch) is deterministic: polling
+                # would repeat it forever and degrade into a TimeoutError.
+                # db_query already classified retryable connection errors,
+                # so anything psycopg that reaches here must propagate.
+                raise ScenarioDatabaseUnavailable(
+                    f"preproduction_db_unavailable: {exc}"
+                ) from exc
             except Exception as exc:  # noqa: BLE001 - keep polling on transient errors
                 last_error = f"{type(exc).__name__}: {exc}"
             if attempt % 3 == 0:

@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T09:20:21Z",
-  "source_base_commit": "b0f7ac0f8307e179dfb1cf9bca952a9597bade01",
-  "registry_digest": "abfc316973e969098f72d05bd4b5d4fd6f41d356204afa85c5f8aaea1ae8516e",
+  "generated_at": "2026-10-20T11:08:57Z",
+  "source_base_commit": "f2528d9b34038470761ae5e6438150e41221480d",
+  "registry_digest": "2f6d99a90c1248e3c6c56bd6b37fc63488607ee8e230cf5a93fd824d648e53ca",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1628,6 +1628,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "双轨 v1 验收轮 4 修复（调用方连接释放 / wait_for SQL 错误传播 / 真实 CLI 入口报告）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 pytest 回读 13/13（含 2 真实 PG 事务语义+2 真实 CLI 入口）；Hermes 六套件 235 passed+33 subtests；场景引擎/控制台/CLI 五套件 87 passed；worker 根区 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同）；compileall 五文件+git diff --check 通过",
+          "result": "发现 1（main.py 调用方泄漏连接）：_automation_test_scenario_thread 对 engine 增加 finally close_db_connection（三种终态均释放）；start_automation_test_scenario_run 预检引擎改为具名变量+try/finally 关闭（原 from_env().connectivity_check() 匿名引擎持久连接无人释放）。发现 2（wait_for 仍吞 SQL 错误）：在 ScenarioDatabaseUnavailable 分支后新增 except psycopg.Error→包装为 ScenarioDatabaseUnavailable(preproduction_db_unavailable: 原始错误) from exc 立即传播（db_query 已对可重试连接错误分类，到达 wait_for 的 psycopg 错误均为确定性错误，继续轮询只会退化为 TimeoutError）。发现 3（需真实 CLI 入口测试）：RealCliBoundaryTests 驱动真实 cli.main()（仅 class 级替换 db_query 为合成探针+from_env 返回轻量引擎+sleep 置空；真实 wait_for/runner/except 分支/报告写出/exit code 全部真实运行；aws SSM/.env/SMTP 等沙箱不可达依赖以 no-op/合成值替换并在测试内注明）：(a) 连接槽耗尽探针→报告 aborted=preproduction_db_unavailable+aborted_reason 含 remaining connection slots are reserved+exit 2；(b) psycopg SyntaxError 探针→报告 aborted=preproduction_db_unavailable+aborted_reason 含 synthetic invalid SQL 且不含 timed out+exit 2。为使最终报告自证原因，CLI db_unavailable 分支报告新增 aborted_reason 字段（经 redact_text 脱敏、截 400），aborted 稳定标记不变。披露：test_automation_test_store_postgres 在 RUN_POSTGRES_INTEGRATION=1 且与场景/控制台/CLI 套件同批运行时 1 失败（TICKET_DB_DSN 被同批更早测试泄漏为 example.invalid），在干净根区 main 同批逐字复现、单独运行正常 skip，属存量测试隔离问题，非本分支引入。"
         },
         {
           "type": "test",
@@ -18613,9 +18619,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-11",
-      "updated_at": "2026-10-13",
+      "updated_at": "2026-10-20",
       "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
-      "next_action": "双轨 v1 验收轮 3 修复完成（异常传播三处+只读短事务+真实 PG 事务语义证明）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
+      "next_action": "双轨 v1 验收轮 4 修复完成（调用方连接释放+wait_for SQL 错误传播+真实 CLI 入口测试×2+报告 aborted_reason）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18630,6 +18636,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "双轨 v1 验收轮 4 修复（调用方连接释放 / wait_for SQL 错误传播 / 真实 CLI 入口报告）",
+          "command": "RUN_POSTGRES_INTEGRATION=1 pytest 回读 13/13（含 2 真实 PG 事务语义+2 真实 CLI 入口）；Hermes 六套件 235 passed+33 subtests；场景引擎/控制台/CLI 五套件 87 passed；worker 根区 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同）；compileall 五文件+git diff --check 通过",
+          "result": "发现 1（main.py 调用方泄漏连接）：_automation_test_scenario_thread 对 engine 增加 finally close_db_connection（三种终态均释放）；start_automation_test_scenario_run 预检引擎改为具名变量+try/finally 关闭（原 from_env().connectivity_check() 匿名引擎持久连接无人释放）。发现 2（wait_for 仍吞 SQL 错误）：在 ScenarioDatabaseUnavailable 分支后新增 except psycopg.Error→包装为 ScenarioDatabaseUnavailable(preproduction_db_unavailable: 原始错误) from exc 立即传播（db_query 已对可重试连接错误分类，到达 wait_for 的 psycopg 错误均为确定性错误，继续轮询只会退化为 TimeoutError）。发现 3（需真实 CLI 入口测试）：RealCliBoundaryTests 驱动真实 cli.main()（仅 class 级替换 db_query 为合成探针+from_env 返回轻量引擎+sleep 置空；真实 wait_for/runner/except 分支/报告写出/exit code 全部真实运行；aws SSM/.env/SMTP 等沙箱不可达依赖以 no-op/合成值替换并在测试内注明）：(a) 连接槽耗尽探针→报告 aborted=preproduction_db_unavailable+aborted_reason 含 remaining connection slots are reserved+exit 2；(b) psycopg SyntaxError 探针→报告 aborted=preproduction_db_unavailable+aborted_reason 含 synthetic invalid SQL 且不含 timed out+exit 2。为使最终报告自证原因，CLI db_unavailable 分支报告新增 aborted_reason 字段（经 redact_text 脱敏、截 400），aborted 稳定标记不变。披露：test_automation_test_store_postgres 在 RUN_POSTGRES_INTEGRATION=1 且与场景/控制台/CLI 套件同批运行时 1 失败（TICKET_DB_DSN 被同批更早测试泄漏为 example.invalid），在干净根区 main 同批逐字复现、单独运行正常 skip，属存量测试隔离问题，非本分支引入。"
+        },
         {
           "type": "test",
           "label": "双轨 v1 验收轮 3 修复（R3-F1 异常传播+CLI 导入 / R3-F2 只读短事务连接）",

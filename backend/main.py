@@ -12359,6 +12359,14 @@ def _automation_test_scenario_thread(run_id: str, scenario_id: str) -> None:
         )
     except Exception as exc:  # noqa: BLE001 - one terminal failure contract
         store.update_run(run_id, {"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        # The engine holds one persistent read-only DB connection; release
+        # it on every terminal outcome so long-lived API threads never
+        # accumulate connections (R4 finding 1).
+        try:
+            engine.close_db_connection()
+        except Exception:  # noqa: BLE001 - cleanup must never mask a result
+            pass
 
 
 @app.get("/api/automation-test/scenarios", dependencies=[Depends(require_workspace_admin)])
@@ -12396,8 +12404,9 @@ def start_automation_test_scenario_run(scenario_id: str) -> dict[str, Any]:
                 "wait for it to finish or cancel it first"
             ),
         )
+    preflight_engine = automation_test_scenarios.ScenarioEngine.from_env()
     try:
-        automation_test_scenarios.ScenarioEngine.from_env().connectivity_check()
+        preflight_engine.connectivity_check()
     except HTTPException:
         raise
     except Exception as exc:  # noqa: BLE001 - fail closed with the reason
@@ -12405,6 +12414,11 @@ def start_automation_test_scenario_run(scenario_id: str) -> dict[str, Any]:
             status_code=502,
             detail=f"scenario channels unavailable, no run started: {exc}",
         ) from exc
+    finally:
+        try:
+            preflight_engine.close_db_connection()
+        except Exception:  # noqa: BLE001
+            pass
     run_id = f"atr-{uuid4().hex}"
     run = automation_test_scenario_run_store.claim_run_slot(run_id, scenario_id)
     if run is None:

@@ -642,6 +642,9 @@ def main() -> int:
                 report = {
                     "scenario": args.scenario,
                     "aborted": "preproduction_db_unavailable",
+                    "aborted_reason": pp.redact_text(
+                        str(exc), app_id=pp.PP_APP_ID, email=engine.sender
+                    )[:400],
                     "steps": [step.as_dict() for step in engine.steps],
                 }
                 exit_code = 2
