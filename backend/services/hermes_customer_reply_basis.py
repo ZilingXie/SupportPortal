@@ -61,6 +61,9 @@ _FIELD_ALIASES: dict[str, set[str]] = {
     "contact_email": {"contact email", "official contact email", "email address", "联系邮箱"},
     "tax_id": {"tax id", "tax number", "tax identification number", "vat number", "vat id", "税号", "税务登记号"},
     "app_id": {"app id", "application id", "application's app id", "project app id"},
+    "account_type": {"account type", "account category"},
+    "use_case_description": {"use case", "use-case description", "use case description", "usage description", "description of your use case"},
+    "console_configuration": {"console configuration", "last known console configuration", "agora console configuration"},
     "passport_number": {"passport number", "passport id", "护照号"},
     "social_security_number": {"social security number", "ssn", "社保号"},
 }
@@ -518,11 +521,31 @@ def _validate_missing_information_layout(text: str, basis: dict[str, Any]) -> No
             for ln in text.splitlines()
             if _LAYOUT_BULLET_RE.match(ln)
         ]
-        if len(bullet_lines) < len(missing_list):
+        if len(bullet_lines) != len(missing_list):
+            # Too few bullets omit fields; too many invite duplicates or
+            # unauthorized items (plan: exactly one bullet per field).
             raise HermesReplyBasisError("missing_information_layout_invalid")
-        # Numbered list check covered above; extra-field authorization is
-        # enforced by the unauthorized_field_request pass using the full
-        # text - the layout pass only proves per-field bullet coverage.
+        # Resolve each bullet to the distinct missing field it names:
+        # every missing field must be covered exactly once (no duplicate
+        # bullets standing in for others, no unknown-field bullets).
+        matched_keys: list[str] = []
+        for bullet in bullet_lines:
+            bullet_key = next(
+                (
+                    key
+                    for key in missing_list
+                    if key not in matched_keys
+                    and _field_present_in(bullet, key)
+                ),
+                None,
+            )
+            if bullet_key is None:
+                # The bullet names no yet-unmatched missing field: either a
+                # duplicate of an already-matched field or an unknown item.
+                raise HermesReplyBasisError("missing_information_layout_invalid")
+            matched_keys.append(bullet_key)
+        if sorted(matched_keys) != missing_list:
+            raise HermesReplyBasisError("missing_information_layout_invalid")
 
 
 def project_greeting(content: str, greeting_name: str | None) -> str:

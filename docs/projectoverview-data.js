@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-20T06:54:29Z",
-  "source_base_commit": "dd37c4d36200247b8a9d8ded077e60949ed60d67",
-  "registry_digest": "06a6cc1e0e2ffb5b3acdc70fdbb4b363ce5d4bf5c1aa4aff9711f502bfc024c3",
+  "generated_at": "2026-10-20T07:32:00Z",
+  "source_base_commit": "672ad8c80b9d7025adb4edc00f4d4f57c70d8704",
+  "registry_digest": "f6a66b91c24304b522995bedbb3e549efc8ba32a16b7949bbd76a71bc6ea29a5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1628,6 +1628,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "label": "Implementation branch",
           "details": "codex/hermes-fixed-task-comment-action；r4-repair-2 待提交 HEAD 后由独立验收线程读取。"
+        },
+        {
+          "type": "test",
+          "label": "双轨 v1 验收轮 1 修复（B1/B2+app_name 负控）",
+          "command": "pytest basis 44（含 5 项 B1 重复/遗漏/乱序新测试）+回读 6（B2 原始异常+app_name 实际 connect 断言）+定向回归 179+worker 153(14 存量)+compileall+diff check",
+          "result": "B1（重复 bullet 冒充完整列表）：3+ 项分支改为 bullet 数必须等于缺失字段数+逐 bullet 解析字段 key（每 bullet 匹配一个尚未匹配的缺失字段，匹配不到即拒绝=重复或未知字段）+sorted 匹配集与缺失集全等校验；补齐 fraud 七字段别名（account_type/use_case_description/console_configuration 含 Production 措辞变体）；5 项新测试：三条重复同字段拒/重复+缺项拒/漏项+额外字段拒/乱序全过/精确全过。B2（SQL 错误误标不可用）：非可重试 psycopg.Error 直接 raise 原始异常（不包装）；仅连接类错误耗尽 3 次重试预算后才转 ScenarioDatabaseUnavailable；测试改为断言 psycopg.errors.SyntaxError 原样抛出+消息不含 preproduction_db_unavailable+单次调用即失败。验证缺口：app_name 测试改为实际 patch psycopg.connect 断言 options 含 application_name=supportportal-scenario-tester 与 search_path（非仅常量比对）。"
         },
         {
           "type": "test",
@@ -18597,7 +18603,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-11",
       "updated_at": "2026-10-13",
       "summary": "原 Hermes v3.1 在 HEAD 41f27f48 独立代码验收通过，PR #1485 合并为 main@4ecea043 并已发布 Preproduction r20261013-4ecea04、v6 Prompt pr-78386473bd08 和 sid-precise published v2。新工单 14037 确认兼容 job 被 legacy worker 置为 manual_attention，客户两轮回复已投递但内部邮件释放阻断。当前计划 Hermes Enablement Reply Delivery and Natural Persona v1.1 rev v3.2 在同一分支修复源头所有权、claim 排除、已领取恢复和 stale payload CAS；reviewed HEAD 为 main@0de4868ef1624e619255cff87a6b0808ccfb2fe3，base 为 main@c9722399daa347a7a24e0f15fafb8fddaedebe39，等待独立验收。当前代码证据口径为 278 passed、50 subtests；新增 PG 竞态套件 18 passed、17 subtests；16/16 负控检出。",
-      "next_action": "双轨 v1 实施完成（回读韧性+布局规则+检查器）：Draft PR 待独立验收；通过后 Prompt Release+Preprod 部署+新 enablement 最小工单首轮验证（不重跑 14140）。",
+      "next_action": "双轨 v1 验收轮 1 修复完成（B1 逐 bullet 全等覆盖+B2 原始异常+app_name 实际断言）：Draft PR #1525 追加提交待复验；通过后 Prompt Release+Preprod+新工单（不重跑 14140）。",
       "acceptance_criteria": [
         "客户回复 basis 使用 hermes_customer_reply_basis_v1，携带 source_turn_id、route、facts、claims 和 publication_policy。",
         "客户回复所有权记录为 hermes_persona；human_review_required、draft stale、ownership lost、translation failure 均 fail-closed。",
@@ -18612,6 +18618,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Invoice/Verification intake、Investigation 人工复核/Persona 和完整 reviewer assignment 回读证据仍缺失。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "双轨 v1 验收轮 1 修复（B1/B2+app_name 负控）",
+          "command": "pytest basis 44（含 5 项 B1 重复/遗漏/乱序新测试）+回读 6（B2 原始异常+app_name 实际 connect 断言）+定向回归 179+worker 153(14 存量)+compileall+diff check",
+          "result": "B1（重复 bullet 冒充完整列表）：3+ 项分支改为 bullet 数必须等于缺失字段数+逐 bullet 解析字段 key（每 bullet 匹配一个尚未匹配的缺失字段，匹配不到即拒绝=重复或未知字段）+sorted 匹配集与缺失集全等校验；补齐 fraud 七字段别名（account_type/use_case_description/console_configuration 含 Production 措辞变体）；5 项新测试：三条重复同字段拒/重复+缺项拒/漏项+额外字段拒/乱序全过/精确全过。B2（SQL 错误误标不可用）：非可重试 psycopg.Error 直接 raise 原始异常（不包装）；仅连接类错误耗尽 3 次重试预算后才转 ScenarioDatabaseUnavailable；测试改为断言 psycopg.errors.SyntaxError 原样抛出+消息不含 preproduction_db_unavailable+单次调用即失败。验证缺口：app_name 测试改为实际 patch psycopg.connect 断言 options 含 application_name=supportportal-scenario-tester 与 search_path（非仅常量比对）。"
+        },
         {
           "type": "test",
           "label": "PP-A1 回读稳定性+缺资料回复布局双轨 v1 实施（Draft PR 待独立验收）",

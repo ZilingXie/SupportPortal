@@ -531,7 +531,13 @@ class ScenarioEngine:
                     names = [item.name for item in cursor.description]
                     return [dict(zip(names, row)) for row in cursor.fetchall()]
             except psycopg.Error as exc:
-                if not self._is_retryable_db_error(exc) or attempt >= self._DB_MAX_RETRIES:
+                if not self._is_retryable_db_error(exc):
+                    # Plain SQL errors surface unchanged: they are query
+                    # bugs, not infrastructure availability (B2).
+                    raise
+                if attempt >= self._DB_MAX_RETRIES:
+                    # Only connection-class errors that exhausted the retry
+                    # budget become the infrastructure boundary.
                     raise ScenarioDatabaseUnavailable(
                         f"preproduction_db_unavailable: {exc}"
                     ) from exc

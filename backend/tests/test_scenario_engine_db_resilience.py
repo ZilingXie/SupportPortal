@@ -95,7 +95,7 @@ class DbResilienceTests(unittest.TestCase):
             with self.assertRaises(ScenarioDatabaseUnavailable):
                 engine.db_query("select 1", ())
 
-    def test_non_retryable_sql_error_raises_immediately(self):
+    def test_non_retryable_sql_error_surfaces_original(self):
         engine = _engine()
 
         class _SyntaxCursor(_FakeCursor):
@@ -105,8 +105,11 @@ class DbResilienceTests(unittest.TestCase):
         conn = MagicMock()
         conn.cursor.return_value = _SyntaxCursor()
         with patch.object(engine, "_open_db_connection", return_value=conn):
-            with self.assertRaises(ScenarioDatabaseUnavailable) as ctx:
+            with self.assertRaises(psycopg.errors.SyntaxError) as ctx:
                 engine.db_query("bogus", ())
+        # B2: a plain SQL error is NOT the infrastructure boundary and
+        # must never carry the preproduction_db_unavailable marker.
+        self.assertNotIn("preproduction_db_unavailable", str(ctx.exception))
         # No retries: the error surfaces on the first attempt.
         self.assertEqual(conn.cursor.call_count, 1)
 
@@ -140,23 +143,19 @@ class DbResilienceTests(unittest.TestCase):
         engine = _engine()
         captured = {}
 
-        def fake_connect(dsn, connect_timeout, options):
+        def fake_connect(dsn, *, connect_timeout, options):
+            captured["dsn"] = dsn
+            captured["connect_timeout"] = connect_timeout
             captured["options"] = options
             return _FakeConnection()
 
-        with patch.object(
-            ScenarioEngine, "_open_db_connection", lambda self: fake_connect(
-                self.db_dsn, 10, "opts"
-            )
-        ):
-            # options are built inside _open_db_connection; verify directly.
-            source_options = "supportportal_preproduction"
-        # Direct check: build via the real method against the real psycopg
-        # signature is overkill; assert the constant exists.
-        self.assertEqual(
-            ScenarioEngine._DB_APPLICATION_NAME, "supportportal-scenario-tester"
-        )
-        self.assertEqual(ScenarioEngine._DB_MAX_RETRIES, 3)
+        with patch.object(psycopg, "connect", side_effect=fake_connect):
+            connection = engine._open_db_connection()
+        self.assertIn("application_name=supportportal-scenario-tester", captured["options"])
+        self.assertIn("search_path=supportportal_preproduction,public", captured["options"])
+        self.assertEqual(captured["connect_timeout"], 10)
+        self.assertIs(engine._db_connection if False else connection, connection)
+        engine.close_db_connection()
 
 
 if __name__ == "__main__":

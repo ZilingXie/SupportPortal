@@ -296,3 +296,64 @@ class MissingInformationLayoutTests:
 
 class TestMissingInformationLayout(MissingInformationLayoutTests):
     pass
+
+
+class TestLayoutDuplicateCoverage:
+    """B1 regression: duplicate bullets cannot stand in for full coverage."""
+
+    @staticmethod
+    def _ask_basis(missing):
+        return _basis(
+            missing_fields=list(missing),
+            collected_facts={},
+            trusted_conclusion={"status": "missing_fields"},
+            allowed_claims=["state:missing_fields"],
+        )
+
+    def test_duplicate_bullets_same_field_rejected(self):
+        basis = self._ask_basis(["account_type", "name", "office_address"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nTo continue:\n"
+                "- Account type\n- Account type\n- Account type",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_duplicate_plus_missing_field_rejected(self):
+        basis = self._ask_basis(["account_type", "name", "office_address"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nTo continue:\n"
+                "- Account type\n- Account type\n- Office address",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_omitted_field_with_extra_bullet_rejected(self):
+        basis = self._ask_basis(["account_type", "name", "office_address"])
+        with pytest.raises(HermesReplyBasisError) as exc:
+            validate_customer_reply_draft(
+                "Hi Customer,\n\nTo continue:\n"
+                "- Account type\n- Name\n- Contact number",
+                basis,
+            )
+        assert exc.value.code == "missing_information_layout_invalid"
+
+    def test_reordered_fields_pass(self):
+        basis = self._ask_basis(["account_type", "name", "office_address"])
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nTo continue:\n"
+            "- Office address\n- Account type\n- Name",
+            basis,
+        )["decision"] == "pass"
+
+    def test_exact_count_full_coverage_passes(self):
+        basis = self._ask_basis(
+            ["account_type", "name", "office_address"]
+        )
+        assert validate_customer_reply_draft(
+            "Hi Customer,\n\nWe need the following:\n"
+            "- Account type\n- Name\n- Office address",
+            basis,
+        )["decision"] == "pass"
