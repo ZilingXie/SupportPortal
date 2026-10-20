@@ -7,6 +7,14 @@
 
 # Prompt Change Log
 
+## 2026-10-20 - Prompt Release Sync 部署诊断与瞬时连接恢复（p2-206 preproduction-prompt-sync-resilience v1，待独立验收）
+
+- 仅部署工具链行为变更，Prompt 内容、Prompt Release 数据模型、模型档位与业务逻辑不变。
+- `deploy_automation_ecs_release.sh` 的 `prompt-target-state` 回读与 `prompt_release sync` 不再 `2>/dev/null` 丢弃 stderr：原始 stderr 只落 checkpoint 之外的私有 scratch 目录（退出删除），每次失败由 `classify-prompt-operation-failure` 按 psycopg 异常类型→SQLSTATE→明确 libpq 文本→unknown 分类并写脱敏 artifact（`prompt-target-state-error.json`/`prompt-sync-error.json` + `-attempts.jsonl`），写出前过 `assert_evidence_secret_free`。
+- 仅连接超时/瞬时连接错误可重试（最多 3 次，退避 1s/3s）；权限、schema 缺失、Prompt 校验、unknown 一次即停。sync 失败先只读回读目标状态，release 非 `missing` 一律 `prompt_sync_write_result_unknown` fail-closed，不自动重放、不自动激活。
+- 两个 Prompt CLI 的 stderr 末行改为结构化 `{"ok": false, "error", "exception_type", "sqlstate"}`；`prompt-target-state` 与 sync 目标连接显式 `connect_timeout=10`（仅连接建立）。evidence `checks` 新增 target-state/sync 的分类、尝试次数、可重试字段。
+- 验证：`backend/tests/test_prompt_sync_resilience.py`（真实 source 部署脚本 + 伪 Prompt CLI）59 项、受影响模块 335 项通过，突变负控检出；未部署 Preproduction/Production，未触碰真实数据库。合同与证据见 `docs/plans/preproduction-prompt-sync-resilience-v1.md`。
+
 ## 2026-10-19 - 调查 Agent 内部知识检索切换 WeKnora 主源（p2-197 stage6-weknora-agent-bridge）
 
 - `internal_knowledge_search` 子代理从仅消费 summary packet 的 `rag_result` 占位实现，切换为 WeKnora 主检索：经共享检索服务（`weknora_knowledge_retrieval`）先查 WeKnora hybrid-search，逐命中按对象 ID 回读全文，仅 `parse_status=completed ∧ enable_status=enabled` 的已发布对象进入 Agent 上下文（Draft/未索引/版本缺失一律过滤）。

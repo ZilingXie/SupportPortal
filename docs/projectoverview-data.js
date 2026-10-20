@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-19T10:06:00Z",
-  "source_base_commit": "0514209e9ab52fd923ef57204bff2bd2ff631f40",
-  "registry_digest": "2cc966e65c1e74e97898cf1f6f33485c13fd9a25a6c164aa03b8667a37fca0a1",
+  "generated_at": "2026-10-20T04:25:31Z",
+  "source_base_commit": "49e968cdee6313f3be81265fbbe22cfc92d7ee03",
+  "registry_digest": "0dae498840d2c536ad3a0d97ae2087b51e55ae029d0126cf39a4ced5a40450b7",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -3402,6 +3402,17 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "Independent re-acceptance passed",
           "details": "2026-09-30 独立复验通过（验收对象 preproduction r20260930-39144ab，commit 39144abb；211 tests passed；五项首轮发现全部确认修复：filtered 聚合/ragflow 排除/幂等写入+非法拒记/anti-join/flush 失败 partial；线上读回 v13+列+唯一索引+5 条真实 hermes usage+重放 rowcount=0+52 case totals 110055/17444 完整性 partial 正确）。验收记录的残余：部署采集文件残留 rollback_incomplete/route CloudWatch 2 错误/rollback failed（后续独立读回 API/Route/Worker 稳定，属发布证据残留非运行问题）；本轮未重新直连复核；当前任务定义关闭 hermes workflow，现有 5 条记录的写入与幂等已验，新运行版本 provenance 未独立复核。Production 晋级不在范围。"
+        },
+        {
+          "type": "test",
+          "label": "真实入口与分类/脱敏回归",
+          "path": "backend/tests/test_prompt_sync_resilience.py",
+          "result": "2026-10-20：新模块 59 passed（source 部署脚本 + 伪 Prompt CLI：瞬时恢复、三次即停并落 evidence、非瞬时单次、sync 按回读 fail-closed、分类器失败回退、resume 已 active 跳过 sync/activation、resume 回读恢复后 sync）；受影响 9 个模块 335 passed；突变负控（MAX=5、去回读门）10 项失败后复原转绿；强制泄漏负控拒写 artifact；bash -n / compileall / git diff --check 通过。"
+        },
+        {
+          "type": "decision",
+          "label": "执行侧等价选择",
+          "details": "脱敏字段命名 redacted_message（保留 PR#1054 的 last_error 守卫）；validation_failed 仅属 prompt_sync_*；evidence 对称增加 prompt_target_state* 字段；prompt_schema 阶段抽为 run_prompt_release_phase 仅为真实入口测试、阶段体不变；仓库层 _run_with_connection_retry 单次重试为既有层不改。基线既有失败 test_automation_ecs_terraform::test_preproduction_network_and_runtime_identity_are_explicit 在根区 main 同样失败，与本任务无关。"
         }
       ],
       "source_refs": [
@@ -3414,7 +3425,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 12,
+      "task_count": 13,
       "done_count": 10,
       "blocked_count": 0
     },
@@ -19030,6 +19041,44 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "docs/plans/hermes-native-enable-app-id-natural-v1.md",
         "backend/services/prompts/hermes_support_agent.py",
         "backend/tests/test_hermes_native_enablement_regression.py"
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-206",
+      "phase_id": "phase-1",
+      "module_id": "platform-delivery",
+      "function_id": "ecs-environment-migration",
+      "title": "Prompt Release Sync 可观测性与瞬时连接恢复 v1",
+      "summary": "计划 preproduction-prompt-sync-resilience v1：ECS deploy 的 prompt-target-state 回读与 Prompt sync 不再丢弃 stderr，失败按 psycopg 异常类型→SQLSTATE→明确 libpq 文本→unknown 分类并保存脱敏 artifact；仅瞬时连接错误有限重试（3 次，1s/3s），sync 失败先只读回读目标状态、release 非 missing 一律 write_result_unknown fail-closed；两条目标连接显式 connect_timeout=10；evidence checks 记录分类/尝试次数/可重试。仅部署工具链，不改 Prompt 内容、数据模型或业务逻辑。",
+      "status": "active",
+      "next_action": "Draft PR 等待独立代码验收；通过后按正常 finalize 流程合入 main。本计划不部署、不触碰真实数据库或业务系统；首个真实 Preproduction 失败样本出现时回读 prompt-*-error.json 分类是否与实际原因一致（waiting-for-evidence）。",
+      "owner": "codex",
+      "created_at": "2026-10-20",
+      "updated_at": "2026-10-20",
+      "acceptance_criteria": [
+        "C1-C6 见 docs/plans/preproduction-prompt-sync-resilience-v1.md（错误不泄密、目标状态读取、瞬时故障最多 3 次重试、非瞬时错误仅 1 次、sync 事务结果不确定 fail-closed、证据绑定）"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "真实入口与分类/脱敏回归",
+          "path": "backend/tests/test_prompt_sync_resilience.py",
+          "result": "2026-10-20：新模块 59 passed（source 部署脚本 + 伪 Prompt CLI：瞬时恢复、三次即停并落 evidence、非瞬时单次、sync 按回读 fail-closed、分类器失败回退、resume 已 active 跳过 sync/activation、resume 回读恢复后 sync）；受影响 9 个模块 335 passed；突变负控（MAX=5、去回读门）10 项失败后复原转绿；强制泄漏负控拒写 artifact；bash -n / compileall / git diff --check 通过。"
+        },
+        {
+          "type": "decision",
+          "label": "执行侧等价选择",
+          "details": "脱敏字段命名 redacted_message（保留 PR#1054 的 last_error 守卫）；validation_failed 仅属 prompt_sync_*；evidence 对称增加 prompt_target_state* 字段；prompt_schema 阶段抽为 run_prompt_release_phase 仅为真实入口测试、阶段体不变；仓库层 _run_with_connection_retry 单次重试为既有层不改。基线既有失败 test_automation_ecs_terraform::test_preproduction_network_and_runtime_identity_are_explicit 在根区 main 同样失败，与本任务无关。"
+        }
+      ],
+      "source_refs": [
+        "docs/plans/preproduction-prompt-sync-resilience-v1.md",
+        "deployment/deploy_automation_ecs_release.sh",
+        "backend/scripts/automation_ecs_release_pipeline.py",
+        "backend/scripts/prompt_release.py",
+        "docs/deploy_automation_ecs_release.md"
       ]
     },
     {
