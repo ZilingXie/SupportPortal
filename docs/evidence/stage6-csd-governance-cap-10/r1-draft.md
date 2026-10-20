@@ -38,3 +38,9 @@
 - **manifest**：published=6511c2e9/draft=86f9fb06/candidateBase=86f9fb06/nodeCount=12。
 
 验证：validator 通过（15+4+56）；**B1/B2/B3 断言脚本全过**（active 版本+端点+凭据+无直写；draft 端点+凭据+版本；candidate 含 Limit+重接+端点+凭据；三文件均单一 source endpoint）。validator 局限（内部一致性≠线上一致性）已由断言脚本补足——断言对照的是线上回读值（6511c2e9/86f9fb06/supportcenter/bearer）。
+
+## 独立验收通过（2026-10-20，HEAD 0cd6752a）
+
+Draft 验收通过：三份快照与线上回读一致（Active 6511c2e9/12 节点；Draft 86f9fb06/13 节点含 Cap 10）、endpoint/认证/重接/未发布标记/manifest 元数据全部确认；validator 15+4+56 通过；B1/B2/B3+元数据断言通过；两树干净。validator 的 13 条 LEGACY-EXPOSED 属历史 Solved 快照与本 Draft 无关（复核确认）。
+
+**验收边界**：仅释放 Draft 验收门。发布、自然每日执行、治理开关开启=三个后续单独授权，均未释放。
