@@ -39,3 +39,41 @@
 ## 边界声明
 
 本轮不宣称文件功能任何形式的启用验收；关闭状态与无附件流程在当前 release 上的行为已由 live 探针与本轮测试复核。p2-192 原 R1 发布复审/真实业务门禁不受本轮影响，继续分别保留。
+
+## v2 执行记录（2026-10-20，启用轮）
+
+状态：**执行完成，等待独立验收**。C1-C6 全部通过（live 与离线分层证据），C7 继续 `waiting-for-evidence`。机器可读证据见 [v2 证据](investigation-case-files-r2-preprod-file-enable-evidence-v2.json)。
+
+### 执行摘要
+
+1. **基线冻结**：等待并行车辆 `r20261020-8e8e495` 完成（其 Hermes 经历 td46→td45→td47/48 回滚序列，最终镜像 2cdc5a8a 已把插件退回 p2-203 之前）。
+2. **三方合并 overlay**（不再以 baseline 树为底）：gateway 取新镜像（保留 p2-188 failure_reason），skills_tool/插件取 td46 镜像（完整 p2-203 profile 栈含 zac consult），叠加 R2 文件能力；含 `supportportal_skill_profile` 模块与 investigation-profiles。合并树验证五门禁+profile 负向全过；镜像 `a40faeca` 构建推送、td49 部署、EFS 安装 skill。合并脚本入库 [v2-merge](../../deployment/hermes-case-files/v2-merge/)。
+3. **两次 SP 发布**：r20261020-dd37c4d（开关=1，知识开关保留 0，422 变为 `file_scope_invalid`）与修复后的 r20261020-0bd735e-r2（api:164/route:160/worker:163，现行）。
+4. **修复轮 PR #1524**：case_task 方向提升只写了 automation（13968 时代不对称），investigation 案件 binding.direction 永远停在 pending，Slack 文件门禁因此永不放行——14142/14144 实证。双侧存储对称提升 + 真实入口测试（memory+PG）+326 回归全绿。
+5. **代表性文件闭环（14147）**：Map 登记（`14147-engineer-2.txt`，managed 命名含全局序号）→ 模型真实调用 list×1/read×1/search×3 → 标记命中第 6/10/14 行（无截断，与文件逐字一致）→ 草稿冻结快照 → 审批 → Zendesk 公开评论 54778303456916 + 附件 54778318315924（`14147-engineer-2.txt` 1083B）→ 工单保持 open。
+6. **live 负向**：伪造/篡改/缺失 capability 全部 422；重复事件身份冲突且 Map/turn 零重复；已解决工单投递被 worker 取消（14145）。
+
+### 必须披露的边界与发现
+
+- **appid 线程交互**：本轮期间并行线程重建 Hermes（最终 td52/`180e2c98`，构建于合并能力之上）；所有 live 测试实际运行于 td52，容器内标记事后复核完好。该线程曾回滚 p2-203 插件，本轮按计划要求以三方合并将其恢复。
+- **n8n 传输跳**：工程师文件消息以真实 Slack 文件/消息/线程元数据直调 SP API；唯一可用凭据是工程师 bot token，而 n8n 过滤器按设计排除 bot 事件（R1 已验证该传输跳）。真实人类上传路径未演练。
+- **自动 solve 时序**：reply turn 完成后约 4 秒流程自动 solve 工单（14145 实证），人工审批窗口极窄；14147 以反馈文本"保持 open"绕过。此为既有行为，未在本轮修改。
+- **SLO**：两次发布总时长分别为 1202.8s 与（r2 略短），超 900s 常规 SLO，硬门禁全过，如实保留。
+- 草稿表在交付完成后仍显示 queued（14057 已知显示差异，交付账本为准）。
+
+### 剩余门禁
+
+- C7 Zac 文件：`waiting-for-evidence` 不变（真实文件接口/样本仍缺）。
+- Production：未触碰；启用与业务写入仅限 Preproduction。
+
+### 修复轮 R2-V2-B1（2026-10-20 独立验收未通过后）
+
+- **发现**（验收方）：真实 Work scope 同时绑定 `supportportal_skill_profile` 与 `supportportal_file_scope` 时，`skills_list/skill_view` 先命中 profile 分支返回 Investigation profile 结果，`support-case-files` 不在列且加载返回 `skill_profile_denied`；原 `verify_merged_overlay.py` 只分别测两种 scope。
+- **修复**：`supportportal_file_context.file_skill_visible(name)`（仅文件技能且仅 work 相位文件 scope 为真）；`skills_list` profile 分支在可见时追加文件技能条目；`skill_view` 与 `_skill_view_with_bump` 对文件技能豁免 profile 短路与 `skill_visible` 门；新增共享谓词 `_supportportal_listing_visible=(skill_visible or file_skill_visible) and skill_allowed` 用于 `_find_all_skills` 三处返回过滤（首次尝试 td53 漏了这三处：view 通过但 list 仍缺，已被 td54 取代）。
+- **验证**：离线矩阵 `verify_b1.py` B1_VERIFY_OK（profile-only 不变 / 组合 work 列出并可加载 / 组合 persona 隐藏 / file-only 不变；stub `_find_all_skills` 改为经同一谓词，堵住离线绕过真实过滤的缺口）；bundle 五门禁 + case files/attachments 套件 62/0（隔离 PG）；**td54（镜像 `7df5f3a3`）容器内以真实 `skills_tool`+真实 EFS 技能目录复核**：组合 list 含 `support-case-files`、view 返回真实 SKILL.md 内容，profile-only 与无 scope 负向不变。
+- **live 复验 14151**：Map `14151-engineer-4.txt`、list×2/read×5/search×2、标记命中、调查证据显式引用 "support-case-files skill"、审批快照、Zendesk 评论 54779760112148 + 附件 54779773301652、工单 open。C3/C5/C6 重新验证通过。
+- **保持开放的边界**：Slack→n8n 人类上传传输跳未演练（bot token 事件按设计被过滤）；Automation 路径反向调用无 live 证据；C7 Zac 文件 waiting-for-evidence。
+
+### 独立验收结论（2026-10-20，第二轮）
+
+**通过（R2-V2-B1 修复及 C1-C6 范围）**。审查对象：PR #1527 HEAD `bc8d31f2`、B1 修复与 verify_b1 四模式矩阵、Preproduction Hermes td54（`sha256:7df5f3a3…`，单一 PRIMARY 健康）、14151 真实闭环证据、主干/worktree/JSON/Overview/Feature List 检查。B1 六项组合行为确认修复；C1-C6 全部判定通过；文档与 Git 检查通过。**不宣称**：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 文件获取、Production、原 R1 发布复审——均保持开放/另行授权；工单自动 solve 与人工审批的时序竞争仍为观察项。验收门禁释放，进入收口与合并流程。
