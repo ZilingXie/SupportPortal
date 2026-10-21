@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T07:35:36Z",
-  "source_base_commit": "ab547256e34e4a3f5f4aceca8a672935cc3459ee",
-  "registry_digest": "ce088edde43498117ec2afa95a6f4585af4be55ca52fd991d79c8766644d81f5",
+  "generated_at": "2026-10-21T08:45:09Z",
+  "source_base_commit": "7afabcd5f612e3045201a774c66fee3a7815cb48",
+  "registry_digest": "4d5746dae1a0e4d8b5d6581d9fd39e949f223d64974b7b826723ed91467b4e70",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5535,11 +5535,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "R2/F1 回归 test_first_turn_sectioned_delivery.py 7 项：真实 process(job) 入口 + 真实 _ensure_case_thread（F1 窗口=pre-work 绑定失败→notify 时成功）；四 section + 按钮单独末条 + 旧渲染器 0 调用；长内容无损分片 + event_refs 可读；幂等重放零重发；已有线程不建新根；channel 缺失/mismatch 停止且有诊断事件。反向验证：移除 re-read 后首轮测试必败"
+          "label": "R2 验收轮1：F1-A（线程创建失败→停止+thread_creation_failed 事件，不调旧模板）+ F1-B（binding 回读 None→停止+binding_reread_failed 事件，or-binding 回退被移除且反向验证检出）；两 guard 仅作用于 native（repository≠None）路径，repository=None 兼容路径不变"
         },
         {
           "type": "test",
-          "label": "回归合计 194 passed（含 v1 合同 23、route_status_fix、draft_save、zendesk agent/tools）+ 隔离 PostgreSQL 54 passed；compileall + git diff --check 干净。预存 case-files 3 失败为基线既有（干净 main 同样失败，与本修复无关）"
+          "label": "R2 测试套件 11 个方法（原 6+fixed_task 首轮 2+F1 分支 2+PG 隔离 1）：真实 process(job) 入口+真实 _ensure_case_thread；fixed_task 路径实际发送顺序断言（从 posted events 提取 section 标签按发送序验证 Summary→Evidence→Blockers→Next steps→ACTION）；长内容完整保留（Q×300/W×250/Z×200 唯一填充字符精确计数/子串）；隔离 PG 专项验证绑定落库→重读→分片回执落账（PG 真实 ledger 全 completed + 按钮单独末条）"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 198 passed + 隔离 PostgreSQL 65 passed；compileall + git diff --check 干净。预存 case-files 3 失败为基线既有"
         }
       ],
       "source_refs": [
@@ -5549,7 +5553,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "legacy_ids": [],
       "status": "active",
       "task_count": 9,
-      "done_count": 8,
+      "done_count": 7,
       "blocked_count": 0
     },
     {
@@ -19279,8 +19283,8 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "function_id": "engineer-investigation-reply",
       "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
       "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
-      "status": "done",
-      "next_action": "R2（F1 首轮分条发送修复）实施完成，Draft PR 待独立验收：worktree p2-207-r2-first-turn（基线 ab547256 最新 main）。F1 根因=#14161 实证——_notify_investigation_result 在 _ensure_case_thread 创建线程前读取 binding，创建后未刷新，继续用旧 binding 的空 channel 回退旧截断模板。修复：线程创建后重新读取已持久化 binding；channel 缺失/mismatch 时记 native.investigation_result_notification_missing 事件并停止本次通知（不回退截断内容或按钮，调查记录与 awaiting_review 状态保留）。7 类回归 + 反向验证（临时移除 re-read 首轮测试必败）全过；隔离 PG 54 passed。验收通过后合并并发布 Preproduction",
+      "status": "active",
+      "next_action": "R2 验收轮1修复完成（F1-A 线程创建失败停止+诊断、F1-B binding 回读 None 停止、F2 四项测试补齐），Draft PR #1534 待独立验收复审。回归 198 passed + 隔离 PG 65 passed（含 PG 首轮专项）；反向验证 or-binding 回退被检出。验收通过后合并并发布 Preproduction",
       "owner": "agent",
       "created_at": "2026-10-20",
       "updated_at": "2026-10-21",
@@ -19314,11 +19318,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
-          "label": "R2/F1 回归 test_first_turn_sectioned_delivery.py 7 项：真实 process(job) 入口 + 真实 _ensure_case_thread（F1 窗口=pre-work 绑定失败→notify 时成功）；四 section + 按钮单独末条 + 旧渲染器 0 调用；长内容无损分片 + event_refs 可读；幂等重放零重发；已有线程不建新根；channel 缺失/mismatch 停止且有诊断事件。反向验证：移除 re-read 后首轮测试必败"
+          "label": "R2 验收轮1：F1-A（线程创建失败→停止+thread_creation_failed 事件，不调旧模板）+ F1-B（binding 回读 None→停止+binding_reread_failed 事件，or-binding 回退被移除且反向验证检出）；两 guard 仅作用于 native（repository≠None）路径，repository=None 兼容路径不变"
         },
         {
           "type": "test",
-          "label": "回归合计 194 passed（含 v1 合同 23、route_status_fix、draft_save、zendesk agent/tools）+ 隔离 PostgreSQL 54 passed；compileall + git diff --check 干净。预存 case-files 3 失败为基线既有（干净 main 同样失败，与本修复无关）"
+          "label": "R2 测试套件 11 个方法（原 6+fixed_task 首轮 2+F1 分支 2+PG 隔离 1）：真实 process(job) 入口+真实 _ensure_case_thread；fixed_task 路径实际发送顺序断言（从 posted events 提取 section 标签按发送序验证 Summary→Evidence→Blockers→Next steps→ACTION）；长内容完整保留（Q×300/W×250/Z×200 唯一填充字符精确计数/子串）；隔离 PG 专项验证绑定落库→重读→分片回执落账（PG 真实 ledger 全 completed + 按钮单独末条）"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 198 passed + 隔离 PostgreSQL 65 passed；compileall + git diff --check 干净。预存 case-files 3 失败为基线既有"
         }
       ]
     },

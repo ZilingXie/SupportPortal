@@ -291,3 +291,301 @@ class FirstTurnSectionedDeliveryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FixedTaskFirstTurnTests(unittest.TestCase):
+    """R2 review F2: the #14161 flow is the FIXED_TASK first-turn path
+    (route-decider seeds direction/investigation before the work run).
+    These tests drive that real entry with the real _ensure_case_thread."""
+
+    def setUp(self):
+        os.environ["ENGINEER_SLACK_CHANNEL_ID"] = "C-TEST"
+
+    def test_fixed_task_first_turn_sections_in_actual_send_order(self):
+        from backend.tests.test_native_hermes_fixed_task_review import start_fixed
+
+        store = _store()
+        repo = _Repo()
+        job = start_fixed(store)
+        turn_id = job.payload["turn_id"]
+
+        def complete(_, key):
+            assert key.endswith(":work")
+            from backend.services.automation_hermes_tools import tool_save_investigation_progress
+
+            tool_save_investigation_progress(store, repo, turn_id=turn_id, **_record())
+
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+
+        client = FakeHermesClient(on_run_completed=complete)
+        processor = HermesAgentTurnProcessor(
+            store, client=client, repository=repo, environment="preproduction", poll_interval_seconds=0.01
+        )
+        with patch("backend.services.engineer_slack.notify_hermes_case_opened", return_value={"status": "delivered", "slack_message_ts": "200.2", "slack_channel_id": "C-TEST"}), patch(
+            "backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True
+        ), patch(
+            "backend.services.investigation_slack_sections.post_engineer_slack_event", side_effect=_slack_ok
+        ) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as legacy:
+            outcome = processor.process(job)
+        self.assertEqual(outcome["status"], "awaiting_investigation_review")
+        legacy.assert_not_called()
+        # ACTUAL SEND ORDER: extract the section label from each posted
+        # event IN POSTING ORDER and verify the sequence directly — not a
+        # reconstructed list.
+        posted = [call.args[0] for call in post.call_args_list]
+        labels = []
+        for e in posted:
+            for s in ("Summary", "Evidence", "Blockers", "Next steps"):
+                if f"— {s}" in e["message_text"]:
+                    labels.append(s)
+                    break
+            else:
+                if e.get("action") == "prepare_draft":
+                    labels.append("ACTION")
+        self.assertEqual(labels, ["Summary", "Evidence", "Blockers", "Next steps", "ACTION"])
+        # Button is the LAST event; no earlier event carries an action.
+        self.assertEqual(posted[-1].get("action"), "prepare_draft")
+        self.assertTrue(all(not e.get("action") for e in posted[:-1]))
+        # Thread binding persisted and every ledger row completed.
+        binding = store.get_hermes_case_binding("123")
+        self.assertEqual(binding.get("slack_channel_id"), "C-TEST")
+        self.assertTrue(binding.get("slack_thread_ts"))
+        scope = f"native-hermes-notification:{store.settings.job_namespace}"
+        rows = [r for k, r in repo.rows.items() if k.startswith("investigation:123:")]
+        self.assertTrue(rows and all(r["state"] == "completed" for r in rows))
+
+    def test_fixed_task_long_content_complete_preservation(self):
+        from backend.tests.test_native_hermes_fixed_task_review import start_fixed
+
+        store = _store()
+        repo = _Repo()
+        job = start_fixed(store)
+        turn_id = job.payload["turn_id"]
+        long_blocker = "Q" * 300
+        long_next = "W" * 250
+        record = dict(summary="Finding: " + "Z" * 200, evidence=_record()["evidence"], blockers=[long_blocker], next_steps=[long_next])
+
+        def complete(_, key):
+            from backend.services.automation_hermes_tools import tool_save_investigation_progress
+
+            tool_save_investigation_progress(store, repo, turn_id=turn_id, **record)
+
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+
+        client = FakeHermesClient(on_run_completed=complete)
+        processor = HermesAgentTurnProcessor(
+            store, client=client, repository=repo, environment="preproduction", poll_interval_seconds=0.01
+        )
+        with patch("backend.services.engineer_slack.notify_hermes_case_opened", return_value={"status": "delivered", "slack_message_ts": "200.2", "slack_channel_id": "C-TEST"}), patch(
+            "backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True
+        ), patch(
+            "backend.services.investigation_slack_sections.post_engineer_slack_event", side_effect=_slack_ok
+        ) as post:
+            outcome = processor.process(job)
+        self.assertEqual(outcome["status"], "awaiting_investigation_review")
+        texts = [call.args[0]["message_text"] for call in post.call_args_list]
+        joined = "".join(texts)
+        # ALL 300 chars of the blocker and 250 of the next step survive.
+        self.assertEqual(joined.count("Q"), 300)
+        self.assertEqual(joined.count("W"), 250)
+        # The header contains Z (Zendesk); verify the 200-char summary
+        # body survived as one contiguous run instead of a raw count.
+        flattened = joined.replace(chr(10), "")
+        self.assertIn("Finding: " + "Z" * 200, flattened)
+        self.assertNotIn("…", joined)
+
+
+class F1FailureBranchTests(unittest.TestCase):
+    """R2 review F1: the two remaining stale-binding escape hatches."""
+
+    def setUp(self):
+        os.environ["ENGINEER_SLACK_CHANNEL_ID"] = "C-TEST"
+
+    def test_thread_creation_failure_stops_with_diagnostic(self):
+        # F1-A: _ensure_case_thread returns None — the notification must
+        # stop with a diagnostic event, not call the legacy template with
+        # an empty thread.
+        store = _store()
+        repo = _Repo()
+        handoff, agent_job = _seed_full(store)
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+
+        def complete(_, key):
+            if not key.endswith(":work"):
+                from backend.services.automation_hermes_tools import tool_record_direction
+                tool_record_direction(store, repo, turn_id=agent_job.payload["turn_id"], direction="investigation", route="rag", reason="test")
+                return
+            from backend.services.automation_hermes_tools import tool_save_investigation_progress
+            tool_save_investigation_progress(store, repo, turn_id=agent_job.payload["turn_id"], summary="S", evidence=[], blockers=[], next_steps=[])
+
+        client = FakeHermesClient(on_run_completed=complete)
+        processor = HermesAgentTurnProcessor(store, client=client, repository=repo, environment="preproduction", poll_interval_seconds=0.01)
+        with patch("backend.services.engineer_slack.notify_hermes_case_opened", side_effect=RuntimeError("slack down for entire turn")), patch(
+            "backend.services.investigation_slack_sections.post_engineer_slack_event", side_effect=_slack_ok
+        ) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as legacy:
+            outcome = processor.process(agent_job)
+        self.assertEqual(outcome["status"], "awaiting_investigation_review")
+        legacy.assert_not_called()
+        section_events = [c for c in post.call_args_list if "investigation" in str(c.args[0].get("event_type", ""))]
+        self.assertEqual(len(section_events), 0)
+        events = [e for e in store.list_case_timeline("123") if e.get("event_type") == "native.investigation_result_notification_missing"]
+        self.assertTrue(events and events[-1]["payload"].get("reason") == "thread_creation_failed")
+
+    def test_binding_reread_none_stops_without_fallback(self):
+        # F1-B: the fresh binding re-read returns None — the notification
+        # must stop; the `or binding` fallback to the stale pre-thread
+        # binding is the exact bug this guards against.
+        store = _store()
+        repo = _Repo()
+        handoff, agent_job = _seed_full(store)
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+
+        real_get = store.get_hermes_case_binding
+        state = {"notify_root_done": False, "consumed": False}
+        root_calls = {"n": 0}
+
+        def get_binding_after_root_none(ticket_id):
+            row = real_get(ticket_id)
+            if state["notify_root_done"] and not state["consumed"]:
+                state["consumed"] = True
+                return None
+            return row
+
+        def root_flaky(**kwargs):
+            root_calls["n"] += 1
+            if root_calls["n"] == 1:
+                from backend.services.engineer_slack import EngineerSlackDeliveryError
+                raise EngineerSlackDeliveryError("pre-work root failed")
+            state["notify_root_done"] = True
+            return {"status": "delivered", "slack_message_ts": "300.3", "slack_channel_id": "C-TEST"}
+
+        def complete(_, key):
+            if not key.endswith(":work"):
+                from backend.services.automation_hermes_tools import tool_record_direction
+                tool_record_direction(store, repo, turn_id=agent_job.payload["turn_id"], direction="investigation", route="rag", reason="test")
+                return
+            from backend.services.automation_hermes_tools import tool_save_investigation_progress
+            tool_save_investigation_progress(store, repo, turn_id=agent_job.payload["turn_id"], summary="S", evidence=[], blockers=[], next_steps=[])
+
+        client = FakeHermesClient(on_run_completed=complete)
+        processor = HermesAgentTurnProcessor(store, client=client, repository=repo, environment="preproduction", poll_interval_seconds=0.01)
+        with patch.object(store, "get_hermes_case_binding", side_effect=get_binding_after_root_none), patch(
+            "backend.services.engineer_slack.notify_hermes_case_opened", side_effect=root_flaky
+        ), patch(
+            "backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True
+        ), patch(
+            "backend.services.investigation_slack_sections.post_engineer_slack_event", side_effect=_slack_ok
+        ) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as legacy:
+            outcome = processor.process(agent_job)
+        self.assertEqual(outcome["status"], "awaiting_investigation_review")
+        legacy.assert_not_called()
+        section_events = [c for c in post.call_args_list if "investigation" in str(c.args[0].get("event_type", ""))]
+        self.assertEqual(len(section_events), 0)
+        events = [e for e in store.list_case_timeline("123") if e.get("event_type") == "native.investigation_result_notification_missing"]
+        self.assertTrue(any(e["payload"].get("reason") == "binding_reread_failed" for e in events),
+                        [e["payload"] for e in events])
+
+
+class IsolatedPostgresFirstTurnTests(unittest.TestCase):
+    """R2 review F2: isolated PostgreSQL — first-turn binding persist →
+    re-read → sectioned delivery with shard receipts in the REAL ledger."""
+
+    def setUp(self):
+        import os as _os
+        _os.environ["ENGINEER_SLACK_CHANNEL_ID"] = "C-TEST"
+        if _os.getenv("RUN_POSTGRES_INTEGRATION") != "1":
+            self.skipTest("isolated PostgreSQL required")
+
+    def test_pg_first_turn_binding_persisted_then_sections_delivered(self):
+        from backend.services.automation_ecs_store import PostgresAutomationEcsStore
+        from backend.repositories.ticket_repository import PostgresTicketRepository
+        from backend.tests.test_automation_ecs_store_postgres import DSN as _PG_DSN_SOURCE
+        from backend.services.automation_hermes_agent import HermesAgentTurnProcessor
+        from backend.tests.test_native_hermes_fixed_task_review import start_fixed
+        from uuid import uuid4
+
+        from uuid import uuid4 as _uuid4
+        _schema = f"test_hermes_r2_preproduction_{_uuid4().hex[:10]}"
+        _ns = f"automation.{_schema}"
+        import os as _os
+        with patch.dict(_os.environ, {
+            "AUTOMATION_ENVIRONMENT": "preproduction",
+            "AUTOMATION_DB_SCHEMA": _schema,
+            "AUTOMATION_DB_RESOURCE_ID": "rds-preproduction",
+            "AUTOMATION_JOB_NAMESPACE": _ns,
+            "AUTOMATION_INTAKE_SHARED_TOKEN": "secret",
+            "AUTOMATION_RUNTIME_ALLOW_MEMORY": "0",
+            "AUTOMATION_RELEASE_ID": "r-r2test",
+            "AUTOMATION_IMAGE_DIGEST": "sha256:" + "a" * 64,
+            "APP_BUILD_REF": "abc123",
+            "PROMPT_RELEASE_ID": "prompt-1",
+            "AUTOMATION_DB_MIGRATION_DSN": _PG_DSN_SOURCE,
+            "AUTOMATION_DB_DSN": _PG_DSN_SOURCE,
+        }):
+            from backend.services.automation_ecs_runtime import AutomationEcsSettings
+            _settings = AutomationEcsSettings.from_env("worker")
+        settings = _settings
+        store = PostgresAutomationEcsStore(settings)
+        store.migrate()
+        store.migrate()
+        try:
+            repo = PostgresTicketRepository(
+                dsn=_PG_DSN_SOURCE, migration_dsn=_PG_DSN_SOURCE, schema=_schema
+            )
+            repo.initialize()
+            job = start_fixed(store)
+            turn_id = job.payload["turn_id"]
+
+            def complete(_, key):
+                assert key.endswith(":work")
+                from backend.services.automation_hermes_tools import tool_save_investigation_progress
+                tool_save_investigation_progress(store, repo, turn_id=turn_id, **_record())
+
+            client = FakeHermesClient(on_run_completed=complete)
+            processor = HermesAgentTurnProcessor(
+                store, client=client, repository=repo, environment="preproduction", poll_interval_seconds=0.01
+            )
+            with patch("backend.services.engineer_slack.notify_hermes_case_opened", return_value={"status": "delivered", "slack_message_ts": "400.4", "slack_channel_id": "C-TEST"}), patch(
+                "backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True
+            ), patch(
+                "backend.services.investigation_slack_sections.post_engineer_slack_event", side_effect=_slack_ok
+            ) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as legacy:
+                outcome = processor.process(job)
+            self.assertEqual(outcome["status"], "awaiting_investigation_review")
+            legacy.assert_not_called()
+
+            # The binding was persisted and re-read from PG.
+            binding = store.get_hermes_case_binding("123")
+            self.assertEqual(binding.get("slack_channel_id"), "C-TEST")
+            self.assertTrue(binding.get("slack_thread_ts"))
+
+            # Actual send order from the posted events.
+            posted = [call.args[0] for call in post.call_args_list]
+            labels = []
+            for e in posted:
+                matched = False
+                for s in ("Summary", "Evidence", "Blockers", "Next steps"):
+                    if f"— {s}" in e["message_text"]:
+                        labels.append(s)
+                        matched = True
+                        break
+                if not matched and e.get("action") == "prepare_draft":
+                    labels.append("ACTION")
+            self.assertEqual(labels, ["Summary", "Evidence", "Blockers", "Next steps", "ACTION"])
+
+            # Shard receipts landed in the REAL PG ledger.
+            scope = f"native-hermes-notification:{store.settings.job_namespace}"
+            from backend.services.investigation_slack_sections import SECTION_ORDER as _SO
+            for section in ("summary", "evidence", "blockers", "next_steps"):
+                key = f"investigation:123:{turn_id}:{section}:1"
+                row = repo.get_native_notification(scope=scope, key=key)
+                self.assertIsNotNone(row, f"missing ledger row for {key}")
+                self.assertEqual(row["state"], "completed", f"{key} state={row['state']}")
+            action_key = f"investigation:123:{turn_id}:action:prepare_draft"
+            action_row = repo.get_native_notification(scope=scope, key=action_key)
+            self.assertIsNotNone(action_row)
+            self.assertEqual(action_row["state"], "completed")
+        finally:
+            from psycopg import sql as _sql
+            with store._connect() as conn:
+                conn.execute(_sql.SQL("DROP SCHEMA IF EXISTS {} CASCADE").format(_sql.Identifier(settings.db_schema)))

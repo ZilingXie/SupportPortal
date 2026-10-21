@@ -1000,21 +1000,42 @@ class HermesAgentTurnProcessor:
                         return
                 else:
                     thread = self._ensure_case_thread(payload, turn) or ""
-                    # F1 (p2-207 R2): _ensure_case_thread may have JUST created
-                    # and persisted the thread binding; the binding captured
-                    # above predates it and still carries the empty channel of
-                    # a first-turn case. Re-read the persisted binding so the
-                    # sectioned delivery sees the fresh channel/thread instead
-                    # of silently falling back to the legacy truncated notice.
-                    binding = self.store.get_hermes_case_binding(ticket.id) or binding
-                    channel = str(binding.get("slack_channel_id") or "").strip()
-                    if thread and self.repository is not None:
+                    if self.repository is not None:
+                        # F1 (p2-207 R2): _ensure_case_thread may have JUST
+                        # created and persisted the thread binding; the binding
+                        # captured above predates it. Re-read the persisted
+                        # binding and require the FRESH state in the NATIVE
+                        # path — no fallback to a stale binding or the
+                        # truncated legacy notice. The repository=None
+                        # compatibility path keeps its existing scope.
+                        fresh_binding = self.store.get_hermes_case_binding(ticket.id)
+                        if fresh_binding is None:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "binding_reread_failed"},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_binding_reread_failed turn_id=%s ticket_id=%s",
+                                payload.turn_id,
+                                ticket.id,
+                            )
+                            return
+                        binding = fresh_binding
+                        channel = str(binding.get("slack_channel_id") or "").strip()
+                        if not thread:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "thread_creation_failed"},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_thread_creation_failed turn_id=%s ticket_id=%s",
+                                payload.turn_id,
+                                ticket.id,
+                            )
+                            return
                         if not channel:
-                            # First-turn native path: a missing/failed binding
-                            # read stops THIS notification with an explicit
-                            # reason — the investigation record and the
-                            # awaiting-review state stay intact; we never fall
-                            # back to sending truncated content or a button.
                             self.store.append_execution_event(
                                 payload.execution_id,
                                 "native.investigation_result_notification_missing",
@@ -1038,6 +1059,8 @@ class HermesAgentTurnProcessor:
                                 channel,
                             )
                             return
+                    else:
+                        channel = str(binding.get("slack_channel_id") or "").strip()
                 if thread and channel and self.repository is not None:
                     outcome = deliver_investigation_sections(
                         self.repository,
