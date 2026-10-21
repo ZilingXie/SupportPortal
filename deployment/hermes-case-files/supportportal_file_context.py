@@ -18,6 +18,19 @@ def skill_allowed(name):
     return scope is not None and scope.get("phase") == "work"
 
 
+def file_skill_visible(name):
+    """True only for the case-file skill inside an active work-phase file scope.
+
+    Used beside an active Investigation skill profile: the profile narrows the
+    skill list to its own entries, and this predicate adds exactly the
+    case-file skill when the run also holds a work-phase file scope (R2-V2-B1).
+    """
+    if 'support-case-files' not in str(name).replace('\\', '/').replace(':', '/').split('/'):
+        return False
+    scope = current_scope()
+    return scope is not None and scope.get("phase") == "work"
+
+
 @contextmanager
 def bind_file_scope(scope, session_id, workspace):
     valid = isinstance(scope, dict) and scope.get('session_id') == session_id and all(

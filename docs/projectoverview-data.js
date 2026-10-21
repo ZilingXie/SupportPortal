@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T01:37:52Z",
-  "source_base_commit": "28fe469b257d02fbccde18f192e1f5fb922c8d00",
-  "registry_digest": "aa59b1514b936d737ba35429f51615fd2b03ba402880c9f01eca7d719a40e842",
+  "generated_at": "2026-10-21T01:48:54Z",
+  "source_base_commit": "5d6efa01f3874e59a3ae1feff8bf57e848f61436",
+  "registry_digest": "1aac75f63b766351784ac44f334636f50b810e5ce155fda1b650ea32c8d03e28",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1601,6 +1601,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
           "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable.md",
+          "label": "v2 启用轮执行记录（2026-10-20）：三方合并/两次发布/修复轮/14147 闭环/负向/披露边界"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "v2 机器证据：overlay a40faeca、r20261020-0bd735e-r2、Map/工具调用/Zendesk 回执、live 负向、C1-C6 判定"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "R2-V2-B1 修复：组合 scope 技能可见性（td54/7df5f3a3 容器内真实函数复核 + 14151 live 复验 C3/C5/C6）"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
+          "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
         },
         {
           "type": "document",
@@ -18022,9 +18042,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。",
+      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
       "status": "blocked",
-      "next_action": "启用轮（investigation-case-files-r2-preprod-file-enable v1）停在 waiting-for-evidence：待用户提供 Zac 真实文件接口与获准合成样本；并行车辆 r20261020-8e8e495 完成后从新 main 重建；构建前先把 bundle 插件输入重定到 p2-203 世代源（a49f64b4）并重新验收，收口陈旧非终态行（991000183-1/13872/13904），随显式发布参数恢复 HERMES_CASE_WORKFLOW_MODE。原 R1 发布复审/真实业务门禁继续单独保留；开启文件后的 C1-C7 云端回读与 Production 各自另行授权。",
+      "next_action": "v2 启用轮收口：合并 PR#1527（Draft 转 ready）、快进根区、刷新 CodeSight（含部署产物代码文件）、清理 worktree。后续独立门禁：Slack→n8n 人类上传路径验证、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争；工单 14147/14151 处置待定。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-20",
@@ -18034,9 +18054,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-        "R2-PP：真实Hermes镜像/profile与Slack/Zendesk C1-C7回读未执行。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence。",
-        "R2-ENABLE-PREP（2026-10-20）：①overlay 插件输入需重定到 p2-203 世代源，否则 COPY 覆盖 live zac consult；②并发车辆 r20261020-8e8e495-hermes-appid-pp-a1-r2 已建未发需让行；③切换开关/签名前须收口陈旧非终态行 991000183-1/13872/13904；④HERMES_CASE_WORKFLOW_MODE 当前 disabled，文件闭环需随显式参数恢复。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
       ],
       "evidence": [
         {
@@ -18118,6 +18136,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1521",
           "label": "启用前证据轮用户独立验收通过（2026-10-20，合并提交 95b1d7b4）：范围仅限证据轮文档与登记，不含文件传输上线验收；剩余门禁清单（Zac 接口/获准样本、overlay 输入重定、并行车辆让行、陈旧在途收口、HERMES_CASE_WORKFLOW_MODE 恢复、C1-C7 云端闭环）逐项保留"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable.md",
+          "label": "v2 启用轮执行记录（2026-10-20）：三方合并/两次发布/修复轮/14147 闭环/负向/披露边界"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "v2 机器证据：overlay a40faeca、r20261020-0bd735e-r2、Map/工具调用/Zendesk 回执、live 负向、C1-C6 判定"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
+          "label": "R2-V2-B1 修复：组合 scope 技能可见性（td54/7df5f3a3 容器内真实函数复核 + 14151 live 复验 C3/C5/C6）"
+        },
+        {
+          "type": "document",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
+          "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
         }
       ]
     },
