@@ -1674,3 +1674,228 @@ class TestTerminalFailureHandoff:
         assert case["automation_status"] == "human_review_required"
         review = store.get_hermes_case_review("804")
         assert not [d for d in review["drafts"] if d["turn_id"] == handoff["turn_id"]]
+
+
+# ---------------------------------------------------------------------------
+# 14152: in-session re-enable wording and manual-mode progress state
+# ---------------------------------------------------------------------------
+
+
+def _enable_execution_classification(**extra: Any) -> dict[str, Any]:
+    payload = {
+        "intent_class": "agora",
+        "agora_route": "backend_operation",
+        "backend_operation_subcategory": "enablement",
+        "backend_operation": {
+            "action": "enable",
+            "target": "media_relay",
+            "evidence": "Could you help me enable the permission now?",
+        },
+        "intent_confidence": 0.95,
+        "agora_confidence": 0.95,
+        "confidence": 0.95,
+        "reason_code": "registered_enablement",
+    }
+    payload.update(extra)
+    return payload
+
+
+def _reenable_comments(trigger_body: str = "Could you help me enable the permission now?"):
+    return [
+        _customer_comment("90", "I want to enable media relay.", "2026-09-24T10:00:00Z"),
+        _assistant_comment("91", "Thanks — your request is in review.", "2026-09-24T10:01:00Z"),
+        _customer_comment("92", trigger_body, "2026-09-24T10:05:00Z"),
+    ]
+
+
+class TestInsessionEnableReuse:
+    def test_enable_proposal_on_bound_case_reroutes_to_progress(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "601", relay_request_id="enr-AC-601-v1")
+        event_comments = _reenable_comments()
+        event = _comment_event("zendesk:ticket:601:comment:92", "601", event_comments, "92")
+        handoff, _job = _open_turn(store, event)
+        _attach_snapshot(store, repository, event, handoff["turn_id"])
+        result = tool_record_direction(
+            store,
+            repository,
+            turn_id=handoff["turn_id"],
+            direction="automation",
+            reason="registered_enablement",
+            classification=_enable_execution_classification(),
+        )
+        assert result["direction"] == "automation"
+        assert result["route"] == "conversation_followup"
+        assert result["classification"]["conversation_subcategory"] == "progress_inquiry"
+        assert result["classification"]["deterministic_fallback"] == (
+            "backend_operation_insession_enable_reuse"
+        )
+        assert result["classification"]["server_correction_reason"] == (
+            "deterministic_fallback:backend_operation_insession_enable_reuse"
+        )
+        turn = store.get_hermes_turn(handoff["turn_id"])
+        assert turn["route"] == "conversation_followup"
+        case = repository.get_account_case_by_ticket_id("601")
+        # The reply-only reroute never rewrites the business route.
+        assert case["execution_action"] == "enablement"
+        assert case["automation_status"] == "automation"
+
+    def test_enable_proposal_terminal_request_corrects_to_human(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(
+            repository, "602",
+            relay_request_id="enr-AC-602-v1",
+            relay_status="cancelled",
+        )
+        event_comments = _reenable_comments()
+        event = _comment_event("zendesk:ticket:602:comment:92", "602", event_comments, "92")
+        handoff, _job = _open_turn(store, event)
+        _attach_snapshot(store, repository, event, handoff["turn_id"])
+        result = tool_record_direction(
+            store,
+            repository,
+            turn_id=handoff["turn_id"],
+            direction="automation",
+            reason="registered_enablement",
+            classification=_enable_execution_classification(),
+        )
+        assert result["direction"] == "human"
+        assert result["classification"]["server_correction_reason"].startswith(
+            "followup_progress_state_unavailable:request_"
+        )
+
+    def test_enable_proposal_without_complete_app_id_stays_new_execution(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        case = _seed_account_case(repository, "603", relay_request_id="enr-AC-603-v1")
+        case["collected_fields"] = {}
+        case["missing_fields"] = ["app_id"]
+        repository.save_account_case(dict(case))
+        event_comments = _reenable_comments()
+        event = _comment_event("zendesk:ticket:603:comment:92", "603", event_comments, "92")
+        handoff, _job = _open_turn(store, event)
+        _attach_snapshot(store, repository, event, handoff["turn_id"])
+        result = tool_record_direction(
+            store,
+            repository,
+            turn_id=handoff["turn_id"],
+            direction="automation",
+            reason="registered_enablement",
+            classification=_enable_execution_classification(),
+        )
+        assert result["direction"] == "automation"
+        assert result["route"] == "enablement"
+
+    def test_enable_proposal_with_new_app_id_in_comment_stays_new_execution(self) -> None:
+        from backend.repositories.ticket_repository import InMemoryTicketRepository
+
+        store = _store()
+        repository = InMemoryTicketRepository()
+        _seed_account_case(repository, "604", relay_request_id="enr-AC-604-v2")
+        event_comments = _reenable_comments(
+            "Could you help me enable the permission now? My App ID is 4b7634a0d0f1418b8135918292f6a507"
+        )
+        event = _comment_event("zendesk:ticket:604:comment:92", "604", event_comments, "92")
+        handoff, _job = _open_turn(store, event)
+        _attach_snapshot(store, repository, event, handoff["turn_id"])
+        result = tool_record_direction(
+            store,
+            repository,
+            turn_id=handoff["turn_id"],
+            direction="automation",
+            reason="registered_enablement",
+            classification=_enable_execution_classification(),
+        )
+        assert result["direction"] == "automation"
+        assert result["route"] == "enablement"
+
+
+class TestEnablementProgressStateBindings:
+    def _case(self, **overrides):
+        from copy import deepcopy
+
+        case = {
+            "automation_status": "automation",
+            "execution_action": "enablement",
+            "route": "enablement",
+            "collected_fields": {
+                "app_id": "4b7634a0d0f1418b8135918292f6a507",
+                "requested_feature": "media_relay",
+                "requested_feature_label": "Media Relay",
+            },
+            "internal_email_send_status": "awaiting_public_reply",
+            "automation_context": {
+                "enablement_manual_workflow": {
+                    "version": 1,
+                    "state": "awaiting_public_reply",
+                    "reply_job_id": "account-reply-14152",
+                    "prepared_at": "2026-10-20T08:00:00Z",
+                },
+            },
+        }
+        case.update(deepcopy(overrides))
+        return case
+
+    def test_manual_binding_pending_review_is_answerable(self) -> None:
+        from backend.services.automation_hermes_followup_reply import enablement_progress_state
+
+        repository = Mock()
+        repository.get_account_reply_job.return_value = {
+            "job_id": "account-reply-14152",
+            "status": "queued",
+        }
+        state = enablement_progress_state(repository, self._case())
+        assert state["ok"] is True
+        assert state["progress"]["binding"] == "manual_review"
+        assert state["progress"]["review_state"] == "received and queued for review"
+        assert state["progress"]["submitted_at"] == "2026-10-20T08:00:00Z"
+
+    def test_manual_binding_sent_review_is_with_engineer(self) -> None:
+        from backend.services.automation_hermes_followup_reply import enablement_progress_state
+
+        repository = Mock()
+        repository.get_account_reply_job.return_value = {"job_id": "j", "status": "published"}
+        case = self._case(internal_email_send_status="sent")
+        state = enablement_progress_state(repository, case)
+        assert state["ok"] is True
+        assert state["progress"]["review_state"] == "with the reviewing engineer"
+
+    def test_manual_binding_unreadable_delivery_fails_closed(self) -> None:
+        from backend.services.automation_hermes_followup_reply import enablement_progress_state
+
+        repository = Mock()
+        repository.get_account_reply_job.return_value = {"job_id": "j"}
+        state = enablement_progress_state(
+            repository, self._case(internal_email_send_status="delivery_unknown")
+        )
+        assert state["ok"] is False
+        assert state["reason"] == (
+            "followup_progress_state_unavailable:manual_delivery_delivery_unknown"
+        )
+
+    def test_missing_manual_job_fails_closed(self) -> None:
+        from backend.services.automation_hermes_followup_reply import enablement_progress_state
+
+        repository = Mock()
+        repository.get_account_reply_job.return_value = None
+        state = enablement_progress_state(repository, self._case())
+        assert state["ok"] is False
+        assert state["reason"] == "followup_progress_state_unavailable:manual_job_missing"
+
+    def test_no_binding_reports_no_bound_request(self) -> None:
+        from backend.services.automation_hermes_followup_reply import enablement_progress_state
+
+        repository = Mock()
+        case = self._case()
+        case["automation_context"] = {}
+        state = enablement_progress_state(repository, case)
+        assert state["ok"] is False
+        assert state["reason"] == "followup_progress_state_unavailable:no_bound_request"

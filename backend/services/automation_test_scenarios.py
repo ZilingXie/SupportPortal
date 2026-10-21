@@ -98,6 +98,11 @@ E3_NUDGE_BODY = (
     "We appreciate your help and look forward to your update."
 )
 
+# 14152 regression sentence: the customer re-asks to enable while the request
+# is already bound and pending. Kept verbatim; the polite nudge above stays as
+# the control scenario.
+E3_REENABLE_BODY = "Could you help me enable the permission now?"
+
 
 def _ask_appid_content_check(content: str) -> str | None:
     """Acceptance check: the missing-App-ID ask must request the App ID."""
@@ -2112,10 +2117,12 @@ class ScenarioEngine:
         under the p2-178 contracts: missing App ID ask -> in-session RAG
         knowledge answer -> invalid App ID -> valid-format submit (relay
         review) -> progress nudge answered from the bound relay request ->
-        a terminal relay result. ``project_not_found`` continues through the
-        corrected-App-ID request and real enablement; ``ownership_mismatch``
-        uses the dedicated solved closure and ends the scenario. The live
-        fixture determines which valid terminal result is observed.
+        in-session re-enable request (14152 sentence) server-corrected to the
+        same progress contract -> a terminal relay result. ``project_not_found``
+        continues through the corrected-App-ID request and real enablement;
+        ``ownership_mismatch`` uses the dedicated solved closure and ends the
+        scenario. The live fixture determines which valid terminal result is
+        observed.
         """
         if self.customer_turn_transport != "zendesk_api":
             # Fail BEFORE any ticket is created: the 163 email path is broken
@@ -2233,6 +2240,37 @@ class ScenarioEngine:
         self.wait_case_field(
             ctx, "automation_status", "automation",
             "case stays automation-owned after the nudge (turn 5)",
+        )
+
+        self.next_customer_turn(ctx, E3_REENABLE_BODY)
+        # Turn 5b contract (14152 regression): an in-session re-enable request
+        # with a complete App ID and a bound, still-active relay application is
+        # a progress inquiry — server-corrected away from a second enablement
+        # execution no matter how the model phrases the action. The polite
+        # nudge above (turn 5) stays as the control scenario.
+        turn5b = self.wait_hermes_message_action(
+            ctx,
+            "report_progress",
+            "in-session re-enable request answered by message_action (turn 5b)",
+        )
+        self.wait_bound_relay_request_active(
+            ctx, turn4_request_id,
+            "re-enable request leaves the bound relay application untouched (turn 5b)",
+        )
+        relay_requests_after_turn5b = self.relay_request_count(ctx)
+        self.record(
+            ctx, "re-enable request creates no second relay application (turn 5b)",
+            relay_requests_after_turn5b == 1,
+            f"relay_request_count={relay_requests_after_turn5b}",
+        )
+        self.wait_hermes_draft_delivered(
+            ctx, "re-enable progress answer delivered (turn 5b)",
+            content_check=_progress_answer_content_check,
+            expected_turn_id=str(turn5b.get("turn_id") or ""),
+        )
+        self.wait_case_field(
+            ctx, "automation_status", "automation",
+            "case stays automation-owned after the re-enable request (turn 5b)",
         )
 
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)

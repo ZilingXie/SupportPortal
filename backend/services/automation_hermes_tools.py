@@ -246,6 +246,47 @@ def tool_record_direction(
         normalized_reason = str(
             normalized_classification.get("route_reason_code") or normalized_reason
         )
+        if (
+            normalized_direction == "automation"
+            and normalized_route == "enablement"
+            and latest_assistant_message_present
+        ):
+            # 14152 in-session re-enable: inside an automation-held enablement
+            # case with a complete App ID and no new App ID in the current
+            # comment, a model proposal for ANOTHER enable execution of the
+            # same pending request re-normalizes into the progress taxonomy.
+            # The server correction stays on the record; the followup gate
+            # below then verifies the bound request state fail-closed.
+            from backend.services.automation_hermes_followup_reply import (
+                insession_enable_reuse_applicable,
+            )
+
+            operation = normalized_classification.get("backend_operation")
+            operation = operation if isinstance(operation, dict) else {}
+            if insession_enable_reuse_applicable(
+                repository,
+                turn,
+                proposed_target=str(operation.get("target") or ""),
+            ):
+                try:
+                    rerouted = normalize_hermes_route_classification(
+                        classification,
+                        latest_assistant_message_present=latest_assistant_message_present,
+                        insession_enable_reuse=True,
+                    )
+                except HermesRouteClassificationError as exc:
+                    raise HermesToolError(exc.code, str(exc)) from exc
+                normalized_classification = rerouted
+                normalized_classification.setdefault(
+                    "hermes_proposed_direction", hermes_proposed_direction
+                )
+                normalized_classification["server_correction_reason"] = (
+                    "insession_enable_reuse:"
+                    "backend_operation_enable->conversation_followup_progress_inquiry"
+                )
+                normalized_direction = str(rerouted["direction"])
+                normalized_route = rerouted.get("route")
+                normalized_reason = str(rerouted.get("route_reason_code") or normalized_reason)
         # The server, not the model, makes the final call for the reply-only
         # route and for any automation proposal on a case already handed to a
         # human; the correction (and the raw proposal) stay on the record.

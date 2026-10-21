@@ -21,6 +21,7 @@ phase renders it from the recorded work result.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from backend.services.automation_ecs_store import AutomationEcsStore
@@ -29,6 +30,22 @@ LOGGER = logging.getLogger("supportportal.automation_hermes_followup_reply")
 
 CONVERSATION_FOLLOWUP_ROUTE = "conversation_followup"
 FOLLOWUP_REPLY_ROUTE_TARGET = "conversation_reply"
+
+# A bare 32-hex token in the current customer comment is treated as a
+# potential new App ID: the re-enable/progress correction never fires, the
+# normal enablement continuation (field extraction) handles the value.
+_BARE_APP_ID_RE = re.compile(r"\b[0-9a-f]{32}\b", re.IGNORECASE)
+
+
+def message_carries_new_app_id(text: str, current_app_id: str) -> bool:
+    """True when the message contains a 32-hex App ID token other than the
+    already-collected one. Used by the in-session re-enable corrections to
+    stay out of the way of a genuine corrected-App-ID message."""
+    current = str(current_app_id or "").strip().lower()
+    for match in _BARE_APP_ID_RE.finditer(str(text or "")):
+        if match.group(0).lower() != current:
+            return True
+    return False
 
 _AGENT_ROLES = frozenset({"agent", "staff", "admin", "support"})
 _CUSTOMER_ROLES = frozenset({"end-user", "end_user", "customer", "requester", "user"})
@@ -116,6 +133,43 @@ def _enablement_case(account_case: dict[str, Any]) -> bool:
     return route == "enablement"
 
 
+def insession_enable_reuse_applicable(
+    repository: Any,
+    turn: dict[str, Any],
+    *,
+    proposed_target: str = "",
+) -> bool:
+    """True when the turn's case sits in the middle of an enablement session
+    whose pending request a re-enable message would restate (14152): an
+    automation-held enablement case with a complete App ID, no new App ID in
+    the current trigger comment, and (when the proposal names one) the same
+    feature target. This is only the applicability check — the bound-request
+    readability gates still run fail-closed on the resulting progress reply
+    path."""
+    ticket_id = str(turn.get("zendesk_ticket_id") or "")
+    if not ticket_id or repository is None:
+        return False
+    account_case = repository.get_account_case_by_ticket_id(ticket_id)
+    if not isinstance(account_case, dict):
+        return False
+    if str(account_case.get("automation_status") or "").strip() != "automation":
+        return False
+    route = str(account_case.get("execution_action") or account_case.get("route") or "").strip()
+    if route != "enablement":
+        return False
+    fields = account_case.get("collected_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    if len(str(fields.get("app_id") or "").strip()) != 32:
+        return False
+    if _BARE_APP_ID_RE.search(_trigger_comment_body(turn)):
+        return False
+    target = str(proposed_target or "").strip()
+    feature = str(fields.get("requested_feature") or "").strip()
+    if target and feature and target != feature:
+        return False
+    return True
+
+
 def followup_reply_state_gate(
     store: AutomationEcsStore,
     repository: Any,
@@ -158,26 +212,9 @@ def followup_reply_state_gate(
         }
     # 3. Subcategory-specific business state.
     if subcategory == "progress_inquiry":
-        from backend.repositories.enablement_relay_repository import (
-            ENABLEMENT_RELAY_ACTIVE_STATUSES,
-        )
-
-        context = account_case.get("automation_context")
-        context = context if isinstance(context, dict) else {}
-        workflow = context.get("enablement_auto_workflow")
-        workflow = workflow if isinstance(workflow, dict) else {}
-        request_id = str(workflow.get("request_id") or "").strip()
-        if not request_id:
-            return {"ok": False, "reason": "followup_progress_state_unavailable:no_bound_request"}
-        request = repository.get_enablement_relay_request(request_id)
-        if not isinstance(request, dict):
-            return {"ok": False, "reason": "followup_progress_state_unavailable:request_missing"}
-        status = str(request.get("status") or "").strip()
-        if status not in ENABLEMENT_RELAY_ACTIVE_STATUSES:
-            return {
-                "ok": False,
-                "reason": f"followup_progress_state_unavailable:request_{status or 'unknown'}",
-            }
+        state = enablement_progress_state(repository, account_case)
+        if not state["ok"]:
+            return {"ok": False, "reason": state["reason"]}
     return {"ok": True, "reason": ""}
 
 
@@ -224,6 +261,108 @@ _RELAY_STATUS_CUSTOMER_LABELS = {
 
 def _relay_status_label(status: str) -> str:
     return _RELAY_STATUS_CUSTOMER_LABELS.get(status, "in review")
+
+
+# Manual-mode enablement review: the submission confirmation publishes and the
+# internal review request is released only after the public readback, so both
+# the gate value and any in-flight/known delivery state count as "review
+# pending". Anything else (unknown, failed, reset) is not confirmably pending.
+_MANUAL_REVIEW_PENDING_DELIVERY_STATUSES = frozenset(
+    {"awaiting_public_reply", "pending", "sending", "sent", "retry"}
+)
+
+
+def _enablement_feature_label(account_case: dict[str, Any], *, binding: str) -> str:
+    fields = account_case.get("collected_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    label = str(fields.get("requested_feature_label") or "").strip()
+    if label:
+        return label
+    return "Media Relay" if binding == "relay_request" else "the requested feature"
+
+
+def enablement_progress_state(
+    repository: Any, account_case: dict[str, Any] | None
+) -> dict[str, Any]:
+    """Trusted pending-review state of the request BOUND to this enablement
+    case. Covers both bindings: the auto/relay request (active statuses only)
+    and the manual review reply job (14152's Production shape). Returns
+    ``{"ok": True, "progress": {...}}`` or ``{"ok": False, "reason": ...}``;
+    the reason ``...:no_bound_request`` means the case never had a binding
+    (the caller may then treat the message as a fresh enablement), every other
+    reason is a fail-closed escalation."""
+    if not isinstance(account_case, dict):
+        return {"ok": False, "reason": "followup_progress_state_unavailable:case_missing"}
+    context = account_case.get("automation_context")
+    context = context if isinstance(context, dict) else {}
+    auto = context.get("enablement_auto_workflow")
+    if isinstance(auto, dict) and str(auto.get("request_id") or "").strip():
+        from backend.repositories.enablement_relay_repository import (
+            ENABLEMENT_RELAY_ACTIVE_STATUSES,
+        )
+
+        request_id = str(auto.get("request_id") or "").strip()
+        request = (
+            repository.get_enablement_relay_request(request_id)
+            if repository is not None
+            else None
+        )
+        if not isinstance(request, dict):
+            return {"ok": False, "reason": "followup_progress_state_unavailable:request_missing"}
+        status = str(request.get("status") or "").strip()
+        if status not in ENABLEMENT_RELAY_ACTIVE_STATUSES:
+            return {
+                "ok": False,
+                "reason": f"followup_progress_state_unavailable:request_{status or 'unknown'}",
+            }
+        return {
+            "ok": True,
+            "progress": {
+                "feature_label": _enablement_feature_label(account_case, binding="relay_request"),
+                "review_state": _relay_status_label(status),
+                "request_id": request_id,
+                "request_version": int(request.get("request_version") or 1),
+                "submitted_at": str(request.get("created_at") or ""),
+                "raw_status": status,
+                "binding": "relay_request",
+            },
+        }
+    manual = context.get("enablement_manual_workflow")
+    if isinstance(manual, dict) and str(manual.get("reply_job_id") or "").strip():
+        job_id = str(manual.get("reply_job_id") or "").strip()
+        job = (
+            repository.get_account_reply_job(job_id)
+            if repository is not None
+            else None
+        )
+        if not isinstance(job, dict):
+            return {"ok": False, "reason": "followup_progress_state_unavailable:manual_job_missing"}
+        delivery = str(account_case.get("internal_email_send_status") or "").strip()
+        if delivery not in _MANUAL_REVIEW_PENDING_DELIVERY_STATUSES:
+            return {
+                "ok": False,
+                "reason": (
+                    "followup_progress_state_unavailable:"
+                    f"manual_delivery_{delivery or 'missing'}"
+                ),
+            }
+        return {
+            "ok": True,
+            "progress": {
+                "feature_label": _enablement_feature_label(account_case, binding="manual_review"),
+                "review_state": (
+                    "with the reviewing engineer"
+                    if delivery == "sent"
+                    else "received and queued for review"
+                ),
+                "request_id": "",
+                "request_version": 1,
+                "submitted_at": str(manual.get("prepared_at") or ""),
+                "raw_status": delivery,
+                "binding": "manual_review",
+            },
+        }
+    return {"ok": False, "reason": "followup_progress_state_unavailable:no_bound_request"}
 
 
 def run_followup_reply_work(
@@ -321,30 +460,18 @@ def run_followup_reply_work(
                 "The bound enablement review state could not be confirmed for a "
                 "progress reply; the case was transferred to the human team.",
             )
-        context = account_case.get("automation_context")
-        context = context if isinstance(context, dict) else {}
-        workflow = context.get("enablement_auto_workflow")
-        workflow = workflow if isinstance(workflow, dict) else {}
-        request_id = str(workflow.get("request_id") or "")
-        request = (
-            repository.get_enablement_relay_request(request_id)
-            if repository is not None
-            else None
-        )
-        request = request if isinstance(request, dict) else {}
-        status = str(request.get("status") or "")
+        state = enablement_progress_state(repository, account_case)
+        if not state["ok"]:
+            return _escalated(
+                state["reason"],
+                "The bound enablement review state could not be confirmed for a "
+                "progress reply; the case was transferred to the human team.",
+            )
         return {
             "status": "executed",
             "route": CONVERSATION_FOLLOWUP_ROUTE,
             "followup_kind": "progress_inquiry",
-            "progress": {
-                "feature_label": "Media Relay",
-                "review_state": _relay_status_label(status),
-                "request_id": request_id,
-                "request_version": int(request.get("request_version") or 1),
-                "submitted_at": str(request.get("created_at") or ""),
-                "raw_status": status,
-            },
+            "progress": state["progress"],
         }
 
     return _escalated(
@@ -460,25 +587,27 @@ def run_message_action_reply_work(
             notification="failure" if technical else "takeover",
         )
 
-    context = account_case.get("automation_context")
-    context = context if isinstance(context, dict) else {}
-    workflow = context.get("enablement_auto_workflow")
-    workflow = workflow if isinstance(workflow, dict) else {}
-    request_id = str(workflow.get("request_id") or "")
-    request = repository.get_enablement_relay_request(request_id)
-    request = request if isinstance(request, dict) else {}
+    # The trusted basis comes from the bound request state, never from the
+    # raw conversation context.
+    state = enablement_progress_state(repository, account_case)
+    if not state["ok"]:
+        return _escalate_followup(
+            store,
+            repository,
+            turn,
+            account_case,
+            reason=state["reason"],
+            detail=(
+                "The bound enablement review state could not be confirmed for the "
+                "progress reply; the case was transferred to the human team."
+            ),
+            notification="takeover",
+        )
     return {
         "status": "executed",
         "route": route,
         "reply_kind": "progress_inquiry",
-        "progress": {
-            "feature_label": "Media Relay",
-            "review_state": _relay_status_label(str(request.get("status") or "")),
-            "request_id": request_id,
-            "request_version": int(request.get("request_version") or 1),
-            "submitted_at": str(request.get("created_at") or ""),
-            "raw_status": str(request.get("status") or ""),
-        },
+        "progress": state["progress"],
         "message_action_reply": {"action": action},
     }
 

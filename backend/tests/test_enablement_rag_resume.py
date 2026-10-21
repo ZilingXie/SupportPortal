@@ -61,6 +61,9 @@ class EnablementRagResumeTest(TestCase):
         self.repo.begin_idempotent_request.side_effect = self.claim
         self.repo.complete_idempotent_request.side_effect = self.complete
         self.repo.fail_idempotent_request.side_effect = self.complete
+        # The escalation context persists this count (p2-190); a bare Mock
+        # return value is not deepcopy-safe and would crash the case mirror.
+        self.repo.cancel_pending_account_reply_jobs.return_value = 0
         self.mail = Mock()
         self.stack.enter_context(patch.object(intake, "notify_account_failure", side_effect=lambda **kw:
                                              notify_account_failure(**kw, mail_sender=self.mail)))
@@ -333,3 +336,160 @@ class EnablementRagResumeTest(TestCase):
         self.assertEqual(self.jobs[0]["reply_intent"], "submission_confirmation")
         prepared = self.repo.prepare_account_internal_email_delivery.call_args.kwargs
         self.assertEqual(prepared["target_status"], "awaiting_public_reply")
+
+
+class InsessionEnableProgressReplyTest(EnablementRagResumeTest):
+    """14152 regression: an in-session re-enable request restates the SAME
+    pending request. It is answered from the bound request's actual state
+    (manual review or relay request) — never superseded into the RAG
+    fallback, never a second enablement application."""
+
+    REENABLE = "Could you help me enable the permission now?"
+
+    def _enter_pending_review_state(self, app_id="b" * 32):
+        """Post-submission 14152 state: complete App ID, manual review reply
+        job bound, review pending, automation still owns the case."""
+        self.case["collected_fields"] = {
+            "requested_feature": "media_relay",
+            "requested_feature_label": "Media Relay",
+        }
+        if app_id:
+            self.case["collected_fields"]["app_id"] = app_id
+        self.case["missing_fields"] = []
+        self.case["internal_email_send_status"] = "awaiting_public_reply"
+        self.case["internal_email_send_reason"] = "enablement_manual_review"
+        self.case["automation_context"] = {
+            "zendesk_ownership": {"state": "assigned", "source_group_id": "original-group"},
+            "enablement_manual_workflow": {
+                "version": 1,
+                "state": "awaiting_public_reply",
+                "reply_job_id": "account-reply-14152",
+                "delivery_key": "dk-1",
+                "prepared_at": "2026-10-20T08:00:00Z",
+                "updated_at": "2026-10-20T08:00:00Z",
+            },
+        }
+        self.repo.get_account_reply_job.return_value = {
+            "job_id": "account-reply-14152",
+            "status": "queued",
+        }
+
+    def test_reenable_wording_answered_from_manual_review_state(self):
+        self._enter_pending_review_state()
+        self.turn(self.REENABLE, "rag")
+        # No RAG fallback, no supersession, no second application.
+        self.rag.assert_not_called()
+        self.repo.create_enablement_relay_request.assert_not_called()
+        classification = self.case["route_classification"]
+        self.assertEqual(classification.get("handler_binding_status"), "active")
+        self.assertNotEqual(
+            classification.get("previous_handler_binding_status"), "superseded"
+        )
+        self.assertEqual(classification["handler_continuation_reason"], "insession_enable_progress")
+        self.assertEqual(
+            classification["server_correction_reason"],
+            "insession_enable_reuse:re_enable_wording->progress_inquiry",
+        )
+        self.assertEqual(self.case["automation_status"], "automation")
+        self.assertEqual(self.case["execution_action"], "enablement")
+        self.assertEqual(len(self.jobs), 1)
+        job = self.jobs[0]
+        self.assertEqual(job["reply_intent"], "progress_inquiry_answer")
+        facts = job["reply_facts"]
+        self.assertEqual(facts["behavior"], "progress_inquiry")
+        self.assertIn("already received", facts["provided_answer"])
+        self.assertIn("queued for review", facts["provided_answer"])
+        self.assertEqual(facts["progress"]["binding"], "manual_review")
+
+    def test_reenable_wording_failclosed_when_review_state_unreadable(self):
+        self._enter_pending_review_state()
+        self.repo.get_account_reply_job.return_value = None
+        self.turn(self.REENABLE, "rag")
+        self.rag.assert_not_called()
+        self.assertEqual(self.case["automation_status"], "human_review_required")
+        self.assertEqual(
+            self.case["failure_code"],
+            "followup_progress_state_unavailable:manual_job_missing",
+        )
+        self.assertEqual(self.jobs, [])
+
+    def test_reenable_wording_terminal_relay_request_fails_closed(self):
+        self._enter_pending_review_state()
+        self.case["automation_context"]["enablement_auto_workflow"] = {
+            "state": "awaiting_public_reply",
+            "request_id": "enr-14152-v1",
+        }
+        self.repo.get_enablement_relay_request.return_value = {
+            "request_id": "enr-14152-v1",
+            "status": "cancelled",
+        }
+        self.turn(self.REENABLE, "rag")
+        self.rag.assert_not_called()
+        self.assertEqual(
+            self.case["failure_code"],
+            "followup_progress_state_unavailable:request_cancelled",
+        )
+
+    def test_reenable_wording_active_relay_request_answers_from_request(self):
+        self._enter_pending_review_state()
+        self.case["automation_context"]["enablement_auto_workflow"] = {
+            "state": "awaiting_public_reply",
+            "request_id": "enr-14152-v1",
+        }
+        self.repo.get_enablement_relay_request.return_value = {
+            "request_id": "enr-14152-v1",
+            "status": "dispatched",
+            "request_version": 1,
+            "created_at": "2026-10-20T09:00:00Z",
+        }
+        self.turn(self.REENABLE, "rag")
+        self.rag.assert_not_called()
+        job = self.jobs[-1]
+        self.assertEqual(job["reply_intent"], "progress_inquiry_answer")
+        self.assertEqual(job["reply_facts"]["progress"]["binding"], "relay_request")
+        self.assertEqual(
+            job["reply_facts"]["progress"]["review_state"], "with the reviewing engineer"
+        )
+
+    def test_reenable_wording_incomplete_app_id_falls_through_to_rag(self):
+        self._enter_pending_review_state(app_id=None)
+        self.case["missing_fields"] = ["app_id"]
+        self.case["collected_fields"] = {
+            "requested_feature": "media_relay",
+            "requested_feature_label": "Media Relay",
+        }
+        self.case["missing_fields"] = ["app_id"]
+        self.turn(self.REENABLE, "rag")
+        # Old contract preserved: field collection continues via routing.
+        self.assertEqual(self.rag.call_count, 1)
+        self.assertEqual(self.jobs[-1]["reply_intent"], "rag_fallback_answer")
+
+    def test_reenable_wording_human_review_status_does_not_fire(self):
+        self._enter_pending_review_state()
+        self.case["automation_status"] = "human_review_required"
+        self.turn(self.REENABLE, "rag")
+        # The progress branch requires an automation-held case; the RAG
+        # fallback gate also skips an already-escalated case. No progress
+        # reply may appear either way.
+        self.assertTrue(
+            all(job["reply_intent"] != "progress_inquiry_answer" for job in self.jobs)
+        )
+
+    def test_reenable_wording_with_new_app_id_stays_out_of_progress_path(self):
+        message = f"Could you help me enable the permission now? My App ID is {'c' * 32}"
+        self.turn(message, "rag")
+        # A corrected App ID riding with the re-enable wording is field
+        # progress: the progress reply must stay out of the turn even when
+        # extraction itself does not surface the new value.
+        self.assertTrue(
+            all(job["reply_intent"] != "progress_inquiry_answer" for job in self.jobs)
+        )
+        self.assertNotEqual(
+            self.case["route_classification"].get("handler_continuation_reason"),
+            "insession_enable_progress",
+        )
+
+    def test_plain_question_wording_is_not_a_reenable_request(self):
+        self.turn("Where can I find the App ID?", "rag")
+        self.assertEqual(self.rag.call_count, 1)
+        self.assertEqual(self.jobs[-1]["reply_intent"], "rag_fallback_answer")

@@ -2987,3 +2987,155 @@ def test_deploy_script_wires_knowledge_stage_config_end_to_end() -> None:
     # Both gates: after the render loop and before activation.
     occurrences = script.count("verify_knowledge_stage_config_rendered\n")
     assert occurrences >= 2, "the render-time and activation-time gates must both be present"
+
+
+# ---------------------------------------------------------------------------
+# 14152-hermes-default-preservation: live native Hermes configuration reads
+# and the Preproduction inheritance resolution
+# ---------------------------------------------------------------------------
+
+
+def _live_definition(role: str, *, engine: str | None = "hermes", workflow_mode: str = "disabled",
+                     agent: bool = True, persona: bool = True) -> dict:
+    environment = [{"name": "AUTOMATION_ENVIRONMENT", "value": "preproduction"}]
+    secrets = []
+    if role == "route":
+        if engine:
+            environment.append({"name": "AUTOMATION_CASE_ENGINE", "value": engine})
+    else:
+        environment.append({"name": "HERMES_CASE_WORKFLOW_MODE", "value": workflow_mode})
+        if agent:
+            secrets.append(
+                {"name": "HERMES_AGENT_BASE_URL", "valueFrom": "arn:aws:ssm:us-east-1:1:parameter/supportportal/preproduction/hermes-agent-base-url"}
+            )
+            secrets.append(
+                {"name": "HERMES_AGENT_API_TOKEN", "valueFrom": "arn:aws:ssm:us-east-1:1:parameter/supportportal/preproduction/hermes-api-server-key"}
+            )
+        if persona:
+            secrets.append(
+                {"name": "ENGINEER_INVESTIGATION_REPLY_BASE_URL", "valueFrom": "arn:aws:ssm:us-east-1:1:parameter/supportportal/preproduction/hermes-base-url"}
+            )
+    return {
+        "containerDefinitions": [
+            {"name": role, "image": "img", "environment": environment, "secrets": secrets}
+        ]
+    }
+
+
+def _resolve(**kwargs):
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    live = {
+        key: kwargs.pop(key)
+        for key in ("engine", "workflow_mode", "agent", "persona")
+        if key in kwargs
+    }
+    return resolve_preproduction_case_configuration(
+        route_definition=_live_definition("route", engine=live.pop("engine", "hermes")),
+        api_definition=_live_definition("api", **live),
+        worker_definition=_live_definition("worker", **live),
+        **kwargs,
+    )
+
+
+def test_resolve_inherits_live_hermes_configuration() -> None:
+    record = _resolve()
+    assert record["automation_case_engine"] == "hermes"
+    assert record["hermes_agent_enabled"] is True
+    assert record["hermes_persona_enabled"] is True
+    assert record["hermes_case_workflow_mode"] == "disabled"
+    assert record["provenance"]["automation_case_engine"] == "inherited_live_hermes"
+    assert record["provenance"]["hermes_case_workflow_mode"] == "inherited_live"
+
+
+def test_resolve_live_persona_off_is_inherited() -> None:
+    record = _resolve(persona=False)
+    assert record["hermes_persona_enabled"] is False
+    assert record["provenance"]["hermes_persona_enabled"] == "inherited_live"
+
+
+def test_resolve_live_legacy_engine_requires_explicit_flag() -> None:
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    with pytest.raises(ValueError, match="requires explicit --automation-case-engine"):
+        resolve_preproduction_case_configuration(
+            route_definition=_live_definition("route", engine="legacy"),
+            api_definition=_live_definition("api"),
+            worker_definition=_live_definition("worker"),
+        )
+
+
+def test_resolve_missing_live_engine_requires_explicit_flag() -> None:
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    with pytest.raises(ValueError, match="requires explicit --automation-case-engine"):
+        resolve_preproduction_case_configuration(
+            route_definition=_live_definition("route", engine=None),
+            api_definition=_live_definition("api"),
+            worker_definition=_live_definition("worker"),
+        )
+
+
+def test_resolve_hermes_without_live_agent_credentials_fails_closed() -> None:
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    with pytest.raises(ValueError, match="requires hermes agent credentials"):
+        resolve_preproduction_case_configuration(
+            route_definition=_live_definition("route"),
+            api_definition=_live_definition("api", agent=False),
+            worker_definition=_live_definition("worker", agent=False),
+        )
+
+
+def test_resolve_workflow_mode_disagreement_fails_closed() -> None:
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    with pytest.raises(ValueError, match="HERMES_CASE_WORKFLOW_MODE disagrees"):
+        resolve_preproduction_case_configuration(
+            route_definition=_live_definition("route"),
+            api_definition=_live_definition("api", workflow_mode="disabled"),
+            worker_definition=_live_definition("worker", workflow_mode="real"),
+        )
+
+
+def test_resolve_explicit_legacy_needs_no_live_engine() -> None:
+    record = _resolve(
+        engine="legacy",
+        explicit_engine="legacy",
+    )
+    assert record["automation_case_engine"] == "legacy"
+    assert record["hermes_agent_enabled"] is False
+    assert record["provenance"]["automation_case_engine"] == "explicit"
+
+
+def test_resolve_explicit_values_override_live_state() -> None:
+    record = _resolve(
+        explicit_engine="hermes",
+        explicit_agent_enabled=True,
+        explicit_persona_enabled=False,
+        explicit_case_workflow_mode="disabled",
+    )
+    assert record["automation_case_engine"] == "hermes"
+    assert record["hermes_persona_enabled"] is False
+    assert record["provenance"]["hermes_persona_enabled"] == "explicit"
+
+
+def test_resolve_cli_subcommand_outputs_json(tmp_path, capsys) -> None:
+    from backend.scripts.automation_ecs_deploy import run
+
+    route_path = tmp_path / "route.json"
+    route_path.write_text(json.dumps(_live_definition("route")), encoding="utf-8")
+    api_path = tmp_path / "api.json"
+    api_path.write_text(json.dumps(_live_definition("api")), encoding="utf-8")
+    worker_path = tmp_path / "worker.json"
+    worker_path.write_text(json.dumps(_live_definition("worker")), encoding="utf-8")
+    result = run(
+        [
+            "resolve-current-case-config",
+            "--task-definition-route", str(route_path),
+            "--task-definition-api", str(api_path),
+            "--task-definition-worker", str(worker_path),
+        ]
+    )
+    assert result["automation_case_engine"] == "hermes"
+    assert result["provenance"]["automation_case_engine"] == "inherited_live_hermes"

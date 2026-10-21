@@ -1116,3 +1116,91 @@ def test_pipeline_binds_knowledge_stage_config_into_checkpoint_and_deploy_args(
     with pytest.raises(ValueError):
         pipeline.run_pipeline(args)
     assert stages == []
+
+
+# ---------------------------------------------------------------------------
+# 14152-hermes-default-preservation: Preproduction case-flag inheritance
+# ---------------------------------------------------------------------------
+
+
+def _live_definitions():
+    def definition(role: str) -> dict:
+        environment = [{"name": "AUTOMATION_ENVIRONMENT", "value": "preproduction"}]
+        secrets = []
+        if role == "route":
+            environment.append({"name": "AUTOMATION_CASE_ENGINE", "value": "hermes"})
+        else:
+            environment.append({"name": "HERMES_CASE_WORKFLOW_MODE", "value": "disabled"})
+            secrets.append({"name": "HERMES_AGENT_BASE_URL", "valueFrom": "arn:x"})
+            secrets.append({"name": "ENGINEER_INVESTIGATION_REPLY_BASE_URL", "valueFrom": "arn:y"})
+        return {"containerDefinitions": [{"name": role, "image": "img", "environment": environment, "secrets": secrets}]}
+
+    return {role: definition(role) for role in ("route", "api", "worker")}
+
+
+def _inheritance_args(repo: Path, release: str, *extra: str) -> argparse.Namespace:
+    return pipeline.build_parser().parse_args([
+        "run", "--project-root", str(repo), "--release-commit", release,
+        "--prompt-release-id", "prompt-test", *extra,
+    ])
+
+
+def test_resolve_preproduction_case_flags_inherits_live_hermes(monkeypatch: pytest.MonkeyPatch) -> None:
+    args = argparse.Namespace(automation_case_engine=None, hermes_agent_enabled=False,
+                              hermes_persona_enabled=False, hermes_persona_disabled=False,
+                              hermes_case_workflow_mode=None)
+    monkeypatch.setattr(
+        pipeline, "_describe_live_preproduction_task_definitions",
+        lambda env: _live_definitions(),
+    )
+    record = pipeline.resolve_preproduction_case_flags(args, {})
+    assert record["automation_case_engine"] == "hermes"
+    assert record["provenance"]["automation_case_engine"] == "inherited_live_hermes"
+    assert args.automation_case_engine == "hermes"
+    assert args.hermes_agent_enabled is True
+    assert args.hermes_persona_enabled is True
+    assert args.hermes_case_workflow_mode == "disabled"
+
+
+def test_resolve_preproduction_case_flags_fails_closed_on_legacy(monkeypatch: pytest.MonkeyPatch) -> None:
+    definitions = _live_definitions()
+    definitions["route"]["containerDefinitions"][0]["environment"] = [
+        {"name": "AUTOMATION_CASE_ENGINE", "value": "legacy"}
+    ]
+    monkeypatch.setattr(
+        pipeline, "_describe_live_preproduction_task_definitions",
+        lambda env: definitions,
+    )
+    args = argparse.Namespace(automation_case_engine=None, hermes_agent_enabled=False,
+                              hermes_persona_enabled=False, hermes_persona_disabled=False,
+                              hermes_case_workflow_mode=None)
+    with pytest.raises(ValueError, match="requires explicit --automation-case-engine"):
+        pipeline.resolve_preproduction_case_flags(args, {})
+
+
+def test_deploy_mode_args_passes_persona_disable_and_resolved_engine() -> None:
+    args = argparse.Namespace(
+        bootstrap_account_schema=False,
+        hermes_case_workflow_mode="disabled",
+        hermes_persona_enabled=False,
+        hermes_persona_disabled=True,
+        automation_case_engine="hermes",
+        hermes_agent_enabled=True,
+        investigation_case_files_enabled=False,
+        enablement_workflow_mode="manual",
+        through="preproduction",
+    )
+    values = deploy_mode_args(args)
+    assert "--automation-case-engine" in values
+    assert values[values.index("--automation-case-engine") + 1] == "hermes"
+    assert "--hermes-persona-disabled" in values
+    assert "--hermes-persona-enabled" not in values
+
+
+def test_check_live_case_engine_rejects_unapproved_hermes_downgrade(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        pipeline, "_describe_live_preproduction_task_definitions",
+        lambda env: _live_definitions(),
+    )
+    with pytest.raises(ValueError, match="Hermes to legacy downgrade requires"):
+        pipeline.check_live_case_engine("legacy", {})

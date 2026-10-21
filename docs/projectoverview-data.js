@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T03:38:41Z",
-  "source_base_commit": "1192ee459103d9f257c4b37f31d6a47d96a930d2",
-  "registry_digest": "f74aff9dfee7a914dfc87fe64e9c730775cbb73e05449a59007145af64e1fb2e",
+  "generated_at": "2026-10-21T04:51:54Z",
+  "source_base_commit": "972a0fc21249261e541ee4609ce4e0e75350e33a",
+  "registry_digest": "6668a7233ed48670565146c0addb9242ca0e26d75f27bbe7c7d534fe32934cb0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1810,6 +1810,31 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "backend/tests/test_automation_ecs_deploy.py 解析器/CLI 继承与 fail-closed（新增 9 项，套件 116 passed）",
+          "url": "backend/tests/test_automation_ecs_deploy.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_automation_ecs_release_pipeline.py 继承解析/参数透传/降级拒绝（新增 4 项，套件 59 passed）",
+          "url": "backend/tests/test_automation_ecs_release_pipeline.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_enablement_rag_resume.py 14152 脱敏回归（manual/relay/终态/新 App ID/human 状态 8 项）",
+          "url": "backend/tests/test_enablement_rag_resume.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_hermes_followup_reply_contract.py 会话内复用重路由与双绑定进度状态（新增 9 项）",
+          "url": "backend/tests/test_hermes_followup_reply_contract.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_automation_test_scenarios.py E3 turn 5b 精确回合剧本与断言（49 passed）",
+          "url": "backend/tests/test_automation_test_scenarios.py"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1915,7 +1940,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 50,
+      "task_count": 51,
       "done_count": 25,
       "blocked_count": 2
     },
@@ -19273,6 +19298,56 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "document",
           "label": "发布约束遵守：knowledge 各开关维持 0（未开 CSD10 intake）、未发送真实 Slack/Zendesk 消息、14146 未重放、Production 未触碰"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-208",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "title": "14152 部署默认保留 native Hermes 与会话内再执行措辞进度修正（E3 精确回合）",
+      "summary": "两个合同：(1) Preproduction 发布未指定 --automation-case-engine 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态；缺失/冲突/不可读一律 fail-closed 要求显式旗标；显式 legacy 保留既有降级授权门；新增 --hermes-persona-disabled；发布证据记录 native_hermes_config 四字段与 provenance）——根治 2026-10-21 r20261021-ebb59c8 两次人工旗标误用（enablement=manual 遗漏既有 archer 等）。(2) 14152 回归：客户在 enablement 会话中段再次要求开通（Could you help me enable the permission now?）不再 superseded→RAG fallback 转人工，而是服务端修正为进度追问——reply-sync（legacy 轮询路径）从绑定 manual review reply job 或 relay request 的真实状态生成 progress_inquiry_answer 回复（确定性 provided_answer+Persona 措辞，不承诺加速/完成时间）；native hermes 路径 tool_record_direction 对 backend_operation(enable) 提案、agent 对 continue_task message_action 同样状态门控修正为 conversation_followup/progress_inquiry 或 report_progress，绑定不可读/终态 fail-closed 转人工；E3 在 relay request 建立后、终态前新增精确回合（保留原礼貌催促为对照），断言 comment↔turn 绑定、report_progress、单一 relay request、无 RAG fallback。",
+      "status": "active",
+      "next_action": "代码与定向测试完成（分类器16/合同37/业务32/agent76/场景49/部署116/管线59/邻接157 passed；隔离 PG 中新测试过，存量失败簇经 stash 对照确认 main 同样失败并披露）；待 finalize 合入 main 后执行 Preproduction 发布（本次发布将首次走 C1 engine 继承路径）与部署层回读；真实 E3 执行需单独授权（会建 Zendesk 工单并产生评论/邮件/自动化副作用）",
+      "owner": "agent",
+      "created_at": "2026-10-21",
+      "updated_at": "2026-10-21",
+      "acceptance_criteria": [
+        "C1 Preproduction 发布未指定 engine 且当前 Route 定义可读为 hermes → 继承 hermes 并保留 agent/persona；当前配置缺失/冲突/不可读 → fail-closed 要求显式指定",
+        "C2 显式 legacy 视为降级操作，继续使用既有 Hermes→legacy 授权门禁；无授权发布前拒绝",
+        "C3 未指定 HERMES_CASE_WORKFLOW_MODE → 保持当前 API/Worker 值；当前值无法确认时停止发布；native hermes 不自动改 real",
+        "C4 active enablement + App ID 完整 + 已有 review/relay request + 无新字段 + 状态可读 + automation 持有 → 再执行措辞按进度追问处理，返回绑定 request 实际状态；不可读取或冲突 → 转人工",
+        "C5 C4 场景重复执行不创建第二个 relay request、不重复提交 enablement、不重复发送内部申请；幂等身份缺失或状态不确定 → fail-closed",
+        "C6 E3 发送 14152 原句 → 绑定当前 Zendesk comment 与 Hermes turn，验证 progress_inquiry/report_progress；被识别为新 enablement、进入 RAG 或无法绑定 turn → 测试失败"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "backend/tests/test_automation_ecs_deploy.py 解析器/CLI 继承与 fail-closed（新增 9 项，套件 116 passed）",
+          "url": "backend/tests/test_automation_ecs_deploy.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_automation_ecs_release_pipeline.py 继承解析/参数透传/降级拒绝（新增 4 项，套件 59 passed）",
+          "url": "backend/tests/test_automation_ecs_release_pipeline.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_enablement_rag_resume.py 14152 脱敏回归（manual/relay/终态/新 App ID/human 状态 8 项）",
+          "url": "backend/tests/test_enablement_rag_resume.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_hermes_followup_reply_contract.py 会话内复用重路由与双绑定进度状态（新增 9 项）",
+          "url": "backend/tests/test_hermes_followup_reply_contract.py"
+        },
+        {
+          "type": "test",
+          "label": "backend/tests/test_automation_test_scenarios.py E3 turn 5b 精确回合剧本与断言（49 passed）",
+          "url": "backend/tests/test_automation_test_scenarios.py"
         }
       ]
     },

@@ -73,6 +73,14 @@ from backend.services.enablement_automation import (
 )
 from backend.services.enablement_field_extractor import EnablementFieldExtraction
 from backend.services.account_ai_execution import AccountProcessingFailure
+from backend.services.account_reply_jobs import (
+    ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
+)
+from backend.services.automation_hermes_followup_reply import (
+    enablement_progress_state,
+    message_carries_new_app_id,
+)
+from backend.services.hermes_route_classifier import enablement_execution_request_wording
 from backend.services.engineer_assignment import EngineerAssignmentService
 from backend.services.engineer_cases import (
     apply_case_context_to_engineer_case,
@@ -394,6 +402,140 @@ async def process_account_customer_reply(
             await asyncio.get_running_loop().run_in_executor(
                 None, lambda: flush_case_usage_capture(repository, usage_capture)
             )
+
+
+async def _handle_insession_enable_progress(
+    *,
+    repository: Any,
+    billing_ticket: dict[str, Any],
+    canonical_ticket: dict[str, Any],
+    customer_msg: dict[str, Any],
+    ticket_id: str,
+    timestamp: str,
+    customer_message: str,
+    customer_name_hint: str | None,
+    persona_assignment: dict[str, Any] | None,
+    processing_profile: str,
+) -> tuple[bool, dict[str, Any], dict[str, Any] | None]:
+    """14152: the customer re-asks to enable inside an active enablement
+    session whose request is already pending ("Could you help me enable the
+    permission now?"). Treat it as a progress inquiry answered from the bound
+    request's actual state — never supersede the handler, never re-submit
+    enablement, never enter the RAG fallback.
+
+    Returns ``(handled, account_case, reply_job)``. ``handled=False`` means
+    the session does not qualify and the caller continues normal routing; a
+    qualifying session with an unreadable/terminal bound request fails closed
+    into the shared human-handoff failure record (still ``handled=True``)."""
+    import asyncio
+
+    def _sync(call, *args, **kwargs):
+        return asyncio.get_running_loop().run_in_executor(None, lambda: call(*args, **kwargs))
+
+    fields = dict(billing_ticket.get("collected_fields") or {})
+    if len(str(fields.get("app_id") or "").strip()) != 32:
+        return False, billing_ticket, None
+    if message_carries_new_app_id(customer_message, str(fields.get("app_id") or "")):
+        # A corrected App ID riding along with the re-enable wording is field
+        # progress: the normal enablement continuation owns the turn.
+        return False, billing_ticket, None
+    ownership = (billing_ticket.get("automation_context") or {}).get("zendesk_ownership")
+    ownership_state = (
+        str(ownership.get("state") or "").strip().lower()
+        if isinstance(ownership, dict)
+        else ""
+    )
+    if ownership_state and ownership_state != "assigned":
+        # Ownership no longer automation-held: no automatic answer.
+        return False, billing_ticket, None
+    state = enablement_progress_state(repository, billing_ticket)
+    if not state["ok"]:
+        reason = str(state["reason"])
+        if reason.endswith("no_bound_request"):
+            return False, billing_ticket, None
+        await _sync(repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+        escalated = await _record_execution_failure(
+            repository=repository,
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler="enablement",
+            stage="enablement_insession_progress",
+            reason_code=reason,
+            customer_context=customer_message,
+        )
+        return True, escalated, None
+    progress = state["progress"]
+    feature_label = str(progress.get("feature_label") or "the requested feature")
+    review_state = str(progress.get("review_state") or "in review")
+    provided_answer = (
+        f"The {feature_label} enablement request for this ticket was already received and does "
+        f"not need to be submitted again. Current recorded review status: {review_state}. "
+        "We will update you here as soon as there is news; no further action is needed from you."
+    )
+    route_classification = dict(billing_ticket.get("route_classification") or {})
+    route_classification.update(
+        {
+            "retained_automation_handler": "enablement",
+            "handler_continuation_reason": "insession_enable_progress",
+            "server_correction_reason": (
+                "insession_enable_reuse:re_enable_wording->progress_inquiry"
+            ),
+            "conversation_action": "follow_up",
+            "conversation_subcategory": "progress_inquiry",
+        }
+    )
+    billing_ticket.update(
+        {
+            "route_classification": route_classification,
+            "updated_at": timestamp,
+        }
+    )
+    await _sync(repository.save_ticket, canonical_ticket, new_messages=[customer_msg])
+    await _sync(repository.save_account_case, billing_ticket)
+    await _sync(
+        repository.record_event,
+        ticket_id,
+        "enablement_insession_progress_reply",
+        {
+            "binding": progress.get("binding"),
+            "raw_status": progress.get("raw_status"),
+            "server_correction_reason": "insession_enable_reuse",
+            "triggered_at": timestamp,
+        },
+    )
+    try:
+        reply_job = await _sync(
+            _create_reply_job,
+            repository=repository,
+            ticket_id=ticket_id,
+            trigger_message_created_at=timestamp,
+            reply_facts={
+                "behavior": "progress_inquiry",
+                "reply_intent": ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
+                "provided_answer": provided_answer,
+                "progress": dict(progress),
+                "customer_first_name": resolve_customer_greeting_name(
+                    latest_customer_author_name=customer_name_hint,
+                    case_customer_name=billing_ticket.get("customer_name"),
+                ),
+            },
+            asked_field_keys=[],
+            persona_assignment=persona_assignment,
+            reply_intent=ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
+            processing_profile=processing_profile,
+        )
+    except Exception as exc:
+        failed = await _record_execution_failure(
+            repository=repository,
+            account_case=billing_ticket,
+            ticket_id=ticket_id,
+            handler="enablement",
+            stage="reply_job",
+            reason_code="account_reply_job_creation_failed",
+            detail=exc,
+        )
+        return True, failed, None
+    return True, billing_ticket, reply_job
 
 
 async def _process_account_customer_reply_impl(
@@ -866,6 +1008,37 @@ async def _process_account_customer_reply_impl(
             )
         if handler_continued:
             automation_attempt = candidate_attempt
+
+    if (
+        not handler_continued
+        and prior_handler == "enablement"
+        and prior_classification.get("handler_binding_status") == "active"
+        and str(billing_ticket.get("automation_status") or "").strip() == "automation"
+        and enablement_execution_request_wording(customer_message)
+    ):
+        # 14152: an in-session re-enable request with no new fields restates
+        # the SAME pending request. Answer it from the bound request's actual
+        # state (or fail closed to human) instead of superseding the handler
+        # and falling into the RAG fallback.
+        handled, outcome_ticket, progress_reply_job = await _handle_insession_enable_progress(
+            repository=repository,
+            billing_ticket=billing_ticket,
+            canonical_ticket=canonical_ticket,
+            customer_msg=customer_msg,
+            ticket_id=client_ticket_id,
+            timestamp=timestamp,
+            customer_message=customer_message,
+            customer_name_hint=customer_name_hint,
+            persona_assignment=persona_assignment,
+            processing_profile=processing_profile,
+        )
+        if handled:
+            return {
+                **outcome_ticket,
+                "messages": canonical_ticket.get("messages", []),
+                "support_ticket_status": canonical_ticket.get("status"),
+                **_reply_job_public(progress_reply_job),
+            }
 
     decision = None
     if not handler_continued:

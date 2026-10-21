@@ -44,6 +44,8 @@
 
 配置键、角色注入和模式参数以 [ECS Runbook](../deploy_automation_ecs_release.md) 为准。本文不复制密钥值，也不固定各环境的当前开关状态。
 
+Preproduction 发布的 case engine 等 native Hermes 旗标自 2026-10-21 起支持默认保留：未显式传 `--automation-case-engine` 时继承当前 Route/API/Worker task definition 的可读配置（仅 live hermes 可继承，其余 fail-closed 要求显式指定），机制与证据字段见 [ECS Runbook](../deploy_automation_ecs_release.md) 的「Preproduction native Hermes 默认保留」章节。
+
 Terraform 管理稳定基础设施；部署脚本管理 ECS task-definition revision 和服务指针。两套 Terraform root 的管理范围不同，不能互相套用；共享 VPC、ALB、RDS、EFS 等也不意味着所有环境资源都由同一个 root 管理。
 
 Preproduction Terraform 包含 Hermes 的独立 IAM、EFS access point 和服务发现配置。Hermes 的实际运行位置、实例数、状态目录和启用模式需结合 [Hermes 部署说明](../deploy_hermes_investigator_ecs.md) 与目标环境只读证据核对，不从 Terraform 文件存在与否推断在线状态。

@@ -575,6 +575,189 @@ def _secret_names(container: dict[str, Any]) -> set[str]:
     }
 
 
+def _observed_task_definition(payload: Any) -> dict[str, Any]:
+    definition = payload.get("taskDefinition") if isinstance(payload, dict) and "taskDefinition" in payload else payload
+    if not isinstance(definition, dict):
+        raise ValueError("taskDefinition object is required")
+    return definition
+
+
+def _live_hermes_role_state(payload: Any, role: str) -> dict[str, Any]:
+    container = _container(_observed_task_definition(payload), role)
+    environment = _environment_map(container)
+    secrets = _secret_names(container)
+    return {
+        "case_workflow_mode": str(environment.get("HERMES_CASE_WORKFLOW_MODE") or "").strip().lower(),
+        "agent_enabled": bool({"HERMES_AGENT_BASE_URL", "HERMES_AGENT_API_TOKEN"} & secrets),
+        "persona_enabled": "ENGINEER_INVESTIGATION_REPLY_BASE_URL" in secrets,
+    }
+
+
+def _live_case_flags_from_definitions(
+    *,
+    route_definition: Any,
+    api_definition: Any,
+    worker_definition: Any,
+) -> dict[str, Any]:
+    """Read the current native Hermes configuration from live task definitions.
+
+    Side-effect free so the release pipeline and the deploy shell resolve the
+    same inheritance decision from identical inputs: the Route definition owns
+    ``AUTOMATION_CASE_ENGINE``; the API/Worker definitions own
+    ``HERMES_CASE_WORKFLOW_MODE`` and the agent/persona credential presence.
+    Every value must be readable and consistent across roles — anything else
+    fails closed instead of being guessed."""
+    api_state = _live_hermes_role_state(api_definition, "api")
+    worker_state = _live_hermes_role_state(worker_definition, "worker")
+    if api_state["case_workflow_mode"] not in HERMES_CASE_WORKFLOW_MODES:
+        raise ValueError(
+            "live HERMES_CASE_WORKFLOW_MODE is missing or unrecognized on api/worker; "
+            "pass --hermes-case-workflow-mode explicitly"
+        )
+    if api_state["case_workflow_mode"] != worker_state["case_workflow_mode"]:
+        raise ValueError(
+            "live HERMES_CASE_WORKFLOW_MODE disagrees between api and worker "
+            f"({api_state['case_workflow_mode']} vs {worker_state['case_workflow_mode']}); "
+            "pass --hermes-case-workflow-mode explicitly after reconciliation"
+        )
+    if api_state["agent_enabled"] != worker_state["agent_enabled"]:
+        raise ValueError(
+            "live hermes agent credentials disagree between api and worker; "
+            "pass --hermes-agent-enabled explicitly after reconciliation"
+        )
+    if api_state["persona_enabled"] != worker_state["persona_enabled"]:
+        raise ValueError(
+            "live hermes persona credentials disagree between api and worker; "
+            "pass --hermes-persona-enabled or --hermes-persona-disabled explicitly"
+        )
+    route = _environment_map(_container(_observed_task_definition(route_definition), "route"))
+    engine = str(route.get("AUTOMATION_CASE_ENGINE") or "").strip().lower()
+    return {
+        "automation_case_engine": engine if engine in AUTOMATION_CASE_ENGINES else "",
+        "hermes_agent_enabled": api_state["agent_enabled"],
+        "hermes_persona_enabled": api_state["persona_enabled"],
+        "hermes_case_workflow_mode": api_state["case_workflow_mode"],
+    }
+
+
+def read_live_case_configuration(
+    *,
+    route_definition: Any,
+    api_definition: Any,
+    worker_definition: Any,
+) -> dict[str, Any]:
+    """Strict full read: additionally requires a readable live route engine."""
+    live = _live_case_flags_from_definitions(
+        route_definition=route_definition,
+        api_definition=api_definition,
+        worker_definition=worker_definition,
+    )
+    if not live["automation_case_engine"]:
+        raise ValueError(
+            "live automation case engine is missing or unrecognized; "
+            "pass --automation-case-engine explicitly"
+        )
+    return live
+
+
+def resolve_preproduction_case_configuration(
+    *,
+    route_definition: Any,
+    api_definition: Any,
+    worker_definition: Any,
+    explicit_engine: str | None = None,
+    explicit_agent_enabled: bool | None = None,
+    explicit_persona_enabled: bool | None = None,
+    explicit_case_workflow_mode: str | None = None,
+) -> dict[str, Any]:
+    """Resolve the release's native Hermes flags, inheriting the live
+    configuration for every flag the caller left unspecified.
+
+    Inheritance protects a routine Preproduction release from silently dropping
+    the running native Hermes configuration (14152 class of regression): an
+    unspecified engine inherits only a readable live Hermes engine, and the
+    agent/persona/typed-workflow flags inherit their live values. Any live
+    value that cannot be confirmed fails closed instead of guessing. Explicit
+    values always win; an explicit legacy engine keeps the existing downgrade
+    authorization gate and does not require a readable live engine.
+    """
+    provenance = {
+        "automation_case_engine": "explicit",
+        "hermes_agent_enabled": "explicit",
+        "hermes_persona_enabled": "explicit",
+        "hermes_case_workflow_mode": "explicit",
+    }
+    engine = explicit_engine
+    if (
+        engine is not None
+        and explicit_agent_enabled is not None
+        and explicit_persona_enabled is not None
+        and explicit_case_workflow_mode is not None
+    ):
+        # Fully explicit configuration: the operator override path never
+        # depends on live state.
+        if engine not in AUTOMATION_CASE_ENGINES:
+            raise ValueError("automation case engine must be legacy or hermes")
+        if engine == "hermes" and not explicit_agent_enabled:
+            raise ValueError("the hermes case engine requires --hermes-agent-enabled")
+        if explicit_case_workflow_mode not in HERMES_CASE_WORKFLOW_MODES:
+            raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
+        return {
+            "automation_case_engine": engine,
+            "hermes_agent_enabled": bool(explicit_agent_enabled),
+            "hermes_persona_enabled": bool(explicit_persona_enabled),
+            "hermes_case_workflow_mode": explicit_case_workflow_mode,
+            "provenance": provenance,
+        }
+    live = _live_case_flags_from_definitions(
+        route_definition=route_definition,
+        api_definition=api_definition,
+        worker_definition=worker_definition,
+    )
+    if engine is None:
+        if live["automation_case_engine"] != "hermes":
+            raise ValueError(
+                "Preproduction requires explicit --automation-case-engine "
+                f"(live route engine is {live['automation_case_engine'] or 'missing'})"
+            )
+        engine = "hermes"
+        provenance["automation_case_engine"] = "inherited_live_hermes"
+    if engine not in AUTOMATION_CASE_ENGINES:
+        raise ValueError("automation case engine must be legacy or hermes")
+    agent = explicit_agent_enabled
+    if agent is None:
+        if engine == "hermes":
+            agent = bool(live["hermes_agent_enabled"])
+            provenance["hermes_agent_enabled"] = "inherited_live"
+        else:
+            # The render path keeps agent credentials only under the hermes
+            # engine; an explicit legacy release never inherits them.
+            agent = False
+    if engine == "hermes" and not agent:
+        raise ValueError(
+            "the hermes case engine requires hermes agent credentials "
+            "(live agent credentials are absent; pass --hermes-agent-enabled "
+            "only after provisioning them)"
+        )
+    persona = explicit_persona_enabled
+    if persona is None:
+        persona = bool(live["hermes_persona_enabled"])
+        provenance["hermes_persona_enabled"] = "inherited_live"
+    mode = explicit_case_workflow_mode
+    if mode is None:
+        mode = str(live["hermes_case_workflow_mode"])
+        provenance["hermes_case_workflow_mode"] = "inherited_live"
+    if mode not in HERMES_CASE_WORKFLOW_MODES:
+        raise ValueError("Hermes Case Workflow mode must be disabled, mock, or real")
+    return {
+        "automation_case_engine": engine,
+        "hermes_agent_enabled": agent,
+        "hermes_persona_enabled": persona,
+        "hermes_case_workflow_mode": mode,
+        "provenance": provenance,
+    }
+
+
 def _set_environment_value(container: dict[str, Any], name: str, value: str) -> None:
     environment = container.setdefault("environment", [])
     matches = [item for item in environment if str(item.get("name") or "") == name]
@@ -1829,6 +2012,15 @@ def build_parser() -> argparse.ArgumentParser:
     heartbeat.add_argument("--max-age-seconds", type=float, default=90.0)
     heartbeat.add_argument("--environment", choices=("preproduction", "production"), default="production")
     subparsers.add_parser("validate-suspension-recipients")
+    resolve_case = subparsers.add_parser("resolve-current-case-config")
+    resolve_case.add_argument("--task-definition-route", required=True)
+    resolve_case.add_argument("--task-definition-api", required=True)
+    resolve_case.add_argument("--task-definition-worker", required=True)
+    resolve_case.add_argument("--explicit-engine", choices=sorted(AUTOMATION_CASE_ENGINES), default=None)
+    resolve_case.add_argument("--explicit-agent-enabled", dest="explicit_agent_enabled", action="store_const", const=True, default=None)
+    resolve_case.add_argument("--explicit-persona-enabled", dest="explicit_persona_enabled", action="store_const", const=True, default=None)
+    resolve_case.add_argument("--explicit-persona-disabled", dest="explicit_persona_enabled", action="store_const", const=False, default=None)
+    resolve_case.add_argument("--explicit-case-workflow-mode", choices=sorted(HERMES_CASE_WORKFLOW_MODES), default=None)
     return parser
 
 
@@ -1942,6 +2134,16 @@ def run(argv: list[str] | None = None) -> dict[str, Any]:
             task_definition_path=args.task_definition,
             max_age_seconds=args.max_age_seconds,
             environment=args.environment,
+        )
+    if args.command == "resolve-current-case-config":
+        return resolve_preproduction_case_configuration(
+            route_definition=_read_json(args.task_definition_route),
+            api_definition=_read_json(args.task_definition_api),
+            worker_definition=_read_json(args.task_definition_worker),
+            explicit_engine=args.explicit_engine,
+            explicit_agent_enabled=args.explicit_agent_enabled,
+            explicit_persona_enabled=args.explicit_persona_enabled,
+            explicit_case_workflow_mode=args.explicit_case_workflow_mode,
         )
     if args.command == "validate-suspension-recipients":
         return validate_suspension_recipients()
