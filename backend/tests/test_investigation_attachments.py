@@ -22,6 +22,11 @@ MESSAGE = {"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "123.45", "
     "files": [{"file_id": "F123", "file_name": "untrusted-name"}]}
 
 
+@pytest.fixture(autouse=True)
+def trusted_engineer_bot(monkeypatch):
+    monkeypatch.setenv("ENGINEER_SLACK_BOT_ID", "B08RHT5TZV2")
+
+
 def send(store, payload=MESSAGE):
     return handle_slack_hermes_message(store, payload, expected_team_id="T-TEST", expected_channel_id="C-TEST")
 
@@ -56,7 +61,6 @@ def test_real_feedback_entry_freezes_verified_files_to_reply_draft_and_new_round
 
 def test_trusted_file_share_metadata_is_bounded_and_unknown_bot_fails_closed(route_store, monkeypatch):
     monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
-    monkeypatch.setenv("ENGINEER_SLACK_BOT_ID", "B08RHT5TZV2")
     store = route_store
     finish_initial(store)
     store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
@@ -82,7 +86,6 @@ def test_trusted_file_share_metadata_is_bounded_and_unknown_bot_fails_closed(rou
 
 def test_short_description_overflow_uses_stable_default_and_description_filter(route_store, monkeypatch):
     monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
-    monkeypatch.setenv("ENGINEER_SLACK_BOT_ID", "B08RHT5TZV2")
     store = route_store
     finish_initial(store)
     store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
@@ -97,6 +100,18 @@ def test_short_description_overflow_uses_stable_default_and_description_filter(r
         assert send(store, {**MESSAGE, "text": long_text})["ok"] is True
     row = store.list_case_files("123")[0]
     assert row["short_description"] == f"Engineer attachment {row['managed_filename']}"
+
+
+def test_missing_trusted_bot_configuration_fails_closed(route_store, monkeypatch):
+    monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
+    monkeypatch.delenv("ENGINEER_SLACK_BOT_ID", raising=False)
+    store = route_store
+    finish_initial(store)
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    result = send(store)
+    assert result == {"ok": False, "status_code": 422, "detail": "attachments require configured trusted Slack bot"}
+    result = send(store)
+    assert result == {"ok": False, "status_code": 422, "detail": "attachments require configured trusted Slack bot"}
 
 
 @pytest.mark.parametrize("changes", [{"shares": {}}, {"user": "U-OTHER"}, {"size": 0}, {"is_external": True}])

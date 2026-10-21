@@ -83,7 +83,7 @@ def reference(row):
         'channel_id': p['channel_id'], 'thread_ts': p['thread_ts'], 'source_message_ts': p.get('message_ts'),
         'source_event_id': p['source_event_id'], 'actor_id': p.get('uploader_id'),
         'source_system': row['source_system'], 'source_session_id': p.get('session_id'),
-        'short_description': row.get('short_description') or f"Engineer attachment {row['managed_filename']}",
+        'short_description': row.get('short_description') or normalize_short_description('', managed_filename=row['managed_filename'], source_system=row.get('source_system', 'engineer')),
         'introduced_turn_id': p.get('turn_id'), 'state': row['state'], 'purpose': row['purpose']}
 
 
@@ -92,7 +92,7 @@ def register_engineer(store, case_id, refs, team_id, short_description=None):
     for ref in refs:  # Already verified against Slack by the authenticated ingress.
         row = store.register_case_file(case_id=case_id, source_system='engineer', source_file_id=ref['slack_file_id'],
             original_filename=ref['file_name'], content_type=ref['content_type'], size_bytes=ref['size_bytes'], purpose='supplement',
-            short_description=normalize_short_description(short_description or ref.get('short_description'), managed_filename=''),
+            short_description=normalize_short_description(short_description or ref.get('short_description'), managed_filename='', source_system='engineer'),
             provenance={'team_id': team_id, 'channel_id': ref['channel_id'], 'thread_ts': ref['thread_ts'],
                 'message_ts': ref['source_message_ts'], 'source_event_id': ref['source_event_id'],
                 'provider_id': ref['actor_id'], 'uploader_id': ref['actor_id']})
@@ -115,7 +115,7 @@ def import_legacy_engineer_files(store, case_id):
                 continue
             row = store.register_case_file(case_id=case_id, source_system='engineer', source_file_id=ref['slack_file_id'],
                 original_filename=ref['file_name'], content_type=ref['content_type'], size_bytes=ref['size_bytes'], purpose='supplement',
-                short_description=normalize_short_description(ref.get('short_description'), managed_filename=''),
+                short_description=normalize_short_description(ref.get('short_description'), managed_filename='', source_system='engineer'),
                 provenance={'channel_id': ref['channel_id'], 'thread_ts': ref['thread_ts'], 'message_ts': ref['source_message_ts'],
                     'source_event_id': ref['source_event_id'], 'provider_id': ref['actor_id'], 'uploader_id': ref['actor_id'], 'turn_id': turn['turn_id']})
             try:

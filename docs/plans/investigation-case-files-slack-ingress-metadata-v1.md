@@ -10,7 +10,7 @@
 
 ## 根因与范围
 
-execution `197129` / `197130` 的 parent Execute Workflow 使用字符串化输入，child 又要求 `!Input.bot_id`，导致 Slack app `file_share` 附件分支被跳过。修复关闭字符串化，显式构造结构化 Input，并将 child 条件绑定到已验证的 app bot 和父消息操作者。不会重传 `F0CAR4LED0B`，不会关闭工单 `14170`。
+execution `197129` / `197130` 的已回读根因是 child 附件条件要求 `!Input.bot_id`，而实际 Slack app `file_share` 事件带有 `bot_id` 和 `subtype=file_share`，因此附件分支不命中。parent 的字符串化输入是需要消除的传输风险，但不是本次已证实的跳过原因。修复显式构造结构化 Input，并将 child 条件绑定到已验证的 app bot 和父消息操作者。不会重传 `F0CAR4LED0B`，不会关闭工单 `14170`。
 
 ## 数据与迁移
 
@@ -18,10 +18,11 @@ execution `197129` / `197130` 的 parent Execute Workflow 使用字符串化输�
 
 ## 验证
 
-- 定向测试：`TICKET_DB_DSN='postgresql://test/test' .venv/bin/python -m pytest -q backend/tests/test_investigation_attachments.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_investigation_case_files.py`；结果 `41 passed, 29 skipped`，4 个既有 FastAPI 弃用警告。
+- 定向测试：`TICKET_DB_DSN='postgresql://test/test' .venv/bin/python -m pytest -q backend/tests/test_investigation_attachments.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_investigation_case_files.py`；结果 `50 passed, 31 skipped`（含 2 个 PostgreSQL integration 子测试套件的本地 InMemory/bridge 覆盖），4 个既有 FastAPI 弃用警告。
 - n8n 快照校验：`python3 scripts/n8n/validate_workflow_snapshots.py` 通过；输出中的 `LEGACY-EXPOSED` 仅为既有历史 published 快照。
+- PostgreSQL：本机 PostgreSQL 14?（当前 127.0.0.1:5432）执行 `RUN_POSTGRES_INTEGRATION=1 AUTOMATION_ECS_TEST_POSTGRES_DSN=... TICKET_DB_DSN=... pytest backend/tests/test_automation_ecs_store_postgres.py`，结果 `12 passed`；其中新增 schema-016 metadata roundtrip/唯一键与 legacy add-only upgrade 均通过。
 - `py_compile`、`git diff --check` 通过。
 
 ## 未覆盖边界
 
-本轮不证明 Preproduction 运行时回读、真实 Slack/Zendesk 闭环、Hermes 文件 Skill、Zac 文件协议或历史 execution 重放。完成独立验收后仍需由获准流程决定是否发布；Production 需要单独授权。
+本轮不证明 Preproduction 运行时回读、真实 Slack/Zendesk 闭环、Hermes 文件 Skill 的云端部署回读、Zac 文件协议或历史 execution 重放。完成独立验收后仍需由获准流程决定是否发布；Production 需要单独授权。

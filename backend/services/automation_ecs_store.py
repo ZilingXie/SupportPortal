@@ -2856,7 +2856,7 @@ class PostgresAutomationEcsStore(PostgresConsultStore, PostgresCaseFileStore):
                 # deployments keep their Map rows and receive a stable
                 # display-only description column on the next bootstrap.
                 cursor.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS short_description TEXT NOT NULL DEFAULT ''").format(self._table("investigation_case_files")))
-                cursor.execute(sql.SQL("UPDATE {} SET short_description=LEFT('Engineer attachment ' || managed_filename, 240) WHERE short_description='' AND managed_filename <> ''").format(self._table("investigation_case_files")))
+                cursor.execute(sql.SQL("UPDATE {} SET short_description=LEFT(CASE source_system WHEN 'engineer' THEN 'Engineer attachment ' WHEN 'zendesk' THEN 'Customer attachment ' WHEN 'customer' THEN 'Customer attachment ' WHEN 'hermes' THEN 'Hermes report ' WHEN 'zac' THEN 'Zac file ' ELSE 'Case attachment ' END || managed_filename, 240) WHERE short_description='' AND managed_filename <> ''").format(self._table("investigation_case_files")))
                 if revision in self._UPGRADABLE_SCHEMA_REVISIONS:
                     cursor.execute(
                         sql.SQL(

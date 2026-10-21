@@ -222,7 +222,9 @@ def handle_slack_hermes_message(
     from backend.services.investigation_attachments import validate_slack_files
     from backend.services.engineer_slack import EngineerSlackDeliveryError
     if payload.get("files"):
-        trusted_bot = str(os.getenv("ENGINEER_SLACK_BOT_ID") or "B08RHT5TZV2").strip()
+        trusted_bot = str(os.getenv("ENGINEER_SLACK_BOT_ID") or "").strip()
+        if not trusted_bot:
+            return _invalid("attachments require configured trusted Slack bot")
         if not parent_user_id or not bot_id or bot_id != trusted_bot:
             return _invalid("attachments require the trusted Slack bot and parent actor")
         binding = store.get_hermes_case_binding(ticket_id) or {}

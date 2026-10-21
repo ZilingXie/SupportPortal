@@ -130,6 +130,12 @@ class InvestigationAttachmentsN8nContractTests(unittest.TestCase):
         for field in ("subtype", "parent_user_id", "bot_id", "files", "client_msg_id", "event_id"):
             self.assertIn(field, expression)
 
+    def test_child_handoff_preserves_trusted_identity(self) -> None:
+        body = self.nodes["Send Hermes Message"]["parameters"]["body"]
+        self.assertIn("parent_user_id", body)
+        self.assertIn("bot_id", body)
+        self.assertIn("input.bot_id", body)
+
 
 if __name__ == "__main__":
     unittest.main()

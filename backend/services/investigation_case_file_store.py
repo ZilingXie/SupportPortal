@@ -33,7 +33,7 @@ FILE_TABLE_DDL = """
 MAX_SHORT_DESCRIPTION = 240
 
 
-def normalize_short_description(value, *, managed_filename: str = '') -> str:
+def normalize_short_description(value, *, managed_filename: str = '', source_system: str = 'engineer') -> str:
     """Return bounded, display-only metadata; never accept control characters."""
     raw = str(value or '')
     if any(ord(char) < 32 for char in raw if char not in {'\t', '\n', '\r'}):
@@ -41,7 +41,9 @@ def normalize_short_description(value, *, managed_filename: str = '') -> str:
     text = ' '.join(raw.split())
     if len(text) > MAX_SHORT_DESCRIPTION:
         raise ValueError('case_file_description_too_long')
-    return text or (f'Engineer attachment {managed_filename}'.strip() if managed_filename else '')
+    labels = {'engineer': 'Engineer attachment', 'zendesk': 'Customer attachment', 'customer': 'Customer attachment',
+              'hermes': 'Hermes report', 'zac': 'Zac file'}
+    return text or (f"{labels.get(str(source_system or '').casefold(), 'Case attachment')} {managed_filename}".strip() if managed_filename else '')
 
 
 def managed_name(case_id, source_system, file_id, original):
@@ -66,7 +68,7 @@ class MemoryCaseFileStore:
                 return copy.deepcopy(existing)
             fid = len(rows) + 1
             managed = managed_name(row['case_id'], row['source_system'], fid, row['original_filename'])
-            row['short_description'] = normalize_short_description(row.get('short_description'), managed_filename=managed)
+            row['short_description'] = normalize_short_description(row.get('short_description'), managed_filename=managed, source_system=row['source_system'])
             row.update(id=fid, managed_filename=managed,
                        state='pending', failure_code=None, version=1, slack_file_id=None, slack_filename='')
             rows[fid] = row
@@ -101,7 +103,7 @@ class PostgresCaseFileStore:
     def register_case_file(self, **row):
         columns = ('case_id', 'source_system', 'source_file_id', 'original_filename', 'content_type', 'size_bytes', 'purpose', 'short_description', 'provenance')
         short_description = normalize_short_description(row.get('short_description'), managed_filename='')
-        values = [row[k] for k in columns]
+        values = [row.get(k) for k in columns]
         values[columns.index('short_description')] = short_description
         values[columns.index('provenance')] = Jsonb(row['provenance'])
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
@@ -117,7 +119,7 @@ class PostgresCaseFileStore:
                 result = dict(cursor.fetchone())
             if not result['short_description']:
                 cursor.execute(sql.SQL('UPDATE {} SET short_description=%s WHERE id=%s RETURNING *').format(self._table('investigation_case_files')),
-                    (normalize_short_description('', managed_filename=result['managed_filename']), result['id']))
+                    (normalize_short_description('', managed_filename=result['managed_filename'], source_system=result['source_system']), result['id']))
                 result = dict(cursor.fetchone())
         return result
 
