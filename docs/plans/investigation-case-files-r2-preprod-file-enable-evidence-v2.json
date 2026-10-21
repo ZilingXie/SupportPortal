@@ -173,5 +173,25 @@
     "Slack->n8n transport hop for human file_share not exercised (bot token excluded by design); keep open until a human-upload path is verified",
     "live automation-path reverse call of file tools not driven",
     "C7 Zac files waiting-for-evidence"
-  ]
+  ],
+  "independent_acceptance": {
+    "verdict": "PASS (R2-V2-B1 fix and C1-C6 scope only)",
+    "round": 2,
+    "reviewed_head": "bc8d31f2",
+    "confirmed": [
+      "B1 fixed across all six combined-mode behaviors",
+      "td54 single PRIMARY healthy, digest matches evidence",
+      "14151 real loop evidence chain",
+      "C1-C6 pass",
+      "docs/JSON/Overview/FeatureList/diff checks green"
+    ],
+    "not_claimed": [
+      "Slack->n8n human upload path",
+      "live automation-path reverse call",
+      "C7 zac files (waiting-for-evidence)",
+      "Production",
+      "original R1 release review gate"
+    ],
+    "open_observation": "auto-solve vs manual approval timing race"
+  }
 }

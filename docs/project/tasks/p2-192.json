@@ -5,9 +5,9 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。",
+  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
   "status": "blocked",
-  "next_action": "v2 执行轮 R2-V2-B1 修复完成（td54 镜像 7df5f3a3，14151 复验闭环），Draft PR#1527 等待重新独立验收。通过后收口文档与工作区；Zac 真实文件接口/样本仍是 C7 独立门禁；Slack→n8n 人类上传路径另需验证；Production 另行授权。遗留观察：reply turn 完成后自动 solve 与人工审批的时序竞争；工单 14147/14151 保持 open 待处置。",
+  "next_action": "v2 启用轮收口：合并 PR#1527（Draft 转 ready）、快进根区、刷新 CodeSight（含部署产物代码文件）、清理 worktree。后续独立门禁：Slack→n8n 人类上传路径验证、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争；工单 14147/14151 处置待定。",
   "owner": "agent",
   "created_at": "2026-10-09",
   "updated_at": "2026-10-20",
@@ -17,8 +17,7 @@
   ],
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
-    "R2-V2-ACCEPT：v2 首轮独立验收未通过（R2-V2-B1 组合 scope 技能不可见）；修复已部署 td54 并 live 复验（14151），等待重新验收。开放边界：Slack→n8n 人类上传传输跳、Automation 路径 live 反向调用。"
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
   ],
   "evidence": [
     {
@@ -115,6 +114,11 @@
       "type": "deployment",
       "url": "docs/plans/investigation-case-files-r2-preprod-file-enable-evidence-v2.json",
       "label": "R2-V2-B1 修复：组合 scope 技能可见性（td54/7df5f3a3 容器内真实函数复核 + 14151 live 复验 C3/C5/C6）"
+    },
+    {
+      "type": "document",
+      "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
+      "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
     }
   ]
 }

@@ -73,3 +73,7 @@
 - **验证**：离线矩阵 `verify_b1.py` B1_VERIFY_OK（profile-only 不变 / 组合 work 列出并可加载 / 组合 persona 隐藏 / file-only 不变；stub `_find_all_skills` 改为经同一谓词，堵住离线绕过真实过滤的缺口）；bundle 五门禁 + case files/attachments 套件 62/0（隔离 PG）；**td54（镜像 `7df5f3a3`）容器内以真实 `skills_tool`+真实 EFS 技能目录复核**：组合 list 含 `support-case-files`、view 返回真实 SKILL.md 内容，profile-only 与无 scope 负向不变。
 - **live 复验 14151**：Map `14151-engineer-4.txt`、list×2/read×5/search×2、标记命中、调查证据显式引用 "support-case-files skill"、审批快照、Zendesk 评论 54779760112148 + 附件 54779773301652、工单 open。C3/C5/C6 重新验证通过。
 - **保持开放的边界**：Slack→n8n 人类上传传输跳未演练（bot token 事件按设计被过滤）；Automation 路径反向调用无 live 证据；C7 Zac 文件 waiting-for-evidence。
+
+### 独立验收结论（2026-10-20，第二轮）
+
+**通过（R2-V2-B1 修复及 C1-C6 范围）**。审查对象：PR #1527 HEAD `bc8d31f2`、B1 修复与 verify_b1 四模式矩阵、Preproduction Hermes td54（`sha256:7df5f3a3…`，单一 PRIMARY 健康）、14151 真实闭环证据、主干/worktree/JSON/Overview/Feature List 检查。B1 六项组合行为确认修复；C1-C6 全部判定通过；文档与 Git 检查通过。**不宣称**：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 文件获取、Production、原 R1 发布复审——均保持开放/另行授权；工单自动 solve 与人工审批的时序竞争仍为观察项。验收门禁释放，进入收口与合并流程。
