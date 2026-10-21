@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T01:08:14Z",
-  "source_base_commit": "bc8d31f2d2b1614e3b4c0b73d1a6f7dd5651e0aa",
-  "registry_digest": "98c31fc8f6981743b25c2c990c9810ed6a3bd17a280464c9b22d2e2f6106b7be",
+  "generated_at": "2026-10-21T01:48:54Z",
+  "source_base_commit": "5d6efa01f3874e59a3ae1feff8bf57e848f61436",
+  "registry_digest": "1aac75f63b766351784ac44f334636f50b810e5ce155fda1b650ea32c8d03e28",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5474,6 +5474,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "decision",
           "label": "真实业务样本",
           "result": "waiting-for-evidence; 未重放 #14122，未发送真实客户、Slack/Zendesk/Argus/Team Agent 消息"
+        },
+        {
+          "type": "test",
+          "label": "验收轮1新增：action 消息 finish CAS 失败→outcome_unknown（不报 confirmed/action_sent）；结构化 truncated/source_truncated/has_more 字段→truncation_note 显式标注（false 不误报）；入口测试改为正文一次投递+section 顺序+按钮单独末条+账本全 completed 断言"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 304 passed + 92 subtests（含 test_investigation_route_status_fix 全量、native notifications）；隔离 PostgreSQL 54 passed（draft-save + route-status-fix 双套件）；compileall + git diff --check 干净"
+        },
+        {
+          "type": "pr",
+          "label": "Draft PR #1528（待独立验收）：分支 codex/investigation-reply-display-v1"
         }
       ],
       "source_refs": [
@@ -5482,7 +5494,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 8,
+      "task_count": 9,
       "done_count": 7,
       "blocked_count": 0
     },
@@ -19190,6 +19202,45 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "at": "2026-10-20",
           "event": "completed",
           "summary": "preproduction-prompt-sync-resilience v1 独立验收通过（评审 HEAD 7855b936），集成 42e71f71 后 finalize 合入 main 2856b178（PR#1523）；代码验收完成，部署观察 waiting-for-evidence。"
+        }
+      ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-207",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
+      "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
+      "status": "active",
+      "next_action": "验收轮1三项修复完成：action 回执未落账改报 outcome_unknown；Evidence 结构化截断字段（truncated/source_truncated/has_more 等）显式 truncation_note；旧入口测试更新到分条/顺序/账本断言。回归 304 passed + 隔离 PostgreSQL 54 passed；Draft PR #1528 待独立验收复审",
+      "owner": "agent",
+      "created_at": "2026-10-20",
+      "updated_at": "2026-10-20",
+      "acceptance_criteria": [
+        "C1 超过原 1200 字符、含代码块的合法草稿可保存并完整展示到 Slack，无长度拒绝",
+        "C2 表达类问题不阻断审核（安全拒绝仍阻断）；未批准不投递",
+        "C3 中文首行规范化为「{name}您好，」取服务端身份，无重复问候语；英文不受影响",
+        "C4 各 section 独立分条、顺序固定、换行正确；分片可还原全部正文；代码块跨消息正确闭合",
+        "C5 Evidence 嵌套结构中的 API/success/errorCode/来源实际显示；其他结构完整 JSON，不退化成仅 source",
+        "C6 第二条失败后首条不重复；outcome_unknown 不自动重发；任一正文未确认则按钮不出现",
+        "C7 展示前后数据库完整调查记录一致；route、审批、附件绑定不变",
+        "反向验证：原长度拒绝、Evidence 丢字段、重复发送问题可被测试检出"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "验收轮1新增：action 消息 finish CAS 失败→outcome_unknown（不报 confirmed/action_sent）；结构化 truncated/source_truncated/has_more 字段→truncation_note 显式标注（false 不误报）；入口测试改为正文一次投递+section 顺序+按钮单独末条+账本全 completed 断言"
+        },
+        {
+          "type": "test",
+          "label": "回归合计 304 passed + 92 subtests（含 test_investigation_route_status_fix 全量、native notifications）；隔离 PostgreSQL 54 passed（draft-save + route-status-fix 双套件）；compileall + git diff --check 干净"
+        },
+        {
+          "type": "pr",
+          "label": "Draft PR #1528（待独立验收）：分支 codex/investigation-reply-display-v1"
         }
       ]
     },

@@ -89,7 +89,9 @@ def _investigation_draft_candidate(
     if rejection:
         diagnostic = {
             "turn_id": turn_id, "run_id": turn.get("run_id"), "attempt": attempt,
-            "code": str(rejection["code"]), "actual_chars": len(content), "max_chars": 1200,
+            # p2-207: no length gate remains; actual_chars is kept as a
+            # diagnostic only and max_chars is no longer reported.
+            "code": str(rejection["code"]), "actual_chars": len(content),
             "rewrite_allowed": attempt < 2 and not rejection.get("outcome_unknown"),
             "rewrite_exhausted": attempt >= 2,
         }

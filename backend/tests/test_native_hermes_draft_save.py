@@ -77,101 +77,102 @@ def activate(store, job):
     return turn_id
 
 
-def test_prepare_persona_one_rewrite_saves_and_waits_for_approval(native_store):
+def test_prepare_persona_saves_long_draft_and_waits_for_approval(native_store):
+    # p2-207 C1/C2: an over-budget draft WITH real content saves on the
+    # first submission - the completeness gate is the human reviewer, and
+    # the guardrail still runs (safety unchanged).
     store = native_store
     job, source_id = prepare(store)
-    turn_id = job.payload["turn_id"]
+    turn_id = job.payload['turn_id']
     client, repo = api(store)
     responses = []
+    long_content = 'The issue is confirmed. ' + ('Detailed evidence follows. ' * 60)
+    assert len(long_content) > 1200
     def persona(_, request_id):
-        assert request_id.endswith(":persona")
-        responses.append(post(client, turn_id, "Please share the channel name. " + "x" * 1200))
-        responses.append(post(client, turn_id, "Please share the channel name and call time window."))
+        assert request_id.endswith(':persona')
+        responses.append(post(client, turn_id, long_content))
     hermes = FakeHermesClient(on_run_completed=persona)
     processor = HermesAgentTurnProcessor(store, client=hermes, repository=None,
-                                         environment="preproduction", poll_interval_seconds=.01)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
-         patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-               return_value={"decision": "approved_for_final_engineer_review", "blockers": []}) as guard, client:
+                                         environment='preproduction', poll_interval_seconds=.01)
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'approved_for_final_engineer_review', 'blockers': []}) as guard, client:
         outcome = processor.process(job)
-    assert [r.status_code for r in responses] == [422, 200]
-    first = responses[0].json()["detail"]
-    assert first["code"] == "reply_too_long" and first["attempt"] == 1 and first["rewrite_allowed"]
-    assert first["actual_chars"] > first["max_chars"] == 1200
+    assert [r.status_code for r in responses] == [200]
     assert len(hermes.submissions) == 1
     request = hermes.submissions[0]
-    assert "rewrite once in this same run" in request["instructions"]
-    assert '"max_complete_chars": 1200' in request["input_text"]
+    assert 'no length limit' in request['instructions']
+    assert 'character_limit' in request['input_text']
+    assert 'at most 1200' not in request['input_text']
     guard.assert_called_once()
-    assert outcome["publication"]["status"] == "awaiting_approval"
-    drafts = store.get_hermes_case_review("123")["drafts"]
+    assert outcome['publication']['status'] == 'awaiting_approval'
+    drafts = store.get_hermes_case_review('123')['drafts']
     assert len(drafts) == 1
     draft = drafts[0]
-    assert draft["turn_id"] == turn_id and draft["status"] == "awaiting_approval"
-    turn = store.get_hermes_turn(turn_id)
-    assert turn["work_result"]["source_turn_id"] == source_id
-    assert turn["work_result"]["draft_save"]["attempts"] == 2
-    assert draft["basis"]["source_turn_id"] == turn_id
-    assert draft["case_revision"] == store.get_hermes_turn(source_id)["case_revision"]
-    assert draft["basis"]["attachments"] == turn["work_result"]["attachments"]
-    assert len(draft["content"]) <= 1200
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
-         patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final") as replay_guard, client:
-        replay = post(client, turn_id, "Please share the channel name and call time window.")
-    assert replay.status_code == 200 and replay.json()["draft_id"] == draft["draft_id"]
+    assert draft['turn_id'] == turn_id and draft['status'] == 'awaiting_approval'
+    assert draft['content'] == ('Hi Customer,\n\n' + long_content).rstrip()
+    assert store.get_hermes_turn(turn_id)['work_result']['draft_save']['attempts'] == 1
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final') as replay_guard, client:
+        replay = post(client, turn_id, 'A different concise draft.')
+    assert replay.status_code == 422 and replay.json()['detail']['code'] == 'draft_content_conflict'
     replay_guard.assert_not_called()
     assert_no_delivery(store)
 
 
 def test_two_rejections_third_submission_blocked_after_restart(native_store):
+    # p2-207: the two-attempt rewrite budget is unchanged; the rejection
+    # lever is the guardrail now that length no longer rejects.
     store = native_store
     job, _ = prepare(store)
     turn_id = activate(store, job)
     client, repo = api(store)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), client:
-        first = post(client, turn_id, "x" * 1200)
-        second = post(client, turn_id, "x" * 1200)
-    assert first.json()["detail"]["rewrite_allowed"]
-    assert second.json()["detail"]["rewrite_exhausted"]
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'blocked', 'blockers': ['simulated restriction']}), client:
+        first = post(client, turn_id, 'First draft.')
+        second = post(client, turn_id, 'Second draft.')
+    assert first.json()['detail']['code'] == 'guardrail_blocked'
+    assert first.json()['detail']['rewrite_allowed']
+    assert second.json()['detail']['code'] == 'guardrail_blocked'
+    assert second.json()['detail']['rewrite_exhausted']
     if isinstance(store, PostgresAutomationEcsStore):
         store = PostgresAutomationEcsStore(store.settings)
     client, repo = api(store)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
-         patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-               return_value={"decision": "pass", "blockers": []}) as guard, client:
-        third = post(client, turn_id, "A concise valid draft.")
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'pass', 'blockers': []}) as guard, client:
+        third = post(client, turn_id, 'A concise valid draft.')
     assert third.status_code == 422
-    assert third.json()["detail"]["code"] == "draft_rewrite_exhausted"
-    assert not third.json()["detail"]["rewrite_allowed"]
-    saved = store.get_hermes_turn(turn_id)["work_result"]["draft_save"]
-    assert saved["attempts"] == 2 and saved["last_error"]["code"] == "reply_too_long"
-    assert not store.get_hermes_case_review("123")["drafts"]
+    assert third.json()['detail']['code'] == 'draft_rewrite_exhausted'
+    assert not third.json()['detail']['rewrite_allowed']
+    saved = store.get_hermes_turn(turn_id)['work_result']['draft_save']
+    assert saved['attempts'] == 2 and saved['last_error']['code'] == 'guardrail_blocked'
+    assert not store.get_hermes_case_review('123')['drafts']
     guard.assert_not_called()
     assert_no_delivery(store)
 
 
-@pytest.mark.parametrize("chars", [1200, 1201])
+@pytest.mark.parametrize("chars", [1200, 1201, 2400])
 def test_complete_greeting_newline_and_chinese_character_boundary(native_store, chars):
+    # p2-207: there is no length boundary - 1201 (the old rejection edge)
+    # and beyond save completely with the server greeting intact.
     store = native_store
     job, _ = prepare(store)
     turn_id = activate(store, job)
-    prefix = "Hi Customer,\n\n"
+    prefix = 'Hi Customer,\n\n'
     client, repo = api(store)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
-         patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-               return_value={"decision": "pass", "blockers": []}) as guard, client:
-        response = post(client, turn_id, "中" * (chars - len(prefix)))
-    assert response.status_code == (200 if chars == 1200 else 422)
-    if chars == 1200:
-        draft = store.get_hermes_draft(response.json()["draft_id"])
-        assert len(draft["content"]) == 1200 and draft["content"].startswith(prefix)
-        guard.assert_called_once()
-    else:
-        assert response.json()["detail"]["actual_chars"] == 1201
-        guard.assert_not_called()
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'pass', 'blockers': []}) as guard, client:
+        response = post(client, turn_id, chr(20013) * (chars - len(prefix)))
+    assert response.status_code == 200
+    draft = store.get_hermes_draft(response.json()['draft_id'])
+    assert len(draft['content']) == chars and draft['content'].startswith(prefix)
+    guard.assert_called_once()
 
 
-@pytest.mark.parametrize("mode", ["overlong", "name", "no_save", "unknown"])
+@pytest.mark.parametrize("mode", ["guardrail", "name", "no_save", "unknown"])
 def test_final_error_api_persistence_turn_and_slack_match(native_store, mode, caplog):
     store = native_store
     job, _ = prepare(store)
@@ -182,17 +183,19 @@ def test_final_error_api_persistence_turn_and_slack_match(native_store, mode, ca
     def persona(*_):
         if mode != "no_save":
             for _ in range(2):
-                responses.append(post(client, turn_id, "x" * 1200 if mode == "overlong" else
+                responses.append(post(client, turn_id,
                                       "Please share your full name." if mode == "name" else "Verified details."))
     hermes = FakeHermesClient(on_run_completed=persona)
     processor = HermesAgentTurnProcessor(store, client=hermes, repository=None,
                                          environment="preproduction", poll_interval_seconds=.01)
     with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
          patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-               side_effect=TimeoutError("simulated external timeout") if mode == "unknown" else None), \
+               side_effect=TimeoutError("simulated external timeout") if mode == "unknown" else (
+                   (lambda **kwargs: {"decision": "blocked", "blockers": ["simulated restriction"]}) if mode == "guardrail" else
+                   (lambda **kwargs: {"decision": "approved_for_final_engineer_review", "blockers": []}))), \
          patch("backend.services.engineer_slack.notify_hermes_draft_blocked", return_value={}) as notify, client:
         result = processor.process(job)
-    expected = {"overlong": "reply_too_long", "name": "unauthorized_field_request",
+    expected = {"guardrail": "guardrail_blocked", "name": "unauthorized_field_request",
                 "no_save": "missing_draft", "unknown": "draft_save_outcome_unknown"}[mode]
     turn = store.get_hermes_turn(turn_id)
     assert result["error_code"] == turn["error_code"] == expected
@@ -238,12 +241,14 @@ def test_concurrent_rejections_never_exceed_two_validations(native_store):
     job, _ = prepare(store)
     turn_id = activate(store, job)
     client, repo = api(store)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), client:
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'blocked', 'blockers': ['simulated restriction']}), client:
         with ThreadPoolExecutor(max_workers=4) as pool:
-            responses = list(pool.map(lambda _: post(client, turn_id, "x" * 1200), range(4)))
-    codes = [r.json()["detail"]["code"] for r in responses]
-    assert codes.count("reply_too_long") == codes.count("draft_rewrite_exhausted") == 2
-    assert store.get_hermes_turn(turn_id)["work_result"]["draft_save"]["attempts"] == 2
+            responses = list(pool.map(lambda _: post(client, turn_id, 'A draft.'), range(4)))
+    codes = [r.json()['detail']['code'] for r in responses]
+    assert codes.count('guardrail_blocked') == codes.count('draft_rewrite_exhausted') == 2
+    assert store.get_hermes_turn(turn_id)['work_result']['draft_save']['attempts'] == 2
 
 
 def test_lost_save_receipt_recovers_existing_draft_without_new_attempt(native_store):
@@ -307,43 +312,43 @@ def test_guardrail_rejection_uses_same_one_rewrite_budget(native_store):
 def test_failed_or_unknown_run_is_not_reclassified_as_validation_rejection(native_store, run_status):
     store = native_store
     job, _ = prepare(store)
-    turn_id = job.payload["turn_id"]
+    turn_id = job.payload['turn_id']
     client, repo = api(store)
     def persona(*_):
-        assert post(client, turn_id, "x" * 1200).status_code == 422
+        assert post(client, turn_id, 'Verified details.').status_code == 422
     processor = HermesAgentTurnProcessor(store, client=FakeHermesClient(
         on_run_completed=persona, terminal_status=run_status,
-        terminal_output="external failure"), repository=None,
-        environment="preproduction", poll_interval_seconds=.01)
-    with patch("backend.automation_ecs_api._engineer_ticket_repository", return_value=repo), \
-         patch.object(processor, "_handoff_terminal_failure"), client:
+        terminal_output='external failure'), repository=None,
+        environment='preproduction', poll_interval_seconds=.01)
+    with patch('backend.automation_ecs_api._engineer_ticket_repository', return_value=repo), \
+         patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'blocked', 'blockers': ['simulated restriction']}), \
+         patch.object(processor, '_handoff_terminal_failure'), client:
         result = processor.process(job)
-    assert result["error_code"] != "reply_too_long"
-    assert store.get_hermes_turn(turn_id)["status"] == ("interrupted" if run_status == "interrupted" else "failed")
-    assert store.get_hermes_turn(turn_id)["work_result"]["draft_save"]["last_error"]["code"] == "reply_too_long"
+    assert result['error_code'] != 'guardrail_blocked'
+    assert store.get_hermes_turn(turn_id)['status'] == ('interrupted' if run_status == 'interrupted' else 'failed')
+    assert store.get_hermes_turn(turn_id)['work_result']['draft_save']['last_error']['code'] == 'guardrail_blocked'
 
 
 @pytest.mark.parametrize("chars", [1200, 1201])
 def test_appended_references_count_toward_complete_length(chars):
+    # p2-207: the reference projection still lands verbatim; there is no
+    # complete-length budget to count against (the 1201 row is the old
+    # rejection edge and now saves identically).
     from backend.tests.test_hermes_zendesk_agent_tools import _setup_case
-    from backend.services.automation_hermes_tools import tool_save_reply_draft, HermesToolError
+    from backend.services.automation_hermes_tools import tool_save_reply_draft
     from backend.services.account_reply_rag_fallback import format_rag_fallback_references
     from backend.services.automation_hermes_followup_reply import CONVERSATION_FOLLOWUP_ROUTE
     store, repository, turn_id = _setup_case()
-    references = ["https://docs.agora.io/en/help/general-use/app-id"]
-    # Exercise the existing trusted-reference projection without adding a new
-    # reference source to native Investigation Prepare turns.
-    store._hermes_turns[turn_id].update(phase="persona", route=CONVERSATION_FOLLOWUP_ROUTE)
-    store._hermes_turns[turn_id]["work_result"].update(
-        followup_kind="knowledge_question", references=references)
-    overhead = len("Hi Customer,\n\n") + len(format_rag_fallback_references(references))
-    with patch("backend.services.automation_hermes_tools.run_engineer_guardrail_final",
-               return_value={"decision": "pass", "blockers": []}) as guard:
-        if chars == 1201:
-            with pytest.raises(HermesToolError) as exc:
-                tool_save_reply_draft(store, repository, turn_id=turn_id, content="x" * (chars - overhead))
-            assert exc.value.code == "reply_too_long"
-            guard.assert_not_called()
-        else:
-            receipt = tool_save_reply_draft(store, repository, turn_id=turn_id, content="x" * (chars - overhead))
-            assert len(store.get_hermes_draft(receipt["draft_id"])["content"]) == chars
+    references = ['https://docs.agora.io/en/help/general-use/app-id']
+    store._hermes_turns[turn_id].update(phase='persona', route=CONVERSATION_FOLLOWUP_ROUTE)
+    store._hermes_turns[turn_id]['work_result'].update(
+        followup_kind='knowledge_question', references=references)
+    overhead = len('Hi Customer,\n\n') + len(format_rag_fallback_references(references))
+    with patch('backend.services.automation_hermes_tools.run_engineer_guardrail_final',
+               return_value={'decision': 'pass', 'blockers': []}) as guard:
+        receipt = tool_save_reply_draft(store, repository, turn_id=turn_id, content='x' * (chars - overhead))
+        saved = store.get_hermes_draft(receipt['draft_id'])['content']
+        assert len(saved) == chars
+        assert saved.endswith(format_rag_fallback_references(references).rstrip())
+    guard.assert_called_once()

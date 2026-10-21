@@ -7,6 +7,14 @@
 
 # Prompt Change Log
 
+## 2026-10-20 - Investigation 回复与调查展示优化 v1（p2-207，Draft 待独立验收）
+
+- `engineer-investigation-persona-v2` → `v3`：客户草稿不再有 1200 字符长度预算。表达要求改为「发现/推测/下一步」三要素短段落（不打印机械标题；代码、日志与具体步骤可展开），明确「无字数限制，人工审核决定是否发送」。保存链路同步删除长度校验：Persona 层 `automation_persona_reply_too_long` 不再由 Investigation 触发（guided 意图保留常量），工具层 `reply_too_long` 拒绝与 store 层 `max_chars` 诊断移除，agent 指令由 `DRAFT SAVE BUDGET`（max_complete_chars=1200）改为 `DRAFT SAVE CONTRACT`（character_limit=none）。安全阻断（guardrail/basis/签名/问候语）与两次候选上限、人工审批边界不变。
+- 中文问候语后端确定性规范化（C3）：翻译提示示例由错误的 `Ziling，您好。` 修正为 `Ziling您好，`；投递准备阶段（`prepare_hermes_draft_delivery`）对非英语投递的首行 CJK 问候做确定性替换——名称取草稿绑定的服务端身份（basis greeting_name 或应用写入的 `Hi {name},` 行），不从翻译结果重新猜测；首行已是规范形则幂等不重复；英文投递路径不受影响。Slack 英文展示转换不走此路径。
+- Slack 调查结果按 section 分条发送（C4/C6）：新模块 `investigation_slack_sections`——Summary/Evidence/Blockers/Next steps 固定顺序各为独立消息（空 section 跳过），删除 320/170/140/2000 业务截断；超技术容量（2800 字/条）按段落→行→硬切分片，代码块跨分片闭合重开、分片号 (i/n) 标注、无省略号无丢字；审核按钮（Prepare draft / Approve & send）为单独最后消息，仅当全部正文分片确认后才发送（Next steps 为空也不丢按钮）。复用 native notification 账本（enqueue/claim/finish）：分片键 `investigation:{ticket}:{turn}:{section}:{index}`，已确认跳过、明确拒绝可续、outcome_unknown 停整清单不自动重发不弹按钮。ad-hoc 路径同分条但无按钮；review-pending 与无 repository 场景保持旧渲染器兼容。
+- Evidence 结构化展示（C5）：新渲染器 `render_evidence_item`——语义键（fact/finding/query/result/event_refs/events/limitation/coverage/error/reference/source/detail）带标签逐行渲染，list-of-dict（事件引用）每条一行（API/success/errorCode/时间可读），未知键保留为带标签行不丢弃，其余结构完整 JSON，绝不退化成仅显示 source；源端 detail 已截断时显式标注 `already truncated — shown as received`。日志片段仅来自已有工具结果；数据库完整调查记录不变（C7）。
+- 验证：新 `test_investigation_reply_display.py` 19 项（问候语幂等/英文不变/Evidence 嵌套与 source-only 反向/截断标注/section 顺序/空 section/无损分片/代码块闭合/无省略号/账本确认-拒绝-outcome_unknown-重试/adhoc 无按钮）；`test_native_hermes_draft_save.py` 重写为无长度门契约（含 1201 边缘、references 投影、guardrail 杠杆的两次预算语义）18 项 memory + 34 项含隔离 PostgreSQL 全过；tools/persona/agent/alerts 回归合计 281 passed。反向验证：旧长度拒绝测试翻转为长草稿保存、source-only 退化由长度断言检出、重复发送由账本键断言检出。未发送真实 Slack/Zendesk 消息；Ticket 14146 未重放。
+
 ## 2026-10-20 - Prompt Release Sync 部署诊断与瞬时连接恢复（p2-206 preproduction-prompt-sync-resilience v1，待独立验收）
 
 - 仅部署工具链行为变更，Prompt 内容、Prompt Release 数据模型、模型档位与业务逻辑不变。

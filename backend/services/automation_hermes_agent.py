@@ -951,10 +951,10 @@ class HermesAgentTurnProcessor:
         self, payload: AgentTurnJobPayload, investigation: dict[str, Any]
     ) -> None:
         # Summons only: a failed ping must never affect the turn state machine.
-        from backend.services.engineer_slack import (
-            notify_hermes_adhoc_investigation_result,
-            notify_hermes_investigation_result,
-        )
+        from uuid import uuid4
+
+        from backend.services.engineer_slack import notify_hermes_adhoc_investigation_result
+        from backend.services.investigation_slack_sections import deliver_investigation_sections
 
         try:
             ticket = payload.event.ticket
@@ -963,13 +963,31 @@ class HermesAgentTurnProcessor:
             if str(binding.get("session_kind") or "case") == "adhoc":
                 # Ad-hoc sessions reply in the engineer's own thread only:
                 # no root message, no action buttons, no Zendesk surface.
-                outcome = notify_hermes_adhoc_investigation_result(
-                    ticket_id=ticket.id,
-                    turn_id=payload.turn_id,
-                    investigation=investigation,
-                    environment=self.environment,
-                    thread_ts=str(binding.get("slack_thread_ts") or "").strip(),
-                )
+                thread = str(binding.get("slack_thread_ts") or "").strip()
+                channel = str(binding.get("slack_channel_id") or "").strip()
+                if thread and channel and self.repository is not None:
+                    outcome = deliver_investigation_sections(
+                        self.repository,
+                        namespace=self.store.settings.job_namespace,
+                        thread_ts=thread,
+                        channel_id=str(binding.get("slack_channel_id") or "").strip(),
+                        ticket_id=ticket.id,
+                        turn_id=payload.turn_id,
+                        investigation=investigation,
+                        environment=self.environment,
+                        action=None,
+                        event_type="hermes_adhoc_result",
+                        header=f"Hermes — Slack ad-hoc session ({ticket.id})",
+                        claim_token=str(uuid4()),
+                    )
+                else:
+                    outcome = notify_hermes_adhoc_investigation_result(
+                        ticket_id=ticket.id,
+                        turn_id=payload.turn_id,
+                        investigation=investigation,
+                        environment=self.environment,
+                        thread_ts=thread,
+                    )
             else:
                 inherited_customer = turn.get("turn_kind") == "investigation_feedback" and payload.event.event_type == IntakeEventType.COMMENT_CREATED
                 if inherited_customer:
@@ -981,18 +999,37 @@ class HermesAgentTurnProcessor:
                         return
                 else:
                     thread = self._ensure_case_thread(payload, turn) or ""
-                outcome = notify_hermes_investigation_result(
-                    ticket_id=ticket.id,
-                    turn_id=payload.turn_id,
-                    investigation=investigation,
-                    environment=self.environment,
-                    thread_ts=thread,
-                )
+                    channel = str(binding.get("slack_channel_id") or "").strip()
+                if thread and channel and self.repository is not None:
+                    outcome = deliver_investigation_sections(
+                        self.repository,
+                        namespace=self.store.settings.job_namespace,
+                        thread_ts=thread,
+                        channel_id=channel,
+                        ticket_id=ticket.id,
+                        turn_id=payload.turn_id,
+                        investigation=investigation,
+                        environment=self.environment,
+                        action="prepare_draft",
+                        event_type="hermes_investigation_result",
+                        header=f"Hermes investigation — Zendesk #{ticket.id} (awaiting review)",
+                        claim_token=str(uuid4()),
+                    )
+                else:
+                    from backend.services.engineer_slack import notify_hermes_investigation_result
+                    outcome = notify_hermes_investigation_result(
+                        ticket_id=ticket.id,
+                        turn_id=payload.turn_id,
+                        investigation=investigation,
+                        environment=self.environment,
+                        thread_ts=thread,
+                    )
             LOGGER.info(
-                "hermes_investigation_result_notified turn_id=%s status=%s ts=%s",
+                "hermes_investigation_result_notified turn_id=%s status=%s ts=%s shards=%s",
                 payload.turn_id,
                 outcome.get("status"),
                 outcome.get("slack_message_ts"),
+                outcome.get("shards"),
             )
         except Exception:  # noqa: BLE001 - best-effort channel ping
             LOGGER.warning(
@@ -1844,17 +1881,29 @@ class HermesAgentTurnProcessor:
                 input_text += f"\n\n--- REPLY BASIS FOR THIS TURN ---\n{basis}"
                 if turn.get("turn_kind") == "investigation_reply":
                     instructions += (
-                        "\nPrepare a concise customer draft: conclusion, key evidence or limits, and next step. "
-                        "The complete saved text (server greeting, newlines and references included) must be at most 1200 characters. "
-                        "Use support_save_reply_draft. On a rejection with rewrite_allowed=true, rewrite once in this same run "
-                        "using the exact returned reason and submit again. The backend accepts at most two candidate validations. "
-                        "If rewrite_allowed=false, stop saving; do not start another run, investigate again, or escalate/route the case. "
-                        "An unknown save outcome requires readback via support_get_case_context before any further action."
+                        "\nPrepare a short, natural customer draft: the key observed finding, the likely cause "
+                        "your evidence supports (keeping necessary qualifications), and the single most valuable "
+                        "next step or confirmation question. A few short paragraphs in your own words — no "
+                        "mechanical section headings; code snippets, log excerpts, and concrete steps may expand "
+                        "as needed. There is no length limit: a human reviews every draft before sending. "
+                        "Use support_save_reply_draft. On a rejection with rewrite_allowed=true, rewrite once in "
+                        "this same run using the exact returned reason and submit again (the backend accepts at "
+                        "most two candidate submissions). If rewrite_allowed=false, stop saving; do not start "
+                        "another run, investigate again, or escalate/route the case. An unknown save outcome "
+                        "requires readback via support_get_case_context before any further action."
                     )
-                    input_text += "\n\n--- DRAFT SAVE BUDGET ---\n" + json.dumps({
-                        "max_complete_chars": 1200, "max_candidate_submissions": 2,
-                        "server_greeting": f"Hi {basis_record.get('greeting_name') or 'Customer'},\n\n",
-                    }, ensure_ascii=False, sort_keys=True)
+                    input_text += (
+                        "\n\n--- DRAFT SAVE CONTRACT ---\n"
+                        + json.dumps(
+                            {
+                                "max_candidate_submissions": 2,
+                                "server_greeting": f"Hi {basis_record.get('greeting_name') or 'Customer'},\n\n",
+                                "character_limit": "none (human review decides)",
+                            },
+                            ensure_ascii=False,
+                            sort_keys=True,
+                        )
+                    )
                 # Restricted follow-up/message-action turns retain their
                 # semantic rendering projection (references/progress labels)
                 # in addition to the canonical basis.

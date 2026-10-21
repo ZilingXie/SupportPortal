@@ -42,8 +42,12 @@ AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v32"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
-ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION = "engineer-investigation-persona-v2"
+ENGINEER_INVESTIGATION_PERSONA_PROMPT_VERSION = "engineer-investigation-persona-v3"
 _ENGINEER_SOURCED_REPLY_INTENTS = {ENGINEER_GUIDED_REPLY_INTENT, ENGINEER_INVESTIGATION_REPLY_INTENT}
+# p2-207: the Investigation customer draft no longer has a character budget —
+# brevity is a prompt-level expression requirement, enforced by human review,
+# not a server-side send gate. The constant stays for the guided intent and
+# existing tests that pin it.
 ENGINEER_CUSTOMER_DRAFT_MAX_CHARS = 1200
 
 _INVALID_CUSTOMER_NAMES = {"", "customer", "none", "null", "n/a", "na", "unknown"}
@@ -987,14 +991,18 @@ def render_automation_reply(
         current_intent_policy = (
             "For an Engineer investigation reply, provided_answer contains the verified AI investigation findings "
             "and is the only authority for customer-facing technical claims, root-cause statements, instructions, "
-            "versions, URLs, steps, and commitments. Preserve the facts that support the conclusion while omitting "
-            "duplicate evidence and the internal investigation process. Use latest_customer_message, "
+            "versions, URLs, steps, and commitments. Use latest_customer_message, "
             "recent_public_conversation, subject, and "
             "customer_language only to choose language, resolve references, avoid contradictions, and write a "
             "relevant acknowledgement. Do not derive or add any diagnosis, recommendation, promise, link, "
             "identifier, internal detail, or technical fact from that context. Do not mention Slack, the engineer, "
-            "AI investigation, or any internal tooling. Lead with the conclusion, include only the key limitation "
-            "or evidence, and give the next step when applicable. Use no more than three short paragraphs. "
+            "AI investigation, or any internal tooling. Keep the reply short and natural: lead with the key "
+            "observed finding, then the likely cause your evidence actually supports (keeping necessary "
+            "qualifications), then the single most valuable next step or confirmation question. Normally that is "
+            "a few short paragraphs in your own words — do not print mechanical section headings. Code snippets, "
+            "log excerpts, and necessary concrete steps may expand as needed; everything else stays brief. "
+            "Omit the internal investigation process and duplicate evidence. There is no character limit; a human "
+            "reviews every draft before it is sent, so completeness of what matters beats compression. "
         )
     enablement_language_policy = (
         "Language policy for Enablement replies: choose the reply language only from the customer's public "
@@ -1008,17 +1016,10 @@ def render_automation_reply(
         "conversation. "
     ) if behavior == "enablement" else ""
     reply_policy = f"{shared_account_policy}{enablement_language_policy}{current_intent_policy}"
+    # p2-207: no body character budget for the Investigation intent — the
+    # completeness gate is the human reviewer, not a server-side limit.
     body_max_chars = None
-    if intent == ENGINEER_INVESTIGATION_REPLY_INTENT:
-        # The saved draft includes the deterministic greeting and separator.
-        body_max_chars = max(1, ENGINEER_CUSTOMER_DRAFT_MAX_CHARS - len(greeting) - 2)
     length_policy = ""
-    if body_max_chars is not None:
-        length_policy = (
-            f"The complete customer draft, including the configured greeting, must be at most "
-            f"{ENGINEER_CUSTOMER_DRAFT_MAX_CHARS} characters. "
-            "Do not repeat the investigation narrative or list every check performed. "
-        )
     system_prompt = (
         f"Prompt version: {prompt_version}.\n"
         "You are the customer-facing Automation Persona. Write the final customer reply from the "

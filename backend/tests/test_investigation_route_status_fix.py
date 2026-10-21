@@ -183,12 +183,39 @@ def test_customer_original_body_is_delivered_once_before_work_in_original_thread
         assert key.endswith(":work")
         tool_save_investigation_progress(store, repo, turn_id=job.payload["turn_id"], summary="Progress", evidence=[], blockers=[], next_steps=[])
     processor = HermesAgentTurnProcessor(store, client=FakeHermesClient(on_run_completed=complete), environment="preproduction", repository=repo, poll_interval_seconds=.01)
-    with patch("backend.services.automation_native_notifications._to_english_display", return_value=body), patch("backend.services.automation_native_notifications.post_engineer_slack_event", return_value=delivered()) as post, patch("backend.services.engineer_slack.notify_hermes_investigation_result") as notify, patch.object(processor, "_ensure_case_thread", side_effect=AssertionError("customer continuation cannot create a root")):
+    # p2-207: the investigation result now goes through the sectioned ledger
+    # delivery (repository present + thread bound). The customer-body leg
+    # still posts exactly once via the native notification ledger.
+    with patch("backend.services.automation_native_notifications._to_english_display", return_value=body), patch("backend.services.automation_native_notifications.post_engineer_slack_event", return_value=delivered()) as body_post, patch("backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True), patch("backend.services.investigation_slack_sections.post_engineer_slack_event", return_value=delivered()) as section_post, patch.object(processor, "_ensure_case_thread", side_effect=AssertionError("customer continuation cannot create a root")):
         assert processor.process(job)["status"] == "awaiting_investigation_review"
         assert processor.process(job)["idempotent_replay"]
-    post.assert_called_once()
-    assert post.call_args.args[0]["plain_text_sections"][-1] == body
-    assert post.call_args.kwargs["thread_ts"] == "123.45"
-    assert notify.call_args.kwargs["thread_ts"] == "123.45"
+    # Customer original body: delivered exactly once, in the bound thread.
+    body_post.assert_called_once()
+    assert body_post.call_args.args[0]["plain_text_sections"][-1] == body
+    assert body_post.call_args.kwargs["thread_ts"] == "123.45"
+    # Sectioned investigation result: fixed order, all in the same thread,
+    # ending with the separate prepare_draft action message.
+    section_events = [call.args[0] for call in section_post.call_args_list]
+    assert section_events, "sectioned delivery did not run"
+    assert all(call.kwargs.get("thread_ts") == "123.45" for call in section_post.call_args_list)
+    texts = [event["message_text"] for event in section_events]
+    ordered = [t for t in texts if "— Summary" in t] + [t for t in texts if "— Evidence" in t]
+    summary_idx = [i for i, t in enumerate(texts) if "— Summary" in t]
+    action_idx = [i for i, t in enumerate(texts) if "All sections delivered" in t]
+    assert summary_idx and action_idx and action_idx[0] > summary_idx[0], (
+        "action message must come after body sections"
+    )
+    assert all("action" not in event for event in section_events if "All sections delivered" not in event["message_text"]), (
+        "body shards must not carry the review button"
+    )
+    action_event = next(e for e in section_events if "All sections delivered" in e["message_text"])
+    assert action_event.get("action") == "prepare_draft"
+    # Every section shard's ledger row ended completed.
+    scope = f"native-hermes-notification:{store.settings.job_namespace}"
+    ledger_rows = [
+        row for (row_scope, key), row in repo._idempotency_records.items()
+        if row_scope == scope and key.startswith("investigation:123:")
+    ]
+    assert ledger_rows and all(row["state"] == "completed" for row in ledger_rows)
     turn = store.get_hermes_turn(job.payload["turn_id"])
     assert not (turn.get("work_result") or {}).get("engineer_authority")
