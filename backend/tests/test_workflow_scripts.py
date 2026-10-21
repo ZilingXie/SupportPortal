@@ -272,6 +272,12 @@ class WorkflowScriptTests(unittest.TestCase):
         env.setdefault("SUPPORTPORTAL_DEPLOY_LOCK_DIR", str(self.root / "deploy-lock"))
         if extra_env:
             env.update(extra_env)
+        # Test-harness convention: extra_env may request inherited variables
+        # to be removed so "the wrapper never sets/leaks X" assertions are
+        # independent of the process running pytest.
+        for leaked_name in env.pop("SUPPORTPORTAL_TEST_DROP_ENV", "").split(","):
+            if leaked_name:
+                env.pop(leaked_name, None)
         return subprocess.run(
             ["bash", str(script_path), *args],
             cwd=cwd,
@@ -2743,6 +2749,477 @@ class WorkflowScriptTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Timed out acquiring the main finalization lock", result.stderr)
+
+    def _install_ephemeral_pg_fakes(
+        self,
+        *,
+        initial_machine_state: str = "stopped",
+        initial_containers: dict[str, dict[str, object]] | None = None,
+        initial_volumes: dict[str, dict[str, object]] | None = None,
+    ) -> tuple[Path, Path]:
+        """Fake podman/podman-compose/probe for with_ephemeral_postgres.sh.
+
+        The fake podman keeps machine state, containers, volumes and port
+        mappings in JSON files so tests can observe lifecycle and cleanup.
+        The fake podman-compose exits 99 whenever it is invoked, proving the
+        wrapper never routes through compose services.
+        """
+        bin_dir = self.root / "eph-bin"
+        state_dir = self.root / "eph-state"
+        bin_dir.mkdir()
+        state_dir.mkdir()
+        (state_dir / "machine-state.txt").write_text(initial_machine_state + "\n", encoding="utf-8")
+        if initial_containers is not None:
+            self._write_json(state_dir / "containers.json", initial_containers)
+        if initial_volumes is not None:
+            self._write_json(state_dir / "volumes.json", initial_volumes)
+
+        self._write_executable(
+            bin_dir / "podman",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                from pathlib import Path
+
+                state = Path(os.environ["EPH_PODMAN_STATE_DIR"])
+                label_key = "io.supportportal.ephemeral-postgres.run"
+
+                def read_json(name, default):
+                    path = state / name
+                    if not path.exists():
+                        return default
+                    return json.loads(path.read_text(encoding="utf-8"))
+
+                def write_json(name, payload):
+                    (state / name).write_text(json.dumps(payload), encoding="utf-8")
+
+                def record(argv):
+                    with (state / "calls.jsonl").open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(argv) + "\\n")
+
+                def arg_value(argv, flag):
+                    if flag in argv:
+                        index = argv.index(flag)
+                        if index + 1 < len(argv):
+                            return argv[index + 1]
+                    for item in argv:
+                        if item.startswith(flag + "="):
+                            return item[len(flag) + 1:]
+                    return None
+
+                def parse_labels(argv):
+                    labels = {}
+                    index = 0
+                    while index < len(argv):
+                        if argv[index] == "--label" and index + 1 < len(argv):
+                            key, _, value = argv[index + 1].partition("=")
+                            labels[key] = value
+                            index += 2
+                        else:
+                            index += 1
+                    return labels
+
+                argv = sys.argv[1:]
+                record(argv)
+
+                if argv[:2] == ["machine", "inspect"]:
+                    path = state / "machine-state.txt"
+                    print(path.read_text(encoding="utf-8").strip() if path.exists() else "stopped")
+                elif argv[:2] == ["machine", "start"]:
+                    (state / "machine-state.txt").write_text("running", encoding="utf-8")
+                    print("started")
+                elif argv[:2] == ["machine", "stop"]:
+                    (state / "machine-state.txt").write_text("stopped", encoding="utf-8")
+                    print("stopped")
+                elif argv[:1] == ["info"]:
+                    pass
+                elif argv[:2] == ["container", "exists"]:
+                    sys.exit(0 if argv[2] in read_json("containers.json", {}) else 1)
+                elif argv[:2] == ["container", "inspect"]:
+                    entry = read_json("containers.json", {}).get(argv[-1], {})
+                    print(entry.get("labels", {}).get(label_key, ""))
+                elif argv[:1] == ["run"]:
+                    name = arg_value(argv, "--name")
+                    containers = read_json("containers.json", {})
+                    containers[name] = {"labels": parse_labels(argv), "running": True}
+                    write_json("containers.json", containers)
+                    ports = read_json("port-map.json", {})
+                    ports[name] = os.environ.get("EPH_FAKE_PORT", "45543")
+                    write_json("port-map.json", ports)
+                    print("fake-container-id")
+                elif argv[:1] == ["port"]:
+                    ports = read_json("port-map.json", {})
+                    print("127.0.0.1:" + ports.get(argv[1], "45543"))
+                elif argv[:1] == ["exec"]:
+                    marker = state / "pg-isready-count"
+                    count = int(marker.read_text(encoding="utf-8") or "0") + 1 if marker.exists() else 1
+                    marker.write_text(str(count), encoding="utf-8")
+                    sys.exit(1 if count <= int(os.environ.get("EPH_PG_ISREADY_FAIL_FIRST", "0")) else 0)
+                elif argv[:1] == ["ps"]:
+                    containers = read_json("containers.json", {})
+                    print("\\n".join(name for name, entry in containers.items() if entry.get("running")))
+                elif argv[:1] == ["rm"]:
+                    containers = read_json("containers.json", {})
+                    names = [item for item in argv[1:] if not item.startswith("-")]
+                    for name in names:
+                        containers.pop(name, None)
+                    write_json("containers.json", containers)
+                elif argv[:1] == ["volume"]:
+                    sub = argv[1]
+                    volumes = read_json("volumes.json", {})
+                    if sub == "exists":
+                        sys.exit(0 if argv[2] in volumes else 1)
+                    elif sub == "create":
+                        name = argv[-1]
+                        volumes[name] = {"labels": parse_labels(argv)}
+                        write_json("volumes.json", volumes)
+                        print(name)
+                    elif sub == "inspect":
+                        print(volumes.get(argv[-1], {}).get("labels", {}).get(label_key, ""))
+                    elif sub == "rm":
+                        for name in [item for item in argv[2:] if not item.startswith("-")]:
+                            volumes.pop(name, None)
+                        write_json("volumes.json", volumes)
+                else:
+                    print("")
+                """
+            ),
+        )
+        self._write_executable(
+            bin_dir / "podman-compose",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import sys
+
+                print("podman-compose must never be called by with_ephemeral_postgres.sh", file=sys.stderr)
+                sys.exit(99)
+                """
+            ),
+        )
+        self._write_executable(
+            bin_dir / "ephemeral-pg-probe",
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env python3
+                import json
+                import os
+                import sys
+                import time
+                from pathlib import Path
+
+                Path(os.environ["PROBE_OUT"]).write_text(
+                    json.dumps({"environ": dict(os.environ), "argv": sys.argv[1:]}),
+                    encoding="utf-8",
+                )
+                mode = os.environ.get("PROBE_MODE", "ok")
+                if mode == "fail":
+                    sys.exit(int(os.environ.get("PROBE_EXIT_CODE", "7")))
+                if mode == "sleep":
+                    time.sleep(30)
+                """
+            ),
+        )
+        return bin_dir, state_dir
+
+    def _ephemeral_pg_env(self, bin_dir: Path, state_dir: Path) -> dict[str, str]:
+        return {
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "EPH_PODMAN_STATE_DIR": str(state_dir),
+            "EPH_FAKE_PORT": "45543",
+            "EPH_PG_ISREADY_FAIL_FIRST": "1",
+            "SUPPORTPORTAL_EPHEMERAL_PG_READY_INTERVAL_SECONDS": "0",
+            "SUPPORTPORTAL_TEST_DROP_ENV": ",".join(
+                ("TICKET_DB_DSN", "PGVECTOR_DSN", "AUTOMATION_ECS_TEST_POSTGRES_DSN")
+            ),
+        }
+
+    def _ephemeral_pg_calls(self, state_dir: Path) -> list[list[str]]:
+        return [call["argv"] if isinstance(call, dict) else call for call in self._read_json_lines(state_dir / "calls.jsonl")]
+
+    def test_with_ephemeral_postgres_requires_a_command(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+
+        missing_separator = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            extra_env=self._ephemeral_pg_env(bin_dir, state_dir),
+        )
+        self.assertNotEqual(missing_separator.returncode, 0)
+        self.assertIn("A command to run is required", missing_separator.stderr)
+
+        empty_command = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            extra_env=self._ephemeral_pg_env(bin_dir, state_dir),
+        )
+        self.assertNotEqual(empty_command.returncode, 0)
+        self.assertIn("A command to run is required", empty_command.stderr)
+
+    def test_with_ephemeral_postgres_requires_at_least_one_dsn_env(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--",
+            "true",
+            extra_env=self._ephemeral_pg_env(bin_dir, state_dir),
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("At least one --dsn-env", result.stderr)
+
+    def test_with_ephemeral_postgres_rejects_invalid_arguments(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        env = self._ephemeral_pg_env(bin_dir, state_dir)
+
+        invalid_name = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "9BAD-NAME",
+            "--",
+            "true",
+            extra_env=env,
+        )
+        self.assertNotEqual(invalid_name.returncode, 0)
+        self.assertIn("Invalid --dsn-env name", invalid_name.stderr)
+
+        unknown_flag = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--bogus",
+            "--",
+            "true",
+            extra_env=env,
+        )
+        self.assertNotEqual(unknown_flag.returncode, 0)
+        self.assertIn("Unsupported argument", unknown_flag.stderr)
+
+    def test_with_ephemeral_postgres_runs_command_with_isolated_dsn_and_cleans_up(self) -> None:
+        repo = self._init_repo()
+        # A poison .env in the working directory must never reach the child.
+        self._write(repo, ".env", "AUTOMATION_ECS_TEST_POSTGRES_DSN=postgresql://poison@db.example.invalid/leak\n")
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        probe_out = self.root / "probe-out.json"
+        env = self._ephemeral_pg_env(bin_dir, state_dir)
+        env["PROBE_OUT"] = str(probe_out)
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            str(bin_dir / "ephemeral-pg-probe"),
+            extra_env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        probe = self._read_json(probe_out)
+        environ = probe["environ"]
+        dsn = environ["AUTOMATION_ECS_TEST_POSTGRES_DSN"]
+        self.assertTrue(dsn.startswith("postgresql://ephemeral:pw-"), msg=dsn.replace(dsn.split("@")[0], "[redacted]"))
+        self.assertTrue(dsn.endswith("@127.0.0.1:45543/ephemeral?sslmode=disable"))
+        self.assertNotIn("poison", dsn)
+        self.assertEqual(environ.get("PYTHON_DOTENV_DISABLED"), "1")
+        self.assertNotIn("TICKET_DB_DSN", environ)
+        self.assertNotIn("PGVECTOR_DSN", environ)
+
+        calls = self._ephemeral_pg_calls(state_dir)
+        run_calls = [call for call in calls if call[:1] == ["run"]]
+        self.assertEqual(len(run_calls), 1)
+        run_call = run_calls[0]
+        container_name = run_call[run_call.index("--name") + 1]
+        self.assertTrue(container_name.startswith("sp-ephemeral-pg-"))
+        volume_name = run_call[run_call.index("--volume") + 1]
+        self.assertTrue(volume_name.startswith("sp-ephemeral-pgdata-"))
+        self.assertTrue(volume_name.endswith(":/var/lib/postgresql/data"))
+        self.assertIn("--restart=no", run_call)
+        self.assertEqual(run_call[run_call.index("--publish") + 1], "127.0.0.1::5432")
+        run_id = container_name[len("sp-ephemeral-pg-"):]
+        self.assertIn(f"io.supportportal.ephemeral-postgres.run={run_id}", run_call)
+        self.assertEqual(run_call[-1], "docker.io/pgvector/pgvector:pg16")
+        self.assertIn(["machine", "start", "podman-machine-default"], calls)
+        self.assertIn(["machine", "stop", "podman-machine-default"], calls)
+        self.assertIn(["rm", "-f", "-t", "5", container_name], calls)
+        self.assertIn(["volume", "rm", volume_name.split(":")[0]], calls)
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "stopped",
+        )
+        self.assertNotIn(container_name, self._read_json(state_dir / "containers.json"))
+        self.assertNotIn(volume_name.split(":")[0], self._read_json(state_dir / "volumes.json"))
+        # The readiness loop retried after the first pg_isready failure.
+        self.assertGreaterEqual(int((state_dir / "pg-isready-count").read_text(encoding="utf-8")), 2)
+
+    def test_with_ephemeral_postgres_injects_every_named_dsn_env(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        probe_out = self.root / "probe-multi.json"
+        env = self._ephemeral_pg_env(bin_dir, state_dir)
+        env["PROBE_OUT"] = str(probe_out)
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "VAR_A",
+            "--dsn-env=VAR_B",
+            "--",
+            str(bin_dir / "ephemeral-pg-probe"),
+            extra_env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        environ = self._read_json(probe_out)["environ"]
+        self.assertEqual(environ["VAR_A"], environ["VAR_B"])
+        self.assertTrue(environ["VAR_A"].endswith("@127.0.0.1:45543/ephemeral?sslmode=disable"))
+
+    def test_with_ephemeral_postgres_leaves_pre_running_machine_running(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes(initial_machine_state="running")
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            "true",
+            extra_env=self._ephemeral_pg_env(bin_dir, state_dir),
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        calls = self._ephemeral_pg_calls(state_dir)
+        self.assertFalse(any(call[:2] == ["machine", "start"] for call in calls))
+        self.assertFalse(any(call[:2] == ["machine", "stop"] for call in calls))
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "running",
+        )
+
+    def test_with_ephemeral_postgres_propagates_child_failure_and_cleans_up(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        probe_out = self.root / "probe-fail.json"
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            str(bin_dir / "ephemeral-pg-probe"),
+            extra_env={
+                **self._ephemeral_pg_env(bin_dir, state_dir),
+                "PROBE_OUT": str(probe_out),
+                "PROBE_MODE": "fail",
+                "PROBE_EXIT_CODE": "7",
+            },
+        )
+        self.assertEqual(result.returncode, 7, msg=result.stderr)
+
+        calls = self._ephemeral_pg_calls(state_dir)
+        run_call = next(call for call in calls if call[:1] == ["run"])
+        container_name = run_call[run_call.index("--name") + 1]
+        volume_name = run_call[run_call.index("--volume") + 1].split(":")[0]
+        self.assertIn(["rm", "-f", "-t", "5", container_name], calls)
+        self.assertIn(["volume", "rm", volume_name], calls)
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "stopped",
+        )
+
+    def test_with_ephemeral_postgres_signal_runs_cleanup_and_kills_child(self) -> None:
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        probe_out = self.root / "probe-signal.json"
+        env = self._script_env()
+        env.update(self._ephemeral_pg_env(bin_dir, state_dir))
+        env["PROBE_OUT"] = str(probe_out)
+        env["PROBE_MODE"] = "sleep"
+
+        process = subprocess.Popen(
+            ["bash", str(SCRIPT_ROOT / "with_ephemeral_postgres.sh"),
+             "--dsn-env", "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+             "--", str(bin_dir / "ephemeral-pg-probe")],
+            cwd=repo,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+        deadline = time.monotonic() + 30
+        while not probe_out.exists():
+            self.assertLess(time.monotonic(), deadline, msg="probe never observed the DSN")
+            time.sleep(0.1)
+        time.sleep(0.3)
+        process.terminate()
+        stdout, stderr = process.communicate(timeout=30)
+
+        self.assertEqual(process.returncode, 143, msg=stderr)
+        calls = self._ephemeral_pg_calls(state_dir)
+        run_call = next(call for call in calls if call[:1] == ["run"])
+        container_name = run_call[run_call.index("--name") + 1]
+        volume_name = run_call[run_call.index("--volume") + 1].split(":")[0]
+        self.assertIn(["rm", "-f", "-t", "5", container_name], calls)
+        self.assertIn(["volume", "rm", volume_name], calls)
+        self.assertIn(["machine", "stop", "podman-machine-default"], calls)
+        self.assertNotIn(container_name, self._read_json(state_dir / "containers.json"))
+        self.assertNotIn(volume_name, self._read_json(state_dir / "volumes.json"))
+
+    def test_with_ephemeral_postgres_never_touches_other_resources(self) -> None:
+        repo = self._init_repo()
+        label_key = "io.supportportal.ephemeral-postgres.run"
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes(
+            initial_containers={"someone-else": {"labels": {}, "running": True}},
+            initial_volumes={
+                "sp-ephemeral-pgdata-older-run": {"labels": {label_key: "older-run"}},
+                "unrelated-volume": {"labels": {}},
+            },
+        )
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            "true",
+            extra_env=self._ephemeral_pg_env(bin_dir, state_dir),
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+        calls = self._ephemeral_pg_calls(state_dir)
+        removed_volumes = [call[2] for call in calls if call[:2] == ["volume", "rm"]]
+        self.assertEqual(len(removed_volumes), 1)
+        self.assertTrue(removed_volumes[0].startswith("sp-ephemeral-pgdata-"))
+        self.assertNotEqual(removed_volumes[0], "sp-ephemeral-pgdata-older-run")
+        volumes = self._read_json(state_dir / "volumes.json")
+        self.assertIn("sp-ephemeral-pgdata-older-run", volumes)
+        self.assertIn("unrelated-volume", volumes)
+        containers = self._read_json(state_dir / "containers.json")
+        self.assertIn("someone-else", containers)
+        # Another active container keeps the machine running even though this
+        # run started it.
+        self.assertFalse(any(call[:2] == ["machine", "stop"] for call in calls))
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "running",
+        )
 
     def test_bootstrap_main_repo_policy_applies_and_verifies_repo_settings(self) -> None:
         repo = self._init_repo()

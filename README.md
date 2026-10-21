@@ -98,6 +98,7 @@ An online deployment is available. Contact the project maintainer for the deploy
 
 1. Podman and `podman-compose` are installed.
 2. The Podman machine has been initialized.
+3. The Podman machine is no longer kept alive by a background agent. Start it explicitly when you need the stack (the start command below includes `podman machine start`), and stop it with `podman machine stop` when finished.
 
 ### Start the Single-Host Stack
 
@@ -149,6 +150,22 @@ podman-compose \
   down
 ```
 
+### Running Tests
+
+Ordinary unit and contract tests do not need Podman; run them directly, for example `python -m pytest -q backend/tests/test_automation_ecs_contracts.py`.
+
+PostgreSQL integration tests use a throwaway database started on demand:
+
+```bash
+bash scripts/workflow/with_ephemeral_postgres.sh \
+  --dsn-env AUTOMATION_ECS_TEST_POSTGRES_DSN \
+  -- .venv/bin/pytest -q -rs backend/tests/test_automation_ecs_store_postgres.py
+```
+
+The wrapper starts the Podman machine only when it is stopped, creates one isolated PostgreSQL container and volume bound to a dynamic `127.0.0.1` port, never reads the root `.env`, injects the DSN only into the explicitly listed variables, removes the container and volume on success, failure, or interrupt, and stops the machine again when nothing else is running in it. `run_with_local_db_env.sh` loads the root `.env`; it targets host-side operations against the running local stack and is not an isolated test entry.
+
+After using the full single-host stack, stop it with the project-level `down` command above. Do not run global cleanup (`podman system prune`, shared volume deletion): existing images and volumes belong to other workflows.
+
 ## Applying Code Changes Locally
 
 1. After changing `backend/`, `ui/client-ui/`, `ui/engineer-ui/`, or `ui/dashboard-ui/`:
@@ -199,7 +216,7 @@ bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db
 
 6. Host-side ingestion or diagnostics need to write to local pgvector:
    - Wrap the command with `bash scripts/workflow/run_with_local_db_env.sh -- <command>`.
-   - The helper exports a host DSN using `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` while containers continue using `local_postgres:5432`.
+   - The helper loads the root `.env` and exports a host DSN using `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` while containers continue using `local_postgres:5432`; it is not an isolated test entry (use `with_ephemeral_postgres.sh` for tests).
 
 ## Project Layout
 
