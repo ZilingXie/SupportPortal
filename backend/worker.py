@@ -6077,6 +6077,213 @@ def _ack_enablement_relay_notification(
         LOGGER.warning("enablement relay %s ack failed: %s", context, exc)
 
 
+_RELAY_TASK_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "cancelled", "expired", "rejected"}
+)
+_RELAY_REQUEST_TERMINAL_STATUSES = frozenset(
+    {"completed", "failed", "cancelled"}
+)
+
+
+def _ack_enablement_relay_message(
+    client: AgentRelayClient,
+    event: dict[str, Any],
+    *,
+    task_detail: dict[str, Any],
+    listener_instance_id: str,
+    readiness_epoch: int,
+) -> bool:
+    """Fenced message ack using values from a freshly fetched task detail."""
+    fence_task = (
+        task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+    )
+    try:
+        client.ack_event(
+            event,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+            turn_sequence=int(fence_task.get("turn_sequence") or 1),
+            expected_task_version=int(fence_task.get("task_version") or 1),
+        )
+        return True
+    except AgentRelayError as exc:
+        LOGGER.warning(
+            "enablement relay ack failed for task %s: %s",
+            str(event.get("task_id") or ""),
+            exc,
+        )
+        return False
+
+
+def _fail_enablement_relay_task(
+    client: AgentRelayClient,
+    *,
+    request_id: str,
+    task_id: str,
+) -> bool:
+    """End the relay task with an explicit failure terminal (C3).
+
+    Mirrors ``_close_enablement_relay_task`` fencing (fresh task read, current
+    message id + task version) and binds the idempotency key to the request so
+    compensation retries are safe. Returns True when the relay accepted the
+    failure or the task is already terminal.
+    """
+    if not task_id:
+        return False
+    try:
+        fresh = client.get_task(task_id)
+    except AgentRelayError as exc:
+        LOGGER.warning(
+            "enablement relay task detail fetch before fail failed for %s: %s",
+            request_id,
+            exc,
+        )
+        return False
+    task = fresh.get("task") if isinstance(fresh.get("task"), dict) else {}
+    message_id = str(task.get("current_message_id") or "")
+    if not message_id:
+        return False
+    if str(task.get("status") or "") in _RELAY_TASK_TERMINAL_STATUSES:
+        return True
+    for attempt in range(2):
+        try:
+            client.fail_task(
+                task_id,
+                message_id=message_id,
+                turn_sequence=int(task.get("turn_sequence") or 1),
+                expected_task_version=int(task.get("task_version") or 1),
+                idempotency_key=f"fail:{request_id}",
+                reason="agent_reported_failure",
+            )
+            return True
+        except AgentRelayError as exc:
+            LOGGER.warning(
+                "enablement relay task fail attempt %s failed for %s: %s",
+                attempt + 1,
+                request_id,
+                exc,
+            )
+            try:
+                refreshed = client.get_task(task_id)
+                task = (
+                    refreshed.get("task")
+                    if isinstance(refreshed.get("task"), dict)
+                    else {}
+                )
+                message_id = str(task.get("current_message_id") or "") or message_id
+                if str(task.get("status") or "") in _RELAY_TASK_TERMINAL_STATUSES:
+                    return True
+            except AgentRelayError:
+                pass
+    return False
+
+
+def _handle_enablement_relay_invalid_result(
+    client: AgentRelayClient,
+    event: dict[str, Any],
+    *,
+    request: dict[str, Any],
+    task_id: str,
+    task_detail: dict[str, Any],
+    listener_instance_id: str,
+    readiness_epoch: int,
+) -> None:
+    """A relay reply that cannot be parsed or bound (14158 class).
+
+    Ordering contract (C3): the request first enters the unified failure /
+    human-takeover chain; the ack is sent only after the failed state is
+    durably persisted (otherwise the event redelivers and the terminal guard
+    makes the retry evidence-only); the relay task then ends with an explicit
+    failure terminal, never ``complete``/``goal_met``. Evidence is sanitized:
+    relay/task/message ids only, never message content.
+    """
+    request_id = str(request.get("request_id") or "")
+    ticket_id = str(request.get("ticket_id") or "")
+    relay_task = (
+        task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
+    )
+    relay_message_id = str(relay_task.get("current_message_id") or "")
+    relay_task_status = str(relay_task.get("status") or "")
+    request_status = str(request.get("status") or "")
+    evidence = {
+        "request_id": request_id,
+        "relay_task_id": task_id,
+        "relay_message_id": relay_message_id,
+        "relay_task_status": relay_task_status,
+        "reason": "result_payload_invalid_or_mismatched",
+        "attempted_at": now_iso(),
+    }
+    try:
+        ticket_repository.record_event(
+            ticket_id or None,
+            "enablement_relay_result_rejected",
+            evidence,
+        )
+    except Exception:
+        LOGGER.exception(
+            "enablement relay rejection event failed for %s", request_id
+        )
+
+    if request_status in _RELAY_REQUEST_TERMINAL_STATUSES:
+        # Duplicate delivery after the failure already landed: update
+        # evidence only — no repeated internal note, customer reply, or
+        # state transition.
+        _ack_enablement_relay_message(
+            client,
+            event,
+            task_detail=task_detail,
+            listener_instance_id=listener_instance_id,
+            readiness_epoch=readiness_epoch,
+        )
+        if relay_task_status not in _RELAY_TASK_TERMINAL_STATUSES:
+            # Compensation: an earlier explicit relay failure never landed.
+            _fail_enablement_relay_task(client, request_id=request_id, task_id=task_id)
+        return
+
+    _record_enablement_relay_failure(
+        request,
+        reason_code="relay_result_invalid",
+        detail=(
+            "The enablement relay reply could not be parsed or was not bound to "
+            "this request (malformed message part, missing kind, or mismatched "
+            "request id). No business result was recorded and no customer "
+            "completion was sent; the relay task ends with an explicit failure."
+        ),
+    )
+    persisted = ticket_repository.get_enablement_relay_request(request_id) or {}
+    if str(persisted.get("status") or "") != "failed":
+        # Not durable yet: do NOT ack. The event redelivers after the ack
+        # lease and the terminal guard above keeps the retry idempotent.
+        LOGGER.warning(
+            "enablement relay invalid-result failure not persisted for %s; "
+            "event will redeliver",
+            request_id,
+        )
+        return
+    _ack_enablement_relay_message(
+        client,
+        event,
+        task_detail=task_detail,
+        listener_instance_id=listener_instance_id,
+        readiness_epoch=readiness_epoch,
+    )
+    if not _fail_enablement_relay_task(client, request_id=request_id, task_id=task_id):
+        try:
+            ticket_repository.record_event(
+                ticket_id or None,
+                "enablement_relay_task_fail_pending",
+                {
+                    "request_id": request_id,
+                    "relay_task_id": task_id,
+                    "attempted_at": now_iso(),
+                },
+            )
+        except Exception:
+            LOGGER.exception(
+                "enablement relay fail-pending event failed for %s", request_id
+            )
+
+
 def _consume_enablement_relay_event(
     client: AgentRelayClient,
     event: dict[str, Any],
@@ -6164,39 +6371,31 @@ def _consume_enablement_relay_event(
                 now=now_iso(),
             )
         else:
-            # Unparsable or wrongly-bound message: consumed as noise, never
-            # allowed to change application state.
-            try:
-                ticket_repository.record_event(
-                    str(request.get("ticket_id") or "") or None,
-                    "enablement_relay_result_rejected",
-                    {
-                        "request_id": request_id,
-                        "relay_task_id": task_id,
-                        "reason": "result_payload_invalid_or_mismatched",
-                        "attempted_at": now_iso(),
-                    },
-                )
-            except Exception:
-                LOGGER.exception(
-                    "enablement relay rejection event failed for %s", request_id
-                )
+            # 14158: an unparsable or wrongly-bound result is a technical
+            # failure of the relay leg, never noise to ack-and-complete.
+            # Persist the failure first, ack only after the failed state is
+            # durable, then end the relay task with an explicit failure
+            # terminal instead of complete/goal_met.
+            _handle_enablement_relay_invalid_result(
+                client,
+                event,
+                request=request,
+                task_id=task_id,
+                task_detail=task_detail,
+                listener_instance_id=listener_instance_id,
+                readiness_epoch=readiness_epoch,
+            )
+            return
     # Durable-persist happened above: ACK now with fencing values from the
     # freshly fetched task detail (the server rejects stale task versions and
     # the ACK itself advances the version).
-    fence_task = (
-        task_detail.get("task") if isinstance(task_detail.get("task"), dict) else {}
-    )
-    try:
-        client.ack_event(
-            event,
-            listener_instance_id=listener_instance_id,
-            readiness_epoch=readiness_epoch,
-            turn_sequence=int(fence_task.get("turn_sequence") or 1),
-            expected_task_version=int(fence_task.get("task_version") or 1),
-        )
-    except AgentRelayError as exc:
-        LOGGER.warning("enablement relay ack failed for task %s: %s", task_id, exc)
+    if not _ack_enablement_relay_message(
+        client,
+        event,
+        task_detail=task_detail,
+        listener_instance_id=listener_instance_id,
+        readiness_epoch=readiness_epoch,
+    ):
         return
     if recorded is not None and recorded.get("winner"):
         try:

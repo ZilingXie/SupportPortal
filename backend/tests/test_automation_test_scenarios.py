@@ -17,6 +17,7 @@ from backend.repositories.ticket_repository import InMemoryTicketRepository
 from backend.services import automation_test_mail
 from backend.services import automation_test_scenarios
 from backend.services.automation_test_scenarios import (
+    _submission_confirmation_content_check,
     AutomationTestScenarioError,
     ScenarioCancelled,
     ScenarioContext,
@@ -568,31 +569,29 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            # Turn 4: valid-format submission -> confirmation + relay v1.
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+            # Turn 4 (C5, 14158 round): the submission confirmation rides the
+            # Hermes draft pipeline; one new relay request + one delivered
+            # public draft comment. The reused legacy reply job (the turn-3
+            # compatibility job) is an auxiliary observation only.
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "dispatched",
+                "app_id": "8cb7aea984c4457daad802e6960e2475",
+                "request_version": 1,
+                "reply_job_id": "job-3",
             }]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-4",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000104",
                 "content": (
                     "Thank you for your request. Our team is reviewing it with our internal "
                     "workflow and will follow up with an update."
                 ),
             }]),
-            ("FROM support_enablement_relay_requests", [{
-                "request_id": "enr-AC-13700-v1",
-                "status": "gated",
-                "app_id": "8cb7aea984c4457daad802e6960e2475",
-                "request_version": 1,
-            }]),
-            ("FROM support_account_zendesk_comment_deliveries", [{
-                "status": "delivered",
-                "is_public": True,
-                "zendesk_comment_id": "53820000000104",
+            ("FROM support_account_reply_jobs WHERE job_id = %s", [{
+                "status": "persona_v8_queued",
             }]),
             # Turn 5: nudge -> report_progress from the BOUND relay request.
             ("FROM automation_hermes_agent_turns", [{
@@ -848,27 +847,24 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
-            }]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "content": "Thank you for your request. Our team is reviewing it.",
-            }]),
+            # Turn 4 (C5): relay request + delivered draft confirmation;
+            # the reused legacy reply job is auxiliary only.
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "fcd0dab13017495bbe25a63bfdb236fd",
                 "request_version": 1,
+                "reply_job_id": "job-3",
             }]),
-            ("FROM support_account_zendesk_comment_deliveries", [{
-                "status": "delivered",
-                "is_public": True,
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-4",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000304",
+                "content": "Thank you for your request. Our team is reviewing it.",
+            }]),
+            ("FROM support_account_reply_jobs WHERE job_id = %s", [{
+                "status": "persona_v8_queued",
             }]),
             ("FROM automation_hermes_agent_turns", [{
                 "turn_id": "turn-5",
@@ -1908,3 +1904,244 @@ class E3ReenableFixtureTest(unittest.TestCase):
             "Could you help me enable the permission now?",
         )
         self.assertIn("possibility of getting", automation_test_scenarios.E3_NUDGE_BODY)
+
+
+class _Step:
+    def __init__(self, step: str, status: str = "PASS", detail: str = "") -> None:
+        self.step = step
+        self.status = status
+        self.detail = detail
+
+
+class WrapperExitCodeTests(unittest.TestCase):
+    """C6 (14158 round): an aborted scenario must never exit 0."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+
+        cli_path = (
+            Path(__file__).resolve().parents[2]
+            / "scripts"
+            / "testing"
+            / "production_ticket_scenarios.py"
+        )
+        spec = importlib.util.spec_from_file_location(
+            "production_ticket_scenarios_exit_under_test", cli_path
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        cls.cli = module
+
+    def _run_main(self, engine) -> tuple[int, str]:
+        import io
+        from contextlib import redirect_stdout
+        from unittest.mock import patch
+
+        buffer = io.StringIO()
+        with patch.object(self.cli, "load_env_into_process", lambda: None), patch(
+            "backend.services.automation_test_scenarios.ScenarioEngine.from_env",
+            staticmethod(lambda: engine),
+        ), patch(
+            "sys.argv",
+            ["scenarios", "--scenario", "E1P", "--yes"],
+        ), redirect_stdout(buffer):
+            code = self.cli.main()
+        return code, buffer.getvalue()
+
+    def _engine(self, run_behavior) -> "SimpleNamespace":
+        engine = SimpleNamespace(
+            customer_turn_transport="zendesk_api",
+            sender="xieziling97@163.com",
+            turn_timeout_min=1,
+            approval_timeout_min=1,
+            relay_timeout_min=1,
+            listener=None,
+            steps=[],
+            run_scenario=run_behavior,
+            all_passed=lambda: all(s.status == "PASS" for s in engine.steps),
+        )
+        return engine
+
+    def test_aborted_scenario_returns_nonzero_despite_recorded_passes(self):
+        # The exact 14158 failure mode: 10 recorded PASS steps, then abort.
+        def behavior(scenario_id):
+            self_running_engine.steps.append(_Step("routed"))
+            self_running_engine.steps.append(_Step("delivered"))
+            raise AssertionError("timed out waiting for reply job")
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 2, out)
+        self.assertIn("[ABORTED]", out)
+        self.assertIn("aborted: timed out waiting for reply job", out)
+
+    def test_approval_timeout_reports_waiting_for_human(self):
+        def behavior(scenario_id):
+            self_running_engine.steps.append(_Step("routed"))
+            raise TimeoutError("timed out waiting for approval")
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 2, out)
+        self.assertIn("[WAITING_FOR_HUMAN]", out)
+
+    def test_recorded_failure_without_raise_returns_nonzero(self):
+        def behavior(scenario_id):
+            self_running_engine.steps.append(_Step("routed"))
+            self_running_engine.steps.append(_Step("bad", status="FAIL"))
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 2, out)
+        self.assertIn("[FAILED]", out)
+
+    def test_complete_pass_returns_zero(self):
+        def behavior(scenario_id):
+            self_running_engine.steps.append(_Step("routed"))
+            self_running_engine.steps.append(_Step("closed"))
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 0, out)
+        self.assertIn("[PASSED]", out)
+
+
+class E3Turn4CarrierTests(unittest.TestCase):
+    """C5 (14158 round): turn 4 asserts the CURRENT Hermes draft carrier."""
+
+    def _recorder(self) -> "RecorderEngine":
+        return RecorderEngine()
+
+    def test_turn4_waits_relay_request_then_delivered_draft(self):
+        engine = self._recorder()
+        engine.run_scenario("E3")
+        calls = [
+            name for name, _args, _kwargs in engine.calls if name != "db_query"
+        ]
+        # Turn 4 no longer uses the legacy submission_confirmation reply-job
+        # wait (later turns keep their own reply-job carriers).
+        turn4_wait_calls = [
+            (name, args) for name, args, _kw in engine.calls
+            if "turn 4" in str(args)
+        ]
+        self.assertNotIn("wait_reply_intent", [name for name, _ in turn4_wait_calls])
+        # Turn 4 order: submit -> relay request -> delivered draft confirmation.
+        submit_index = max(
+            i for i, (name, args, _kw) in enumerate(engine.calls)
+            if name == "next_customer_turn" and "typo" in str(args[1])
+        )
+        tail = calls[submit_index + 1 : submit_index + 4]
+        self.assertEqual(
+            tail,
+            [
+                "wait_enablement_relay_request",
+                "wait_hermes_draft_delivered",
+                "_observe_reused_confirmation_reply_job",
+            ],
+            f"turn-4 carrier sequence wrong: {tail}",
+        )
+        draft_kwargs = [
+            kwargs for name, args, kwargs in engine.calls
+            if name == "wait_hermes_draft_delivered"
+            and "submission confirmation" in str(args[1] if len(args) > 1 else "")
+        ]
+        self.assertTrue(draft_kwargs, "turn-4 draft delivery step missing")
+        # Delivered + confirmation-semantics content check is the gate (C5).
+        self.assertIs(
+            draft_kwargs[0].get("content_check"),
+            _submission_confirmation_content_check,
+        )
+
+    def test_reused_reply_job_observation_is_auxiliary(self):
+        from types import SimpleNamespace as NS
+
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("E3")
+        engine.db_queue = [
+            ("FROM support_account_reply_jobs", [{"status": "persona_v8_queued"}]),
+        ]
+        engine._observe_reused_confirmation_reply_job(
+            ctx,
+            {"request_id": "enr-x-v1", "reply_job_id": "job-3"},
+            turn3_job_id="job-3",
+        )
+        self.assertEqual(len(engine.steps), 1)
+        self.assertEqual(engine.steps[-1].status, "PASS")
+        self.assertIn("turn-3 compatibility job", engine.steps[-1].detail)
+        # No reply_job_id -> no observation step at all (never a gate).
+        engine._observe_reused_confirmation_reply_job(
+            ctx, {"request_id": "enr-x-v1"}, turn3_job_id=""
+        )
+        self.assertEqual(len(engine.steps), 1)
+
+
+class RecorderEngine(ScenarioEngine):
+    """Records every helper run_e3 calls; returns canned rows."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            smtp_host="smtp.test",
+            smtp_port=465,
+            sender="xieziling97@163.com",
+            smtp_password="pw",
+            imap_host="imap.test",
+            imap_port=993,
+            db_dsn="postgresql://example.invalid/test",
+            poll_interval_seconds=0,
+        )
+        self.calls: list[tuple[str, tuple, dict]] = []
+        self.steps = []
+        self.customer_turn_transport = "zendesk_api"
+        self.zendesk_auth = "synthetic-zendesk-auth"
+
+    def _record_call(name):
+        def method(self, *args, **kwargs):
+            self.calls.append((name, args, kwargs))
+            return RecorderEngine.RESPONSES.get(name, {})
+        return method
+
+    start_ticket = _record_call("start_ticket")
+    find_case = _record_call("find_case")
+    wait_case_field = _record_call("wait_case_field")
+    wait_hermes_draft_delivered = _record_call("wait_hermes_draft_delivered")
+    next_customer_turn = _record_call("next_customer_turn")
+    wait_hermes_message_action = _record_call("wait_hermes_message_action")
+    relay_request_count = _record_call("relay_request_count")
+    wait_hermes_workflow_outcome = _record_call("wait_hermes_workflow_outcome")
+    wait_customer_reply_delivered = _record_call("wait_customer_reply_delivered")
+    wait_hermes_compatibility_job = _record_call("wait_hermes_compatibility_job")
+    wait_enablement_relay_request = _record_call("wait_enablement_relay_request")
+    wait_bound_relay_request_active = _record_call("wait_bound_relay_request_active")
+    emit_relay_approval_hint = _record_call("emit_relay_approval_hint")
+    wait_enablement_relay_result = _record_call("wait_enablement_relay_result")
+    wait_reply_intent = _record_call("wait_reply_intent")
+    wait_published_reply_content = _record_call("wait_published_reply_content")
+    wait_zendesk_delivery_delivered = _record_call("wait_zendesk_delivery_delivered")
+    verify_relay_result_approval_binding = _record_call("verify_relay_result_approval_binding")
+    _observe_reused_confirmation_reply_job = _record_call("_observe_reused_confirmation_reply_job")
+
+    RESPONSES = {
+        "wait_hermes_workflow_outcome": {
+            "turn_id": "turn-3", "compatibility_account_reply_job_id": "job-3",
+        },
+        "wait_hermes_message_action": {"turn_id": "turn-2"},
+        "wait_enablement_relay_request": {
+            "request_id": "enr-x-v1", "reply_job_id": "job-3",
+        },
+        "wait_enablement_relay_result": {"outcome": "project_not_found"},
+        "relay_request_count": 1,
+    }
+
+    def record(self, ctx, step, ok, detail=""):
+        self.steps.append(_Step(str(step), "PASS" if ok else "FAIL", str(detail)))
+
+    def db_query(self, sql, params):
+        self.calls.append(("db_query", (sql,), {}))
+        if "support_account_reply_jobs" in sql:
+            return [{"status": "persona_v8_queued"}]
+        return []
+
+    def run_e3_finalize(self):
+        pass

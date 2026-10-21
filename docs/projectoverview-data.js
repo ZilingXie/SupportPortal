@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T05:49:25Z",
-  "source_base_commit": "4c728884bdf4d59cb6a6dad3a3c182d310378d3d",
-  "registry_digest": "bceb59ae1167c13b6f52fa72ebe205ae2657f2382bb947eaf5e0bb38ccb51443",
+  "generated_at": "2026-10-21T07:53:31Z",
+  "source_base_commit": "ab547256e34e4a3f5f4aceca8a672935cc3459ee",
+  "registry_digest": "209c651a0f384ab09117a057b8f8705db3e79f729db5f4e8f1f3e8eabf927586",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1840,6 +1840,30 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "test",
+          "label": "AgentRelay 发送端契约（C1/C2）",
+          "command": "cd agentRelay/.worktrees/relay-result-integrity-v1 && npm run check && npm test && node --test scripts/agentrelay-message-parts.test.mjs",
+          "result": "check 309 pass/0 fail（含新语法链）；smoke ok；新契约测试 11 项全过：kind:text 通过；type:text 拒绝（错误信息不含 payload）；缺 kind 拒绝；kind:text 缺 text 拒绝；enablement-relay-result-v1 缺 request_id/outcome/write_attempted 非布尔拒绝；builder CLI 生成 canonical parts 且对无效草稿 exit 1；prepare_local_action 与 agentrelay_reply 双钩返回 MESSAGE_PARTS_INVALID 结构化拒绝"
+        },
+        {
+          "type": "test",
+          "label": "SP worker 无效结果失败收尾与幂等（C3/C4）",
+          "command": "pytest backend/tests/test_enablement_relay_result_integrity.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py -q（InMemory）；RUN_POSTGRES_INTEGRATION=1+隔离 PG 同套件",
+          "result": "InMemory 11 passed（14158 形态 type-part/非 JSON/缺 kind/缺 outcome/错 request_id→统一失败链+持久化后单次 ACK+fail_task(agent_reported_failure, idempotency_key=fail:{request_id})+永不 complete；失败态未持久化不 ACK；重复投递仅证据；fail 暂时失败记 fail_pending 事件；合法 kind:text 走原 record→ACK→apply→complete；合法 ownership_mismatch 走业务路径不进技术失败链；enabled 缺回读走 target_mismatch 链）+ PG 1 passed（关键状态转移真实库复跑：invalid→failed+单 fail_task、重复仅证据）；关联套件全绿。旧 mismatched 测试断言更新为新契约（14158 前旧契约即本计划修的缺陷）"
+        },
+        {
+          "type": "test",
+          "label": "E3 载体与退出码（C5/C6）",
+          "command": "pytest backend/tests/test_automation_test_scenarios.py -q",
+          "result": "55 passed：wrapper 中止负控（10/10 已记录 PASS 后 abort→exit 2+[ABORTED]，不再 exit 0）；审批超时→[WAITING_FOR_HUMAN]；记录失败→[FAILED]；完整 PASS→0；E3 turn4 序列=提交→wait_enablement_relay_request→wait_hermes_draft_delivered(带确认语义内容检查)→辅助观察（不再要求 submission_confirmation reply job；后续 turn6/7 的 reply-job 载体保留）；draft 投递探针加 dl.is_public=TRUE；两个 ScriptedEngine 全生命周期脚本更新为新载体；辅助观察复用 turn-3 兼容 job 时记录 PASS 且不作为门禁"
+        },
+        {
+          "type": "test",
+          "label": "DSN 脱敏（C7）",
+          "command": "pytest backend/tests/test_dsn_redaction.py -q；compileall；git diff --check",
+          "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
+        },
+        {
+          "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
           "details": "8 单测（confirmed/llm false/disabled 不调用/missing key/invocation error/非 JSON/非布尔 payload/空 note）+ 93 worker 集成（含新增中文回复升级完成路径、regex 命中不调用分类器、分类器失败保持 resolution_update；存量 regex-negative 测试补 mock）+ compose 契约。空 OPENAI_API_KEY 运行证明测试密闭无真实 LLM 依赖。"
@@ -1945,7 +1969,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 51,
+      "task_count": 52,
       "done_count": 25,
       "blocked_count": 2
     },
@@ -19358,6 +19382,54 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "task_id": "p2-209",
+      "title": "Enablement relay 结果完整性：发送端 part 契约、无效结果失败收尾、E3 现行载体与退出码（enablement-relay-result-integrity-v1）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-21",
+      "updated_at": "2026-10-21",
+      "summary": "14158 事故修复：本地执行器回传 part 用 type 而非 kind 被 worker 解析器拒收后仍 ACK+complete（goal_met），申请搁置无失败交接。双仓修复：AgentRelay 发送入口 part/结果校验+标准结果构造；SP worker 无效结果走显式失败终态（fail_task）+失败/人工接管链+CAS+幂等；E3 第 4 回合改用现行 Hermes draft/delivery 载体；剧本包装器中止必须非零退出；skill/文档钉死 kind:text；DSN 输出三格式脱敏检测（密码不轮换）。14158 不重放；不触 Production。",
+      "next_action": "enablement-relay-result-integrity-v1 实施完成：双 Draft PR（SP codex/enablement-relay-result-integrity + AgentRelay relay-result-integrity-v1）待独立验收；通过后合并并仅 Preproduction 部署验证（synthetic 最小 case→新 E3 工单；14158 不重放、不触 Production）。",
+      "acceptance_criteria": [
+        "错误 type 消息在 AgentRelay 发送端被阻断（含负控）",
+        "无效结果到达 SP 时不按成功关闭，进入明确失败/人工接管链，不产生客户完成回复",
+        "合法 ownership_mismatch 仍走业务结果路径；合法 enabled 缺独立回读进失败链",
+        "E3 使用当前 Hermes 载体并能正确报告中止；中止场景返回非零",
+        "数据库密码不再进入日志/evidence（三格式脱敏检测）；本轮不轮换"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "test",
+          "label": "AgentRelay 发送端契约（C1/C2）",
+          "command": "cd agentRelay/.worktrees/relay-result-integrity-v1 && npm run check && npm test && node --test scripts/agentrelay-message-parts.test.mjs",
+          "result": "check 309 pass/0 fail（含新语法链）；smoke ok；新契约测试 11 项全过：kind:text 通过；type:text 拒绝（错误信息不含 payload）；缺 kind 拒绝；kind:text 缺 text 拒绝；enablement-relay-result-v1 缺 request_id/outcome/write_attempted 非布尔拒绝；builder CLI 生成 canonical parts 且对无效草稿 exit 1；prepare_local_action 与 agentrelay_reply 双钩返回 MESSAGE_PARTS_INVALID 结构化拒绝"
+        },
+        {
+          "type": "test",
+          "label": "SP worker 无效结果失败收尾与幂等（C3/C4）",
+          "command": "pytest backend/tests/test_enablement_relay_result_integrity.py backend/tests/test_enablement_auto_relay.py backend/tests/test_enablement_auto_failure.py -q（InMemory）；RUN_POSTGRES_INTEGRATION=1+隔离 PG 同套件",
+          "result": "InMemory 11 passed（14158 形态 type-part/非 JSON/缺 kind/缺 outcome/错 request_id→统一失败链+持久化后单次 ACK+fail_task(agent_reported_failure, idempotency_key=fail:{request_id})+永不 complete；失败态未持久化不 ACK；重复投递仅证据；fail 暂时失败记 fail_pending 事件；合法 kind:text 走原 record→ACK→apply→complete；合法 ownership_mismatch 走业务路径不进技术失败链；enabled 缺回读走 target_mismatch 链）+ PG 1 passed（关键状态转移真实库复跑：invalid→failed+单 fail_task、重复仅证据）；关联套件全绿。旧 mismatched 测试断言更新为新契约（14158 前旧契约即本计划修的缺陷）"
+        },
+        {
+          "type": "test",
+          "label": "E3 载体与退出码（C5/C6）",
+          "command": "pytest backend/tests/test_automation_test_scenarios.py -q",
+          "result": "55 passed：wrapper 中止负控（10/10 已记录 PASS 后 abort→exit 2+[ABORTED]，不再 exit 0）；审批超时→[WAITING_FOR_HUMAN]；记录失败→[FAILED]；完整 PASS→0；E3 turn4 序列=提交→wait_enablement_relay_request→wait_hermes_draft_delivered(带确认语义内容检查)→辅助观察（不再要求 submission_confirmation reply job；后续 turn6/7 的 reply-job 载体保留）；draft 投递探针加 dl.is_public=TRUE；两个 ScriptedEngine 全生命周期脚本更新为新载体；辅助观察复用 turn-3 兼容 job 时记录 PASS 且不作为门禁"
+        },
+        {
+          "type": "test",
+          "label": "DSN 脱敏（C7）",
+          "command": "pytest backend/tests/test_dsn_redaction.py -q；compileall；git diff --check",
+          "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
         }
       ]
     },

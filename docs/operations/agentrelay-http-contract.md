@@ -129,3 +129,14 @@
 8. `max_inflight` 默认 1（可经 `scripts/set_agent_delivery_limit.py` 调 1-100）；backlog 准入上限
    1000 条未决事件/agent（`queued/inflight/retry_wait/parked` 计入，acked/exhausted 不占），全服
    常量不可按 agent 配置。
+
+## 2026-10-21 无效结果失败收尾（p2-209，enablement-relay-result-integrity-v1）
+
+14158 事故后 worker 消费契约变更：relay 回复不可解析（part 非 `kind:"text"`、非 JSON）或未绑定本申请（request_id 不匹配、缺 outcome）时，不再"记 rejected 事件后 ACK 并 complete（goal_met）"。现行顺序：
+
+1. 记录脱敏 `enablement_relay_result_rejected` 事件（只含 relay/task/message id）；
+2. 申请进入统一失败/人工接管链（internal note + 人工接管 + 通知邮件；`suppression_reason=relay_result_invalid`），不产生客户完成回复；
+3. 回读确认申请已持久化为 `failed` 才 ACK（未持久化则不 ACK，事件按租约重投，终态守卫保证重试只更新证据）；
+4. relay 任务以显式失败终态收尾（`POST /tasks/{id}/fail`，reason 限枚举 `agent_reported_failure`/`max_turns_exhausted`，idempotency_key=`fail:{request_id}`，CAS 用新鲜 task_version/current_message_id）；fail 暂时失败记 `enablement_relay_task_fail_pending` 事件，重复投递可安全补偿。
+
+发送端配套（AgentRelay 仓）：`agentrelay_prepare_local_action`/`agentrelay_reply` 拒绝 `type:"text"`、缺 `kind`、request_id 缺失的结果 JSON；标准结果 parts 由 `node scripts/agentrelay-build-result.mjs --result=<file>` 生成。
