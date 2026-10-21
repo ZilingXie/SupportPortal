@@ -206,6 +206,14 @@
       "regressions": "bundle five gates passed; isolated PostgreSQL (p2192_case_files_test): test_investigation_case_files 25 passed/4 skip, test_investigation_attachments 30 passed/3 skip (skips = NATIVE_NOTIFICATION_TEST_DSN gate), test_investigation_route_status_fix 20 passed, merge smoke 6 passed/1 skip; zero failures"
     },
     "scope_note": "developer toolchain repair only: no runtime behavior change, no deployment, no live mutation; open boundaries (C7 Zac, human Slack upload path, Automation reverse call, Production) unchanged",
-    "repaired_at": "2026-10-21"
+    "repaired_at": "2026-10-21",
+    "acceptance": {
+      "verdict": "通过",
+      "date": "2026-10-21",
+      "pr": "#1529",
+      "reviewed_head": "e2a1263fad198a1d04d88e9d47cada083844d5a9",
+      "reviewer_recheck": "clean-dir smoke 6 passed/1 skipped/2 subtests; real-input rebuild 7 passed/2 subtests; case-files+attachments+route-status 82 passed; compileall/git diff --check/Overview passed",
+      "finalization": "main had advanced to ebb59c8b; merge conflict limited to generated docs/projectoverview-data.js, resolved by regeneration; reviewed 11-file scope zero-diff vs e2a1263f; developer-tooling change, no deployment"
+    }
   }
 }

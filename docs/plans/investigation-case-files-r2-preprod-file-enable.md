@@ -90,3 +90,7 @@
   - 测试入库：`backend/tests/test_hermes_case_files_v2_merge_scripts.py` 干净目录冒烟（子进程 + 清空 `CF_*`/`SUPPORTPORTAL_ROOT` + cwd 无泄漏；合成输入由脚本自身 `swap()` 锚点经 `ast` 提取组装，防锚点漂移）6 通过 + 缺参/缺文件负控；`RealInputRebuildTests` 环境门控（`CF_B1_SRC`/`CF_B1_PROFILES`/可选 `CF_B1_EXPECTED_TREE`），本机以真实输入 + 期望树逐字节断言通过。
   - 回归：bundle 五门禁 passed（patch_apply/core_compile/skills_list_gate/skill_view_gate/session_negative）；隔离 PG（`p2192_case_files_test`）case files 25+4 skip、attachments 30+3 skip（skip 均为 NATIVE_NOTIFICATION_TEST_DSN 门控）、route status fix 20、merge 冒烟 6+1 skip，全绿零失败。
 - **不宣称**：C7 Zac 文件、Slack→n8n 人类上传路径、Automation 反向调用、Production——维持原开放边界；本轮不部署（修复为开发者工具链，无 runtime 行为变更，不触发 ECS 发布）。
+
+### 独立复验结论（2026-10-21，R2-V2-B1-REPRO 轮）
+
+**通过**。审查对象：PR #1529 HEAD `e2a1263f`；验收方独立复跑冒烟/真实重建/case-files 相关套件/静态检查全过，td54 逐字节与逐位复现证据确认。收口时 main 推进至 `ebb59c8b`，merge 仅 `docs/projectoverview-data.js` 生成冲突并以重生成解决，评审范围对 `e2a1263f` 零差异。本轮不部署。开放边界（C7 Zac、Slack→n8n 人类上传、Automation 反向调用、Production）不变。
