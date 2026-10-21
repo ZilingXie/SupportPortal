@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T02:13:18Z",
-  "source_base_commit": "ee9a6eebf3e7f7058284cbb88f379f2d666eea9b",
-  "registry_digest": "633bc531f743393614312f9efdbfa1f02e06d4542310e89fd6703f1a307a3f25",
+  "generated_at": "2026-10-21T02:45:15Z",
+  "source_base_commit": "d645f0497ca6bcfa0d5dc224bf507f8da9c44eb9",
+  "registry_digest": "c9d85cc098b77eb616dc06e28379a567da08e8fd083ab9a2e638ab65baf88c08",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5488,16 +5488,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "waiting-for-evidence; 未重放 #14122，未发送真实客户、Slack/Zendesk/Argus/Team Agent 消息"
         },
         {
-          "type": "test",
-          "label": "验收轮1新增：action 消息 finish CAS 失败→outcome_unknown（不报 confirmed/action_sent）；结构化 truncated/source_truncated/has_more 字段→truncation_note 显式标注（false 不误报）；入口测试改为正文一次投递+section 顺序+按钮单独末条+账本全 completed 断言"
-        },
-        {
-          "type": "test",
-          "label": "回归合计 304 passed + 92 subtests（含 test_investigation_route_status_fix 全量、native notifications）；隔离 PostgreSQL 54 passed（draft-save + route-status-fix 双套件）；compileall + git diff --check 干净"
-        },
-        {
           "type": "pr",
-          "label": "Draft PR #1528（待独立验收）：分支 codex/investigation-reply-display-v1"
+          "label": "PR #1528 MERGED：squash ebb59c8b6c93c101bb43ca5d84464ced53ab3270（v1 实现 28fe469b + 验收轮1修复 5d6efa01 + 合并前分支整理 701e9b18，12 files +898）；合并后 main 已推进至 d645f049（p2-192 R2-V2-B1-REPRO #1529）"
+        },
+        {
+          "type": "deployment",
+          "label": "发布中止与回滚：ecs-pipeline-r20261021-ebb59c8（codebuild passed → preflight 首败后过 → deploy 两败；第一次 mode 误为 enablement=manual/hermes_case_workflow=disabled/schema_bootstrap=false）；回滚目标 r20261020-0bd735e-case-files-enable-r2（deploy passed，enablement=archer）；线上三服务 COMPLETED 1/1/0、digest 一致、/health/release ok（执行方回滚复核，2026-10-21 10:31 北京）"
+        },
+        {
+          "type": "test",
+          "label": "合并前验证：合同套件 23 + 相关回归 304 passed + 92 subtests + 隔离 PostgreSQL 54 passed（验收轮1后，HEAD 5d6efa01）"
+        },
+        {
+          "type": "document",
+          "label": "prompt_change_log（p2-207 条目）、Task/Overview 已随 PR 合入；运行验收待重新发布后完成"
         }
       ],
       "source_refs": [
@@ -19238,10 +19242,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
       "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
       "status": "active",
-      "next_action": "验收轮1三项修复完成：action 回执未落账改报 outcome_unknown；Evidence 结构化截断字段（truncated/source_truncated/has_more 等）显式 truncation_note；旧入口测试更新到分条/顺序/账本断言。回归 304 passed + 隔离 PostgreSQL 54 passed；Draft PR #1528 待独立验收复审",
+      "next_action": "已合并，运行验证未完成：PR #1528 经独立验收后 squash 合入 main（ebb59c8b，2026-10-21T01:51Z）；同日发布尝试 r20261021-ebb59c8 两次 deploy 失败（第一次 flags 误用 enablement=manual，遗漏既有配置；第二次 preflight 过但 deploy 失败），执行方已中止并回滚——线上现运行 r20261020-0bd735e-case-files-enable-r2（API :164/Route :160/Worker :163，digest 与旧版本一致，回滚复核通过，2026-10-21 10:31 北京）。重新发布待用户授权：需按成功基线 checkpoint（enablement=archer）复刻 flags，并与在途的 ebb59c8-csd10-intake-r1（p2-197 CSD10，已建 checkpoint 未跑）协调先后；发布后完成运行验收（分条 Slack/无长度门草稿/中文问候语的自然样本）",
       "owner": "agent",
       "created_at": "2026-10-20",
-      "updated_at": "2026-10-20",
+      "updated_at": "2026-10-21",
       "acceptance_criteria": [
         "C1 超过原 1200 字符、含代码块的合法草稿可保存并完整展示到 Slack，无长度拒绝",
         "C2 表达类问题不阻断审核（安全拒绝仍阻断）；未批准不投递",
@@ -19255,16 +19259,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [],
       "evidence": [
         {
-          "type": "test",
-          "label": "验收轮1新增：action 消息 finish CAS 失败→outcome_unknown（不报 confirmed/action_sent）；结构化 truncated/source_truncated/has_more 字段→truncation_note 显式标注（false 不误报）；入口测试改为正文一次投递+section 顺序+按钮单独末条+账本全 completed 断言"
-        },
-        {
-          "type": "test",
-          "label": "回归合计 304 passed + 92 subtests（含 test_investigation_route_status_fix 全量、native notifications）；隔离 PostgreSQL 54 passed（draft-save + route-status-fix 双套件）；compileall + git diff --check 干净"
-        },
-        {
           "type": "pr",
-          "label": "Draft PR #1528（待独立验收）：分支 codex/investigation-reply-display-v1"
+          "label": "PR #1528 MERGED：squash ebb59c8b6c93c101bb43ca5d84464ced53ab3270（v1 实现 28fe469b + 验收轮1修复 5d6efa01 + 合并前分支整理 701e9b18，12 files +898）；合并后 main 已推进至 d645f049（p2-192 R2-V2-B1-REPRO #1529）"
+        },
+        {
+          "type": "deployment",
+          "label": "发布中止与回滚：ecs-pipeline-r20261021-ebb59c8（codebuild passed → preflight 首败后过 → deploy 两败；第一次 mode 误为 enablement=manual/hermes_case_workflow=disabled/schema_bootstrap=false）；回滚目标 r20261020-0bd735e-case-files-enable-r2（deploy passed，enablement=archer）；线上三服务 COMPLETED 1/1/0、digest 一致、/health/release ok（执行方回滚复核，2026-10-21 10:31 北京）"
+        },
+        {
+          "type": "test",
+          "label": "合并前验证：合同套件 23 + 相关回归 304 passed + 92 subtests + 隔离 PostgreSQL 54 passed（验收轮1后，HEAD 5d6efa01）"
+        },
+        {
+          "type": "document",
+          "label": "prompt_change_log（p2-207 条目）、Task/Overview 已随 PR 合入；运行验收待重新发布后完成"
         }
       ]
     },
