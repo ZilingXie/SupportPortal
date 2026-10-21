@@ -2198,14 +2198,23 @@ class ScenarioEngine:
             "invalid App ID case marker",
         )
         self.next_customer_turn(ctx, f"Sorry, typo. My App ID is {E3_APPID_NOT_FOUND}")
-        self.wait_reply_intent(
-            ctx, {"submission_confirmation"}, "submission confirmation (turn 4)"
-        )
-        self.wait_published_reply_content(
+        # Turn 4 contract (current native chain, verified live on 2026-10-21
+        # ticket 14171): the valid-format submission completes the enablement
+        # workflow with outcome=review_requested, the confirmation reply rides
+        # the Hermes persona draft channel, and the relay request binds the
+        # turn's compatibility reply job. No legacy submission_confirmation
+        # reply job exists on this path, so the old reply-job wait can never
+        # be satisfied.
+        turn4 = self.wait_hermes_workflow_outcome(
             ctx,
-            expected_intent="submission_confirmation",
-            check=_submission_confirmation_content_check,
-            step="confirmation content mentions review without a deadline promise",
+            expected_outcome="review_requested",
+            expected_reason="enablement_auto_review",
+            step="valid-format submission entered review (turn 4)",
+        )
+        self.wait_hermes_draft_delivered(
+            ctx, "submission confirmation delivered (turn 4)",
+            content_check=_submission_confirmation_content_check,
+            expected_turn_id=str(turn4.get("turn_id") or ""),
         )
         turn4_request = self.wait_enablement_relay_request(
             ctx, "relay request created after confirmation"
