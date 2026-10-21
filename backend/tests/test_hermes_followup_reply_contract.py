@@ -1004,6 +1004,7 @@ class TestRestrictedReplyPath:
         work = turn["work_result"]
         assert work["followup_kind"] == "progress_inquiry"
         assert work["progress"]["request_id"] == "enr-AC-604-v1"
+        assert work["compatibility_relay_required"] is False
         assert work["progress"]["raw_status"] == "dispatched"
         # No new relay request, no release, state untouched.
         request = repository.get_enablement_relay_request("enr-AC-604-v1")
@@ -1899,3 +1900,56 @@ class TestEnablementProgressStateBindings:
         state = enablement_progress_state(repository, case)
         assert state["ok"] is False
         assert state["reason"] == "followup_progress_state_unavailable:no_bound_request"
+
+
+class TestReplyOnlyRelayReleaseFlag:
+    """14176 regression: a reply-only turn (knowledge answer / progress
+    restate on a case whose relay workflow context already exists) must carry
+    the explicit server decision ``compatibility_relay_required=False``.
+    Without it the delivery-side worker gate falls back to the workflow
+    context, demands a compatibility job, and escalates the case to human
+    review even though the customer reply was delivered."""
+
+    def test_basis_projects_the_reply_only_flag(self) -> None:
+        from backend.services.hermes_customer_reply_basis import basis_from_work_result
+
+        work = {
+            "status": "executed",
+            "route": "enablement",
+            "reply_kind": "progress_inquiry",
+            "progress": {"review_state": "with the reviewing engineer"},
+            "message_action_reply": {"action": "report_progress"},
+            "compatibility_relay_required": False,
+        }
+        basis = basis_from_work_result(
+            turn={"turn_id": "t-612", "zendesk_ticket_id": "612", "route": "enablement", "direction": "automation"},
+            work_result=work,
+        )
+        assert basis["compatibility_relay_required"] is False
+
+    def test_worker_gate_leaves_reply_only_delivery_untouched(self) -> None:
+        # The worker side of the 14176 shape: an explicit False flag with a
+        # live relay workflow context must neither demand a job nor release
+        # ownership (mirrors the ask-turn contract for reply-only turns).
+        from backend.tests.test_worker_compatibility_scope import _case as scope_case
+        from backend.tests.test_worker_compatibility_scope import _delivery as scope_delivery
+        from backend.tests.test_worker_compatibility_scope import _run as scope_run
+
+        case = scope_case(
+            automation_context={
+                "enablement_auto_workflow": {"reply_job_id": "account-reply-14176"}
+            }
+        )
+        repository = scope_run(
+            case,
+            scope_delivery(
+                attachments=[{"_hermes_compatibility_relay_required": False}],
+                immutable_content=(
+                    "Hi Ziling, your request is with our reviewing engineer."
+                ),
+            ),
+        )
+        assert case["automation_status"] == "automation"
+        assert "execution_reason_code" not in case
+        repository.release_account_internal_email_after_public_reply.assert_not_called()
+        repository.release_enablement_relay_requests_after_public_reply.assert_not_called()

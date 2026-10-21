@@ -443,6 +443,12 @@ class ScenarioEngineTests(unittest.TestCase):
                     if str(getattr(ctx, "zendesk_ticket_id", "")) == "13702"
                     else "53820000000103"
                 )
+            elif "Sorry, typo" in body:
+                comment_id = (
+                    "53820000000304"
+                    if str(getattr(ctx, "zendesk_ticket_id", "")) == "13702"
+                    else "53820000000104"
+                )
             elif "possibility of getting" in body:
                 comment_id = "53820000000106"
             elif "enable the permission now" in body:
@@ -568,19 +574,28 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            # Turn 4: valid-format submission -> confirmation + relay v1.
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+            # Turn 4 (current native chain): workflow outcome review_requested,
+            # confirmation delivered through the Hermes draft channel, relay v1.
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-4",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000104",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "review_requested",
+                    "internal_email_send_reason": "enablement_auto_review",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
             }]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-4",
+                "turn_id": "turn-4",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000104",
                 "content": (
-                    "Thank you for your request. Our team is reviewing it with our internal "
-                    "workflow and will follow up with an update."
+                    "Hi Ziling, thanks for correcting the App ID. I have recorded your Media "
+                    "Relay enablement request for review and will follow up with an update."
                 ),
             }]),
             ("FROM support_enablement_relay_requests", [{
@@ -848,16 +863,24 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-4",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000304",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "review_requested",
+                    "internal_email_send_reason": "enablement_auto_review",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
             }]),
-            ("FROM support_account_reply_jobs", [{
-                "job_id": "job-4",
-                "status": "published",
-                "content": "Thank you for your request. Our team is reviewing it.",
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-4",
+                "turn_id": "turn-4",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000304",
+                "content": "Hi Ziling, I have recorded your Media Relay request for review.",
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
