@@ -214,6 +214,40 @@ class AgentRelayClient:
             "POST", f"/tasks/{_path_segment(task_id)}/complete", payload=payload
         )
 
+    def fail_task(
+        self,
+        task_id: str,
+        *,
+        message_id: str,
+        turn_sequence: int,
+        expected_task_version: int,
+        idempotency_key: str,
+        reason: str = "agent_reported_failure",
+    ) -> dict[str, Any]:
+        """End a task with a Relay-authorized failure reason.
+
+        The relay accepts only its documented failure reason enum
+        (agent_reported_failure / max_turns_exhausted); anything else is a
+        client bug and the server rejects the call.
+        """
+        if reason not in {"agent_reported_failure", "max_turns_exhausted"}:
+            raise AgentRelayError(
+                "agentrelay_fail_reason_invalid",
+                f"Unsupported relay failure reason: {reason}",
+                retryable=False,
+            )
+        payload = {
+            "actor_agent_id": self._config.agent_id,
+            "message_id": str(message_id),
+            "turn_sequence": int(turn_sequence),
+            "expected_task_version": int(expected_task_version),
+            "idempotency_key": str(idempotency_key),
+            "reason": str(reason),
+        }
+        return self._request(
+            "POST", f"/tasks/{_path_segment(task_id)}/fail", payload=payload
+        )
+
     # -- Headless listener (recovery pull) --------------------------------
 
     def register_listener(self, listener_instance_id: str) -> int:

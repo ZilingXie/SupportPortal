@@ -104,7 +104,12 @@ def main() -> int:
         try:
             channels = engine.connectivity_check()
         except Exception as exc:  # noqa: BLE001 - surface a clean failure
-            print(f"connectivity check failed: {exc}", file=sys.stderr)
+            from backend.services.dsn_redaction import redact_dsn_secrets
+
+            print(
+                f"connectivity check failed: {redact_dsn_secrets(exc)}",
+                file=sys.stderr,
+            )
             return 1
         for channel, result in channels.items():
             log(f"{channel.upper()}: {result}")
@@ -143,22 +148,40 @@ def main() -> int:
             print_approval_banner(data)
 
     engine.listener = cli_listener
-    all_ok = True
+    # C6 (14158 round): an aborted scenario must NEVER exit 0. A scenario is
+    # "passed" only when run_scenario() returned AND every recorded step
+    # passed; an exception is "aborted" (or "waiting_for_human" when the
+    # abort is an approval-wait timeout); recorded failures are "failed".
+    outcomes: dict[str, str] = {}
     for scenario_id in selected:
         log(f"========== scenario {scenario_id} ==========")
         try:
             engine.run_scenario(scenario_id)
         except Exception as exc:  # noqa: BLE001 - report and continue to the matrix
-            log(f"scenario {scenario_id} aborted: {exc}")
-        all_ok = all_ok and engine.all_passed()
+            status = _classify_abort(exc)
+            from backend.services.dsn_redaction import redact_dsn_secrets
+
+            log(f"scenario {scenario_id} {status}: {redact_dsn_secrets(exc)}")
+            outcomes[scenario_id] = status
+            continue
+        outcomes[scenario_id] = "passed" if engine.all_passed() else "failed"
 
     print("\n================ SCENARIO RESULTS ================")
+    for scenario_id in selected:
+        print(f"  [{outcomes.get(scenario_id, 'aborted').upper()}] {scenario_id}")
     for step in engine.steps:
         mark = "✓" if step.status == "PASS" else "✗"
         print(f"  {mark} {step.step}" + (f" — {step.detail}" if step.detail else ""))
     print("  clean up test tickets in Zendesk afterwards (subjects tagged [zac test]).")
     print("==================================================")
-    return 0 if all_ok else 2
+    return 0 if outcomes and all(status == "passed" for status in outcomes.values()) else 2
+
+
+def _classify_abort(exc: BaseException) -> str:
+    """Distinguish a human-approval timeout from a plain abort (C6)."""
+    if isinstance(exc, TimeoutError) and "approval" in str(exc).casefold():
+        return "waiting_for_human"
+    return "aborted"
 
 
 if __name__ == "__main__":

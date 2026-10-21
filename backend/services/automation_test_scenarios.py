@@ -1803,6 +1803,27 @@ class ScenarioEngine:
             raise AssertionError(f"unexpected Hermes compatibility job: {detail}")
         return row
 
+    def _observe_reused_confirmation_reply_job(
+        self, ctx: ScenarioContext, request_row: dict, *, turn3_job_id: str
+    ) -> None:
+        """Auxiliary observation only: the relay request may reuse the
+        chain's compatibility reply job. Never a success condition (C5)."""
+        job_id = str(request_row.get("reply_job_id") or "")
+        if not job_id:
+            return
+        rows = self.db_query(
+            "SELECT status FROM support_account_reply_jobs WHERE job_id = %s",
+            (job_id,),
+        )
+        status = str(rows[0].get("status") or "") if rows else "missing"
+        detail = f"relay request reuses reply job {job_id} status={status}"
+        if turn3_job_id and job_id == turn3_job_id:
+            detail += " (turn-3 compatibility job)"
+        self.record(
+            ctx, "submission confirmation reply job reuse (auxiliary, turn 4)",
+            True, detail,
+        )
+
     def wait_hermes_draft_delivered(
         self, ctx: ScenarioContext, step: str,
         *, content_check: Callable[[str], str | None] | None = None,
@@ -1827,7 +1848,7 @@ class ScenarioEngine:
                     "JOIN automation_hermes_agent_turns t "
                     "ON t.turn_id = d.turn_id "
                     "LEFT JOIN support_account_zendesk_comment_deliveries dl "
-                    "ON dl.message_id = d.draft_id "
+                    "ON dl.message_id = d.draft_id AND dl.is_public = TRUE "
                     "WHERE d.zendesk_ticket_id = %s AND d.turn_id = %s "
                     "AND t.zendesk_ticket_id = %s "
                     "ORDER BY d.created_at DESC LIMIT 1",
@@ -1841,7 +1862,7 @@ class ScenarioEngine:
                     "dl.status AS delivery_status, dl.zendesk_comment_id "
                     "FROM automation_hermes_case_drafts d "
                     "LEFT JOIN support_account_zendesk_comment_deliveries dl "
-                    "ON dl.message_id = d.draft_id "
+                    "ON dl.message_id = d.draft_id AND dl.is_public = TRUE "
                     "WHERE d.zendesk_ticket_id = %s AND d.created_at >= %s "
                     "ORDER BY d.created_at DESC LIMIT 1",
                     (ctx.zendesk_ticket_id, since),
@@ -2199,12 +2220,13 @@ class ScenarioEngine:
         )
         self.next_customer_turn(ctx, f"Sorry, typo. My App ID is {E3_APPID_NOT_FOUND}")
         # Turn 4 contract (current native chain, verified live on 2026-10-21
-        # ticket 14171): the valid-format submission completes the enablement
-        # workflow with outcome=review_requested, the confirmation reply rides
-        # the Hermes persona draft channel, and the relay request binds the
-        # turn's compatibility reply job. No legacy submission_confirmation
-        # reply job exists on this path, so the old reply-job wait can never
-        # be satisfied.
+        # tickets 14169/14171 by p2-208 #1536; integrity merge of p2-209): the
+        # valid-format submission completes the enablement workflow with
+        # outcome=review_requested, the confirmation reply rides the Hermes
+        # persona draft channel, and the relay request reuses the chain's
+        # compatibility reply job — no legacy submission_confirmation reply
+        # job exists on this path, so the old reply-job wait can never be
+        # satisfied. The reused job is kept as an auxiliary observation only.
         turn4 = self.wait_hermes_workflow_outcome(
             ctx,
             expected_outcome="review_requested",
@@ -2221,6 +2243,10 @@ class ScenarioEngine:
         )
         turn4_request_id = str(turn4_request.get("request_id") or "")
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+        self._observe_reused_confirmation_reply_job(
+            ctx, turn4_request,
+            turn3_job_id=str(turn3.get("compatibility_account_reply_job_id") or ""),
+        )
 
         self.next_customer_turn(ctx, E3_NUDGE_BODY)
         # Turn 5 contract (fixed-task/message-action): a polite review nudge

@@ -5282,3 +5282,10 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - `hermes-investigation-manual-v4` → `v5`：先执行只读调查；频道仅有名称时使用服务端固定前30天初查窗口；区分空结果、错误、截断；限制三次搜索；偏色结论明确证据边界。
 - 新增按回合绑定的 `supportportal-investigation-v1` Skill profile 与专用 `support_zac_consult` 工具；不改变 Automation/Cron 默认技能。
 - SupportPortal PR #1502 与 Hermes deploy PR #34 已合入 main；Preproduction release `r20261014-8c15123`（Prompt `pr-88298d4e0a3f`）正式 evidence 为 `complete`，健康与发布身份已只读回读一致。未触达真实 Argus/Zac/Slack/Zendesk/客户业务，Production 未执行。
+
+## 2026-10-21 — Enablement relay 结果完整性与 E3 载体（p2-209 enablement-relay-result-integrity-v1，待独立验收）
+
+- 无 Prompt/Persona/footer 变更。本条为工具链行为登记：AgentRelay 回传文本 part 合法结构固定为 `{"kind":"text","text":"<json>"}`（`type` 键在发送/准备两端被拒），`enablement-relay-result-v1` 发送前校验 request_id/outcome/write_attempted 绑定。
+- SupportPortal worker 对不可解析/未绑定的 relay 结果不再"当噪音 ACK+complete"：先入统一失败/人工接管链，持久化失败态后才 ACK，relay 任务以显式 `fail_task`（agent_reported_failure）终态收尾；重复投递仅更新证据。
+- E3 剧本第 4 回合改用现行 Hermes draft/delivery 载体（relay request + 已投递公开草稿评论 + 确认语义检查），旧 `submission_confirmation` reply job 降为辅助观察；场景包装器中止/审批超时/记录失败一律非零退出。
+- 本轮不含任何线上行为部署；合同与证据见 p2-209 任务登记与两仓 Draft PR。

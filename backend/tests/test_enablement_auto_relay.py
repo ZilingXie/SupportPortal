@@ -90,6 +90,8 @@ class _FakeRelayClient:
         self.events: list[dict] = []
         self.acked: list[dict] = []
         self.completed_tasks: list[str] = []
+        self.failed_tasks: list[dict] = []
+        self.fail_task_side_effect = None
         self.task_details: dict[str, dict] = {}
         self.epoch = 7
         self.create_side_effect = None
@@ -124,7 +126,22 @@ class _FakeRelayClient:
 
     def complete_task(self, task_id, **kwargs):
         self.completed_tasks.append(task_id)
+        self.set_task_status(task_id, "completed")
         return {"task": {"status": "completed"}}
+
+    def fail_task(self, task_id, **kwargs):
+        if self.fail_task_side_effect is not None:
+            raise self.fail_task_side_effect
+        self.failed_tasks.append(
+            {"task_id": task_id, "kwargs": dict(kwargs)}
+        )
+        self.set_task_status(task_id, "failed")
+        return {"task": {"status": "failed"}}
+
+    def set_task_status(self, task_id, status):
+        detail = self.task_details.get(task_id)
+        if isinstance(detail, dict) and isinstance(detail.get("task"), dict):
+            detail["task"]["status"] = status
 
 
 def _open_ticket_snapshot():
@@ -662,22 +679,34 @@ class RelayInboxTests(unittest.TestCase):
         request = self.repository.get_enablement_relay_request(self.request_id)
         self.assertEqual(request["status"], "completed")
 
-    def test_mismatched_request_binding_is_rejected_and_acked(self):
+    def test_mismatched_request_binding_fails_request_and_relay_task(self):
         client, _payload = self._client_with_result()
         client.task_details["task-1"]["messages"][-1]["parts"][0]["text"] = json.dumps(
             _result_payload("enr-OTHER-v1")
         )
+        failure = AsyncMock()
         with patch.dict("os.environ", RELAY_ENV, clear=False), patch.object(
             WORKER, "ticket_repository", self.repository
-        ), patch.object(WORKER, "AgentRelayClient", return_value=client):
+        ), patch.object(WORKER, "AgentRelayClient", return_value=client), patch.object(
+            WORKER, "_record_execution_failure", failure
+        ):
             WORKER._cycle_enablement_relay_inbox(max_events=5)
-        # Consumed (acked) but never applied: no result row, request unchanged.
+        # 14158 contract: an unbindable result is a technical failure —
+        # never ack-and-complete. The request fails durably, the ack happens
+        # after that, and the relay task gets an explicit failure terminal.
         self.assertIsNone(self.repository.get_enablement_relay_result(self.request_id))
         request = self.repository.get_enablement_relay_request(self.request_id)
-        self.assertEqual(request["status"], "dispatched")
+        self.assertEqual(request["status"], "failed")
+        self.assertEqual(request["suppression_reason"], "relay_result_invalid")
+        failure.assert_awaited_once()
         self.assertEqual(len(client.acked), 1)
+        self.assertEqual(
+            [item["task_id"] for item in client.failed_tasks], ["task-1"]
+        )
+        self.assertEqual(client.completed_tasks, [])
         events = [item["event_type"] for item in self.repository._events]
         self.assertIn("enablement_relay_result_rejected", events)
+        self.assertIn("enablement_relay_failure", events)
 
     def test_failed_result_routes_to_failure_chain_without_manual_email(self):
         client, _payload = self._client_with_result(outcome="config_mismatch")

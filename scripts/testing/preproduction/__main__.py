@@ -627,10 +627,17 @@ def main() -> int:
             "sender": pp.redact_email(engine.sender),
         }
     except Exception as exc:  # noqa: BLE001 - report and fail with the matrix
-        log(f"scenario {args.scenario} aborted: {pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400]}")
+        # C7 (14158 round): exception text can carry a DSN in URL or key=value
+        # form; redact before it reaches the log or the report file.
+        from backend.services.dsn_redaction import redact_dsn_secrets
+
+        aborted_reason = redact_dsn_secrets(
+            pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)
+        )[:400]
+        log(f"scenario {args.scenario} aborted: {aborted_reason}")
         report = {
             "scenario": args.scenario,
-            "aborted": pp.redact_text(str(exc), app_id=pp.PP_APP_ID, email=engine.sender)[:400],
+            "aborted": aborted_reason,
             "steps": [step.as_dict() for step in engine.steps],
         }
         exit_code = 2

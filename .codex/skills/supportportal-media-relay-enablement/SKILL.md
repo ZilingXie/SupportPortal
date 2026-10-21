@@ -70,6 +70,14 @@ ECS 侧不做任何 Archer 写入；本技能是唯一执行方，且**两次人
 
 ## 结果回传契约（reply 消息的 text part，单条 JSON）
 
+**消息 part 合法结构（14158 事故铁律）**：结果 JSON 必须放在
+`{"parts": [{"kind": "text", "text": "<单条 JSON>"}]}`。`type:"text"` 会被
+AgentRelay 发送端直接拒绝，缺失 `kind` 同样拒绝；ECS 解析器只认 `kind`，
+错误结构的消息会被判为无效结果并**立即进入失败/人工接管链**（申请置
+failed，不再搁置 14 天）。标准 parts 由
+`node <agentRelay>/scripts/agentrelay-build-result.mjs --result=<已批准结果.json>`
+生成并校验（request_id/outcome/write_attempted），禁止手工拼接 wire parts。
+
 ```json
 {
   "schema_version": "enablement-relay-result-v1",
