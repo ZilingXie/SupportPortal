@@ -156,6 +156,11 @@ cleanup() {
         note "Stopped Podman machine $machine_name (it was stopped before this run)."
       else
         note "Failed to stop Podman machine $machine_name; stop it manually with 'podman machine stop $machine_name'."
+        # POD-001: a failed restore-to-stopped is a failed run — the wrapper
+        # must not report success while the machine keeps running in the
+        # background. Earlier cleanup results (container/volume removal)
+        # stay recorded above.
+        (( rc != 0 )) || rc=1
       fi
     else
       note "Leaving Podman machine $machine_name running: other containers are active: $(printf '%s' "$others" | tr '\n' ' ')"

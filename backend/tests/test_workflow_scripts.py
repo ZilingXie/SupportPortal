@@ -2832,6 +2832,8 @@ class WorkflowScriptTests(unittest.TestCase):
                     (state / "machine-state.txt").write_text("running", encoding="utf-8")
                     print("started")
                 elif argv[:2] == ["machine", "stop"]:
+                    if os.environ.get("EPH_FAKE_MACHINE_STOP_FAIL") == "1":
+                        sys.exit(42)
                     (state / "machine-state.txt").write_text("stopped", encoding="utf-8")
                     print("stopped")
                 elif argv[:1] == ["info"]:
@@ -2842,6 +2844,8 @@ class WorkflowScriptTests(unittest.TestCase):
                     entry = read_json("containers.json", {}).get(argv[-1], {})
                     print(entry.get("labels", {}).get(label_key, ""))
                 elif argv[:1] == ["run"]:
+                    if os.environ.get("EPH_FAKE_RUN_FAIL") == "1":
+                        sys.exit(42)
                     name = arg_value(argv, "--name")
                     containers = read_json("containers.json", {})
                     containers[name] = {"labels": parse_labels(argv), "running": True}
@@ -2857,6 +2861,8 @@ class WorkflowScriptTests(unittest.TestCase):
                     marker = state / "pg-isready-count"
                     count = int(marker.read_text(encoding="utf-8") or "0") + 1 if marker.exists() else 1
                     marker.write_text(str(count), encoding="utf-8")
+                    if os.environ.get("EPH_PG_ISREADY_ALWAYS_FAIL") == "1":
+                        sys.exit(1)
                     sys.exit(1 if count <= int(os.environ.get("EPH_PG_ISREADY_FAIL_FIRST", "0")) else 0)
                 elif argv[:1] == ["ps"]:
                     containers = read_json("containers.json", {})
@@ -2873,6 +2879,8 @@ class WorkflowScriptTests(unittest.TestCase):
                     if sub == "exists":
                         sys.exit(0 if argv[2] in volumes else 1)
                     elif sub == "create":
+                        if os.environ.get("EPH_FAKE_VOLUME_CREATE_FAIL") == "1":
+                            sys.exit(43)
                         name = argv[-1]
                         volumes[name] = {"labels": parse_labels(argv)}
                         write_json("volumes.json", volumes)
@@ -3180,6 +3188,149 @@ class WorkflowScriptTests(unittest.TestCase):
         self.assertIn(["machine", "stop", "podman-machine-default"], calls)
         self.assertNotIn(container_name, self._read_json(state_dir / "containers.json"))
         self.assertNotIn(volume_name, self._read_json(state_dir / "volumes.json"))
+
+    def test_with_ephemeral_postgres_container_run_failure_fails_closed_and_cleans_up(self) -> None:
+        # EVID-002: a startup-phase fault (podman run fails) must exit
+        # non-zero and still restore the machine and remove the volume.
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            "true",
+            extra_env={
+                **self._ephemeral_pg_env(bin_dir, state_dir),
+                "EPH_FAKE_RUN_FAIL": "1",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to start PostgreSQL container", result.stderr)
+        calls = self._ephemeral_pg_calls(state_dir)
+        create_call = next(call for call in calls if call[:2] == ["volume", "create"])
+        volume_name = create_call[-1]
+        self.assertIn(["volume", "rm", volume_name], calls)
+        self.assertIn(["machine", "stop", "podman-machine-default"], calls)
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "stopped",
+        )
+        self.assertNotIn(volume_name, self._read_json(state_dir / "volumes.json"))
+        containers_state = (
+            self._read_json(state_dir / "containers.json")
+            if (state_dir / "containers.json").exists()
+            else {}
+        )
+        self.assertEqual(containers_state, {})
+
+    def test_with_ephemeral_postgres_readiness_timeout_fails_closed_and_cleans_up(self) -> None:
+        # EVID-002: PostgreSQL never becoming ready must exit non-zero and
+        # clean up the container, the volume, and the started machine.
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            "true",
+            extra_env={
+                **self._ephemeral_pg_env(bin_dir, state_dir),
+                "EPH_PG_ISREADY_ALWAYS_FAIL": "1",
+                "SUPPORTPORTAL_EPHEMERAL_PG_READY_ATTEMPTS": "2",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("did not become ready", result.stderr)
+        calls = self._ephemeral_pg_calls(state_dir)
+        run_call = next(call for call in calls if call[:1] == ["run"])
+        container_name = run_call[run_call.index("--name") + 1]
+        volume_name = run_call[run_call.index("--volume") + 1].split(":")[0]
+        self.assertIn(["rm", "-f", "-t", "5", container_name], calls)
+        self.assertIn(["volume", "rm", volume_name], calls)
+        self.assertIn(["machine", "stop", "podman-machine-default"], calls)
+        self.assertNotIn(container_name, self._read_json(state_dir / "containers.json"))
+        self.assertNotIn(volume_name, self._read_json(state_dir / "volumes.json"))
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "stopped",
+        )
+        isready_attempts = int((state_dir / "pg-isready-count").read_text(encoding="utf-8"))
+        self.assertEqual(isready_attempts, 2)
+
+    def test_with_ephemeral_postgres_volume_create_failure_fails_closed(self) -> None:
+        # EVID-002: the first startup step failing must exit non-zero and
+        # still stop the machine this run started.
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            "true",
+            extra_env={
+                **self._ephemeral_pg_env(bin_dir, state_dir),
+                "EPH_FAKE_VOLUME_CREATE_FAIL": "1",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to create volume", result.stderr)
+        calls = self._ephemeral_pg_calls(state_dir)
+        self.assertFalse(any(call[:1] == ["run"] for call in calls))
+        self.assertIn(["machine", "stop", "podman-machine-default"], calls)
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "stopped",
+        )
+
+    def test_with_ephemeral_postgres_machine_stop_failure_returns_nonzero(self) -> None:
+        # POD-001 regression: when `podman machine stop` fails, the wrapper
+        # must exit non-zero while preserving the earlier cleanup (container
+        # and volume removal) and leave the failed-stop note visible.
+        repo = self._init_repo()
+        bin_dir, state_dir = self._install_ephemeral_pg_fakes()
+        probe_out = self.root / "probe-stop-fail.json"
+        env = self._ephemeral_pg_env(bin_dir, state_dir)
+        env["PROBE_OUT"] = str(probe_out)
+
+        result = self._run_workflow(
+            "with_ephemeral_postgres.sh",
+            repo,
+            "--dsn-env",
+            "AUTOMATION_ECS_TEST_POSTGRES_DSN",
+            "--",
+            str(bin_dir / "ephemeral-pg-probe"),
+            extra_env={
+                **env,
+                "EPH_FAKE_MACHINE_STOP_FAIL": "1",
+            },
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Failed to stop Podman machine", result.stderr)
+        self.assertIn("stop it manually", result.stderr)
+        # The child itself succeeded; the failure comes from the restore step.
+        self.assertTrue(probe_out.exists())
+        calls = self._ephemeral_pg_calls(state_dir)
+        run_call = next(call for call in calls if call[:1] == ["run"])
+        container_name = run_call[run_call.index("--name") + 1]
+        volume_name = run_call[run_call.index("--volume") + 1].split(":")[0]
+        self.assertIn(["rm", "-f", "-t", "5", container_name], calls)
+        self.assertIn(["volume", "rm", volume_name], calls)
+        self.assertNotIn(container_name, self._read_json(state_dir / "containers.json"))
+        self.assertNotIn(volume_name, self._read_json(state_dir / "volumes.json"))
+        # The machine could not be stopped and stays running.
+        self.assertEqual(
+            (state_dir / "machine-state.txt").read_text(encoding="utf-8").strip(),
+            "running",
+        )
 
     def test_with_ephemeral_postgres_never_touches_other_resources(self) -> None:
         repo = self._init_repo()
