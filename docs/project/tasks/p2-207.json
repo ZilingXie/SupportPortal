@@ -6,8 +6,8 @@
   "function_id": "engineer-investigation-reply",
   "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
   "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
-  "status": "active",
-  "next_action": "已合并，运行验证未完成：PR #1528 经独立验收后 squash 合入 main（ebb59c8b，2026-10-21T01:51Z）；同日发布尝试 r20261021-ebb59c8 两次 deploy 失败（第一次 flags 误用 enablement=manual，遗漏既有配置；第二次 preflight 过但 deploy 失败），执行方已中止并回滚——线上现运行 r20261020-0bd735e-case-files-enable-r2（API :164/Route :160/Worker :163，digest 与旧版本一致，回滚复核通过，2026-10-21 10:31 北京）。重新发布待用户授权：需按成功基线 checkpoint（enablement=archer）复刻 flags，并与在途的 ebb59c8-csd10-intake-r1（p2-197 CSD10，已建 checkpoint 未跑）协调先后；发布后完成运行验收（分条 Slack/无长度门草稿/中文问候语的自然样本）",
+  "status": "done",
+  "next_action": "已完成（ECS Preproduction 技术验收通过，2026-10-21）：正式 pipeline 发布 r20261021-1192ee4（git 1192ee459，含 p2-207 全部代码与 p2-192 R2-V2-B1-REPRO），flags 从成功基线复刻（enablement=archer / engine=hermes / persona / agent，knowledge 保持全 0，未开 CSD10 intake）。部署 evidence complete：provider/public health/cloudwatch 零错误/terraform 发布后零漂移/TargetHealth healthy/三角色 runtime_verified+digest 逐一绑定（api :167 8c2047af / route :163 c3685bb7 / worker :166 9a75c5e3）；独立线上回读一致。镜像内隔离探针 12 项全过（section 顺序/无损分片/结构化截断标注/无长度门代码在位/persona v3/问候语三态）。业务验收（真实 Slack 分条效果、真实长草稿、真实中文投递问候语、14146 重放）不在本次范围，需单独授权",
   "owner": "agent",
   "created_at": "2026-10-20",
   "updated_at": "2026-10-21",
@@ -24,20 +24,20 @@
   "blockers": [],
   "evidence": [
     {
-      "type": "pr",
-      "label": "PR #1528 MERGED：squash ebb59c8b6c93c101bb43ca5d84464ced53ab3270（v1 实现 28fe469b + 验收轮1修复 5d6efa01 + 合并前分支整理 701e9b18，12 files +898）；合并后 main 已推进至 d645f049（p2-192 R2-V2-B1-REPRO #1529）"
-    },
-    {
       "type": "deployment",
-      "label": "发布中止与回滚：ecs-pipeline-r20261021-ebb59c8（codebuild passed → preflight 首败后过 → deploy 两败；第一次 mode 误为 enablement=manual/hermes_case_workflow=disabled/schema_bootstrap=false）；回滚目标 r20261020-0bd735e-case-files-enable-r2（deploy passed，enablement=archer）；线上三服务 COMPLETED 1/1/0、digest 一致、/health/release ok（执行方回滚复核，2026-10-21 10:31 北京）"
+      "label": "r20261021-1192ee4（Preproduction，2026-10-21T03:21Z deploy passed，evidence complete 全门禁）：api td:167 digest 8c2047affecc / route td:163 digest c3685bb7177b / worker td:166 digest 9a75c5e37，三角色 runtime_verified=true；独立回读 /health/release ok=ok release_id=r20261021-1192ee4 git=1192ee459 prompt=pr-88298d4e0a3f 与 manifest 一致；SLO 轻微超出（1222s vs 900s 目标）已记录非阻断"
     },
     {
       "type": "test",
-      "label": "合并前验证：合同套件 23 + 相关回归 304 passed + 92 subtests + 隔离 PostgreSQL 54 passed（验收轮1后，HEAD 5d6efa01）"
+      "label": "部署 worker 镜像内隔离探针 12 项 ALL_PASS（digest 9a75c5e37aeb5 实测：分条 section 固定顺序/5000 字 summary 无损无省略号/分片围栏平衡/event_refs 的 API+success+errorCode 可读/结构化 truncated 标注/非 source-only/工具层无 reply_too_long/persona 无长度策略且 v3/问候语规范化-幂等-英文不变）"
+    },
+    {
+      "type": "pr",
+      "label": "代码链：PR #1528（squash ebb59c8b，v1+验收轮1）→ 发布中止回滚（r20261021-ebb59c8 两败，flags 误用 manual 已纠正为基线复刻）→ 重发成功 r20261021-1192ee4"
     },
     {
       "type": "document",
-      "label": "prompt_change_log（p2-207 条目）、Task/Overview 已随 PR 合入；运行验收待重新发布后完成"
+      "label": "发布约束遵守：knowledge 各开关维持 0（未开 CSD10 intake）、未发送真实 Slack/Zendesk 消息、14146 未重放、Production 未触碰"
     }
   ]
 }
