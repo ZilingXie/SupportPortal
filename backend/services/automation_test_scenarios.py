@@ -2219,20 +2219,30 @@ class ScenarioEngine:
             "invalid App ID case marker",
         )
         self.next_customer_turn(ctx, f"Sorry, typo. My App ID is {E3_APPID_NOT_FOUND}")
-        # Turn 4 carrier (14158 observation, 2026-10-21): the submission
-        # confirmation travels the Hermes draft pipeline to a delivered
-        # public Zendesk comment; the relay request reuses the chain's
-        # compatibility reply job instead of creating a new legacy
-        # submission_confirmation reply job. Assert the current carrier and
-        # keep the legacy job as an auxiliary observation only.
-        turn4_request = self.wait_enablement_relay_request(
-            ctx, "relay request created after submission"
+        # Turn 4 contract (current native chain, verified live on 2026-10-21
+        # tickets 14169/14171 by p2-208 #1536; integrity merge of p2-209): the
+        # valid-format submission completes the enablement workflow with
+        # outcome=review_requested, the confirmation reply rides the Hermes
+        # persona draft channel, and the relay request reuses the chain's
+        # compatibility reply job — no legacy submission_confirmation reply
+        # job exists on this path, so the old reply-job wait can never be
+        # satisfied. The reused job is kept as an auxiliary observation only.
+        turn4 = self.wait_hermes_workflow_outcome(
+            ctx,
+            expected_outcome="review_requested",
+            expected_reason="enablement_auto_review",
+            step="valid-format submission entered review (turn 4)",
         )
-        turn4_request_id = str(turn4_request.get("request_id") or "")
         self.wait_hermes_draft_delivered(
             ctx, "submission confirmation delivered (turn 4)",
             content_check=_submission_confirmation_content_check,
+            expected_turn_id=str(turn4.get("turn_id") or ""),
         )
+        turn4_request = self.wait_enablement_relay_request(
+            ctx, "relay request created after confirmation"
+        )
+        turn4_request_id = str(turn4_request.get("request_id") or "")
+        self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
         self._observe_reused_confirmation_reply_job(
             ctx, turn4_request,
             turn3_job_id=str(turn3.get("compatibility_account_reply_job_id") or ""),

@@ -444,6 +444,12 @@ class ScenarioEngineTests(unittest.TestCase):
                     if str(getattr(ctx, "zendesk_ticket_id", "")) == "13702"
                     else "53820000000103"
                 )
+            elif "Sorry, typo" in body:
+                comment_id = (
+                    "53820000000304"
+                    if str(getattr(ctx, "zendesk_ticket_id", "")) == "13702"
+                    else "53820000000104"
+                )
             elif "possibility of getting" in body:
                 comment_id = "53820000000106"
             elif "enable the permission now" in body:
@@ -569,31 +575,46 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            # Turn 4 (C5, 14158 round): the submission confirmation rides the
-            # Hermes draft pipeline; one new relay request + one delivered
-            # public draft comment. The reused legacy reply job (the turn-3
-            # compatibility job) is an auxiliary observation only.
-            ("FROM support_enablement_relay_requests", [{
-                "request_id": "enr-AC-13700-v1",
-                "status": "dispatched",
-                "app_id": "8cb7aea984c4457daad802e6960e2475",
-                "request_version": 1,
-                "reply_job_id": "job-3",
+            # Turn 4 (current native chain): workflow outcome review_requested,
+            # confirmation delivered through the Hermes draft channel, relay v1.
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-4",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000104",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "review_requested",
+                    "internal_email_send_reason": "enablement_auto_review",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
             }]),
             ("FROM automation_hermes_case_drafts", [{
                 "draft_id": "draft-4",
+                "turn_id": "turn-4",
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000104",
                 "content": (
-                    "Thank you for your request. Our team is reviewing it with our internal "
-                    "workflow and will follow up with an update."
+                    "Hi Ziling, thanks for correcting the App ID. I have recorded your Media "
+                    "Relay enablement request for review and will follow up with an update."
                 ),
             }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "gated",
+                "app_id": "8cb7aea984c4457daad802e6960e2475",
+                "request_version": 1,
+                "reply_job_id": "job-3",
+            }]),
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
+                "zendesk_comment_id": "53820000000104",
+            }]),
+            # Turn 5: nudge -> report_progress from the BOUND relay request.
             ("FROM support_account_reply_jobs WHERE job_id = %s", [{
                 "status": "persona_v8_queued",
             }]),
-            # Turn 5: nudge -> report_progress from the BOUND relay request.
             ("FROM automation_hermes_agent_turns", [{
                 "turn_id": "turn-5",
                 "turn_kind": "message_action",
@@ -847,21 +868,36 @@ class ScenarioEngineTests(unittest.TestCase):
                 "hermes_compatibility_only": "true",
             }]),
             ("WHERE account_case_id", [{"internal_email_send_reason": "appid_invalid_format"}]),
-            # Turn 4 (C5): relay request + delivered draft confirmation;
-            # the reused legacy reply job is auxiliary only.
+            ("WHERE zendesk_ticket_id = %s AND event_id = %s", [{
+                "turn_id": "turn-4",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000304",
+                "work_result": {
+                    "status": "workflow_completed",
+                    "outcome": "review_requested",
+                    "internal_email_send_reason": "enablement_auto_review",
+                    "compatibility_account_reply_job_id": "job-3",
+                },
+            }]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-4",
+                "turn_id": "turn-4",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000304",
+                "content": "Hi Ziling, I have recorded your Media Relay request for review.",
+            }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
-                "status": "dispatched",
+                "status": "gated",
                 "app_id": "fcd0dab13017495bbe25a63bfdb236fd",
                 "request_version": 1,
                 "reply_job_id": "job-3",
             }]),
-            ("FROM automation_hermes_case_drafts", [{
-                "draft_id": "draft-4",
-                "draft_status": "queued",
-                "delivery_status": "delivered",
+            ("FROM support_account_zendesk_comment_deliveries", [{
+                "status": "delivered",
+                "is_public": True,
                 "zendesk_comment_id": "53820000000304",
-                "content": "Thank you for your request. Our team is reviewing it.",
             }]),
             ("FROM support_account_reply_jobs WHERE job_id = %s", [{
                 "status": "persona_v8_queued",
@@ -2027,17 +2063,21 @@ class E3Turn4CarrierTests(unittest.TestCase):
             if "turn 4" in str(args)
         ]
         self.assertNotIn("wait_reply_intent", [name for name, _ in turn4_wait_calls])
-        # Turn 4 order: submit -> relay request -> delivered draft confirmation.
+        # Turn 4 order (merged contract with p2-208 #1536): submit ->
+        # workflow outcome (review_requested) -> turn-bound delivered draft
+        # -> relay request -> public comment -> auxiliary reuse observation.
         submit_index = max(
             i for i, (name, args, _kw) in enumerate(engine.calls)
             if name == "next_customer_turn" and "typo" in str(args[1])
         )
-        tail = calls[submit_index + 1 : submit_index + 4]
+        tail = calls[submit_index + 1 : submit_index + 6]
         self.assertEqual(
             tail,
             [
-                "wait_enablement_relay_request",
+                "wait_hermes_workflow_outcome",
                 "wait_hermes_draft_delivered",
+                "wait_enablement_relay_request",
+                "wait_public_comment_delivered",
                 "_observe_reused_confirmation_reply_job",
             ],
             f"turn-4 carrier sequence wrong: {tail}",
@@ -2048,11 +2088,13 @@ class E3Turn4CarrierTests(unittest.TestCase):
             and "submission confirmation" in str(args[1] if len(args) > 1 else "")
         ]
         self.assertTrue(draft_kwargs, "turn-4 draft delivery step missing")
-        # Delivered + confirmation-semantics content check is the gate (C5).
+        # Delivered + turn-bound + confirmation-semantics content check is
+        # the gate (C5, merged with #1536's live-verified binding).
         self.assertIs(
             draft_kwargs[0].get("content_check"),
             _submission_confirmation_content_check,
         )
+        self.assertTrue(str(draft_kwargs[0].get("expected_turn_id") or ""))
 
     def test_reused_reply_job_observation_is_auxiliary(self):
         from types import SimpleNamespace as NS
@@ -2121,6 +2163,18 @@ class RecorderEngine(ScenarioEngine):
     wait_zendesk_delivery_delivered = _record_call("wait_zendesk_delivery_delivered")
     verify_relay_result_approval_binding = _record_call("verify_relay_result_approval_binding")
     _observe_reused_confirmation_reply_job = _record_call("_observe_reused_confirmation_reply_job")
+    wait_public_comment_delivered = _record_call("wait_public_comment_delivered")
+
+    def sleep(self, seconds):
+        # Defensive: a helper that slips past the recorder must never enter
+        # the engine's real polling loop.
+        return None
+
+    def wait_for(self, description, probe, timeout_seconds):
+        result = probe()
+        if result is None:
+            raise TimeoutError(f"timed out waiting for {description}")
+        return result
 
     RESPONSES = {
         "wait_hermes_workflow_outcome": {
