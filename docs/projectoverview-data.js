@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T04:51:54Z",
-  "source_base_commit": "972a0fc21249261e541ee4609ce4e0e75350e33a",
-  "registry_digest": "6668a7233ed48670565146c0addb9242ca0e26d75f27bbe7c7d534fe32934cb0",
+  "generated_at": "2026-10-21T05:49:25Z",
+  "source_base_commit": "4c728884bdf4d59cb6a6dad3a3c182d310378d3d",
+  "registry_digest": "bceb59ae1167c13b6f52fa72ebe205ae2657f2382bb947eaf5e0bb38ccb51443",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1832,6 +1832,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "backend/tests/test_automation_test_scenarios.py E3 turn 5b 精确回合剧本与断言（49 passed）",
           "url": "backend/tests/test_automation_test_scenarios.py"
+        },
+        {
+          "type": "deployment",
+          "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
+          "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
         },
         {
           "type": "test",
@@ -19310,7 +19315,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "14152 部署默认保留 native Hermes 与会话内再执行措辞进度修正（E3 精确回合）",
       "summary": "两个合同：(1) Preproduction 发布未指定 --automation-case-engine 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态；缺失/冲突/不可读一律 fail-closed 要求显式旗标；显式 legacy 保留既有降级授权门；新增 --hermes-persona-disabled；发布证据记录 native_hermes_config 四字段与 provenance）——根治 2026-10-21 r20261021-ebb59c8 两次人工旗标误用（enablement=manual 遗漏既有 archer 等）。(2) 14152 回归：客户在 enablement 会话中段再次要求开通（Could you help me enable the permission now?）不再 superseded→RAG fallback 转人工，而是服务端修正为进度追问——reply-sync（legacy 轮询路径）从绑定 manual review reply job 或 relay request 的真实状态生成 progress_inquiry_answer 回复（确定性 provided_answer+Persona 措辞，不承诺加速/完成时间）；native hermes 路径 tool_record_direction 对 backend_operation(enable) 提案、agent 对 continue_task message_action 同样状态门控修正为 conversation_followup/progress_inquiry 或 report_progress，绑定不可读/终态 fail-closed 转人工；E3 在 relay request 建立后、终态前新增精确回合（保留原礼貌催促为对照），断言 comment↔turn 绑定、report_progress、单一 relay request、无 RAG fallback。",
       "status": "active",
-      "next_action": "代码与定向测试完成（分类器16/合同37/业务32/agent76/场景49/部署116/管线59/邻接157 passed；隔离 PG 中新测试过，存量失败簇经 stash 对照确认 main 同样失败并披露）；待 finalize 合入 main 后执行 Preproduction 发布（本次发布将首次走 C1 engine 继承路径）与部署层回读；真实 E3 执行需单独授权（会建 Zendesk 工单并产生评论/邮件/自动化副作用）",
+      "next_action": "已完成：代码合入 main（PR#1532=4c728884，2026-10-21）；Preproduction 发布 r20261021-4c72888-hermes-default-v1 经 C1 继承路径部署成功（发布命令未传任何 case 旗标，pipeline 从 live Route/API/Worker 解析继承 hermes/agent/persona/disabled，case-config-resolution.json 四项 provenance=inherited_live[_hermes]；deploy 全阶段 passed，rollback not_started）；实时回读 route:164 engine=hermes、api:168/worker:167 typed=disabled+agent+persona 凭据、health ready/release=ok 同 release、digests observed-match ×3、prompt pr-88298d4e0a3f active。真实 E3（turn 5b 精确回合实跑）待单独授权；存量失败簇（handoff note_comment_id、conversation 累计）另线修复",
       "owner": "agent",
       "created_at": "2026-10-21",
       "updated_at": "2026-10-21",
@@ -19348,6 +19353,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "test",
           "label": "backend/tests/test_automation_test_scenarios.py E3 turn 5b 精确回合剧本与断言（49 passed）",
           "url": "backend/tests/test_automation_test_scenarios.py"
+        },
+        {
+          "type": "deployment",
+          "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
+          "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
         }
       ]
     },
