@@ -28,7 +28,7 @@
 
 ## 单元和契约测试入口
 
-以下命令在当前任务工作区根目录执行，`python` 应来自已准备好项目测试依赖的环境。如果复用根工作区的虚拟环境解释器，仍保持工作目录和待验证源码指向当前任务工作区。命令中的测试文件存在不代表它已经执行。
+以下命令在当前任务工作区根目录执行，`python` 应来自已准备好项目测试依赖的环境。如果复用根工作区的虚拟环境解释器，仍保持工作目录和待验证源码指向当前任务工作区。命令中的测试文件存在不代表它已经执行。普通单元/契约测试不需要 Podman，也不要求 Podman machine 处于运行状态；需要 PostgreSQL 的集成测试见下节的一次性入口。
 
 | 改动范围 | 建议先读的测试 |
 | --- | --- |
@@ -56,7 +56,27 @@ rtk proxy python -m pytest -q backend/tests/test_automation_ecs_images.py
 
 测试 DSN 必须指向允许创建、写入和清理测试数据的专用测试数据库，不复用未经确认的运行或迁移 DSN。凭据只通过环境提供，不写进命令参数、文档或测试报告。其他 PostgreSQL 测试使用的变量以对应文件为准。
 
-配置好专用环境后，例如：
+本机隔离入口（2026-10-21 起默认关闭 Podman 后台保活）：用一次性 PostgreSQL 包装器运行，不占用共享数据库：
+
+```bash
+bash scripts/workflow/with_ephemeral_postgres.sh \
+  --dsn-env AUTOMATION_ECS_TEST_POSTGRES_DSN \
+  -- .venv/bin/pytest -q -rs backend/tests/test_automation_ecs_store_postgres.py
+```
+
+包装器合同（来源 [with_ephemeral_postgres.sh](../../scripts/workflow/with_ephemeral_postgres.sh)，核对日期 2026-10-21）：
+
+- 不读取根 `.env`，并向子进程设置 `PYTHON_DOTENV_DISABLED=1`；
+- 只把本次 DSN 注入 `--dsn-env` 显式列出的变量，`TICKET_DB_DSN`/`PGVECTOR_DSN` 等不动；
+- 只启动 PostgreSQL（`pgvector/pgvector:pg16`），不经过 podman-compose，不启动 API/RAG/Redis/Neo4j/Nginx；
+- 绑定 `127.0.0.1` 动态端口，容器/卷带唯一 run label，`restart=no`；
+- 成功、失败、中断都会清理本次 run 的容器和卷，不删除其他容器/卷/镜像/网络；
+- machine 原本运行则保持运行；原本停止且结束时无其他运行容器则停回；
+- Podman machine 默认不再由后台 launchd 保活（原 `local.supportportal.podman.keepalive` 已禁用，plist 保留可恢复）。
+
+`run_with_local_db_env.sh` 会加载根 `.env`，面向运行中的本地栈 host-side 操作，不能作为隔离测试入口。
+
+配置好其他专用 DSN 环境后，例如：
 
 ```bash
 rtk proxy python -m pytest -q -rs backend/tests/test_automation_ecs_store_postgres.py

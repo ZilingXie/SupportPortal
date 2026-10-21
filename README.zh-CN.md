@@ -96,6 +96,7 @@ RAG Workbench 支持 benchmark 复盘、基于筛选条件的诊断，以及检�
 
 1. 已安装 Podman 和 `podman-compose`。
 2. 已初始化 Podman machine。
+3. Podman machine 不再由后台代理常驻保活：需要完整栈或依赖 Podman 的测试时显式启动（下方命令已包含 `podman machine start`），用完执行 `podman machine stop`。
 
 ### 启动单机栈
 
@@ -147,6 +148,22 @@ podman-compose \
   down
 ```
 
+### 运行测试
+
+普通单元和契约测试不需要 Podman，直接运行即可，例如 `python -m pytest -q backend/tests/test_automation_ecs_contracts.py`。
+
+PostgreSQL 集成测试使用按需启动的一次性数据库：
+
+```bash
+bash scripts/workflow/with_ephemeral_postgres.sh \
+  --dsn-env AUTOMATION_ECS_TEST_POSTGRES_DSN \
+  -- .venv/bin/pytest -q -rs backend/tests/test_automation_ecs_store_postgres.py
+```
+
+包装器仅在 machine 停止时才启动它；创建唯一 PostgreSQL 容器和卷并绑定 `127.0.0.1` 动态端口；不读取根 `.env`；只把 DSN 注入显式列出的变量；成功、失败、中断都会清理本次容器和卷，结束后 machine 无其他使用者时自动停回。`run_with_local_db_env.sh` 会加载根 `.env`，面向运行中的本地栈 host-side 操作，不是隔离测试入口。
+
+完整单机栈使用结束后，用上方项目级 `down` 停止。不要执行全局清理（`podman system prune`、删除共享卷）：现有镜像和卷属于其他工作流。
+
 ## 本地修改如何生效
 
 1. 修改了 `backend/`、`ui/client-ui/`、`ui/engineer-ui/` 或 `ui/dashboard-ui/` 后：
@@ -197,7 +214,7 @@ bash scripts/workflow/restart_single_host_stack.sh --mode local_lightweight --db
 
 6. host-side ingestion 或排查脚本需要写入本地 pgvector：
    - 使用 `bash scripts/workflow/run_with_local_db_env.sh -- <command>` 包裹命令。
-   - helper 会导出 `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` 的 host DSN，容器内仍使用 `local_postgres:5432`。
+   - helper 会加载根 `.env`，导出 `127.0.0.1:${LOCAL_POSTGRES_HOST_PORT}` 的 host DSN，容器内仍使用 `local_postgres:5432`；它不是隔离测试入口（测试用 `with_ephemeral_postgres.sh`）。
 
 ## 项目目录
 
