@@ -10,17 +10,46 @@ Adds:
   R2 file hunks (bind_file_scope at the approval site, skill_allowed filters,
   skill_view gate, plugin TOOLSETS/bridge/draft-scope, yaml provides_tools)
 
-Every replacement asserts exactly one anchor match. Output: cf-overlay-work/tree/.
+Every replacement asserts exactly one anchor match.
+
+Inputs (no machine paths are baked in; see README.md for extraction):
+  --work DIR   (or CF_OVERLAY_WORK)  work dir holding from-new-image/,
+               from-td46/, supportportal_skill_profile.py, td46/investigation-profiles/
+  --sp DIR     (or SUPPORTPORTAL_ROOT) SupportPortal checkout; defaults to the
+               checkout this script lives in
+  --out DIR    (or CF_OVERLAY_OUT)   output tree; defaults to <work>/tree
 """
+import argparse
+import os
 import shutil
 import sys
 from pathlib import Path
 
-W = Path("/Users/xieziling/Desktop/personal_proj/cf-overlay-work")
-SP = Path("/Users/xieziling/Desktop/personal_proj/SupportPortal")
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--work", default=os.environ.get("CF_OVERLAY_WORK"),
+                        required=not os.environ.get("CF_OVERLAY_WORK"),
+                        help="work dir with from-new-image/, from-td46/, td46/ (env CF_OVERLAY_WORK)")
+    parser.add_argument("--sp", default=os.environ.get("SUPPORTPORTAL_ROOT")
+                        or str(Path(__file__).resolve().parents[3]),
+                        help="SupportPortal checkout root (env SUPPORTPORTAL_ROOT; default: this checkout)")
+    parser.add_argument("--out", default=os.environ.get("CF_OVERLAY_OUT"),
+                        help="output tree dir (env CF_OVERLAY_OUT; default <work>/tree)")
+    return parser.parse_args(argv)
+
+
+_args = _parse_args()
+W = Path(_args.work).expanduser().resolve()
+SP = Path(_args.sp).expanduser().resolve()
 NEW = W / "from-new-image"      # populated by caller
 TD46 = W / "from-td46"          # populated by caller
-OUT = W / "tree"
+OUT = Path(_args.out).expanduser().resolve() if _args.out else W / "tree"
+for required, label in ((NEW, "--work/from-new-image"), (TD46, "--work/from-td46"),
+                        (W / "td46/investigation-profiles", "--work/td46/investigation-profiles"),
+                        (SP / "deployment/hermes-case-files", "--sp/deployment/hermes-case-files")):
+    if not required.is_dir():
+        sys.exit(f"missing input directory for {label}: {required}")
 
 def swap(text, anchor, replacement, label):
     n = text.count(anchor)

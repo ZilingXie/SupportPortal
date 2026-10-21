@@ -193,5 +193,19 @@
       "original R1 release review gate"
     ],
     "open_observation": "auto-solve vs manual approval timing race"
+  },
+  "r2_v2_b1_repro_repair": {
+    "finding": "R2-V2-B1-REPRO (independent re-review): v2-merge scripts hardcoded one machine's paths (misspelled cf-overlay-work home dir, a since-deleted SupportPortal worktree, /tmp/b1src, /tmp/b1-investigation-profiles); the repo build chain could not rebuild the td54 artifact",
+    "fix": "all four scripts (merge_b1_fix.py, merge_overlay_v2.py, verify_b1.py, verify_merged_overlay.py) parameterized: required CLI args with CF_*/SUPPORTPORTAL_ROOT env fallbacks, SupportPortal root derived from the script's own checkout, fail-closed on missing inputs with the exact path; rebuild procedure recorded in deployment/hermes-case-files/v2-merge/README.md",
+    "verification": {
+      "real_rebuild": "clean cwd, CF_* scrubbed, preserved live inputs (extracted from base sha256:75e0bdd07bca712dfcba3014ecb40bb37ebb13c180e2c98e0cfb1b88bd3d886c): B1_MERGE_OK; rebuilt tree byte-identical to the td54 build tree across all 12 overlay files; verify_b1.py B1_VERIFY_OK on the rebuilt tree",
+      "deployed_image_content": "td54 task definition pins hermes sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0; image pulled by that digest from ECR, 7 COPY destinations exported and byte-identical to the rebuilt tree",
+      "local_image_rebuild": "podman build from the rebuilt tree on the same base: image ID, rootfs layers, created and history all equal the local td54 image (bit-identical); in-container probe CONTAINER_PROBE_OK (file_skill_visible four-state semantics, _supportportal_listing_visible x3, profile module)",
+      "v2_chain": "merge_overlay_v2.py rerun with explicit args: MERGE_OK + verify_merged_overlay.py VERIFY_OK; current output includes the B1 file_skill_visible helper from the repo bundle (only diff vs the td49-era tree, expected)",
+      "tests": "backend/tests/test_hermes_case_files_v2_merge_scripts.py: 6 clean-directory smoke tests pass (synthetic inputs assembled from the scripts' own swap() anchors via ast, subprocess with scrubbed env, cwd-leak negatives, missing-arg/file fail-closed negatives) + env-gated RealInputRebuildTests passes with CF_B1_SRC/CF_B1_PROFILES/CF_B1_EXPECTED_TREE against the real inputs",
+      "regressions": "bundle five gates passed; isolated PostgreSQL (p2192_case_files_test): test_investigation_case_files 25 passed/4 skip, test_investigation_attachments 30 passed/3 skip (skips = NATIVE_NOTIFICATION_TEST_DSN gate), test_investigation_route_status_fix 20 passed, merge smoke 6 passed/1 skip; zero failures"
+    },
+    "scope_note": "developer toolchain repair only: no runtime behavior change, no deployment, no live mutation; open boundaries (C7 Zac, human Slack upload path, Automation reverse call, Production) unchanged",
+    "repaired_at": "2026-10-21"
   }
 }

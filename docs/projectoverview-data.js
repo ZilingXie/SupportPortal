@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T01:08:14Z",
-  "source_base_commit": "bc8d31f2d2b1614e3b4c0b73d1a6f7dd5651e0aa",
-  "registry_digest": "98c31fc8f6981743b25c2c990c9810ed6a3bd17a280464c9b22d2e2f6106b7be",
+  "generated_at": "2026-10-21T01:56:52Z",
+  "source_base_commit": "762ef889f9290f08525f02f3594c00e1fbda3eab",
+  "registry_digest": "3cbb29f893f5ff354a7963de939f22686e9e2c0d7b7790f35cf716374416df26",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1521,6 +1521,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "decision",
           "label": "用户确认采用 ECS Preproduction 技术验收并豁免本地官方栈重启（2026-10-09）"
+        },
+        {
+          "type": "test",
+          "label": "R2-V2-B1-REPRO 修复轮（v2-merge 构建链可重建化，2026-10-21）",
+          "command": "干净 cwd+清空 CF_* 环境重建（现行 live 输入）；verify_b1/verify_merged_overlay；ECR digest 拉取 td54 镜像导出对照；本地 podman build+容器探针；pytest test_hermes_case_files_v2_merge_scripts.py（冒烟 6+负控+环境门控真实重建）；bundle 五门禁；隔离 PG（p2192_case_files_test）case files/attachments/route status fix 套件",
+          "result": "四脚本（merge_b1_fix/merge_overlay_v2/verify_b1/verify_merged_overlay）去除全部机器路径（原 merge_b1_fix 写错的本机 cf-overlay-work 路径+已删除 worktree+/tmp 硬编码），输入/输出改必填 CLI 参数（CF_*/SUPPORTPORTAL_ROOT 回退、SP 根默认取脚本所在检出、缺参 fail-closed 报具体路径），重建程序入库 v2-merge/README.md。真实重建树与 td54 构建树 12 个 overlay 文件逐字节一致；td54 镜像（任务定义钉 sha256:7df5f3a3…，按 digest 拉取）内 7 个 COPY 目标与重建树逐字节一致；重建树+同基底本地 podman build 所得镜像与 td54 镜像 ID/rootfs 层/created/history 全等（逐位一致）且容器探针 CONTAINER_PROBE_OK；v2 链 MERGE_OK+VERIFY_OK（现行输出含 B1 助手，与 td49 树仅该文件差异属预期）。冒烟测试入库（子进程+清空 env+合成锚点输入经 ast 提取，6 通过+缺参/缺文件负控）；环境门控真实重建测试（CF_B1_SRC/CF_B1_PROFILES/CF_B1_EXPECTED_TREE）本机通过含逐字节断言。回归：bundle 五门禁 passed；隔离 PG case files 25+4 skip / attachments 30+3 skip（skip=NATIVE_NOTIFICATION_TEST_DSN 门控）/ route status fix 20 / 冒烟 6+1 skip，零失败。边界不宣称：C7/人类上传路径/Automation 反向/Production 不变；本轮开发者工具链修复，无 runtime 变更，不部署。"
         },
         {
           "type": "document",
@@ -18032,19 +18038,26 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 附件闭环 v1",
       "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
       "status": "blocked",
-      "next_action": "v2 启用轮收口：合并 PR#1527（Draft 转 ready）、快进根区、刷新 CodeSight（含部署产物代码文件）、清理 worktree。后续独立门禁：Slack→n8n 人类上传路径验证、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争；工单 14147/14151 处置待定。",
+      "next_action": "R2-V2-B1-REPRO 修复轮完成待独立复验（Draft PR：四脚本参数化+README 重建程序+冒烟/真实重建测试+真实输入逐字节/镜像逐位复现证据）；复验通过后恢复收口流程（合并、快进、CodeSight、清理）。后续独立门禁与观察项不变：Slack→n8n 人类上传路径、Automation live 反向调用、C7 Zac、Production 单独授权、自动 solve 时序。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-20",
+      "updated_at": "2026-10-21",
       "acceptance_criteria": [
         "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
         "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
       ],
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+        "R2-V2-B1-REPRO：构建链可重建性修复完成，独立复验未过（复验通过后移除）。"
       ],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R2-V2-B1-REPRO 修复轮（v2-merge 构建链可重建化，2026-10-21）",
+          "command": "干净 cwd+清空 CF_* 环境重建（现行 live 输入）；verify_b1/verify_merged_overlay；ECR digest 拉取 td54 镜像导出对照；本地 podman build+容器探针；pytest test_hermes_case_files_v2_merge_scripts.py（冒烟 6+负控+环境门控真实重建）；bundle 五门禁；隔离 PG（p2192_case_files_test）case files/attachments/route status fix 套件",
+          "result": "四脚本（merge_b1_fix/merge_overlay_v2/verify_b1/verify_merged_overlay）去除全部机器路径（原 merge_b1_fix 写错的本机 cf-overlay-work 路径+已删除 worktree+/tmp 硬编码），输入/输出改必填 CLI 参数（CF_*/SUPPORTPORTAL_ROOT 回退、SP 根默认取脚本所在检出、缺参 fail-closed 报具体路径），重建程序入库 v2-merge/README.md。真实重建树与 td54 构建树 12 个 overlay 文件逐字节一致；td54 镜像（任务定义钉 sha256:7df5f3a3…，按 digest 拉取）内 7 个 COPY 目标与重建树逐字节一致；重建树+同基底本地 podman build 所得镜像与 td54 镜像 ID/rootfs 层/created/history 全等（逐位一致）且容器探针 CONTAINER_PROBE_OK；v2 链 MERGE_OK+VERIFY_OK（现行输出含 B1 助手，与 td49 树仅该文件差异属预期）。冒烟测试入库（子进程+清空 env+合成锚点输入经 ast 提取，6 通过+缺参/缺文件负控）；环境门控真实重建测试（CF_B1_SRC/CF_B1_PROFILES/CF_B1_EXPECTED_TREE）本机通过含逐字节断言。回归：bundle 五门禁 passed；隔离 PG case files 25+4 skip / attachments 30+3 skip（skip=NATIVE_NOTIFICATION_TEST_DSN 门控）/ route status fix 20 / 冒烟 6+1 skip，零失败。边界不宣称：C7/人类上传路径/Automation 反向/Production 不变；本轮开发者工具链修复，无 runtime 变更，不部署。"
+        },
         {
           "type": "document",
           "url": "docs/plans/investigation-attachments-v1.md",
