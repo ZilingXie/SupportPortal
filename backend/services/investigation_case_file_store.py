@@ -19,6 +19,7 @@ FILE_TABLE_DDL = """
     content_type TEXT NOT NULL,
     size_bytes BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 52428800),
     purpose TEXT NOT NULL,
+    short_description TEXT NOT NULL DEFAULT '',
     provenance JSONB NOT NULL,
     slack_file_id TEXT,
     state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','available','unavailable')),
@@ -28,6 +29,19 @@ FILE_TABLE_DDL = """
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE (namespace,case_id,source_system,source_file_id)
 """
+
+MAX_SHORT_DESCRIPTION = 240
+
+
+def normalize_short_description(value, *, managed_filename: str = '') -> str:
+    """Return bounded, display-only metadata; never accept control characters."""
+    raw = str(value or '')
+    if any(ord(char) < 32 for char in raw if char not in {'\t', '\n', '\r'}):
+        raise ValueError('case_file_description_invalid')
+    text = ' '.join(raw.split())
+    if len(text) > MAX_SHORT_DESCRIPTION:
+        raise ValueError('case_file_description_too_long')
+    return text or (f'Engineer attachment {managed_filename}'.strip() if managed_filename else '')
 
 
 def managed_name(case_id, source_system, file_id, original):
@@ -51,7 +65,9 @@ class MemoryCaseFileStore:
             if existing:
                 return copy.deepcopy(existing)
             fid = len(rows) + 1
-            row.update(id=fid, managed_filename=managed_name(row['case_id'], row['source_system'], fid, row['original_filename']),
+            managed = managed_name(row['case_id'], row['source_system'], fid, row['original_filename'])
+            row['short_description'] = normalize_short_description(row.get('short_description'), managed_filename=managed)
+            row.update(id=fid, managed_filename=managed,
                        state='pending', failure_code=None, version=1, slack_file_id=None, slack_filename='')
             rows[fid] = row
             return copy.deepcopy(row)
@@ -83,17 +99,25 @@ class MemoryCaseFileStore:
 
 class PostgresCaseFileStore:
     def register_case_file(self, **row):
-        columns = ('case_id', 'source_system', 'source_file_id', 'original_filename', 'content_type', 'size_bytes', 'purpose', 'provenance')
+        columns = ('case_id', 'source_system', 'source_file_id', 'original_filename', 'content_type', 'size_bytes', 'purpose', 'short_description', 'provenance')
+        short_description = normalize_short_description(row.get('short_description'), managed_filename='')
+        values = [row[k] for k in columns]
+        values[columns.index('short_description')] = short_description
+        values[columns.index('provenance')] = Jsonb(row['provenance'])
         with self._connect() as connection, connection.transaction(), connection.cursor() as cursor:
             cursor.execute(sql.SQL('INSERT INTO {} (namespace,{}) VALUES (%s,{}) '
                 'ON CONFLICT (namespace,case_id,source_system,source_file_id) DO UPDATE SET source_file_id=EXCLUDED.source_file_id RETURNING *').format(
                 self._table('investigation_case_files'), sql.SQL(',').join(map(sql.Identifier, columns)),
                 sql.SQL(',').join(sql.Placeholder() for _ in columns)),
-                (self.settings.job_namespace, *(Jsonb(row[k]) if k == 'provenance' else row[k] for k in columns)))
+                (self.settings.job_namespace, *values))
             result = dict(cursor.fetchone())
             if not result['managed_filename']:
                 cursor.execute(sql.SQL('UPDATE {} SET managed_filename=%s WHERE id=%s RETURNING *').format(self._table('investigation_case_files')),
                     (managed_name(result['case_id'], result['source_system'], result['id'], result['original_filename']), result['id']))
+                result = dict(cursor.fetchone())
+            if not result['short_description']:
+                cursor.execute(sql.SQL('UPDATE {} SET short_description=%s WHERE id=%s RETURNING *').format(self._table('investigation_case_files')),
+                    (normalize_short_description('', managed_filename=result['managed_filename']), result['id']))
                 result = dict(cursor.fetchone())
         return result
 
@@ -111,7 +135,7 @@ class PostgresCaseFileStore:
             return [dict(row) for row in cursor.fetchall()]
 
     def update_case_file(self, case_id, file_id, **fields):
-        allowed = {'slack_file_id', 'slack_filename', 'content_type', 'state', 'failure_code', 'provenance'}
+        allowed = {'slack_file_id', 'slack_filename', 'content_type', 'state', 'failure_code', 'provenance', 'short_description'}
         if not fields or set(fields) - allowed:
             raise ValueError('case_file_update_invalid')
         with self._connect() as connection, connection.cursor() as cursor:

@@ -13,6 +13,7 @@ from pathlib import Path
 
 from backend.services import investigation_attachments as transfer
 from backend.services.automation_hermes_tools import HermesToolError
+from backend.services.investigation_case_file_store import normalize_short_description
 
 TEXT_EXTENSIONS = {'.txt', '.log', '.json', '.csv', '.tsv', '.md', '.html', '.htm', '.xml', '.yaml', '.yml'}
 MAX_TEXT_BYTES = 2 * 1024 * 1024
@@ -82,14 +83,16 @@ def reference(row):
         'channel_id': p['channel_id'], 'thread_ts': p['thread_ts'], 'source_message_ts': p.get('message_ts'),
         'source_event_id': p['source_event_id'], 'actor_id': p.get('uploader_id'),
         'source_system': row['source_system'], 'source_session_id': p.get('session_id'),
+        'short_description': row.get('short_description') or f"Engineer attachment {row['managed_filename']}",
         'introduced_turn_id': p.get('turn_id'), 'state': row['state'], 'purpose': row['purpose']}
 
 
-def register_engineer(store, case_id, refs, team_id):
+def register_engineer(store, case_id, refs, team_id, short_description=None):
     results = []
     for ref in refs:  # Already verified against Slack by the authenticated ingress.
         row = store.register_case_file(case_id=case_id, source_system='engineer', source_file_id=ref['slack_file_id'],
             original_filename=ref['file_name'], content_type=ref['content_type'], size_bytes=ref['size_bytes'], purpose='supplement',
+            short_description=normalize_short_description(short_description or ref.get('short_description'), managed_filename=''),
             provenance={'team_id': team_id, 'channel_id': ref['channel_id'], 'thread_ts': ref['thread_ts'],
                 'message_ts': ref['source_message_ts'], 'source_event_id': ref['source_event_id'],
                 'provider_id': ref['actor_id'], 'uploader_id': ref['actor_id']})
@@ -112,6 +115,7 @@ def import_legacy_engineer_files(store, case_id):
                 continue
             row = store.register_case_file(case_id=case_id, source_system='engineer', source_file_id=ref['slack_file_id'],
                 original_filename=ref['file_name'], content_type=ref['content_type'], size_bytes=ref['size_bytes'], purpose='supplement',
+                short_description=normalize_short_description(ref.get('short_description'), managed_filename=''),
                 provenance={'channel_id': ref['channel_id'], 'thread_ts': ref['thread_ts'], 'message_ts': ref['source_message_ts'],
                     'source_event_id': ref['source_event_id'], 'provider_id': ref['actor_id'], 'uploader_id': ref['actor_id'], 'turn_id': turn['turn_id']})
             try:
@@ -242,7 +246,7 @@ def download_for_bridge(store, *, scope, map_id):
 def tool_case_files(store, repository, *, scope, action, args):
     turn, binding = context(store, scope)
     # No model-supplied case, turn, session, URL or source provenance is accepted.
-    allowed = {'list': {'source', 'extension', 'purpose', 'introduced_turn_id'},
+    allowed = {'list': {'source', 'extension', 'purpose', 'introduced_turn_id', 'description'},
         'download': {'map_id', 'offset'}, 'read': {'map_id', 'start_line', 'line_count', 'member'},
         'search': {'map_id', 'query', 'member'}, 'publish': {'operation_id', 'filename', 'content_type', 'data_base64'}}
     if action not in allowed or set(args) - allowed[action]:
@@ -267,6 +271,9 @@ def tool_case_files(store, repository, *, scope, action, args):
                 rows = [r for r in rows if Path(r['managed_filename']).suffix.lower() == args['extension'].lower()]
             if args.get('introduced_turn_id'):
                 rows = [r for r in rows if r['provenance'].get('turn_id') == args['introduced_turn_id']]
+            if args.get('description'):
+                query = str(args['description']).casefold()
+                rows = [r for r in rows if query in str(r.get('short_description') or '').casefold()]
             return {'files': [reference(r) for r in rows]}
         row = store.get_case_file(case_id, int(args['map_id']))
         if not row:

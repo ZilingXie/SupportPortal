@@ -2852,6 +2852,11 @@ class PostgresAutomationEcsStore(PostgresConsultStore, PostgresCaseFileStore):
                         (SCHEMA_REVISION,),
                     )
                 self._create_tables(cursor)
+                # Additive metadata evolution within schema 016. Existing
+                # deployments keep their Map rows and receive a stable
+                # display-only description column on the next bootstrap.
+                cursor.execute(sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS short_description TEXT NOT NULL DEFAULT ''").format(self._table("investigation_case_files")))
+                cursor.execute(sql.SQL("UPDATE {} SET short_description=LEFT('Engineer attachment ' || managed_filename, 240) WHERE short_description='' AND managed_filename <> ''").format(self._table("investigation_case_files")))
                 if revision in self._UPGRADABLE_SCHEMA_REVISIONS:
                     cursor.execute(
                         sql.SQL(

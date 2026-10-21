@@ -9,6 +9,7 @@ slow work (the persona run) happens later in the worker.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from backend.services.automation_ecs_store import (
@@ -216,9 +217,14 @@ def handle_slack_hermes_message(
     source_event_id = str(payload.get("source_event_id") or payload.get("event_id") or "").strip()
     actor = str(payload.get("slack_user_id") or "").strip()
     message_ts = str(payload.get("message_ts") or "").strip()
+    parent_user_id = str(payload.get("parent_user_id") or "").strip()
+    bot_id = str(payload.get("bot_id") or "").strip()
     from backend.services.investigation_attachments import validate_slack_files
     from backend.services.engineer_slack import EngineerSlackDeliveryError
     if payload.get("files"):
+        trusted_bot = str(os.getenv("ENGINEER_SLACK_BOT_ID") or "B08RHT5TZV2").strip()
+        if not parent_user_id or not bot_id or bot_id != trusted_bot:
+            return _invalid("attachments require the trusted Slack bot and parent actor")
         binding = store.get_hermes_case_binding(ticket_id) or {}
         if binding.get("direction") != "investigation" or binding.get("session_kind", "case") != "case":
             return _invalid("attachments require a bound Investigation case")
@@ -250,7 +256,8 @@ def handle_slack_hermes_message(
             return _invalid("attachments require a bound Investigation case")
     from backend.services.investigation_case_files import enabled as case_files_enabled, register_engineer
     if attachments and case_files_enabled():
-        attachments = register_engineer(store, ticket_id, attachments, team_id)
+        candidate_description = text if len(text) <= 240 else None
+        attachments = register_engineer(store, ticket_id, attachments, team_id, short_description=candidate_description)
     if close_requested and (not source_event_id or not actor or not message_ts):
         return _invalid("close requires the authenticated Slack source event, actor, and message timestamp")
     if close_requested and (not expected_team_id or not expected_channel_id):
