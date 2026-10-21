@@ -435,6 +435,11 @@ def run_followup_reply_work(
                 "followup_kind": "knowledge_question",
                 "answer": outcome.answer,
                 "references": list(outcome.references),
+                # 14009 C1 contract: a reply-only turn ran no relay workflow,
+                # so the worker must not demand a compatibility job or release
+                # anything (14176: the missing flag made the worker fall back
+                # to the workflow context and escalate the case to human).
+                "compatibility_relay_required": False,
             }
         # A transport-level failure is a technical incident; a clean
         # "cannot answer" is the policy outcome. Both end in a human
@@ -472,6 +477,7 @@ def run_followup_reply_work(
             "route": CONVERSATION_FOLLOWUP_ROUTE,
             "followup_kind": "progress_inquiry",
             "progress": state["progress"],
+            "compatibility_relay_required": False,
         }
 
     return _escalated(
@@ -571,6 +577,7 @@ def run_message_action_reply_work(
                 "answer": outcome.answer,
                 "references": list(outcome.references),
                 "message_action_reply": {"action": action},
+                "compatibility_relay_required": False,
             }
         technical = str(outcome.reason or "").startswith("ragflow_skill_")
         return _escalate_followup(
@@ -609,6 +616,7 @@ def run_message_action_reply_work(
         "reply_kind": "progress_inquiry",
         "progress": state["progress"],
         "message_action_reply": {"action": action},
+        "compatibility_relay_required": False,
     }
 
 def reply_basis_for_run(turn: dict[str, Any]) -> str:

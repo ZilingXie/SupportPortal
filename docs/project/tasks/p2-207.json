@@ -6,8 +6,8 @@
   "function_id": "engineer-investigation-reply",
   "title": "Investigation 回复与调查展示优化 v1（简洁草稿/中文问候语/Slack 分 section 展示/分条恢复）",
   "summary": "让客户回复简短自然、工程师在 Slack 看到完整可核对的调查材料：删除 Investigation 客户草稿 1200 字符硬限制（保留安全阻断与人工审批）；Persona prompt 改为发现/推测/下一步的简洁表达要求；中文问候语后端确定性规范化（Ziling您好，取服务端身份、防重复）；Slack 调查结果按 Summary/Evidence/Blockers/Next steps 分条发送并删除 320/170/140/2000 业务截断，审核按钮单独消息（正文全部确认后才出现）；Evidence 按数据结构完整展示（fact/query/event_refs/limitation，不退化成仅 source）；分条发送复用既有 native notification 账本，冻结清单逐条回执、outcome_unknown 不自动重发、部分失败不提前展示按钮。不改普通 Automation、固定 route、调查工具权限、附件、关闭工单、人工审批边界，不改 Argus bridge 与数据库完整调查记录。",
-  "status": "done",
-  "next_action": "已完成（ECS Preproduction 技术验收通过，2026-10-21）：正式 pipeline 发布 r20261021-1192ee4（git 1192ee459，含 p2-207 全部代码与 p2-192 R2-V2-B1-REPRO），flags 从成功基线复刻（enablement=archer / engine=hermes / persona / agent，knowledge 保持全 0，未开 CSD10 intake）。部署 evidence complete：provider/public health/cloudwatch 零错误/terraform 发布后零漂移/TargetHealth healthy/三角色 runtime_verified+digest 逐一绑定（api :167 8c2047af / route :163 c3685bb7 / worker :166 9a75c5e3）；独立线上回读一致。镜像内隔离探针 12 项全过（section 顺序/无损分片/结构化截断标注/无长度门代码在位/persona v3/问候语三态）。业务验收（真实 Slack 分条效果、真实长草稿、真实中文投递问候语、14146 重放）不在本次范围，需单独授权",
+  "status": "active",
+  "next_action": "R2 验收轮1修复完成（F1-A 线程创建失败停止+诊断、F1-B binding 回读 None 停止、F2 四项测试补齐），Draft PR #1534 待独立验收复审。回归 198 passed + 隔离 PG 65 passed（含 PG 首轮专项）；反向验证 or-binding 回退被检出。验收通过后合并并发布 Preproduction",
   "owner": "agent",
   "created_at": "2026-10-20",
   "updated_at": "2026-10-21",
@@ -38,6 +38,18 @@
     {
       "type": "document",
       "label": "发布约束遵守：knowledge 各开关维持 0（未开 CSD10 intake）、未发送真实 Slack/Zendesk 消息、14146 未重放、Production 未触碰"
+    },
+    {
+      "type": "test",
+      "label": "R2 验收轮1：F1-A（线程创建失败→停止+thread_creation_failed 事件，不调旧模板）+ F1-B（binding 回读 None→停止+binding_reread_failed 事件，or-binding 回退被移除且反向验证检出）；两 guard 仅作用于 native（repository≠None）路径，repository=None 兼容路径不变"
+    },
+    {
+      "type": "test",
+      "label": "R2 测试套件 11 个方法（原 6+fixed_task 首轮 2+F1 分支 2+PG 隔离 1）：真实 process(job) 入口+真实 _ensure_case_thread；fixed_task 路径实际发送顺序断言（从 posted events 提取 section 标签按发送序验证 Summary→Evidence→Blockers→Next steps→ACTION）；长内容完整保留（Q×300/W×250/Z×200 唯一填充字符精确计数/子串）；隔离 PG 专项验证绑定落库→重读→分片回执落账（PG 真实 ledger 全 completed + 按钮单独末条）"
+    },
+    {
+      "type": "test",
+      "label": "回归合计 198 passed + 隔离 PostgreSQL 65 passed；compileall + git diff --check 干净。预存 case-files 3 失败为基线既有"
     }
   ]
 }
