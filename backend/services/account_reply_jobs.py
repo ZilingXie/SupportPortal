@@ -74,6 +74,12 @@ ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE = "resolution_update"
 # Unexpected-reply RAG fallback answers carry their own draft content and must
 # skip both the legacy re-generation path and the automation persona render.
 ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER = "rag_fallback_answer"
+# In-session enablement progress answers (14152): the customer re-asks to
+# enable inside an active enablement session; the server restates the bound
+# request's actual review state. The deterministic provided_answer carries the
+# recorded facts; the persona phase voices it without promises of immediate
+# completion, acceleration, or a completion date.
+ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER = "progress_inquiry_answer"
 
 # The suspension handoff intent keeps its legacy "_and_close" name for
 # compatibility with persisted jobs, but p2-138 moved its terminal action to
@@ -102,6 +108,7 @@ ACCOUNT_REPLY_KNOWN_INTENTS = frozenset(
         ACCOUNT_REPLY_INTENT_DETAILED_INVOICE_COMPLETED_AND_CLOSE,
         ACCOUNT_REPLY_INTENT_RESOLUTION_UPDATE,
         ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+        ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
     }
 )
 
@@ -272,8 +279,12 @@ def create_account_reply_job(
     }
     if hermes_compatibility_only:
         payload.update(reply_owner="hermes_persona", hermes_compatibility_only=True)
+    provided_answer_intents = {
+        ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+        ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
+    }
     rag_fallback_without_provided_answer = (
-        canonical_intent == ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER
+        canonical_intent in provided_answer_intents
         and not str((normalized_facts or {}).get("provided_answer") or "").strip()
     )
     if normalized_facts and not rag_fallback_without_provided_answer:

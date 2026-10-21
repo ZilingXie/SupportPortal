@@ -979,11 +979,16 @@ def deploy_mode_args(args: argparse.Namespace) -> list[str]:
         values.extend(["--hermes-case-workflow-mode", args.hermes_case_workflow_mode])
     if args.hermes_persona_enabled:
         values.append("--hermes-persona-enabled")
+    elif getattr(args, "hermes_persona_disabled", False):
+        values.append("--hermes-persona-disabled")
     engine = getattr(args, "automation_case_engine", None)
     if engine is None and getattr(args, "through", "preproduction") == "production":
         engine = "legacy"
     if engine not in {"legacy", "hermes"}:
-        raise ValueError("Preproduction requires explicit --automation-case-engine")
+        raise ValueError(
+            "Preproduction requires explicit --automation-case-engine "
+            "(or a readable live hermes engine to inherit)"
+        )
     values.extend(["--automation-case-engine", engine])
     if getattr(args, "hermes_agent_enabled", False):
         values.append("--hermes-agent-enabled")
@@ -1012,21 +1017,68 @@ def validate_case_engine_transition(
         raise ValueError("Hermes to legacy downgrade requires AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED=1 after explicit user authorization")
 
 
-def check_live_case_engine(target_engine: str, env: Mapping[str, str]) -> None:
-    # Check before build; the deploy entry checks again against its observed definition.
+def _describe_live_preproduction_task_definitions(env: Mapping[str, str]) -> dict[str, dict[str, Any]]:
+    """Fetch the live route/api/worker task definitions of the Preproduction
+    cluster. Raises ValueError with a fail-closed message when any service or
+    definition is unavailable."""
     def read(*args: str) -> dict[str, Any]:
         result = subprocess.run(
             ["aws", *args, "--region", AWS_REGION, "--output", "json"],
             env=dict(env), check=True, capture_output=True, text=True, timeout=35,
         )
         return json.loads(result.stdout)
-    response = read("ecs", "describe-services", "--cluster", "supportportal-preproduction",
-                    "--services", "supportportal-preproduction-route")
-    services = response.get("services", [])
-    if response.get("failures") or len(services) != 1 or not services[0].get("taskDefinition"):
-        raise ValueError("Live Preproduction Route definition unavailable")
-    definition = read("ecs", "describe-task-definition", "--task-definition", services[0]["taskDefinition"])
-    validate_case_engine_transition(definition, target_engine,
+
+    definitions: dict[str, dict[str, Any]] = {}
+    for role in ("route", "api", "worker"):
+        response = read("ecs", "describe-services", "--cluster", "supportportal-preproduction",
+                        "--services", f"supportportal-preproduction-{role}")
+        services = response.get("services", [])
+        if response.get("failures") or len(services) != 1 or not services[0].get("taskDefinition"):
+            raise ValueError(f"Live Preproduction {role} definition unavailable")
+        definitions[role] = read(
+            "ecs", "describe-task-definition", "--task-definition", services[0]["taskDefinition"]
+        )
+    return definitions
+
+
+def resolve_preproduction_case_flags(args: argparse.Namespace, env: Mapping[str, str]) -> dict[str, Any]:
+    """Default-preserve the live native Hermes configuration for a
+    Preproduction release (14152-hermes-default-preservation): every
+    unspecified case flag inherits its live value — the engine only when the
+    live engine is hermes; anything unconfirmable fails closed. Mutates
+    ``args`` with the resolved values and returns the resolution record for
+    release evidence."""
+    from backend.scripts.automation_ecs_deploy import resolve_preproduction_case_configuration
+
+    persona_enabled = getattr(args, "hermes_persona_enabled", False)
+    persona_disabled = getattr(args, "hermes_persona_disabled", False)
+    if persona_enabled and persona_disabled:
+        raise ValueError("--hermes-persona-enabled and --hermes-persona-disabled are mutually exclusive")
+    definitions = _describe_live_preproduction_task_definitions(env)
+    record = resolve_preproduction_case_configuration(
+        route_definition=definitions["route"],
+        api_definition=definitions["api"],
+        worker_definition=definitions["worker"],
+        explicit_engine=getattr(args, "automation_case_engine", None),
+        explicit_agent_enabled=(
+            True if getattr(args, "hermes_agent_enabled", False) else None
+        ),
+        explicit_persona_enabled=(
+            True if persona_enabled else False if persona_disabled else None
+        ),
+        explicit_case_workflow_mode=getattr(args, "hermes_case_workflow_mode", None),
+    )
+    args.automation_case_engine = record["automation_case_engine"]
+    args.hermes_agent_enabled = record["hermes_agent_enabled"]
+    args.hermes_persona_enabled = record["hermes_persona_enabled"]
+    args.hermes_case_workflow_mode = record["hermes_case_workflow_mode"]
+    return record
+
+
+def check_live_case_engine(target_engine: str, env: Mapping[str, str]) -> None:
+    # Check before build; the deploy entry checks again against its observed definition.
+    definitions = _describe_live_preproduction_task_definitions(env)
+    validate_case_engine_transition(definitions["route"], target_engine,
         downgrade_approved=env.get("AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED") == "1")
 
 
@@ -1197,15 +1249,30 @@ def _recover_release_evidence(
 
 def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     project_root = Path(args.project_root).resolve()
-    if args.through == "preproduction" and args.automation_case_engine is None:
-        raise ValueError("Preproduction requires explicit --automation-case-engine")
-    if args.automation_case_engine == "hermes" and not args.hermes_agent_enabled:
-        raise ValueError("Hermes case engine requires --hermes-agent-enabled")
-    if args.automation_case_engine is None:
+    case_flag_resolution: dict[str, Any] | None = None
+    if args.through == "preproduction":
+        # C1: inheritance triggers only when the engine itself is unspecified.
+        # With an explicit engine, an unspecified typed-workflow mode or
+        # persona/agent flag keeps the render-layer preserve semantics (the
+        # observed task definition's values survive); resolving those here
+        # would silently change the explicit-flag release identity.
+        unset_case_flags = args.automation_case_engine is None
+    else:
+        unset_case_flags = False
+    if args.through != "preproduction" and args.automation_case_engine is None:
+        # Production keeps the legacy-safe default; only the shell entry needs
+        # the explicit value for preproduction (resolved above when unset).
         args.automation_case_engine = "legacy"
     env = sanitized_aws_environment()
     env["AUTOMATION_RELEASE_PYTHON"] = sys.executable
     verify_aws_identity(env)
+    if unset_case_flags:
+        # Default preservation: unspecified Preproduction case flags inherit
+        # the live native Hermes configuration instead of falling back to the
+        # legacy-safe first-init defaults. Fail-closed on unconfirmable state.
+        case_flag_resolution = resolve_preproduction_case_flags(args, env)
+        if args.automation_case_engine == "hermes" and not args.hermes_agent_enabled:
+            raise ValueError("Hermes case engine requires --hermes-agent-enabled")
     direct_production = bool(args.codebuild_direct_production)
     if direct_production and args.through != "production":
         raise ValueError("--codebuild-direct-production requires --through production")
@@ -1293,6 +1360,18 @@ def run_pipeline(args: argparse.Namespace) -> dict[str, Any]:
     _write_json_atomic(
         knowledge_stage_config_path, knowledge_stage_config or default_knowledge_stage_config()
     )
+    if case_flag_resolution is not None:
+        # 14152-hermes-default-preservation: provenance of every inherited case
+        # flag rides in the release state; the checkpoint identity itself only
+        # carries the resolved values (identical to passing them explicitly).
+        _write_json_atomic(
+            state.path / "case-config-resolution.json",
+            {
+                **case_flag_resolution,
+                "release_id": release_id,
+                "release_commit": release_commit,
+            },
+        )
     release_worktree = state.path / "release-worktree"
     release_dir = state.path / "release"
     if not release_worktree.exists():
@@ -1570,11 +1649,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="publish CodeBuild digests to Production without updating Preproduction ECS",
     )
     pipeline.add_argument("--bootstrap-account-schema", action="store_true")
-    pipeline.add_argument("--hermes-case-workflow-mode", choices=("disabled", "mock", "real"))
-    pipeline.add_argument("--hermes-persona-enabled", action="store_true")
+    pipeline.add_argument("--hermes-case-workflow-mode", choices=("disabled", "mock", "real"),
+                          help="Unset inherits the live API/Worker value for Preproduction")
+    pipeline.add_argument("--hermes-persona-enabled", action="store_true",
+                          help="Unset inherits the live persona value for Preproduction")
+    pipeline.add_argument("--hermes-persona-disabled", dest="hermes_persona_disabled", action="store_true",
+                          help="Explicitly disable Hermes Persona instead of inheriting the live value")
     pipeline.add_argument("--automation-case-engine", choices=("legacy", "hermes"),
-                          help="Required for Preproduction; Production retains legacy")
-    pipeline.add_argument("--hermes-agent-enabled", action="store_true")
+                          help="Unset inherits the live Route engine when it is hermes (Preproduction); Production retains legacy")
+    pipeline.add_argument("--hermes-agent-enabled", action="store_true",
+                          help="Unset inherits the live agent credential state for Preproduction")
     pipeline.add_argument("--investigation-case-files-enabled", action="store_true",
                           help="Enable the R2 Investigation Slack case-file tools in Preproduction")
     pipeline.add_argument(

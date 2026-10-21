@@ -1735,6 +1735,50 @@ class HermesAgentTurnProcessor:
                 "independent_request": False,
             }
 
+    def _correct_insession_continue_task(
+        self, turn: dict[str, Any], action: dict[str, Any]
+    ) -> dict[str, Any]:
+        """14152 in-session re-enable correction for fixed-task message actions.
+
+        A ``continue_task`` action on an automation-held enablement case whose
+        App ID is complete and whose current comment carries no new App ID
+        restates the SAME pending request: continuing the Work phase would
+        create a second application, so the server rewrites the action to the
+        reply-only ``report_progress`` (the message-action reply work then
+        verifies the bound request state and escalates fail-closed when it
+        cannot). The raw proposal and the correction stay on the record."""
+        if str(action.get("action") or "") != "continue_task":
+            return action
+        from backend.services.automation_hermes_followup_reply import (
+            insession_enable_reuse_applicable,
+        )
+
+        try:
+            applicable = insession_enable_reuse_applicable(self.repository, turn)
+        except Exception:
+            LOGGER.exception(
+                "insession_enable_reuse_check_failed turn_id=%s", turn.get("turn_id")
+            )
+            return action
+        if not applicable:
+            return action
+        corrected = dict(action)
+        corrected.update(
+            {
+                "action": "report_progress",
+                "reason_code": "insession_enable_reuse",
+                "server_correction_reason": (
+                    "insession_enable_reuse:continue_task->report_progress"
+                ),
+                "original_action": "continue_task",
+            }
+        )
+        LOGGER.info(
+            "insession_enable_reuse_corrected turn_id=%s continue_task->report_progress",
+            turn.get("turn_id"),
+        )
+        return corrected
+
     def _run_phase(
         self,
         payload: AgentTurnJobPayload,
@@ -1981,6 +2025,7 @@ class HermesAgentTurnProcessor:
                     )
                     if phase == HermesTurnPhase.MESSAGE_ACTION.value:
                         action = self._parse_message_action_output(status.get("output"))
+                        action = self._correct_insession_continue_task(turn, action)
                         self.store.record_hermes_turn_work(
                             turn_id,
                             work_result={

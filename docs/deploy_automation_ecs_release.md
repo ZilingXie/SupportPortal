@@ -45,6 +45,20 @@ pipeline 在构建前读取当前 Route task definition；底层 deploy 在观�
 
 源码：[pipeline](../backend/scripts/automation_ecs_release_pipeline.py)、[deploy](../deployment/deploy_automation_ecs_release.sh)。验证：真实 CLI 缺项拒绝、构建前 mocked AWS 降级拒绝、transition CLI 授权/正常路径、隔离 PostgreSQL fixed-task 审核与并发续接回归。
 
+### Preproduction native Hermes 默认保留（2026-10-21，14152-hermes-default-preservation-e3-progress v1）
+
+p2-199 的"显式 engine"纪律在 2026-10-21 当天两次发布中被人工旗标误用击穿（`r20261021-ebb59c8` 第一次 deploy 遗漏既有配置）。自本轮起，Preproduction 发布**不传** `--automation-case-engine` 时不再直接拒绝，而是默认保留当前运行配置：
+
+- pipeline（`run_pipeline`）和底层 deploy（`resolve_case_configuration`）在 AWS 身份校验之后读取当前 Route / API / Worker 三个 task definition，解析由 [`resolve_preproduction_case_configuration`](../backend/scripts/automation_ecs_deploy.py) 统一完成（`automation_ecs_deploy resolve-current-case-config` 子命令）。
+- 当前 Route 的 `AUTOMATION_CASE_ENGINE=hermes` 可读 → 继承 `hermes`；同时按 API/Worker 的实际状态继承 agent 凭据（`HERMES_AGENT_BASE_URL` 等 secret 是否挂载）、persona 凭据（`ENGINEER_INVESTIGATION_REPLY_BASE_URL`）与 typed workflow（`HERMES_CASE_WORKFLOW_MODE`）。缺省旗标全部补成显式值后再进入 render，因此继承路径不会触发 render 层"mode 显式而 persona 缺省"的 secret 剥除。
+- fail-closed：当前 engine 缺失/不可识别/为 legacy、API 与 Worker 的 mode / agent / persona 不一致、live hermes 却没有 agent 凭据——都停止发布并要求显式旗标。继承只针对 hermes，不会把 legacy 环境"默认保留"成免授权状态。
+- 显式旗标始终优先：显式 `--automation-case-engine legacy` 继续走既有降级授权门（`AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED=1`）；显式传 engine 时 mode / persona / agent 缺省沿用 p2-199 以来的 render 保留语义（观察到的定义值原样保留），不在入口解析。新增 `--hermes-persona-disabled`（pipeline 与 deploy 均有，Preproduction-only）用于显式关闭 persona；不传则继承当前值。
+- 证据：preflight context、deploy record、deploy evidence 均新增 `native_hermes_config{native_case_engine, hermes_agent_enabled, hermes_persona_enabled, typed_case_workflow_mode, provenance}`，`provenance` 标明每项是 `explicit` 还是 `inherited_live(_hermes)`；pipeline 另写 `case-config-resolution.json` 到 release state 目录。checkpoint `identity.mode` 的形状不变，只记录解析后的最终值（与显式传入等价），不影响在途车辆 resume。
+- `engine=hermes` + `HERMES_CASE_WORKFLOW_MODE=disabled` 是 native Hermes 的正常组合；首次初始化任务定义的默认值仍为 `disabled` / `legacy`（首次初始化安全默认，与现有环境继承逻辑分离）。
+- `enablement_workflow_mode` 不在本轮继承范围，仍需显式传递（当前 Preproduction 成功基线为 `archer`）。
+
+验证（2026-10-21）：解析器单元（继承 hermes / live legacy 拒绝 / 缺 engine 拒绝 / 缺 agent 凭据拒绝 / api-worker mode 不一致拒绝 / 显式 legacy 不依赖 live / 显式覆盖）、CLI 子命令、pipeline `resolve_preproduction_case_flags` mocked AWS、`deploy_mode_args` persona 关闭透传、`check_live_case_engine` 降级拒绝；bash 语法检查。
+
 `--hermes-agent-enabled` 控制是否把 Hermes agent gateway 配置
 （SSM `hermes-agent-base-url` / `hermes-api-server-key`）挂到 task definition。
 渲染器对这两个 secret 先删后按条件加回：pipeline 始终显式传

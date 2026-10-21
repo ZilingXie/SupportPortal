@@ -226,3 +226,63 @@ def test_nested_classification_fields_are_retained() -> None:
     )
     assert result["backend_operation"]["target"] == "media_relay"
     assert result["additional_intents"] == ["technical"]
+
+
+def _enablement_execution_payload():
+    return _payload(
+        agora_route="backend_operation",
+        backend_operation_subcategory="enablement",
+        backend_operation={
+            "action": "enable",
+            "target": "media_relay",
+            "evidence": "Could you help me enable the permission now?",
+        },
+        reason_code="registered_enablement",
+    )
+
+
+def test_insession_enable_reuse_redirects_enable_proposal_to_progress() -> None:
+    result = normalize_hermes_route_classification(
+        _enablement_execution_payload(),
+        latest_assistant_message_present=True,
+        insession_enable_reuse=True,
+    )
+    assert result["direction"] == "automation"
+    assert result["route"] == "conversation_followup"
+    assert result["conversation_action"] == "follow_up"
+    assert result["conversation_subcategory"] == "progress_inquiry"
+    assert result["execution_action"] == "followup_reply"
+    assert result["deterministic_fallback"] == "backend_operation_insession_enable_reuse"
+
+
+def test_insession_enable_reuse_requires_assistant_history() -> None:
+    # A new-ticket enable request (no assistant history) stays a new
+    # enablement execution even when a caller wrongly passes the flag.
+    result = normalize_hermes_route_classification(
+        _enablement_execution_payload(),
+        latest_assistant_message_present=False,
+        insession_enable_reuse=True,
+    )
+    assert result["direction"] == "automation"
+    assert result["route"] == "enablement"
+
+
+def test_without_reuse_flag_enable_proposal_stays_new_execution() -> None:
+    result = normalize_hermes_route_classification(
+        _enablement_execution_payload(),
+        latest_assistant_message_present=True,
+    )
+    assert result["route"] == "enablement"
+    assert result["handler_binding_status"] == "active"
+    assert "deterministic_fallback" not in result
+
+
+def test_enablement_execution_request_wording_shapes() -> None:
+    from backend.services.hermes_route_classifier import enablement_execution_request_wording
+
+    assert enablement_execution_request_wording("Could you help me enable the permission now?")
+    assert enablement_execution_request_wording("Please activate media relay for us.")
+    assert enablement_execution_request_wording("can you turn on the feature")
+    assert not enablement_execution_request_wording("What is the status of my request?")
+    assert not enablement_execution_request_wording("Where can I find the App ID?")
+    assert not enablement_execution_request_wording("")

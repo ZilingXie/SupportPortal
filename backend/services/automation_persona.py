@@ -17,6 +17,7 @@ from backend.services.account_reply_jobs import (
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_AND_CLOSE,
     ACCOUNT_REPLY_INTENT_FRAUD_HANDOFF_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER,
+    ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER,
     ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_CONTACT_CONFIRMATION,
     ACCOUNT_REPLY_INTENT_SUSPENSION_HANDOFF_AND_CLOSE,
@@ -818,7 +819,8 @@ def render_automation_reply(
         raise AutomationPersonaError("automation_persona_missing_reply_facts")
     if (
         str(facts.get("reply_intent") or "").strip().lower()
-        in {ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER} | _ENGINEER_SOURCED_REPLY_INTENTS
+        in {ACCOUNT_REPLY_INTENT_RAG_FALLBACK_ANSWER, ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER}
+        | _ENGINEER_SOURCED_REPLY_INTENTS
         and not str(facts.get("provided_answer") or "").strip()
     ):
         raise AutomationPersonaError("automation_persona_missing_provided_answer")
@@ -977,6 +979,15 @@ def render_automation_reply(
             "and conclusion exactly as provided: do not add, drop, soften, or re-interpret anything technical. "
             "Do not invent links or citations; the application appends the reference links itself after your "
             "reply. Do not mention knowledge bases, documentation searches, or where the content came from. "
+        )
+    elif intent == ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER:
+        current_intent_policy = (
+            "For an in-session enablement progress answer (the customer re-asked to enable while their request "
+            "is already pending), restate ONLY the provided_answer recorded review status in your own natural "
+            "first-person voice: the request was received, is still in review, and the customer will be updated "
+            "when there is news. Keep every recorded fact exactly as provided and add none. Never promise "
+            "immediate completion, acceleration, expedited handling, or any specific completion time or date. "
+            "Do not reveal internal identifiers, request IDs, job IDs, or review tooling. "
         )
     elif intent == ENGINEER_GUIDED_REPLY_INTENT:
         current_intent_policy = (

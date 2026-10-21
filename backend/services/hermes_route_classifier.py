@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import math
+import re
 from collections.abc import Mapping
 from typing import Any
 
@@ -156,6 +157,25 @@ def _enablement_priority_verb(action: str) -> bool:
     return _normalize_verb(action) in _ENABLEMENT_PRIORITY_VERBS
 
 
+# In-session re-execution wording (14152: "Could you help me enable the
+# permission now?"): the message repeats the enable/activate execution verb
+# about the SAME pending request. Deterministic text shape only — every
+# business-state condition (active handler, complete App ID, bound review or
+# relay request, ownership) is verified by the stateful callers before this
+# wording can redirect anything.
+_ENABLEMENT_EXECUTION_WORDING_RE = re.compile(
+    r"\b(?:enable|enabled|enabling|activate|activated|activating|turn on|provision|provisioned|provisioning|grant|granted)\b",
+    re.IGNORECASE,
+)
+
+
+def enablement_execution_request_wording(text: str) -> bool:
+    """True when the message repeats an enablement execution verb (the 14152
+    re-enable phrasing). Shared by the reply-sync continuation check and the
+    native Hermes direction gates; never a routing decision on its own."""
+    return bool(_ENABLEMENT_EXECUTION_WORDING_RE.search(str(text or "")))
+
+
 def _session_has_assistant(payload: Mapping[str, Any], latest: bool | None) -> bool:
     if latest is None and "latest_assistant_message_present" in payload:
         return payload.get("latest_assistant_message_present") is True
@@ -251,8 +271,16 @@ def normalize_hermes_route_classification(
     direction_hint: str | None = None,
     route_hint: str | None = None,
     latest_assistant_message_present: bool | None = None,
+    insession_enable_reuse: bool = False,
 ) -> dict[str, Any]:
-    """Normalize a Hermes proposal without touching durable or external state."""
+    """Normalize a Hermes proposal without touching durable or external state.
+
+    ``insession_enable_reuse`` may only be set by a stateful caller that has
+    already verified the enablement-session reuse conditions (14152: active
+    enablement handler, complete App ID, bound review or relay request, no new
+    fields, automation ownership). Under that flag an otherwise-eligible new
+    enablement execution proposed inside the existing session re-normalizes
+    into the conversational progress taxonomy instead."""
     if not isinstance(payload, Mapping):
         raise HermesRouteClassificationError("invalid_payload", "classification must be an object")
     intent = _text(payload.get("intent_class"))
@@ -580,6 +608,38 @@ def normalize_hermes_route_classification(
                 direction_hint=None,
                 route_hint=None,
             )
+    if (
+        eligible
+        and insession_enable_reuse
+        and subcategory == "enablement"
+        and _session_has_assistant(payload, latest_assistant_message_present)
+    ):
+        # 14152 in-session re-enable wording: the stateful caller verified the
+        # active enablement session (complete App ID, bound review/relay
+        # request, no new fields, automation ownership), so a new `enable`
+        # execution proposal for the SAME pending request is a progress
+        # inquiry, never a second application. The correction stays on the
+        # record through deterministic_fallback; hints are deliberately not
+        # checked — this IS the server override.
+        classification.update(
+            intent_class="conversation",
+            conversation_action="follow_up",
+            conversation_subcategory="progress_inquiry",
+            route_target="conversation_reply",
+            route_family="conversation",
+            execution_action="followup_reply",
+            automation_eligibility="eligible",
+            handler_binding_status=None,
+            deterministic_fallback="backend_operation_insession_enable_reuse",
+        )
+        return _finish(
+            classification,
+            direction="automation",
+            route="conversation_followup",
+            reason="conversation_followup_progress_inquiry",
+            direction_hint=None,
+            route_hint=None,
+        )
     classification.update(
         route_target="automation" if eligible else "human_review",
         route_family=AUTOMATED_ROUTE_FAMILY if eligible else "human_review",

@@ -27,10 +27,13 @@ CHECK_ONLY=0
 RESUME=0
 BOOTSTRAP_ACCOUNT_SCHEMA=0
 HERMES_CASE_WORKFLOW_MODE=""
-HERMES_PERSONA_ENABLED=0
+HERMES_PERSONA_ENABLED=""
+HERMES_PERSONA_EXPLICIT=0
+CASE_CONFIG_PROVENANCE="{}"
 INVESTIGATION_CASE_FILES_SWITCH="preserve"
 AUTOMATION_CASE_ENGINE=""
-HERMES_AGENT_ENABLED=0
+HERMES_AGENT_ENABLED=""
+HERMES_AGENT_EXPLICIT=0
 ENABLEMENT_WORKFLOW_MODE="manual"
 ENABLEMENT_WORKFLOW_MODE_EXPLICIT=0
 KNOWLEDGE_STAGE_CONFIG=""
@@ -159,8 +162,18 @@ Usage:
 Optional activation gates:
   --bootstrap-account-schema
   --hermes-case-workflow-mode <disabled|mock|real>
-  --hermes-persona-enabled
+  --hermes-persona-enabled / --hermes-persona-disabled (Preproduction)
   --investigation-case-files-enabled / --investigation-case-files-disabled (Preproduction)
+
+Preproduction native Hermes default preservation (14152): when --automation-case-engine
+is not passed, the release reads the live Route task definition and inherits a readable
+hermes engine, together with the live hermes agent / persona / typed case workflow
+values for any flag left unspecified. A live value that is missing, conflicting, or
+unreadable stops the release and requires the explicit flag; an explicit legacy engine
+keeps the existing downgrade authorization gate (AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED=1).
+The resolved values and their provenance are recorded in the preflight context, deploy
+record, and deploy evidence under native_hermes_config. engine=hermes combined with
+typed case workflow=disabled is the normal native Hermes combination.
 
 Both modes require the read-only source TICKET_DB_DSN. Deploy mode additionally
 requires the environment-specific approval variable and PROMPT_RELEASE_TARGET_DSN.
@@ -228,11 +241,12 @@ parse_args() {
       --terraform-dir) [[ $# -ge 2 ]] || fail "--terraform-dir requires a value"; TERRAFORM_DIR="$2"; shift 2 ;;
       --bootstrap-account-schema) BOOTSTRAP_ACCOUNT_SCHEMA=1; shift ;;
       --hermes-case-workflow-mode) [[ $# -ge 2 ]] || fail "--hermes-case-workflow-mode requires a value"; HERMES_CASE_WORKFLOW_MODE="$2"; shift 2 ;;
-      --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; shift ;;
+      --hermes-persona-enabled) HERMES_PERSONA_ENABLED=1; HERMES_PERSONA_EXPLICIT=1; shift ;;
+      --hermes-persona-disabled) HERMES_PERSONA_ENABLED=0; HERMES_PERSONA_EXPLICIT=1; shift ;;
       --investigation-case-files-enabled) INVESTIGATION_CASE_FILES_SWITCH="enabled"; shift ;;
       --investigation-case-files-disabled) INVESTIGATION_CASE_FILES_SWITCH="disabled"; shift ;;
       --automation-case-engine) [[ $# -ge 2 ]] || fail "--automation-case-engine requires a value"; AUTOMATION_CASE_ENGINE="$2"; shift 2 ;;
-      --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; shift ;;
+      --hermes-agent-enabled) HERMES_AGENT_ENABLED=1; HERMES_AGENT_EXPLICIT=1; shift ;;
       --enablement-workflow-mode) [[ $# -ge 2 ]] || fail "--enablement-workflow-mode requires a value"; ENABLEMENT_WORKFLOW_MODE="$2"; ENABLEMENT_WORKFLOW_MODE_EXPLICIT=1; shift 2 ;;
       --knowledge-stage-config) [[ $# -ge 2 ]] || fail "--knowledge-stage-config requires a value"; KNOWLEDGE_STAGE_CONFIG="$2"; shift 2 ;;
       --check-only) CHECK_ONLY=1; shift ;;
@@ -244,15 +258,19 @@ parse_args() {
     esac
   done
   configure_environment_defaults
-  if [[ "${ENVIRONMENT}" = "preproduction" ]]; then
-    [[ -n "${AUTOMATION_CASE_ENGINE}" ]] || fail "Preproduction requires explicit --automation-case-engine"
-  else
+  if [[ "${ENVIRONMENT}" != "preproduction" ]]; then
     AUTOMATION_CASE_ENGINE="${AUTOMATION_CASE_ENGINE:-legacy}"
   fi
-  [[ "${AUTOMATION_CASE_ENGINE}" = "legacy" || "${AUTOMATION_CASE_ENGINE}" = "hermes" ]] \
-    || fail "--automation-case-engine must be legacy or hermes"
-  [[ "${AUTOMATION_CASE_ENGINE}" != "hermes" || "${HERMES_AGENT_ENABLED}" = "1" ]] \
-    || fail "Hermes case engine requires --hermes-agent-enabled"
+  # 14152-hermes-default-preservation: for Preproduction an unset engine (and
+  # the other native Hermes flags) is resolved from the live task definitions
+  # in resolve_case_configuration, after AWS identity verification — never a
+  # silent legacy fallback. Value-format checks for explicitly passed values
+  # stay here; the cross-flag validations run once values are resolved.
+  if [[ -n "${AUTOMATION_CASE_ENGINE}" ]] && [[ "${AUTOMATION_CASE_ENGINE}" != "legacy" && "${AUTOMATION_CASE_ENGINE}" != "hermes" ]]; then
+    fail "--automation-case-engine must be legacy or hermes"
+  fi
+  [[ "${HERMES_PERSONA_EXPLICIT}" != "1" || "${HERMES_PERSONA_ENABLED}" != "0" || "${ENVIRONMENT}" = "preproduction" ]] \
+    || fail "--hermes-persona-disabled is Preproduction-only"
   [[ "${CHECK_ONLY}" = "0" || "${RESUME}" = "0" ]] || fail "--check-only and --resume are mutually exclusive"
   [[ "${CHECK_ONLY}" = "0" || -z "${PREFLIGHT_EVIDENCE}" ]] || fail "--check-only cannot reuse Preflight Evidence"
   [[ "${CHECK_ONLY}" = "1" || -z "${PREFLIGHT_EVIDENCE_OUT}" ]] || fail "--preflight-evidence-out requires --check-only"
@@ -333,6 +351,93 @@ verify_aws_credential_lifetime() {
 verify_aws_mutation_ready() {
   verify_aws_identity
   verify_aws_credential_lifetime
+}
+
+fetch_role_task_definition() {
+  # fetch_role_task_definition <role> <output-path>
+  local role="$1" output_path="$2" service current_arn
+  service="$(service_name "${role}")"
+  current_arn="$(aws ecs describe-services --region "${REGION}" --cluster "${CLUSTER}" \
+    --services "${service}" --query 'services[0].taskDefinition' --output text)"
+  [[ -n "${current_arn}" && "${current_arn}" != "None" ]] \
+    || fail "${role} service/task definition not found for case configuration inheritance"
+  aws ecs describe-task-definition --region "${REGION}" --task-definition "${current_arn}" \
+    --include TAGS >"${output_path}"
+}
+
+validate_case_configuration() {
+  [[ -n "${AUTOMATION_CASE_ENGINE}" ]] \
+    || fail "Preproduction requires explicit --automation-case-engine (live engine missing or not hermes)"
+  [[ "${AUTOMATION_CASE_ENGINE}" = "legacy" || "${AUTOMATION_CASE_ENGINE}" = "hermes" ]] \
+    || fail "--automation-case-engine must be legacy or hermes"
+  [[ "${AUTOMATION_CASE_ENGINE}" != "hermes" || "${HERMES_AGENT_ENABLED}" = "1" ]] \
+    || fail "Hermes case engine requires --hermes-agent-enabled"
+  [[ -z "${HERMES_CASE_WORKFLOW_MODE}" || "${HERMES_CASE_WORKFLOW_MODE}" = "disabled" || "${HERMES_CASE_WORKFLOW_MODE}" = "mock" || "${HERMES_CASE_WORKFLOW_MODE}" = "real" ]] \
+    || fail "--hermes-case-workflow-mode must be disabled, mock, or real"
+}
+
+resolve_case_configuration() {
+  # 14152-hermes-default-preservation: a routine Preproduction release keeps
+  # the running native Hermes configuration when the operator passes no case
+  # flag: the unset engine inherits only a readable live hermes engine, and
+  # agent/persona/typed-workflow inherit their live values. Anything that
+  # cannot be confirmed fails closed (the python resolver raises, this script
+  # stops). Explicit values always win; an explicit legacy engine keeps the
+  # existing downgrade authorization gate.
+  [[ "${ENVIRONMENT}" = "preproduction" ]] || { validate_case_configuration; return 0; }
+  if [[ -n "${AUTOMATION_CASE_ENGINE}" ]]; then
+    # An explicit engine keeps the existing flag discipline: unset
+    # mode/persona/agent values preserve their observed values through the
+    # render layer (never resolved here). The downgrade gate still applies
+    # later against the observed definition.
+    CASE_CONFIG_PROVENANCE="$(jq -cn '{automation_case_engine:"explicit",hermes_agent_enabled:"explicit",hermes_persona_enabled:"explicit",hermes_case_workflow_mode:"explicit"}')"
+    validate_case_configuration
+    return 0
+  fi
+  local -a explicit_args=()
+  local resolved
+  if [[ -n "${AUTOMATION_CASE_ENGINE}" ]]; then
+    explicit_args+=(--explicit-engine "${AUTOMATION_CASE_ENGINE}")
+  fi
+  if [[ "${HERMES_AGENT_EXPLICIT}" = "1" ]]; then
+    explicit_args+=(--explicit-agent-enabled)
+  fi
+  if [[ "${HERMES_PERSONA_EXPLICIT}" = "1" ]]; then
+    if [[ "${HERMES_PERSONA_ENABLED}" = "1" ]]; then
+      explicit_args+=(--explicit-persona-enabled)
+    else
+      explicit_args+=(--explicit-persona-disabled)
+    fi
+  fi
+  if [[ -n "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
+    explicit_args+=(--explicit-case-workflow-mode "${HERMES_CASE_WORKFLOW_MODE}")
+  fi
+  if [[ ${#explicit_args[@]} -eq 0 ]]; then
+    log "No case configuration flags passed: inheriting the live Preproduction native Hermes configuration"
+  fi
+  fetch_role_task_definition route "${TEMP_DIR}/case-config-route.json"
+  fetch_role_task_definition api "${TEMP_DIR}/case-config-api.json"
+  fetch_role_task_definition worker "${TEMP_DIR}/case-config-worker.json"
+  resolved="$("${PYTHON_BIN}" -m backend.scripts.automation_ecs_deploy resolve-current-case-config \
+    --task-definition-route "${TEMP_DIR}/case-config-route.json" \
+    --task-definition-api "${TEMP_DIR}/case-config-api.json" \
+    --task-definition-worker "${TEMP_DIR}/case-config-worker.json" \
+    ${explicit_args+"${explicit_args[@]}"})" \
+    || fail "live case configuration could not be resolved for inheritance; pass the case flags explicitly"
+  AUTOMATION_CASE_ENGINE="$(jq -r '.automation_case_engine' <<<"${resolved}")"
+  HERMES_AGENT_ENABLED="$(jq -r 'if .hermes_agent_enabled then "1" else "" end' <<<"${resolved}")"
+  if [[ "${HERMES_AGENT_EXPLICIT}" != "1" ]]; then
+    [[ "${HERMES_AGENT_ENABLED}" = "1" ]] || HERMES_AGENT_ENABLED=""
+  fi
+  if [[ "${HERMES_PERSONA_EXPLICIT}" != "1" ]]; then
+    HERMES_PERSONA_ENABLED="$(jq -r 'if .hermes_persona_enabled then "1" else "" end' <<<"${resolved}")"
+  fi
+  if [[ -z "${HERMES_CASE_WORKFLOW_MODE}" ]]; then
+    HERMES_CASE_WORKFLOW_MODE="$(jq -r '.hermes_case_workflow_mode' <<<"${resolved}")"
+  fi
+  CASE_CONFIG_PROVENANCE="$(jq -Sc '.provenance' <<<"${resolved}")"
+  log "Case configuration resolved: engine=${AUTOMATION_CASE_ENGINE} agent=${HERMES_AGENT_ENABLED:-0} persona=${HERMES_PERSONA_ENABLED:-0} typed_workflow=${HERMES_CASE_WORKFLOW_MODE:-inherit}"
+  validate_case_configuration
 }
 
 prepare_terraform_provider() {
@@ -438,6 +543,7 @@ write_preflight_context() {
     --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
+    --argjson case_provenance "${CASE_CONFIG_PROVENANCE}" \
     --arg enablement_mode "${ENABLEMENT_WORKFLOW_MODE}" \
     --arg prompt_release_id "${PROMPT_RELEASE_ID}" --arg prompt_build_ref "${prompt_build_ref}" \
     --arg prompt_fingerprint "${prompt_fingerprint}" --arg prompt_schema "${PROMPT_TARGET_SCHEMA}" \
@@ -445,7 +551,7 @@ write_preflight_context() {
     --slurpfile terraform "${TEMP_DIR}/terraform-identity.json" \
     --slurpfile secrets "${TEMP_DIR}/secret-metadata.json" \
     --slurpfile target "${TEMP_DIR}/prompt-target-identity.json" \
-    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
+    '{environment:$environment,region:$region,aws_identity:{account_id:$account_id,arn:$arn},cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},mode:{automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow:$hermes_mode,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode},native_hermes_config:{native_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),hermes_persona_enabled:($hermes_persona_enabled == "1"),typed_case_workflow_mode:$hermes_mode,provenance:$case_provenance},terraform:$terraform[0],prompt:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint,target_schema:$prompt_schema,target_dsn_configured:$target_configured,target_identity:$target[0]},components:$components,secret_metadata:$secrets[0],ec2_backup:{status:"passed"}}' \
     >"${TEMP_DIR}/preflight-context.json"
 }
 
@@ -474,8 +580,9 @@ checkpoint_identity() {
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg case_files_switch "${INVESTIGATION_CASE_FILES_SWITCH}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
+    --argjson case_provenance "${CASE_CONFIG_PROVENANCE}" \
     --arg enablement_mode "${ENABLEMENT_WORKFLOW_MODE}" \
-    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,investigation_case_files_switch:$case_files_switch,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode}'
+    '{schema_version:$schema_version,manifest_sha256:$manifest_sha256,deploy_record_sha256:$deploy_record_sha256,release_id:$release_id,git_commit:$git_commit,prompt_release_id:$prompt_release_id,region:$region,environment:$environment,cluster:$cluster,services:{api:$api_service,route:$route_service,worker:$worker_service},automation_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),schema_bootstrap:($schema_bootstrap == "1"),hermes_case_workflow_mode:$hermes_mode,investigation_case_files_switch:$case_files_switch,hermes_persona_enabled:($hermes_persona_enabled == "1"),enablement_workflow_mode:$enablement_mode,native_hermes_config:{native_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),hermes_persona_enabled:($hermes_persona_enabled == "1"),typed_case_workflow_mode:$hermes_mode,provenance:$case_provenance}}'
 }
 
 prepare_deploy_workspace() {
@@ -625,6 +732,7 @@ write_evidence() {
     --arg agent_enabled "${HERMES_AGENT_ENABLED}" \
     --arg downgrade_approved "${AUTOMATION_CASE_ENGINE_DOWNGRADE_APPROVED:-0}" \
     --arg hermes_persona_enabled "${HERMES_PERSONA_ENABLED}" \
+    --argjson case_provenance "${CASE_CONFIG_PROVENANCE}" \
     --arg preflight_sha256 "${PREFLIGHT_HASH}" \
     --argjson phase_timings "${phase_timings}" \
     --argjson timing_summary "${timing_summary}" \
@@ -634,7 +742,7 @@ write_evidence() {
     --argjson provider_probe "${provider_probe}" \
     --slurpfile cloudwatch_reports "${cloudwatch_summary}" \
     --argjson components "${components}" \
-    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{case_engine:$case_engine,agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_target_state:$prompt_target_state,prompt_target_state_classification:$prompt_target_state_classification,prompt_target_state_attempts:$prompt_target_state_attempts,prompt_target_state_retryable:$prompt_target_state_retryable,prompt_sync:$prompt_sync,prompt_sync_classification:$prompt_sync_classification,prompt_sync_attempts:$prompt_sync_attempts,prompt_sync_retryable:$prompt_sync_retryable,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
+    '{schema_version:$schema_version,status:$status,generated_at:$generated_at,release_id:$release_id,git_commit:$git_commit,preflight_sha256:$preflight_sha256,phase_timings:$phase_timings,timing_summary:$timing_summary,prompt_release:{release_id:$prompt_release_id,build_ref:$prompt_build_ref,content_fingerprint:$prompt_fingerprint},region:$region,environment:$environment,cluster:$cluster,registry:{id:$registry_id,repository:$repository},components:$components,heartbeats:$heartbeat_summary,target_health:$target_health,cloudwatch:$cloudwatch_reports[0],provider_probe:$provider_probe,terraform:$terraform_identity,ec2_backup:{status:$ec2_backup},hermes:{case_engine:$case_engine,agent_enabled:($agent_enabled == "1"),case_engine_downgrade_approved:($downgrade_approved == "1"),persona_enabled:($hermes_persona_enabled == "1")},hermes_case_workflow:{mode:$hermes_mode,schema_bootstrap_task_arn:$schema_task_arn,schema_bootstrap_task_definition:$schema_task_definition},native_hermes_config:{native_case_engine:$case_engine,hermes_agent_enabled:($agent_enabled == "1"),hermes_persona_enabled:($hermes_persona_enabled == "1"),typed_case_workflow_mode:$hermes_mode,provenance:$case_provenance},checks:{terraform_zero_drift:$terraform,terraform_post_deploy_zero_drift:$terraform_post_deploy,provider_probe:$provider_probe_status,source_prompt:$source_prompt,ecr:$ecr,suspension_recipients:$suspension_recipients,schema_bootstrap:$schema_bootstrap,prompt_target_state:$prompt_target_state,prompt_target_state_classification:$prompt_target_state_classification,prompt_target_state_attempts:$prompt_target_state_attempts,prompt_target_state_retryable:$prompt_target_state_retryable,prompt_sync:$prompt_sync,prompt_sync_classification:$prompt_sync_classification,prompt_sync_attempts:$prompt_sync_attempts,prompt_sync_retryable:$prompt_sync_retryable,heartbeats:$heartbeats,public_health:$public_health,cloudwatch:$cloudwatch,ec2_backup:$ec2_backup,prompt_activation:$prompt_activation,rollback:$rollback}}' \
     >"${STATE_DIR}/evidence.json.tmp"
   mv -- "${STATE_DIR}/evidence.json.tmp" "${STATE_DIR}/evidence.json"
   mkdir -p -- "${STATE_DIR}/evidence-attempts"
@@ -1695,6 +1803,7 @@ main() {
   prepare_deploy_workspace
   prepare_terraform_provider
   verify_aws_mutation_ready
+  resolve_case_configuration
   start_phase preflight
 
   local terraform_pid prompt_pid target_prompt_pid="" backup_pid preflight_failed=0

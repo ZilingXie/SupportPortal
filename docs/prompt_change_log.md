@@ -1,3 +1,11 @@
+## 2026-10-21 - Enablement 会话内再执行措辞的服务端进度修正与部署默认保留（14152-hermes-default-preservation-e3-progress v1）
+
+- Automation Persona 新增 `progress_inquiry_answer` 回复意图（`ACCOUNT_REPLY_INTENT_PROGRESS_INQUIRY_ANSWER`）：客户在 enablement 会话中段再次要求开通（14152 原句 `Could you help me enable the permission now?`）时，服务端从绑定申请的真实状态生成确定性 `provided_answer`（已收到/正在评审，不重复提交），Persona 只负责措辞——意图策略明确「只复述记录的评审状态；不承诺立即完成、加速或具体完成时间；不暴露内部 request/job ID」。该意图要求 `provided_answer`（与 rag_fallback 同门禁），不进入 close 意图集合。
+- Hermes 路由归一化（`hermes_route_classifier`）新增 `insession_enable_reuse` 参数与会话内执行措辞检测（`enablement_execution_request_wording`）：状态层调用方验证（active enablement、App ID 完整、绑定 review/relay request、无新字段、automation 持有）后，backend_operation(enable) 提案确定性重归一为 `conversation_followup`/`progress_inquiry`（`deterministic_fallback=backend_operation_insession_enable_reuse`）；`tool_record_direction` 与 agent 的 `continue_task` message_action 修正（→ `report_progress`，`server_correction_reason=insession_enable_reuse:*`）均留痕。绑定状态不可读/已终态 → fail-closed 转人工，不进 RAG fallback。
+- 进度答复基础（`enablement_progress_state`）覆盖两种绑定：auto/relay request（active 状态集）与 manual review reply job（14152 的 Production 形态：`awaiting_public_reply`/`sent` 等待审族）；native gate 同步支持 manual 绑定。
+- 部署栈（pipeline/deploy shell）Preproduction 未指定 `--automation-case-engine` 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态），解析统一在 `automation_ecs_deploy.resolve_preproduction_case_configuration`；fail-closed 于缺失/冲突/不可读。Prompt 内容与 Prompt Release 数据模型不变。
+- 验证：classifier 16、followup contract 37（+PG 1 过/1 存量失败）、rag resume 32、agent 76、scenarios 49、deploy 116、pipeline 59、persona 85、邻接 157 passed；存量失败簇（handoff note、conversation 累计）确认与 main 完全一致，非本轮引入。
+
 ## 2026-10-19 - Investigation 首条时间窗口与 Team Agent 咨询（p2-204 R2）
 
 - 首条 `ticket.created` 在没有客户 comment 和 trigger_comment_id 时，从 ticket.description 识别中文/英文相对日期；当前 comment 优先，窗口记录来源。

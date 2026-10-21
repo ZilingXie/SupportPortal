@@ -2753,3 +2753,90 @@ class TestAgentModelTiering:
         for submission in work_submissions:
             assert submission["model"] == "gpt-6-sol"
             assert submission["model_options"] == {"reasoning_effort": "xhigh"}
+
+
+class TestInsessionContinueTaskCorrection:
+    """14152: on an automation-held enablement case with a complete App ID and
+    no new App ID in the current comment, a model ``continue_task`` proposal
+    restates the SAME pending request and is server-corrected to the
+    reply-only ``report_progress`` action with the correction on record."""
+
+    def _processor(self, repository):
+        client = Mock()
+        return HermesAgentTurnProcessor(
+            _store(), client=client, environment="preproduction",
+            repository=repository, poll_interval_seconds=0.01,
+        )
+
+    def _turn(self):
+        return {"turn_id": "t-1", "zendesk_ticket_id": "14152", "input_snapshot": {}}
+
+    def _case(self, **overrides):
+        from copy import deepcopy
+
+        case = {
+            "automation_status": "automation",
+            "execution_action": "enablement",
+            "route": "enablement",
+            "collected_fields": {
+                "app_id": "b" * 32,
+                "requested_feature": "media_relay",
+            },
+        }
+        case.update(deepcopy(overrides))
+        return case
+
+    def _action(self, action="continue_task"):
+        return {
+            "contract_version": "hermes-message-action-v1",
+            "action": action,
+            "reason_code": "customer_reply",
+            "confidence": 0.9,
+            "message_role": "customer",
+            "independent_request": False,
+        }
+
+    def test_continue_task_corrected_to_report_progress(self):
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._case()
+        processor = self._processor(repository)
+        corrected = processor._correct_insession_continue_task(self._turn(), self._action())
+        assert corrected["action"] == "report_progress"
+        assert corrected["original_action"] == "continue_task"
+        assert corrected["reason_code"] == "insession_enable_reuse"
+        assert corrected["server_correction_reason"] == (
+            "insession_enable_reuse:continue_task->report_progress"
+        )
+
+    def test_continue_task_unchanged_when_case_not_qualified(self):
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._case(
+            automation_status="human_review_required"
+        )
+        processor = self._processor(repository)
+        action = self._action()
+        assert processor._correct_insession_continue_task(self._turn(), action) is action
+
+    def test_continue_task_unchanged_with_new_app_id_in_comment(self):
+        repository = Mock()
+        repository.get_account_case_by_ticket_id.return_value = self._case()
+        processor = self._processor(repository)
+        turn = {
+            "turn_id": "t-2",
+            "zendesk_ticket_id": "14152",
+            "input_snapshot": {
+                "current_event": {"trigger_comment_id": "c1"},
+                "conversation": [
+                    {"id": "c1", "public": True, "body": f"new id 4b7634a0d0f1418b8135918292f6a507 please"}
+                ],
+            },
+        }
+        action = self._action()
+        assert processor._correct_insession_continue_task(turn, action) is action
+
+    def test_non_continue_task_actions_pass_through(self):
+        repository = Mock()
+        processor = self._processor(repository)
+        action = self._action("report_progress")
+        assert processor._correct_insession_continue_task(self._turn(), action) is action
+        repository.get_account_case_by_ticket_id.assert_not_called()

@@ -445,6 +445,8 @@ class ScenarioEngineTests(unittest.TestCase):
                 )
             elif "possibility of getting" in body:
                 comment_id = "53820000000106"
+            elif "enable the permission now" in body:
+                comment_id = "53820000000107"
             else:
                 comment_id = f"scripted-customer-comment-{len(engine.events)}"
             ctx.last_customer_comment_id = comment_id
@@ -628,6 +630,48 @@ class ScenarioEngineTests(unittest.TestCase):
                 ),
             }]),
             ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            # Turn 5b (14152): re-enable wording is server-corrected to the
+            # reply-only progress action from the BOUND relay request.
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-5b",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13700:comment:53820000000107",
+                "work_result": {
+                    "message_action": {
+                        "action": "report_progress",
+                        "reason_code": "insession_enable_reuse",
+                        "confidence": 0.97,
+                        "independent_request": False,
+                        "server_correction_reason": (
+                            "insession_enable_reuse:continue_task->report_progress"
+                        ),
+                        "original_action": "continue_task",
+                    }
+                },
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "dispatched",
+                "request_version": 1,
+            }]),
+            ("FROM support_enablement_relay_requests", [{"n": 1}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-5b",
+                "turn_id": "turn-5b",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000107",
+                "content": (
+                    "Hi Ziling, your Media Relay enablement request was already received "
+                    "and is with our reviewing engineer; there is no need to submit it "
+                    "again. We will update you here as soon as the review completes."
+                ),
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
             # Turn 6 leg: relay result project_not_found for the BOUND request.
             ("FROM support_enablement_relay_results", [{
                 "outcome": "project_not_found",
@@ -712,6 +756,15 @@ class ScenarioEngineTests(unittest.TestCase):
                 step.step == "review nudge answered by message_action (turn 5)"
                 and "action=report_progress" in step.detail
                 and "route=enablement" in step.detail
+                for step in engine.steps
+            )
+        )
+        self.assertIn("in-session re-enable request answered by message_action (turn 5b)", step_names)
+        self.assertIn("re-enable request creates no second relay application (turn 5b)", step_names)
+        self.assertTrue(
+            any(
+                step.step == "in-session re-enable request answered by message_action (turn 5b)"
+                and "action=report_progress" in step.detail
                 for step in engine.steps
             )
         )
@@ -845,6 +898,48 @@ class ScenarioEngineTests(unittest.TestCase):
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000106",
                 "content": "Your Media Relay request is under review by our reviewing engineer.",
+            }]),
+            ("WHERE account_case_id", [{"automation_status": "automation"}]),
+            # Turn 5b (14152): re-enable wording is server-corrected to the
+            # reply-only progress action from the BOUND relay request.
+            ("FROM automation_hermes_agent_turns", [{
+                "turn_id": "turn-5b",
+                "turn_kind": "message_action",
+                "direction": "automation",
+                "route": "enablement",
+                "direction_reason": "message_action_pending",
+                "status": "completed",
+                "event_id": "zendesk:ticket:13702:comment:53820000000107",
+                "work_result": {
+                    "message_action": {
+                        "action": "report_progress",
+                        "reason_code": "insession_enable_reuse",
+                        "confidence": 0.97,
+                        "independent_request": False,
+                        "server_correction_reason": (
+                            "insession_enable_reuse:continue_task->report_progress"
+                        ),
+                        "original_action": "continue_task",
+                    }
+                },
+            }]),
+            ("FROM support_enablement_relay_requests", [{
+                "request_id": "enr-AC-13700-v1",
+                "status": "dispatched",
+                "request_version": 1,
+            }]),
+            ("FROM support_enablement_relay_requests", [{"n": 1}]),
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-5b",
+                "turn_id": "turn-5b",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53820000000107",
+                "content": (
+                    "Hi Ziling, your Media Relay enablement request was already received "
+                    "and is with our reviewing engineer; there is no need to submit it "
+                    "again. We will update you here as soon as the review completes."
+                ),
             }]),
             ("WHERE account_case_id", [{"automation_status": "automation"}]),
             ("FROM support_enablement_relay_results", [{
@@ -1802,3 +1897,14 @@ class AutomationTestScenarioApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class E3ReenableFixtureTest(unittest.TestCase):
+    def test_reenable_sentence_is_verbatim(self) -> None:
+        # 14152: the regression turn keeps the customer's exact sentence; the
+        # polite nudge stays as the control scenario.
+        self.assertEqual(
+            automation_test_scenarios.E3_REENABLE_BODY,
+            "Could you help me enable the permission now?",
+        )
+        self.assertIn("possibility of getting", automation_test_scenarios.E3_NUDGE_BODY)
