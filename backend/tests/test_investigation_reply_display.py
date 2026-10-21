@@ -309,3 +309,72 @@ class TestSectionOrderConstant(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestStructuredTruncationAndActionLedger(unittest.TestCase):
+    """Acceptance round-2 fixes: structured truncation fields are flagged
+    explicitly (C5), and an unpersisted action-message receipt reports
+    outcome_unknown instead of confirmed (C6)."""
+
+    def test_structured_truncated_field_is_flagged(self):
+        entry = {
+            "source": "argus_query_call_events",
+            "detail": "event list as received",
+            "truncated": True,
+            "omitted_count": 3,
+        }
+        rendered = render_evidence_item(entry)
+        self.assertIn("truncation_note:", rendered)
+        self.assertIn("incomplete as received", rendered)
+        self.assertIn("truncated: True", rendered)
+
+    def test_structured_source_truncated_and_has_more_flagged(self):
+        for field in ("source_truncated", "has_more"):
+            entry = {"source": "bridge", "detail": "x", field: True}
+            rendered = render_evidence_item(entry)
+            self.assertIn("truncation_note:", rendered, field)
+
+    def test_untruncated_structured_fields_do_not_flag(self):
+        entry = {"source": "bridge", "detail": "complete", "truncated": False, "has_more": False}
+        rendered = render_evidence_item(entry)
+        self.assertNotIn("truncation_note:", rendered)
+
+    def test_action_receipt_unpersisted_reports_outcome_unknown(self):
+        # The POST succeeds but the ledger CAS finish returns False: the
+        # delivery must NOT report confirmed/action_sent (a later retry
+        # reads the ledger back instead of trusting this call).
+        repository = _FakeRepository()
+        original_finish = repository.finish_native_notification
+
+        def finish_loses_claim(**kwargs):
+            if kwargs.get("key", "").endswith(":action:prepare_draft"):
+                return False
+            return original_finish(**kwargs)
+
+        repository.finish_native_notification = finish_loses_claim
+        with patch("backend.services.investigation_slack_sections.engineer_slack_configured", return_value=True), patch(
+            "backend.services.investigation_slack_sections.post_engineer_slack_event",
+            side_effect=_slack_post_ok,
+        ):
+            from backend.services.investigation_slack_sections import deliver_investigation_sections
+
+            result = deliver_investigation_sections(
+                repository,
+                namespace="test-ns",
+                thread_ts="111.222",
+                channel_id="C1",
+                ticket_id="123",
+                turn_id="turn-1",
+                investigation=_sample_record(),
+                environment="preproduction",
+                action="prepare_draft",
+                event_type="hermes_investigation_result",
+                header="Hermes investigation — Zendesk #123",
+                claim_token="claim-1",
+            )
+        self.assertEqual(result["status"], "outcome_unknown")
+        self.assertFalse(result["action_sent"])
+        self.assertEqual(result["section"], "action")
+        self.assertEqual(result["failure_code"], "native_slack_receipt_unpersisted")
+        # Body shards were all confirmed before the action attempt.
+        self.assertTrue(result["confirmed"])

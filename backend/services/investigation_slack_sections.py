@@ -83,6 +83,34 @@ def _source_truncated(value: Any) -> bool:
     return "[truncated" in value or value.rstrip().endswith("…")
 
 
+# Structured truncation markers a source (Argus bridge, RAG layers) may set
+# as first-class boolean fields — the JSON text still renders, but the
+# entry-level note must fire on the FIELD, not only on string markers.
+_STRUCTURED_TRUNCATION_KEYS = frozenset({
+    "truncated",
+    "source_truncated",
+    "has_more",
+    "hasmore",
+    "istruncated",
+    "is_truncated",
+    "bridge_budget",
+})
+
+
+def _entry_marked_truncated(item: dict[str, Any]) -> bool:
+    """True when the entry itself declares truncation via a structured field
+    (truncated=true / source_truncated=true / has_more=true …) or any of its
+    direct string values carries a textual truncation marker."""
+    for key, value in item.items():
+        normalized = str(key).strip().lower().replace("-", "_")
+        if normalized in _STRUCTURED_TRUNCATION_KEYS:
+            if value is True or str(value).strip().lower() in {"true", "1", "yes"}:
+                return True
+        if isinstance(value, str) and _source_truncated(value):
+            return True
+    return False
+
+
 def _render_scalar(value: Any) -> str:
     if isinstance(value, _SCALAR_TYPES):
         return str(value)
@@ -136,6 +164,12 @@ def render_evidence_item(item: Any) -> str:
         rendered = value if isinstance(value, str) else _render_scalar(value)
         if isinstance(rendered, str) and rendered.strip():
             lines.append(f"{key}: {rendered.strip()}")
+    if _entry_marked_truncated(item):
+        lines.append(
+            "truncation_note: this entry was marked truncated by the source "
+            "(truncated/source_truncated/has_more field) — the data above is "
+            "incomplete as received"
+        )
     return "\n".join(line for line in lines if line.strip())
 
 
@@ -406,9 +440,15 @@ def deliver_investigation_sections(
                 result = post_engineer_slack_event(event, thread_ts=payload["thread_ts"])
                 if result.get("status") != "delivered" or not result.get("slack_message_ts"):
                     raise EngineerSlackDeliveryError("native_slack_receipt_invalid", outcome_unknown=True)
-                repository.finish_native_notification(
+                saved = repository.finish_native_notification(
                     scope=scope, key=key, claim_token=claim_token, state="completed", result=result, updated_at=_now()
                 )
+                if not saved:
+                    # The POST succeeded but the ledger CAS update lost the
+                    # claim (crash/restart raced us). Same contract as the
+                    # body shards: never report confirmed on an unpersisted
+                    # receipt — a retry reads the ledger state back first.
+                    raise EngineerSlackDeliveryError("native_slack_receipt_unpersisted", outcome_unknown=True)
             except Exception as exc:
                 unknown = bool(submitted and (not isinstance(exc, EngineerSlackDeliveryError) or exc.outcome_unknown))
                 state = "outcome_unknown" if unknown else "failed"
