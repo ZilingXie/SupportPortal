@@ -87,7 +87,7 @@ Rules:
   in the same language as the reference, return it unchanged.
 - Match the reference message's script and register.
 - Keep the salutation on its own first line, translated to match the reference language
-  (e.g. Chinese: "Ziling，您好。"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
+  (e.g. Chinese: "Ziling您好，"; Japanese: "Ziling様、こんにちは。"; English: keep as-is).
 - Return ONLY a JSON object with exactly these two fields:
   {"reference_language": "<english|non_english|undetermined>", "translated_text": "<the translated text>"}
 - reference_language describes the DOMINANT language of the reference message:
@@ -327,6 +327,64 @@ def _validate_translated_content(
     return None
 
 
+def _draft_greeting_name(draft: dict[str, Any]) -> str:
+    """Server-owned greeting name for this draft (never re-guessed from text)."""
+    basis = draft.get("basis") if isinstance(draft.get("basis"), dict) else {}
+    name = str(basis.get("greeting_name") or "").strip()
+    if name:
+        return name
+    # Fall back to the deterministic English greeting line the application
+    # itself wrote into the saved content: "Hi {name},".
+    first_line = str(draft.get("content") or "").split("\n", 1)[0].strip()
+    if first_line.startswith("Hi ") and first_line.rstrip().endswith(","):
+        candidate = first_line[3:].rstrip().rstrip(",").strip()
+        if candidate:
+            return candidate
+    return "Customer"
+
+
+# p2-207: deterministic Chinese first-line normalization for the customer
+# delivery path. Matches a model-translated greeting of the shape
+# "Ziling，您好。" / "Ziling, 您好" / "您好，Ziling" / "你好，Ziling" and
+# replaces ONLY that first line with the canonical "{name}您好，" built from
+# the server-owned identity. A first line already in canonical form stays
+# untouched (no duplicated greeting); the body is preserved verbatim.
+_CJK_GREETING_RES = (
+    re.compile(r"^(?P<name>[^\n，,。.!！?？]{1,40}?)[\s，,]*您好[。，,.!！]?\s*$"),
+    re.compile(r"^您好[，，,]?\s*(?P<name>[^\n，,。.!！?？]{1,40})[。.！!]?\s*$"),
+    re.compile(r"^(?P<name>[^\n，,。.!！?？]{1,40}?)[\s，,]*(?:你好|哈喽| HI|Hi)[。，,.!！]?\s*$", re.IGNORECASE),
+)
+
+
+def _has_cjk(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def normalize_chinese_greeting(text: str, *, greeting_name: str) -> str:
+    """Deterministic Chinese salutation normalization for delivery.
+
+    Only applies when the first line looks like a CJK greeting; otherwise the
+    text is returned unchanged (English and other languages keep their own
+    handling). Never inserts a second greeting: a canonical first line is
+    idempotent."""
+    if not greeting_name or greeting_name == "Customer":
+        return text
+    lines = str(text or "").split("\n")
+    if not lines:
+        return text
+    first = lines[0].strip()
+    if not first or not _has_cjk(first):
+        return text
+    if first == f"{greeting_name}您好，":
+        return text
+    for pattern in _CJK_GREETING_RES:
+        match = pattern.match(first)
+        if match:
+            lines[0] = f"{greeting_name}您好，"
+            return "\n".join(lines)
+    return text
+
+
 def prepare_hermes_draft_delivery(
     store: AutomationEcsStore,
     repository: Any,
@@ -426,6 +484,14 @@ def prepare_hermes_draft_delivery(
     # function, so Slack display conversion still translates non-English.
     if reference_language == "english":
         translated = english_content
+
+    # p2-207 C3: deterministic Chinese salutation normalization on the
+    # customer delivery path only — the name comes from the server-owned
+    # draft identity, never re-guessed from the translation.
+    if reference_language == "non_english" and _has_cjk(translated.split("\n", 1)[0] or ""):
+        translated = normalize_chinese_greeting(
+            translated, greeting_name=_draft_greeting_name(draft)
+        )
 
     # Safety validation on the final delivery text (which may be the English
     # original for English customers, or the translation for non-English).
