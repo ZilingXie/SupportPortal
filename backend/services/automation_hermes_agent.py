@@ -990,16 +990,77 @@ class HermesAgentTurnProcessor:
                     )
             else:
                 inherited_customer = turn.get("turn_kind") == "investigation_feedback" and payload.event.event_type == IntakeEventType.COMMENT_CREATED
+                import os
+                expected_channel = str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip()
                 if inherited_customer:
-                    import os
                     thread = str(binding.get("slack_thread_ts") or "").strip()
                     channel = str(binding.get("slack_channel_id") or "").strip()
-                    if not thread or not channel or channel != str(os.getenv("ENGINEER_SLACK_CHANNEL_ID") or "").strip():
+                    if not thread or not channel or channel != expected_channel:
                         self.store.append_execution_event(payload.execution_id, "native.investigation_result_notification_missing", {"turn_id": payload.turn_id, "reason": "original_thread_missing_or_channel_mismatch"})
                         return
                 else:
                     thread = self._ensure_case_thread(payload, turn) or ""
-                    channel = str(binding.get("slack_channel_id") or "").strip()
+                    if self.repository is not None:
+                        # F1 (p2-207 R2): _ensure_case_thread may have JUST
+                        # created and persisted the thread binding; the binding
+                        # captured above predates it. Re-read the persisted
+                        # binding and require the FRESH state in the NATIVE
+                        # path — no fallback to a stale binding or the
+                        # truncated legacy notice. The repository=None
+                        # compatibility path keeps its existing scope.
+                        fresh_binding = self.store.get_hermes_case_binding(ticket.id)
+                        if fresh_binding is None:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "binding_reread_failed"},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_binding_reread_failed turn_id=%s ticket_id=%s",
+                                payload.turn_id,
+                                ticket.id,
+                            )
+                            return
+                        binding = fresh_binding
+                        channel = str(binding.get("slack_channel_id") or "").strip()
+                        if not thread:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "thread_creation_failed"},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_thread_creation_failed turn_id=%s ticket_id=%s",
+                                payload.turn_id,
+                                ticket.id,
+                            )
+                            return
+                        if not channel:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "thread_created_but_channel_binding_missing"},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_channel_missing turn_id=%s ticket_id=%s",
+                                payload.turn_id,
+                                ticket.id,
+                            )
+                            return
+                        if expected_channel and channel != expected_channel:
+                            self.store.append_execution_event(
+                                payload.execution_id,
+                                "native.investigation_result_notification_missing",
+                                {"turn_id": payload.turn_id, "reason": "bound_channel_mismatch", "bound": channel},
+                            )
+                            LOGGER.warning(
+                                "hermes_investigation_result_channel_mismatch turn_id=%s bound=%s",
+                                payload.turn_id,
+                                channel,
+                            )
+                            return
+                    else:
+                        channel = str(binding.get("slack_channel_id") or "").strip()
                 if thread and channel and self.repository is not None:
                     outcome = deliver_investigation_sections(
                         self.repository,
