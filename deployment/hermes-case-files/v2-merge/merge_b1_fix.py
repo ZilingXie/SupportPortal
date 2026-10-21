@@ -1,11 +1,49 @@
-"""R2-V2-B1 fix: combined profile + file-scope skill visibility (base 180e2c98)."""
+"""R2-V2-B1 fix: combined profile + file-scope skill visibility (base 180e2c98).
+
+Inputs (no machine paths are baked in; see README.md for extraction):
+  --src DIR    (or CF_B1_SRC)  live-image extracted files: skills_tool.py,
+               api_server_runs.py, supportportal_skill_profile.py,
+               supportportal_agent_tools/{__init__.py,plugin.yaml}
+  --profiles DIR (or CF_B1_PROFILES) investigation-profiles/ extracted from the
+               live image
+  --sp DIR     (or SUPPORTPORTAL_ROOT) SupportPortal checkout; defaults to the
+               checkout this script lives in
+  --out DIR    (or CF_B1_OUT)  output tree (no default; must not be the live tree)
+"""
+import argparse
+import os
 import shutil
+import sys
 from pathlib import Path
 
-W = Path("/Users/xiezuling/Desktop/personal_proj/cf-overlay-work")
-SP = Path("/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/case-files-r2-enable-evidence")
-SRC = Path("/tmp/b1src")
-OUT = Path("/tmp/tree-b1")
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    env = os.environ.get
+    parser.add_argument("--src", default=env("CF_B1_SRC"), required=not env("CF_B1_SRC"),
+                        help="live-image extracted source files (env CF_B1_SRC)")
+    parser.add_argument("--profiles", default=env("CF_B1_PROFILES"), required=not env("CF_B1_PROFILES"),
+                        help="investigation-profiles dir from the live image (env CF_B1_PROFILES)")
+    parser.add_argument("--sp", default=env("SUPPORTPORTAL_ROOT") or str(Path(__file__).resolve().parents[3]),
+                        help="SupportPortal checkout root (env SUPPORTPORTAL_ROOT; default: this checkout)")
+    parser.add_argument("--out", default=env("CF_B1_OUT"), required=not env("CF_B1_OUT"),
+                        help="output tree dir (env CF_B1_OUT)")
+    return parser.parse_args(argv)
+
+
+_args = _parse_args()
+SP = Path(_args.sp).expanduser().resolve()
+SRC = Path(_args.src).expanduser().resolve()
+PROFILES = Path(_args.profiles).expanduser().resolve()
+OUT = Path(_args.out).expanduser().resolve()
+for required, label in ((SRC, "--src"), (PROFILES, "--profiles"),
+                        (SP / "deployment/hermes-case-files", "--sp/deployment/hermes-case-files")):
+    if not required.is_dir():
+        sys.exit(f"missing input directory for {label}: {required}")
+for name in ("skills_tool.py", "api_server_runs.py", "supportportal_skill_profile.py",
+             "supportportal_agent_tools/__init__.py", "supportportal_agent_tools/plugin.yaml"):
+    if not (SRC / name).is_file():
+        sys.exit(f"missing input file for --src: {SRC / name}")
 
 def swap(text, anchor, replacement, label):
     n = text.count(anchor)
@@ -124,7 +162,7 @@ shutil.copyfile(SP / "deployment/hermes-case-files/case_files_bridge.py",
                 OUT / "deploy-ecs/supportportal_agent_tools/case_files_bridge.py")
 shutil.copytree(SP / "deployment/hermes-case-files/skills/support-case-files",
                 OUT / "deploy-ecs/case-files-skill", dirs_exist_ok=True)
-shutil.copytree(Path("/tmp/b1-investigation-profiles"), OUT / "investigation-profiles", dirs_exist_ok=True)
+shutil.copytree(PROFILES, OUT / "investigation-profiles", dirs_exist_ok=True)
 
 print("B1_MERGE_OK")
 for p in sorted(OUT.rglob("*")):

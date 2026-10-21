@@ -1,11 +1,23 @@
-"""R2-V2-B1 regression: combined profile + file-scope skill visibility."""
+"""R2-V2-B1 regression: combined profile + file-scope skill visibility.
+
+Usage: verify_b1.py --tree DIR   (or env CF_B1_OUT)
+"""
+import argparse
 import ast
 import json
 import logging
+import os
 import sys
 from pathlib import Path
 
-TREE = Path("/tmp/tree-b1")
+_parser = argparse.ArgumentParser(description="R2-V2-B1 regression verifier")
+_parser.add_argument("--tree", default=os.environ.get("CF_B1_OUT"),
+                     required=not os.environ.get("CF_B1_OUT"),
+                     help="merged overlay tree from merge_b1_fix.py (env CF_B1_OUT)")
+_args = _parser.parse_args()
+TREE = Path(_args.tree).expanduser().resolve()
+if not (TREE / "hermes-agent/tools/skills_tool.py").is_file():
+    sys.exit(f"not a merge_b1_fix.py output tree: {TREE}")
 sys.path.insert(0, str(TREE / "hermes-agent"))
 
 # ---------- compile ----------

@@ -77,3 +77,20 @@
 ### 独立验收结论（2026-10-20，第二轮）
 
 **通过（R2-V2-B1 修复及 C1-C6 范围）**。审查对象：PR #1527 HEAD `bc8d31f2`、B1 修复与 verify_b1 四模式矩阵、Preproduction Hermes td54（`sha256:7df5f3a3…`，单一 PRIMARY 健康）、14151 真实闭环证据、主干/worktree/JSON/Overview/Feature List 检查。B1 六项组合行为确认修复；C1-C6 全部判定通过；文档与 Git 检查通过。**不宣称**：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 文件获取、Production、原 R1 发布复审——均保持开放/另行授权；工单自动 solve 与人工审批的时序竞争仍为观察项。验收门禁释放，进入收口与合并流程。
+
+### 修复轮 R2-V2-B1-REPRO（2026-10-21 独立复验未通过后）
+
+- **发现**（验收方）：`deployment/hermes-case-files/v2-merge/merge_b1_fix.py` 写死错误的本机路径（`/Users/xie…/cf-overlay-work`）且硬编码 SupportPortal worktree 与 `/tmp/b1src` 等路径；`merge_overlay_v2.py`/两个 verify 脚本同样依赖本机绝对路径。live td54 与工单 14151 证明已部署版本正常，但仓库内的发布构建链不可重建，违反"脚本入库、可按现行输入重建并复核"。
+- **修复**：四个脚本全部参数化——输入/输出为必填 CLI 参数（`CF_B1_SRC`/`CF_B1_PROFILES`/`CF_B1_OUT`/`CF_OVERLAY_WORK`/`CF_OVERLAY_OUT` 环境变量回退），SupportPortal 根默认由脚本所在检出推导（`SUPPORTPORTAL_ROOT` 可覆盖），缺参/缺输入 fail-closed 报具体路径；提取+重建+验证+构建命令固化 `v2-merge/README.md`。
+- **验证**（2026-10-21）：
+  - 真实重建：干净 cwd + 清空 `CF_*` 环境下，以保留的现行 live 输入（td52 基底 `sha256:75e0bdd0…` 提取）重建 → `B1_MERGE_OK`；重建树与 td54 构建树 12 个 overlay 文件**逐字节一致**（diff 仅剩 build context Dockerfile 与 `__pycache__` 非脚本产物）；`verify_b1.py` 对重建树 `B1_VERIFY_OK`。
+  - 镜像内容：按 digest 从 ECR 拉取 td54 镜像 `sha256:7df5f3a3…`（td54 任务定义权威确认），导出 7 个 COPY 目标，与重建树**逐字节一致**。
+  - 容器验证：以重建树 + 同一基底本地 `podman build`，重建镜像与本地 td54 镜像 **ID/rootfs 层/created/history 全部相等**（逐位一致）；容器内探针 `CONTAINER_PROBE_OK`（`file_skill_visible` 语义四态、`_supportportal_listing_visible` ×3、profile 模块加载）。
+  - v2 链：`merge_overlay_v2.py` 参数化复跑 `MERGE_OK` + `verify_merged_overlay.py` `VERIFY_OK`；其现行输出含 B1 的 `file_skill_visible`（自仓库 bundle 复制），与 td49 时代树仅在该文件上差异，属预期。
+  - 测试入库：`backend/tests/test_hermes_case_files_v2_merge_scripts.py` 干净目录冒烟（子进程 + 清空 `CF_*`/`SUPPORTPORTAL_ROOT` + cwd 无泄漏；合成输入由脚本自身 `swap()` 锚点经 `ast` 提取组装，防锚点漂移）6 通过 + 缺参/缺文件负控；`RealInputRebuildTests` 环境门控（`CF_B1_SRC`/`CF_B1_PROFILES`/可选 `CF_B1_EXPECTED_TREE`），本机以真实输入 + 期望树逐字节断言通过。
+  - 回归：bundle 五门禁 passed（patch_apply/core_compile/skills_list_gate/skill_view_gate/session_negative）；隔离 PG（`p2192_case_files_test`）case files 25+4 skip、attachments 30+3 skip（skip 均为 NATIVE_NOTIFICATION_TEST_DSN 门控）、route status fix 20、merge 冒烟 6+1 skip，全绿零失败。
+- **不宣称**：C7 Zac 文件、Slack→n8n 人类上传路径、Automation 反向调用、Production——维持原开放边界；本轮不部署（修复为开发者工具链，无 runtime 行为变更，不触发 ECS 发布）。
+
+### 独立复验结论（2026-10-21，R2-V2-B1-REPRO 轮）
+
+**通过**。审查对象：PR #1529 HEAD `e2a1263f`；验收方独立复跑冒烟/真实重建/case-files 相关套件/静态检查全过，td54 逐字节与逐位复现证据确认。收口时 main 推进至 `ebb59c8b`，merge 仅 `docs/projectoverview-data.js` 生成冲突并以重生成解决，评审范围对 `e2a1263f` 零差异。本轮不部署。开放边界（C7 Zac、Slack→n8n 人类上传、Automation 反向调用、Production）不变。
