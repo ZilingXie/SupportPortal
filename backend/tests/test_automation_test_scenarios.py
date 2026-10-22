@@ -332,9 +332,7 @@ class ScenarioEngineTests(unittest.TestCase):
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53746309711252",
                 "content": (
-                    "Hi Ziling, thank you for requesting Media Relay. I've recorded "
-                    "your request for enablement review and will follow up with an "
-                    "update once the review completes."
+                    "Hi Ziling, thank you for requesting Media Relay. I've submitted your request for internal review, and I'll keep you posted as soon as I have an update. Reviews are handled on business days, Monday through Friday."
                 ),
             }]),
             ("FROM support_account_zendesk_comment_deliveries", [{
@@ -609,8 +607,10 @@ class ScenarioEngineTests(unittest.TestCase):
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000104",
                 "content": (
-                    "Hi Ziling, thanks for correcting the App ID. I have recorded your Media "
-                    "Relay enablement request for review and will follow up with an update."
+                    "Hi Ziling, thanks for correcting the App ID. I've submitted your "
+                    "request for internal review and will keep you posted as soon as I "
+                    "have an update. Reviews are handled on business days, Monday "
+                    "through Friday."
                 ),
             }]),
             ("FROM support_enablement_relay_requests", [{
@@ -901,7 +901,11 @@ class ScenarioEngineTests(unittest.TestCase):
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000304",
-                "content": "Hi Ziling, I have recorded your Media Relay request for review.",
+                "content": (
+                    "Hi Ziling, I've submitted your Media Relay request for internal "
+                    "review and will update you. Reviews are handled on business days, "
+                    "Monday through Friday."
+                ),
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
@@ -2296,9 +2300,7 @@ class E1PHermesCarrierTests(unittest.TestCase):
     an auxiliary observation only (C1-C6)."""
 
     CONFIRMATION = (
-        "Hi Ziling, thank you for requesting Media Relay. I've recorded your "
-        "request for enablement review and will follow up with an update once "
-        "the review completes."
+        "Hi Ziling, thank you for requesting Media Relay. I've submitted your request for internal review, and I'll keep you posted as soon as I have an update. Reviews are handled on business days, Monday through Friday."
     )
 
     def _engine(self, responses):
@@ -2429,6 +2431,18 @@ class E1PHermesCarrierTests(unittest.TestCase):
                     draft_row=self._draft(delivery_status=status),
                 ))
                 self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_with_stiff_negative_status_fails(self):
+        # e1p-natural-submission-confirmation-v1: the 14202 shape — correct
+        # review semantics plus a stiff negative status sentence — fails.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content=self.CONFIRMATION
+                + " Media Relay is not yet confirmed as enabled."
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
 
     def test_content_without_confirmation_semantics_fails(self):
         # Matrix 7: delivered and public, but the text is a bare ask.

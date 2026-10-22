@@ -70,36 +70,70 @@ DETAILED_INVOICE_BODY = (
 )
 
 
-def _e1p_confirmation_content_check(content: str) -> str | None:
-    """Acceptance check (e1p-hermes-draft-carrier-v1 C3): the confirmation
-    states the request was received into the enablement review flow, never
-    claims enablement is done, promises no deadline, and never asks an
-    internal approver to reply."""
+_STIFF_NEGATIVE_STATUS_RE = re.compile(
+    r"not\s+yet\s+(?:confirmed\s+as\s+)?(?:enabled|activated|provisioned)"
+    r"|(?:hasn'?t|has\s+not)\s+been\s+(?:enabled|activated)"
+    r"|pending\s+activation"
+    r"|awaiting\s+enablement",
+    re.IGNORECASE,
+)
+
+
+def _submission_confirmation_content_check(content: str) -> str | None:
+    """Auto-path submission confirmation contract
+    (e1p-natural-submission-confirmation-v1 C1-C3).
+
+    Required semantics: thanks/receipt + submission for review + business-day
+    handling + an update commitment. Forbidden: stiff negative status
+    disclaimers ("not yet confirmed as enabled", "pending activation", ...),
+    any affirmative enablement claim, deadline promises, approval wording.
+    """
     lowered = str(content or "").casefold()
     received = any(
         phrase in lowered
         for phrase in (
             "recorded your request", "received your request",
-            "thank you for requesting", "request has been received",
-            "submitted",
+            "thank you for requesting", "thank you for sending",
+            "request has been received", "submitted",
         )
     )
-    in_review = any(
-        phrase in lowered for phrase in ("review", "enablement", "processing")
-    )
-    if not (received and in_review):
-        return "confirmation does not state receipt into the enablement review flow"
+    if not received:
+        return "confirmation does not thank for / acknowledge the request"
+    if "review" not in lowered:
+        return "confirmation does not mention review"
+    if not re.search(
+        r"business\s+days?|weekdays?|monday\s*(?:through|to|-)\s*friday",
+        lowered,
+    ):
+        return "confirmation does not state business-day review handling"
+    if not re.search(
+        r"keep\s+you\s+posted|keep\s+you\s+updated|update\s+you|updates?\b|"
+        r"let\s+you\s+know|notify\s+you|follow\s+up|reach\s+out|"
+        r"hear\s+(?:from\s+us|anything)",
+        lowered,
+    ):
+        return "confirmation does not commit to a follow-up update"
+    stiff = _STIFF_NEGATIVE_STATUS_RE.search(lowered)
+    if stiff:
+        return f"stiff negative status sentence: {stiff.group(0)[:60]}"
     close_claim = _no_affirmative_close_claim(content)
     if close_claim:
         return close_claim
     if re.search(
         r"\b(within|in)\s+(a\s+|a\s+few\s+)?\d*\s*(business\s+)?(hour|day|minute)",
         lowered,
-    ) or "by tomorrow" in lowered:
+    ) or "by tomorrow" in lowered or re.search(r"24\s*[-\s]?hours?", lowered):
         return "confirmation promises a deadline"
     if "approv" in lowered:
         return "confirmation asks for approval (internal handoff wording)"
     return None
+
+
+def _e1p_confirmation_content_check(content: str) -> str | None:
+    """E1P's confirmation gate is the shared auto-path contract (see
+    `_submission_confirmation_content_check`); one semantic contract for the
+    same persona-generated reply (e1p-natural-submission-confirmation-v1)."""
+    return _submission_confirmation_content_check(content)
 
 
 def _enablement_request_body() -> str:
@@ -206,17 +240,6 @@ def _appid_ownership_mismatch_content_check(content: str) -> str | None:
         return "reply does not direct the customer to submit a new support request"
     if any(word in lowered for word in ("enabled", "activated", "turned on")):
         return "reply claims enablement"
-    return None
-
-
-def _submission_confirmation_content_check(content: str) -> str | None:
-    """Acceptance check: confirmation must mention review and promise no deadline."""
-    lowered = str(content or "").casefold()
-    if "review" not in lowered:
-        return "confirmation does not mention review"
-    close_claim = _no_affirmative_close_claim(content)
-    if close_claim:
-        return close_claim
     return None
 
 

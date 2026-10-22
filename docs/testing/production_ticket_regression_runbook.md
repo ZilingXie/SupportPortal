@@ -181,7 +181,10 @@
   preprod intake → route=enablement → 确认回复经 **Hermes draft 公开投递**（2026-10-22
   e1p-hermes-draft-carrier-v1：断言 draft delivered + 确认语义内容检查 + 公开评论
   delivered；旧 `submission_confirmation` reply job 仅为辅助观察，缺失或 queued 不影响
-  判定；超时会记录 FAIL 并非零退出）。
+  判定；超时会记录 FAIL 并非零退出）。确认语义合同（2026-10-22 p2-210）：必须含
+  感谢/已收到+已提交 review+business-day 处理+后续更新承诺；禁止
+  "not yet (confirmed as) enabled"/"pending activation"/"awaiting enablement" 等生硬
+  否定状态句（14202 形态）、提前启用声明、具体期限（含 24h）与审批措辞。
   全程无人工回合；enablement relay 终局（enabled+solved）不在本剧本断言范围。
 - **超时提示**：relay 腿相关等待使用 turn 预算（默认 20 分钟）；涉及人工审批窗口的
   场景用 `--turn-timeout-min 60` 预留审批时间（14184 实证）。

@@ -362,7 +362,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -1109,7 +1109,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1661,7 +1661,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1983,7 +1983,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
@@ -2466,3 +2466,160 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnablementSubmissionConfirmationNaturalContractTests(unittest.TestCase):
+    """e1p-natural-submission-confirmation-v1 (p2-210): the auto-path
+    confirmation thanks, submits for review, states business-day handling,
+    and commits to an update — never a stiff negative enablement status.
+    Verified through the real validate_account_reply_contract entry."""
+
+    AUTO_REPLY_14202 = (
+        "Hi Ziling, Thank you for your request to enable Media Relay to bridge "
+        "presenters between channels. I've submitted your enablement request for "
+        "review; Media Relay is not yet confirmed as enabled."
+    )
+    NATURAL_AUTO = (
+        "Thanks for sending your Media Relay request. I've submitted it for "
+        "internal review, and I'll keep you posted as soon as I have an update. "
+        "Reviews are handled on business days, Monday through Friday."
+    )
+    MANUAL_24H = (
+        "Thanks for sending this over — I've logged the request and will handle "
+        "the rest on my side. Activation usually completes within 24 hours and "
+        "changes go out on weekdays, so I'll keep an eye on it and update you "
+        "once it's live."
+    )
+
+    def _auto_facts(self) -> dict:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            submitted=True,
+            customer_name="Ada Customer",
+        )
+        # The auto (Archer) path overrides the SLA before the reply job is
+        # created, exactly like automation_account_intake does.
+        facts["activation_sla"] = "business-day review"
+        facts["conversation_context"] = enablement_language_context()
+        return facts
+
+    def _manual_facts(self) -> dict:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            submitted=True,
+            customer_name="Ada Customer",
+        )
+        facts["conversation_context"] = enablement_language_context()
+        return facts
+
+    def test_auto_natural_reply_passes(self) -> None:
+        normalized, _close = validate_account_reply_contract(
+            self.NATURAL_AUTO, self._auto_facts()
+        )
+        self.assertEqual(
+            normalized["reply_intent"], "submission_confirmation"
+        )
+
+    def test_14202_original_reply_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "stiff_negative_status"
+        ):
+            validate_account_reply_contract(
+                self.AUTO_REPLY_14202, self._auto_facts()
+            )
+
+    def test_stiff_negative_variants_are_rejected_on_both_paths(self) -> None:
+        variants = {
+            "not yet enabled": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Media Relay is not yet enabled.",
+            ),
+            "hasn't been enabled": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Media Relay hasn't been enabled yet.",
+            ),
+            "pending activation": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Your request is pending activation.",
+            ),
+            "awaiting enablement": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Your project is awaiting enablement.",
+            ),
+        }
+        for name, reply in variants.items():
+            for path, facts in (
+                ("auto", self._auto_facts()),
+                ("manual", self._manual_facts()),
+            ):
+                with self.subTest(variant=name, path=path):
+                    with self.assertRaisesRegex(
+                        AutomationPersonaError, "stiff_negative_status"
+                    ):
+                        validate_account_reply_contract(reply, facts)
+
+    def test_auto_path_requires_business_day_and_update_commitment(self) -> None:
+        missing_bizday = (
+            "Thanks for your message. I've submitted your request for internal "
+            "review and will update you as soon as there is news."
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "business_day_missing"
+        ):
+            validate_account_reply_contract(
+                missing_bizday, self._auto_facts()
+            )
+        missing_update = (
+            "Thanks for your Media Relay request. It is submitted for internal "
+            "review. Reviews are handled on business days, Monday through Friday."
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "update_commitment_missing"
+        ):
+            validate_account_reply_contract(
+                missing_update, self._auto_facts()
+            )
+
+    def test_auto_path_rejects_24h_promise_and_premature_enablement(self) -> None:
+        with self.assertRaisesRegex(AutomationPersonaError, "24h_promise"):
+            validate_account_reply_contract(
+                self.NATURAL_AUTO.replace(
+                    "Reviews are handled on business days, "
+                    "Monday through Friday.",
+                    "It should complete within 24 hours.",
+                ),
+                self._auto_facts(),
+            )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "premature_enablement"
+        ):
+            validate_account_reply_contract(
+                self.NATURAL_AUTO.replace(
+                    "Reviews are handled on business days, "
+                    "Monday through Friday.",
+                    "Media Relay is enabled on your project.",
+                ),
+                self._auto_facts(),
+            )
+
+    def test_manual_24h_copy_keeps_passing(self) -> None:
+        # C5: the manual path keeps its own 24-hour + weekday contract; the
+        # stiff-negative prohibition is the only new constraint it inherits.
+        normalized, _close = validate_account_reply_contract(
+            self.MANUAL_24H, self._manual_facts()
+        )
+        self.assertEqual(
+            normalized["reply_intent"], "submission_confirmation"
+        )
