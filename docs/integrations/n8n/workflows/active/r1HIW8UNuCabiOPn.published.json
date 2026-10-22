@@ -1,13 +1,13 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-22T04:07:33.087Z",
+  "capturedAt": "2026-10-22T04:14:50.328Z",
   "source": {
     "workflowId": "r1HIW8UNuCabiOPn",
     "workflowName": "[slack]Forward Thread|Prod+Preprod",
     "versionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
     "publishedVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
     "snapshotKind": "published",
-    "updatedAt": "2026-10-13T03:25:31.323Z"
+    "updatedAt": "2026-10-22T04:14:05.535Z"
   },
   "restoreNotes": {
     "activeAtCapture": true,
