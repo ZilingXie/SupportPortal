@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-22T02:48:23Z",
-  "source_base_commit": "382f0159cbe3bfe46c570b33dc18c9f4b4382fe9",
-  "registry_digest": "a0a27cb2ba4d6121229fe5c95d563321b2bbf2eaf5392bf7a1610c0b64c714cf",
+  "generated_at": "2026-10-22T05:06:29Z",
+  "source_base_commit": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+  "registry_digest": "5128379c1b48cd33c0bb675ad99b2e7fffef3a922cc27225a20c74d300fb57a4",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1854,6 +1854,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/case-config-resolution.json"
         },
         {
+          "type": "deployment",
+          "label": "Preproduction 发布与业务验证（2026-10-22，enablement-relay-result-integrity-v1）",
+          "command": "release_automation_ecs_pipeline --release-commit 2e2d3ba599f78b18da0f90ea9c569361dbcbdf70 --prompt-release-id pr-88298d4e0a3f --through preproduction --enablement-workflow-mode archer（hermes 配置继承）→ E1P 观察 → E3 全链（新工单 14194，含 relay 腿 staged 审批）",
+          "result": "r20261021-2e2d3ba 上线：evidence complete；api:171/route:167/worker:170 全 PRIMARY 1/1，镜像 digest 三侧与 publish record 一致（worker=b740f075…），worker env release id=r20261021-2e2d3ba；顺带生效 gpt-6.1-sol 模型 pin（既定'下次部署生效'项）。E1P（14183）：业务链健康（确认经 Hermes draft 公开投递），[ABORTED]+exit2=旧 reply-job 断言载体过期（非业务失败，与 E1P 范围外，登记后续）；工单已 solved。E3（14194，--turn-timeout-min 60）：29/29 全 PASS [PASSED]，含新载体 turn4（review_requested/确认投递/relay 申请/公开评论）与 relay 腿闭环——executor 发送 kind:text 规范结果（builder 生成+哈希核对），新 worker 正确消费：申请 completed(ownership_mismatch)、结果落库 applied、专属回复 published+公开投递 54853544502804、工单 solved、relay 任务 completed/goal_met（合法业务结果的正确终态）。14184 观察单（22 PASS 后 relay 审批窗口超时）已 solved 收尾，结果未发送。剧本缺口登记：E1P 末步旧载体；relay 结果等待用 turn 预算（14184 实证）。"
+        },
+        {
           "type": "decision",
           "label": "代码验收通过（2026-10-21，enablement-relay-result-integrity-v1）",
           "command": "验收方复跑：SP 定向回归 172 passed/1 skipped（skip=本地无 PG；隔离 PG 关键测试 1 passed）；AgentRelay 309 passed/0 failed+smoke；compileall/diff --check/Node 语法通过",
@@ -1991,7 +1997,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 52,
-      "done_count": 25,
+      "done_count": 26,
       "blocked_count": 2
     },
     {
@@ -19473,15 +19479,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 1,
       "task_id": "p2-209",
       "title": "Enablement relay 结果完整性：发送端 part 契约、无效结果失败收尾、E3 现行载体与退出码（enablement-relay-result-integrity-v1）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-21",
-      "updated_at": "2026-10-21",
+      "updated_at": "2026-10-22",
       "summary": "14158 事故修复：本地执行器回传 part 用 type 而非 kind 被 worker 解析器拒收后仍 ACK+complete（goal_met），申请搁置无失败交接。双仓修复：AgentRelay 发送入口 part/结果校验+标准结果构造；SP worker 无效结果走显式失败终态（fail_task）+失败/人工接管链+CAS+幂等；E3 第 4 回合改用现行 Hermes draft/delivery 载体；剧本包装器中止必须非零退出；skill/文档钉死 kind:text；DSN 输出三格式脱敏检测（密码不轮换）。14158 不重放；不触 Production。",
-      "next_action": "代码验收通过→收口：合并 SP#1535+AgentRelay#103→仅 Preproduction 发布（worker 含修复、digest 一致）→最小 synthetic enablement→新 E3 工单；失败立即停止；14158 不重放。",
+      "next_action": "p2-209 收口完成（代码验收→合并 SP#1535=main 2e2d3ba5+AgentRelay#103=main 66062e4→r20261021-2e2d3ba 发布→E1P 观察+E3 29/29 全链 PASS）。遗留后续项：E1P 末步载体现代化、E3 relay 腿等待预算与 240min 提示不一致、DSN 密码轮换（用户独立决定）。",
       "acceptance_criteria": [
         "错误 type 消息在 AgentRelay 发送端被阻断（含负控）",
         "无效结果到达 SP 时不按成功关闭，进入明确失败/人工接管链，不产生客户完成回复",
@@ -19491,6 +19497,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布与业务验证（2026-10-22，enablement-relay-result-integrity-v1）",
+          "command": "release_automation_ecs_pipeline --release-commit 2e2d3ba599f78b18da0f90ea9c569361dbcbdf70 --prompt-release-id pr-88298d4e0a3f --through preproduction --enablement-workflow-mode archer（hermes 配置继承）→ E1P 观察 → E3 全链（新工单 14194，含 relay 腿 staged 审批）",
+          "result": "r20261021-2e2d3ba 上线：evidence complete；api:171/route:167/worker:170 全 PRIMARY 1/1，镜像 digest 三侧与 publish record 一致（worker=b740f075…），worker env release id=r20261021-2e2d3ba；顺带生效 gpt-6.1-sol 模型 pin（既定'下次部署生效'项）。E1P（14183）：业务链健康（确认经 Hermes draft 公开投递），[ABORTED]+exit2=旧 reply-job 断言载体过期（非业务失败，与 E1P 范围外，登记后续）；工单已 solved。E3（14194，--turn-timeout-min 60）：29/29 全 PASS [PASSED]，含新载体 turn4（review_requested/确认投递/relay 申请/公开评论）与 relay 腿闭环——executor 发送 kind:text 规范结果（builder 生成+哈希核对），新 worker 正确消费：申请 completed(ownership_mismatch)、结果落库 applied、专属回复 published+公开投递 54853544502804、工单 solved、relay 任务 completed/goal_met（合法业务结果的正确终态）。14184 观察单（22 PASS 后 relay 审批窗口超时）已 solved 收尾，结果未发送。剧本缺口登记：E1P 末步旧载体；relay 结果等待用 turn 预算（14184 实证）。"
+        },
         {
           "type": "decision",
           "label": "代码验收通过（2026-10-21，enablement-relay-result-integrity-v1）",
