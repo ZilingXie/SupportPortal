@@ -5,9 +5,9 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。HERMES-METADATA-01仍阻断真实文件测试就绪：live td54 bridge/Skill缺description。Hermes readiness v3最小两文件overlay、注册bridge到实际API隔离测试及禁网容器profile探针自测完成，等待独立代码验收/仅Hermes部署与最终readiness验收；本轮不注入业务样本。",
+  "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放，真实文件测试仍不可开始。",
   "status": "blocked",
-  "next_action": "Hermes metadata readiness v3：最小bridge/Skill overlay与真实注册入口/API回归已完成自测，等待独立代码验收后仅更新 Preproduction Hermes；部署后只读schema/hash/profile/health回读，再独立验收readiness。不得执行真实文件样本；原R1、人类上传、Automation live反向、C7 Zac与Production边界保留。",
+  "next_action": "对同 Draft PR#1548 的 v4 完整代码做独立验收：publisher/probe/真实loader本地回归已完成（65 passed、17 skipped）；通过并合并后按v4执行Preproduction Hermes/EFS发布，再交独立readiness验收。当前不得修改EFS、再次部署或执行真实文件样本；原R1、人类上传、Automation live反向、C7 Zac与Production边界保留。",
   "owner": "agent",
   "created_at": "2026-10-09",
   "updated_at": "2026-10-22",
@@ -17,7 +17,8 @@
   ],
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+    "HERMES-METADATA-01：v3部署失败/恢复已独立复核；受控单Skill EFS交付路径已获人类授权，v4方案已独立通过，完整代码/部署验收尚待完成，ready_for_real_file_tests=false。"
   ],
   "evidence": [
     {
@@ -135,7 +136,12 @@
     {
       "type": "document",
       "url": "docs/plans/investigation-case-files-hermes-metadata-readiness.md",
-      "label": "Hermes metadata readiness v3：HERMES-METADATA-01 修复候选，代码/部署/真实传输分层门禁"
+      "label": "Hermes metadata readiness v4方案：人类已选受控EFS单Skill发布；v3部署失败/恢复独立复核保留；v4方案已通过；本地实现完成待完整代码验收"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
+      "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
     }
   ]
 }
