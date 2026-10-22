@@ -245,6 +245,26 @@ def test_render_task_definition_api_carries_zendesk_readback_secrets(tmp_path: P
     assert values["AUTOMATION_ZENDESK_SIDE_EFFECTS_ENABLED"] == "1"
 
 
+def test_preproduction_api_and_worker_render_trusted_engineer_bot(tmp_path: Path) -> None:
+    for role in ("api", "worker"):
+        current = _task_definition(tmp_path, role)
+        _as_preproduction(current)
+        rendered = render_task_definition(
+            role=role,
+            current_path=current,
+            manifest_path=_manifest(tmp_path),
+            registry_id="123456789012",
+            region="us-east-1",
+            environment="preproduction",
+            repository="supportportal/preproduction",
+            agent_model="gpt-6-sol",
+            graph_efs_file_system_id="fs-preproduction" if role == "api" else None,
+            graph_efs_access_point_id="fsap-preproduction" if role == "api" else None,
+        )
+        values = {item["name"]: item["value"] for item in rendered["containerDefinitions"][0]["environment"]}
+        assert values["ENGINEER_SLACK_BOT_ID"] == "B08RHT5TZV2"
+
+
 def test_render_task_definition_api_attaches_graph_mail_configuration(
     tmp_path: Path,
 ) -> None:

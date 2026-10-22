@@ -934,6 +934,11 @@ def _base_environment(
                 "ENABLEMENT_WORKFLOW_MODE": enablement_workflow_mode,
             }
         )
+        if environment == "preproduction":
+            # Slack app-authored file_share events are accepted only from the
+            # explicitly configured bot identity. Keep this non-secret value
+            # on the runtime task so missing configuration remains fail-closed.
+            values["ENGINEER_SLACK_BOT_ID"] = "B08RHT5TZV2"
     if role in {"api", "worker"} and environment == "preproduction":
         # Knowledge governance master switch: the stage-6 knowledge stage
         # config owns the value (all-off by default); runtime readiness
@@ -1438,6 +1443,8 @@ def render_task_definition(
             _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "1" if investigation_case_files_enabled else "0")
         elif "INVESTIGATION_CASE_FILES_ENABLED" not in existing_names:
             _set_environment_value(container, "INVESTIGATION_CASE_FILES_ENABLED", "0")
+        if environment == "preproduction":
+            _set_environment_value(container, "ENGINEER_SLACK_BOT_ID", "B08RHT5TZV2")
     if role in {"api", "worker"} and (
         hermes_case_workflow_mode is not None or hermes_persona_enabled is not None
     ):
