@@ -2,11 +2,11 @@
   "plan": "investigation-case-files-slack-ingress-metadata-v1",
   "phase": "Hermes metadata readiness",
   "revision": "v4",
-  "updated_at": "2026-10-22T07:03:47.768546+00:00",
+  "updated_at": "2026-10-22T07:46:06.739455+00:00",
   "source_baseline": "7a1c52231e4bea3184393a065c4f93a111cea840",
   "code_acceptance": "v3 passed; v4 first code review failed HMR-V4-01; repaired pending independent re-review",
-  "deployment_status": "v4 not started; v3 failed and recovered",
-  "deployment_acceptance": "v3 deployment failed; recovery independently passed; v4 not started",
+  "deployment_status": "v4 deployment failed at combined Gateway toolsets readback; TD56 circuit breaker/explicit recovery restored TD54 and EFS old Skill",
+  "deployment_acceptance": "v4 deployment failed; recovery independently read back; live readiness not passed",
   "ready_for_real_file_tests": false,
   "baseline": {
     "generated_at": "2026-10-22T05:18:40.789805+00:00",
@@ -253,10 +253,10 @@
   "open_findings": [
     {
       "id": "HERMES-METADATA-01",
-      "status": "open; v4 plan passed, implementation completed pending independent code acceptance and live readiness",
-      "reason": "v3 image-only overlay did not update actual EFS-served Skill; v3 deployment failed and TD54 recovered",
+      "status": "open; v4 deployment failed and recovery passed",
+      "reason": "TD56 image stage and EFS served-content checks passed, but Gateway toolsets readback produced EOF; circuit breaker restored TD54 and publisher rollback restored old EFS bytes",
       "scope_decision": "human has authorized controlled EFS single Skill update; loader and other profile changes remain excluded",
-      "next_action": "independent full v4 code review; matching pass releases authorized merge and Preproduction Hermes/EFS publication, followed by independent live readiness review"
+      "next_action": "independent review of failed/recovered deployment evidence; resolve readback carrier or authorized plan repair before another deployment"
     }
   ],
   "preserved_boundaries": [
@@ -620,9 +620,9 @@
   },
   "current_execution": {
     "revision": "v4",
-    "status": "implementation_completed_pending_independent_code_acceptance",
+    "status": "deployment_failed_recovered_pending_independent_review",
     "implementation": "completed_locally",
-    "cloud_mutations": "not_started",
+    "cloud_mutations": "TD56 attempted; EFS briefly committed then rolled back; TD54 restored; no business writes",
     "real_file_tests": false,
     "authorization": {
       "source": "human confirmed the proposed controlled single EFS Skill publication with backup/rollback, plan review first",
@@ -639,7 +639,7 @@
         "business tools/messages/file transfer"
       ]
     },
-    "next_gate": "independent HMR-V4-01 repair/full HEAD re-review before merge/cloud mutation"
+    "next_gate": "independent deployment review of failure/recovery; do not retry unchanged deployment"
   },
   "v4_read_only_feasibility": {
     "environment": "Preproduction",
@@ -940,6 +940,665 @@
         "cloud_mutations": "not_started",
         "real_file_tests": false
       }
+    ]
+  },
+  "v4_deployment": {
+    "status": "failed_and_recovered",
+    "release": {
+      "release_id": "hermes-20261022-e9b2ed92-efs-metadata-v4",
+      "tool_source_commit": "e9b2ed92ec1ae3e70e2b95a485fc8d349f551e35",
+      "reviewed_head": "c71f101d4b70c6fb50c2d1f87299d01b9be031f4",
+      "image_source_commit": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+      "immutable_image_release": "hermes-20261022-11ef7856-metadata-v1",
+      "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+      "digest": "sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+      "old_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "efs_access_point": "fsap-068e530f8cd61c854",
+      "efs_filesystem": "fs-0ded23be6872d82da",
+      "old_skill_hash": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "new_skill_hash": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+      "tool_source_sha256": {
+        "publish_skill.py": "fc7bfe1a9f9b552ed6ee256631a29bd6bb6c9481f956c32def3d46ba6fbb3c2a",
+        "probe_metadata.py": "4e3641ff77750a8524ecc33c1df7722069f1e92a0f3bd2a17affa31f023ddfd4"
+      },
+      "ready_for_real_file_tests": false
+    },
+    "baseline": {
+      "at": "2026-10-22T07:10:25.008276+00:00",
+      "identity": {
+        "UserId": "AIDA47GB74UZN6PIG76T7",
+        "Account": "891612554546",
+        "Arn": "arn:aws:iam::891612554546:user/Zac"
+      },
+      "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/f8ebd9498f104faeb7eab3ee5c6ab8f4",
+      "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "services": {
+        "supportportal-preproduction-hermes": {
+          "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+          "running": 1,
+          "pending": 0,
+          "rollout": "COMPLETED"
+        },
+        "supportportal-preproduction-api": {
+          "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+          "running": 1,
+          "pending": 0,
+          "rollout": "COMPLETED"
+        },
+        "supportportal-preproduction-route": {
+          "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+          "running": 1,
+          "pending": 0,
+          "rollout": "COMPLETED"
+        },
+        "supportportal-preproduction-worker": {
+          "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+          "running": 1,
+          "pending": 0,
+          "rollout": "COMPLETED"
+        }
+      },
+      "containers": [
+        {
+          "name": "knowledge",
+          "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "ui-proxy",
+          "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "memory-panel",
+          "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "hermes",
+          "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "memory-core",
+          "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+          "health": "HEALTHY"
+        }
+      ]
+    },
+    "preflight": {
+      "terraform": {
+        "exit_code": 0,
+        "checked_at": "2026-10-22T07:11:19.071726+00:00",
+        "apply_performed": false
+      },
+      "ecr": {
+        "digest": "sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+        "tags": [
+          "hermes-20261022-11ef7856-metadata-v1"
+        ]
+      },
+      "efs": {
+        "EFS_READBACK_JSON": {
+          "path": "/opt/data/skills/support-case-files/SKILL.md",
+          "resolved": "/opt/data/skills/support-case-files/SKILL.md",
+          "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "uid": 10000,
+          "gid": 10000,
+          "mode": 420,
+          "size": 1937,
+          "device": 95,
+          "inode": 1420908215540464960,
+          "other_files_count": 732,
+          "other_files_digest": "2e7504e43e7264d207a4d167ba01097c70c003210f1986d7a9bb68b53615ed85"
+        }
+      },
+      "publisher": {
+        "SKILL_PUBLICATION_JSON": {
+          "action": "check-only",
+          "current": {
+            "device": 95,
+            "gid": 10000,
+            "inode": 1420908215540464960,
+            "mode": 420,
+            "mtime_ns": 1792473399094000000,
+            "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+            "size": 1937,
+            "uid": 10000
+          },
+          "ok": true,
+          "release_id": "hermes-20261022-e9b2ed92-efs-metadata-v4",
+          "state": "baseline"
+        },
+        "PUBLISH_EXIT_JSON": 0
+      },
+      "actual_probe": {
+        "METADATA_PROBE_JSON": {
+          "asset_sha256": {
+            "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+            "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+            "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+            "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+            "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+            "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+          },
+          "backend_tools_called": false,
+          "profile_combined_work_list_and_view": true,
+          "profile_only_and_persona_denied": true,
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "extension": {
+                "type": "string"
+              },
+              "introduced_turn_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "schema_properties": [
+            "extension",
+            "introduced_turn_id",
+            "purpose",
+            "source"
+          ],
+          "served_content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "served_has_short_description": false,
+          "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+          "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+          "sessions_created": false,
+          "skill_has_short_description": false,
+          "visible_work_skills": [
+            "hermes-zac-engineering-handoff",
+            "supportportal-investigation",
+            "support-case-files"
+          ]
+        }
+      }
+    },
+    "image_stage": {
+      "status": "image_staged",
+      "old_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "new_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:56",
+      "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/e7b0070300524467865156c38a39e2ee",
+      "only_hermes_image_changed": true,
+      "containers": [
+        {
+          "name": "memory-core",
+          "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "hermes",
+          "digest": "sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "memory-panel",
+          "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "ui-proxy",
+          "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+          "health": "HEALTHY"
+        },
+        {
+          "name": "knowledge",
+          "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+          "health": "HEALTHY"
+        }
+      ]
+    },
+    "image_stage_efs": {
+      "EFS_READBACK_JSON": {
+        "path": "/opt/data/skills/support-case-files/SKILL.md",
+        "resolved": "/opt/data/skills/support-case-files/SKILL.md",
+        "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "uid": 10000,
+        "gid": 10000,
+        "mode": 420,
+        "size": 1937,
+        "device": 95,
+        "inode": 1420908215540464960,
+        "other_files_count": 732,
+        "other_files_digest": "2e7504e43e7264d207a4d167ba01097c70c003210f1986d7a9bb68b53615ed85"
+      }
+    },
+    "image_stage_probe": {
+      "METADATA_PROBE_JSON": {
+        "asset_sha256": {
+          "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+          "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+          "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+          "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+          "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+        },
+        "backend_tools_called": false,
+        "profile_combined_work_list_and_view": true,
+        "profile_only_and_persona_denied": true,
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+              "type": "string"
+            },
+            "extension": {
+              "type": "string"
+            },
+            "introduced_turn_id": {
+              "type": "string"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "schema_properties": [
+          "description",
+          "extension",
+          "introduced_turn_id",
+          "purpose",
+          "source"
+        ],
+        "served_content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "served_has_short_description": false,
+        "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "sessions_created": false,
+        "skill_has_short_description": true,
+        "visible_work_skills": [
+          "hermes-zac-engineering-handoff",
+          "supportportal-investigation",
+          "support-case-files"
+        ]
+      }
+    },
+    "skill_apply": {
+      "SKILL_PUBLICATION_JSON": {
+        "changed": true,
+        "current": {
+          "device": 95,
+          "gid": 10000,
+          "inode": 10803819642499728500,
+          "mode": 420,
+          "mtime_ns": 1792654018430000000,
+          "sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "size": 2877,
+          "uid": 10000
+        },
+        "ok": true,
+        "state": "committed"
+      },
+      "PUBLISH_EXIT_JSON": 0
+    },
+    "skill_confirm": {
+      "SKILL_PUBLICATION_JSON": {
+        "action": "check-only",
+        "current": {
+          "device": 95,
+          "gid": 10000,
+          "inode": 10803819642499728500,
+          "mode": 420,
+          "mtime_ns": 1792654018430000000,
+          "sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "size": 2877,
+          "uid": 10000
+        },
+        "ok": true,
+        "release_id": "hermes-20261022-e9b2ed92-efs-metadata-v4",
+        "state": "committed"
+      },
+      "PUBLISH_EXIT_JSON": 0
+    },
+    "efs_after": {
+      "EFS_READBACK_JSON": {
+        "path": "/opt/data/skills/support-case-files/SKILL.md",
+        "resolved": "/opt/data/skills/support-case-files/SKILL.md",
+        "sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "uid": 10000,
+        "gid": 10000,
+        "mode": 420,
+        "size": 2877,
+        "device": 95,
+        "inode": 10803819642499728500,
+        "other_files_count": 732,
+        "other_files_digest": "2e7504e43e7264d207a4d167ba01097c70c003210f1986d7a9bb68b53615ed85"
+      }
+    },
+    "live_probe_before_failure": {
+      "METADATA_PROBE_JSON": {
+        "asset_sha256": {
+          "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+          "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+          "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+          "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+          "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+        },
+        "backend_tools_called": false,
+        "profile_combined_work_list_and_view": true,
+        "profile_only_and_persona_denied": true,
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "description": {
+              "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+              "type": "string"
+            },
+            "extension": {
+              "type": "string"
+            },
+            "introduced_turn_id": {
+              "type": "string"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "schema_properties": [
+          "description",
+          "extension",
+          "introduced_turn_id",
+          "purpose",
+          "source"
+        ],
+        "served_content_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "served_has_short_description": true,
+        "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "sessions_created": false,
+        "skill_has_short_description": true,
+        "visible_work_skills": [
+          "hermes-zac-engineering-handoff",
+          "supportportal-investigation",
+          "support-case-files"
+        ]
+      }
+    },
+    "failure": {
+      "status": "failed_and_recovered",
+      "failure_type": "live_gateway_toolsets_readback_eof",
+      "detail": "TD56 image stage and EFS commit completed, but combined Gateway health/toolsets ECS Exec wrapper produced only health marker then EOF; readiness not accepted. ECS circuit breaker restored TD54.",
+      "old_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "failed_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:56",
+      "release": "hermes-20261022-e9b2ed92-efs-metadata-v4",
+      "rollback": {
+        "status": "passed",
+        "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/e6dd041bfe7e49e8aeeb4b943f6bc59a",
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+        "skill_hash": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "probe": {
+          "asset_sha256": {
+            "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+            "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+            "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+            "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+            "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+            "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+          },
+          "backend_tools_called": false,
+          "profile_combined_work_list_and_view": true,
+          "profile_only_and_persona_denied": true,
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "extension": {
+                "type": "string"
+              },
+              "introduced_turn_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "schema_properties": [
+            "extension",
+            "introduced_turn_id",
+            "purpose",
+            "source"
+          ],
+          "served_content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "served_has_short_description": false,
+          "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+          "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+          "sessions_created": false,
+          "skill_has_short_description": false,
+          "visible_work_skills": [
+            "hermes-zac-engineering-handoff",
+            "supportportal-investigation",
+            "support-case-files"
+          ]
+        },
+        "record": {
+          "state": "rolled_back",
+          "pending_action": "rollback",
+          "backup_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "backup_uid": 10000,
+          "backup_gid": 10000,
+          "backup_mode": 384
+        },
+        "gateway": {
+          "ROLLBACK_GATEWAY_JSON": {
+            "status": "ok",
+            "platform": "hermes-agent",
+            "version": "0.21.0"
+          }
+        }
+      },
+      "terraform_after_rollback": {
+        "exit_code": 0,
+        "apply_performed": false,
+        "at": "2026-10-22T07:42:21.527208+00:00"
+      },
+      "ready_for_real_file_tests": false,
+      "cloud_business_writes": false,
+      "recorded_at": "2026-10-22T07:45:20.599281+00:00"
+    },
+    "rollback": {
+      "status": "passed",
+      "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/e6dd041bfe7e49e8aeeb4b943f6bc59a",
+      "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "skill_hash": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "probe": {
+        "asset_sha256": {
+          "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+          "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+          "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+          "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+          "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+        },
+        "backend_tools_called": false,
+        "profile_combined_work_list_and_view": true,
+        "profile_only_and_persona_denied": true,
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "extension": {
+              "type": "string"
+            },
+            "introduced_turn_id": {
+              "type": "string"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "schema_properties": [
+          "extension",
+          "introduced_turn_id",
+          "purpose",
+          "source"
+        ],
+        "served_content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "served_has_short_description": false,
+        "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "sessions_created": false,
+        "skill_has_short_description": false,
+        "visible_work_skills": [
+          "hermes-zac-engineering-handoff",
+          "supportportal-investigation",
+          "support-case-files"
+        ]
+      },
+      "record": {
+        "state": "rolled_back",
+        "pending_action": "rollback",
+        "backup_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "backup_uid": 10000,
+        "backup_gid": 10000,
+        "backup_mode": 384
+      },
+      "gateway": {
+        "ROLLBACK_GATEWAY_JSON": {
+          "status": "ok",
+          "platform": "hermes-agent",
+          "version": "0.21.0"
+        }
+      }
+    },
+    "terraform_after_rollback": {
+      "exit_code": 0,
+      "apply_performed": false,
+      "at": "2026-10-22T07:42:21.527208+00:00"
+    },
+    "protected_after_rollback": {
+      "supportportal-preproduction-api": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+        "rollout": "COMPLETED",
+        "running": 1,
+        "containers": [
+          {
+            "name": "api",
+            "digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+            "health": "HEALTHY"
+          }
+        ]
+      },
+      "supportportal-preproduction-route": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+        "rollout": "COMPLETED",
+        "running": 1,
+        "containers": [
+          {
+            "name": "route",
+            "digest": "sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+            "health": "UNKNOWN"
+          }
+        ]
+      },
+      "supportportal-preproduction-worker": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+        "rollout": "COMPLETED",
+        "running": 1,
+        "containers": [
+          {
+            "name": "worker",
+            "digest": "sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+            "health": "UNKNOWN"
+          }
+        ]
+      }
+    },
+    "rollback_probe": {
+      "METADATA_PROBE_JSON": {
+        "asset_sha256": {
+          "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+          "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+          "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+          "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+          "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+          "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+        },
+        "backend_tools_called": false,
+        "profile_combined_work_list_and_view": true,
+        "profile_only_and_persona_denied": true,
+        "schema": {
+          "additionalProperties": false,
+          "properties": {
+            "extension": {
+              "type": "string"
+            },
+            "introduced_turn_id": {
+              "type": "string"
+            },
+            "purpose": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            }
+          },
+          "required": [],
+          "type": "object"
+        },
+        "schema_properties": [
+          "extension",
+          "introduced_turn_id",
+          "purpose",
+          "source"
+        ],
+        "served_content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "served_has_short_description": false,
+        "served_resolved_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "served_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "sessions_created": false,
+        "skill_has_short_description": false,
+        "visible_work_skills": [
+          "hermes-zac-engineering-handoff",
+          "supportportal-investigation",
+          "support-case-files"
+        ]
+      }
+    },
+    "rollback_gateway": {
+      "ROLLBACK_GATEWAY_JSON": {
+        "status": "ok",
+        "platform": "hermes-agent",
+        "version": "0.21.0"
+      }
+    },
+    "raw_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-metadata-readiness-v4-live",
+    "readback_notes": [
+      "Combined health/toolsets ECS Exec emitted health marker then EOF before toolsets marker; this is a failed readiness carrier, not success.",
+      "TD56 circuit breaker restored TD54; EFS was explicitly rolled back to old hash before final readback.",
+      "No business case/session/run/file transfer or Production operation."
     ]
   }
 }
