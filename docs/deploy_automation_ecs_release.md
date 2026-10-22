@@ -768,6 +768,15 @@ task definition family 和 task 归属，停止仍在运行的旧 task、注销�
 不读取新增表，因此服务回滚仍安全。默认不传这两个参数时，原有发布行为和
 `HERMES_CASE_WORKFLOW_MODE=disabled` 合同保持不变。
 
+2026-10-22 实测补充：schema `016` 内的 add-only `short_description` 升级不能只凭
+revision 判断已完成。[coordination check_schema](../backend/services/automation_ecs_store.py)
+当前只检查 revision，因此同 revision 的旧表可能缺列。发布前须通过目标数据库的
+`information_schema.columns` 核对所需字段；缺列时先运行已审计 release 的正式
+schema-bootstrap Fargate task，确认退出码和列级回读后再切换 `RUNTIME_SCHEMA_MODE=check`
+的服务。不得修改旧 manifest/checkpoint 或手工降改 revision 来触发迁移。
+本次独立 migration 与恢复记录见
+[Slack metadata 发布证据](plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json)。
+
 部署开始前会清除继承的静态/临时AWS credential环境变量，显式使用
 `AUTOMATION_AWS_PROFILE`（默认`default`）指向的refreshable login provider，并核对
 account `891612554546`、ARN `arn:aws:iam::891612554546:user/Zac`和`us-east-1`。

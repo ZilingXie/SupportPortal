@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-22T04:14:50.328Z",
+  "generatedAt": "2026-10-22T04:41:06.662Z",
   "projectId": "sbTCwK2d5D7GOKQb",
   "workflowCount": 15,
   "source": "n8n MCP get_workflow_details sanitized payload",
@@ -189,12 +189,12 @@
       "description": "供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，先解析 ECS Production 的 Engineer Case 线程绑定并转发；未命中时解析 ECS Preproduction 的 Hermes 线程绑定，命中则作为调查反馈转发，仍未命中则作为 ad-hoc 会话首问转发（p2-161）。",
       "parentFolderId": "Uj4fViHZGMeAhqTa",
       "updatedAt": "2026-10-22T04:14:05.535Z",
-      "publishedVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
+      "publishedVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
       "draftVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
-      "draftMatchesPublished": false,
+      "draftMatchesPublished": true,
       "nodeCount": 13,
       "publishedFile": "active/r1HIW8UNuCabiOPn.published.json",
-      "draftFile": "drafts/r1HIW8UNuCabiOPn.draft.json",
+      "draftFile": null,
       "publishedRedactionCount": 0,
       "draftRedactionCount": 0
     },
@@ -234,14 +234,14 @@
       "description": "监听 Slack 消息，经 AI 筛选和支持请求判定后创建 Zendesk 工单并回传链接；缺少团队资料时等待人工补全。指定内部频道的线程消息通过子流程转交 SupportPortal ECS Production。",
       "parentFolderId": "Uj4fViHZGMeAhqTa",
       "updatedAt": "2026-10-22T04:14:07.992Z",
-      "publishedVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
+      "publishedVersionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
       "draftVersionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
-      "draftMatchesPublished": false,
+      "draftMatchesPublished": true,
       "nodeCount": 32,
       "publishedFile": "active/kyiA0QuiVx6JJ03i.published.json",
-      "draftFile": "drafts/kyiA0QuiVx6JJ03i.draft.json",
+      "draftFile": null,
       "publishedRedactionCount": 8,
-      "draftRedactionCount": 8
+      "draftRedactionCount": 0
     }
   ]
 }

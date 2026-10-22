@@ -5,19 +5,20 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
+  "summary": "Investigation 附件：R1 客户/工程师附件经绑定 Slack thread、turn/draft 和审批送 Zendesk；原 R1 发布复审/真实业务门禁保留。R2 统一命名、Slack Map、受限 Hermes 文件工具/Skill与审批快照已通过独立代码验收；关闭态 synthetic 14057、v2 启用轮 C1-C6（14147/14151）和 B1 修复有历史独立通过证据，不能扩大到未覆盖路径。2026-10-22 metadata/bot 代码 PR#1540/#1544 已独立验收并合并；正式 schema task 补齐 short_description TEXT NOT NULL；Preproduction r20261022-a08be07-intake-only-r6 已发布并只读回读（API174/Route169/Worker172、文件开关1、bot B08RHT5TZV2、case workflow disabled），n8n 两条已发布并回读，等待本轮独立部署验收。Hermes 保持 td54，bridge/Skill 缺新版 description filter，未替换 overlay，不能宣布真实文件测试就绪；本轮未创建 case、传文件、发业务消息或重放。",
   "status": "blocked",
-  "next_action": "R2-V2-B1-REPRO 已通过独立复验并 finalize 收口（PR#1529）；回归 v2 启用轮主证据链（PR#1527=main 762ef889、Hermes td54/7df5f3a3、14147/14151）。剩余独立门禁保持 waiting-for-evidence：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争。",
+  "next_action": "交指定线程独立验收 metadata v2 部署/回读证据；HERMES-METADATA-01：另行授权并审核 Hermes overlay/Profile 更新后再回读新版 description filter/Skill。保留 Slack→n8n 人类上传、Automation live 反向、C7 Zac 真实文件协议、原 R1 发布/业务门禁及 Production 单独授权；本轮不注入业务样本。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-21",
+  "updated_at": "2026-10-22",
   "acceptance_criteria": [
     "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
     "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
   ],
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+    "HERMES-METADATA-01：live td54 bridge/Skill 缺新版 description filter；本轮仅只读回读，未替换 overlay，不具备真实文件测试就绪结论。"
   ],
   "evidence": [
     {
@@ -131,6 +132,11 @@
       "type": "document",
       "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
       "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+      "label": "2026-10-22 metadata v2：schema 列级正式迁移、bot 基线→intake-only 正式发布、n8n 精确版本和 Hermes 只读差异；待独立部署验收，业务零注入"
     }
   ]
 }

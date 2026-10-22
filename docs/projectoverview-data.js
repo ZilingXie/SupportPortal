@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-22T02:48:23Z",
-  "source_base_commit": "382f0159cbe3bfe46c570b33dc18c9f4b4382fe9",
-  "registry_digest": "a0a27cb2ba4d6121229fe5c95d563321b2bbf2eaf5392bf7a1610c0b64c714cf",
+  "generated_at": "2026-10-22T05:02:33Z",
+  "source_base_commit": "c1b2fde181b36be9cd78a72b39bf399d5219e955",
+  "registry_digest": "bd9d4d391a85d23f32b969cbde8be29490a706fc54bc9eec6b2ca320b17f3503",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1633,6 +1633,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
           "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+          "label": "2026-10-22 metadata v2：schema 列级正式迁移、bot 基线→intake-only 正式发布、n8n 精确版本和 Hermes 只读差异；待独立部署验收，业务零注入"
         },
         {
           "type": "document",
@@ -6314,6 +6319,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
           "command": "独立核对 ECS/SSM/Terraform/checkpoint",
           "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+          "label": "2026-10-22 已批准 intake-only 合并发布：正式 pipeline/三角色 digest/schema/Prompt/全部开关回读，待独立部署验收；零业务注入，完整知识闭环未验收"
         }
       ],
       "source_refs": [
@@ -18157,19 +18167,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
+      "summary": "Investigation 附件：R1 客户/工程师附件经绑定 Slack thread、turn/draft 和审批送 Zendesk；原 R1 发布复审/真实业务门禁保留。R2 统一命名、Slack Map、受限 Hermes 文件工具/Skill与审批快照已通过独立代码验收；关闭态 synthetic 14057、v2 启用轮 C1-C6（14147/14151）和 B1 修复有历史独立通过证据，不能扩大到未覆盖路径。2026-10-22 metadata/bot 代码 PR#1540/#1544 已独立验收并合并；正式 schema task 补齐 short_description TEXT NOT NULL；Preproduction r20261022-a08be07-intake-only-r6 已发布并只读回读（API174/Route169/Worker172、文件开关1、bot B08RHT5TZV2、case workflow disabled），n8n 两条已发布并回读，等待本轮独立部署验收。Hermes 保持 td54，bridge/Skill 缺新版 description filter，未替换 overlay，不能宣布真实文件测试就绪；本轮未创建 case、传文件、发业务消息或重放。",
       "status": "blocked",
-      "next_action": "R2-V2-B1-REPRO 已通过独立复验并 finalize 收口（PR#1529）；回归 v2 启用轮主证据链（PR#1527=main 762ef889、Hermes td54/7df5f3a3、14147/14151）。剩余独立门禁保持 waiting-for-evidence：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争。",
+      "next_action": "交指定线程独立验收 metadata v2 部署/回读证据；HERMES-METADATA-01：另行授权并审核 Hermes overlay/Profile 更新后再回读新版 description filter/Skill。保留 Slack→n8n 人类上传、Automation live 反向、C7 Zac 真实文件协议、原 R1 发布/业务门禁及 Production 单独授权；本轮不注入业务样本。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-21",
+      "updated_at": "2026-10-22",
       "acceptance_criteria": [
         "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
         "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
       ],
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+        "HERMES-METADATA-01：live td54 bridge/Skill 缺新版 description filter；本轮仅只读回读，未替换 overlay，不具备真实文件测试就绪结论。"
       ],
       "evidence": [
         {
@@ -18283,6 +18294,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
           "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+          "label": "2026-10-22 metadata v2：schema 列级正式迁移、bot 基线→intake-only 正式发布、n8n 精确版本和 Hermes 只读差异；待独立部署验收，业务零注入"
         }
       ]
     },
@@ -18644,9 +18660,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "rag-knowledge",
       "function_id": "weknora-dualwrite-governance",
       "created_at": "2026-10-12",
-      "updated_at": "2026-10-20",
-      "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。**代码与 Preproduction 全关闭部署已完成并通过独立验收**（2026-10-19/20）：PR#1515 合入 main=cd6d8e5f（六轮验收：B1/B2→B3/B4→残留→main 同步→文档锚点→集成增量 #1517 复验 291/0）；changelog #1518+证据 #1519→main=8e8e4952。SSM weknora-api-contract-json 升 **v5**（status 绑定+parse_status_key/enable_status_key，回读验证）。Terraform：ignore_changes 之谜解开+apply -refresh-only 同步指针后零漂移。**全关闭部署 r20261019-21c6eed 全阶段 passed**（api:161/worker:160/route:157 运行 21c6eed1；master=0 七开关全 0+allowlist 空；双 verify 门；hermes 引擎镜像并行线；队列 intakes=304/summaries=42/promotions=64/deliveries=0；关闭态探针 503）。实现：客户端合同 v5（publish fail-closed+status 省略+readiness 回执）；适配器 publish_on_write+lifecycle_at_accept+有界 readiness 轮询；共享检索服务 C4-C8；Agent 桥 DI 全链（含默认构造 configured() 门）；Review 共享 readiness 原语。★边界：**业务闭环证据不足**——无真实知识进入 WeKnora、无 Agent WeKnora 检索成功证据、受控样本/Slack Review/Agent 检索验证未做。★待处理：并行线暂停管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（仅 codebuild、其恢复会部署旧代码需协调）。",
-      "next_action": "①协调/处理暂停的旧管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（避免恢复后以旧代码覆盖 r20261019-21c6eed；建议向用户确认放弃或让其同步新 main 后重建）；②受控样本阶段（计划步 6 分层开启，每层=新发布：intake→精确 allowlist→Summary/Review→AI execution→Slack notify→dual-write worker→双 delivery；Summary/Review 层须同 hermes real mode+--hermes-agent-enabled+--bootstrap-account-schema——层 2c 教训）；③步 7 WeKnora 生命周期验证（publish/index/ready 双方式回读）；④步 8 Agent 检索验证+两负例；⑤步 9 观察窗口（≥48h 或≥10 候选）；⑥步 10 全量放开前人工停点。样本须新的唯一 Preproduction 真实来源，不复用历史已处理样本。",
+      "updated_at": "2026-10-22",
+      "summary": "stage6-weknora-agent-bridge r1：WeKnora 主检索+AgentMemory 迁移期 fallback；既有代码与 2026-10-19/20 全关闭部署独立验收通过。2026-10-22 复用已批准 immutable release r20261022-a08be07-intake-only-r6（source a08be077，Prompt pr-88298d4e0a3f），正式 Preproduction pipeline 和只读回读通过，待独立部署验收：API174/Route169/Worker172；API/Worker master=1、intake=1，其余六开关=0、allowlist 空、HERMES_CASE_WORKFLOW_MODE=disabled。Terraform 前后 zero-drift，无 apply，无历史 execution 重放或新业务样本。本轮只证明 intake-only 配置/运行来源；不证明 Summary/Review、AI execution、双写/Slack/AgentMemory/WeKnora delivery 或真实 WeKnora 检索/业务闭环。",
+      "next_action": "先独立验收 r20261022-a08be07-intake-only-r6 发布/只读配置回读；后续受控来源 intake、精确 allowlist、Summary/Review、AI execution、Slack notify、dual-write、双 delivery 逐层另行授权/发布/验证。真实 WeKnora publish/index/ready、Agent 检索+负例、观察窗口和全量人工停点仍待证据；不恢复旧 release 覆盖当前基线，不重放历史 execution。",
       "acceptance_criteria": [
         "C0 发布源/digest/n8n version/SSM 引用可追溯",
         "C1 关闭态 fail-closed 零候选零写入",
@@ -18776,6 +18792,11 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
           "command": "独立核对 ECS/SSM/Terraform/checkpoint",
           "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+          "label": "2026-10-22 已批准 intake-only 合并发布：正式 pipeline/三角色 digest/schema/Prompt/全部开关回读，待独立部署验收；零业务注入，完整知识闭环未验收"
         }
       ]
     },
@@ -24858,7 +24879,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
         "原生 Investigation 续轮与关闭（p2-190，Preproduction 技术发布通过，最终运行验收方式待用户确认）：首次有效 Investigation 后客户消息在原 session/thread 仅跑 work，工程师可见完整原文；ticket.updated 状态与通知 intent 同事务保存，未知发送结果不自动重发。可信工程师明确 `close the case` 可调用已注册 work tool/skill 将绑定票设为 solved，无客户自动回复；客户感谢/请求关闭、引用与历史均不赋权。SP/Hermes/n8n 版本与工具/技能实际回读通过；没有授权隔离业务 fixture，自然闭环样本未验证。",
-        "Investigation 附件闭环 v1（p2-192，既有代码验收保留；发布修复及完整业务证据未闭环，n8n 附件入口已补 Preproduction Hermes binding gate）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。Production-bound 与未绑定附件显式忽略，不进入 adhoc；旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。R2 统一管理名称、Slack Map、绑定 Investigation 文件工具/Skill与显式审批附件快照已实现待独立代码验收，未部署；Zac真实获取等待证据。",
+        "Investigation 附件闭环 v1（p2-192，Preproduction 分层验证，Production 未推广）：客户/工程师附件进入绑定 Slack thread 与 turn/draft，按审批快照和正文送 Zendesk；统一管理名称、Slack Map、Hermes 文件工具/Skill已有独立代码验收与 v2 C1-C6 历史证据。2026-10-22 metadata/bot 代码已合并，schema 016 补齐 short_description，API174/Route169/Worker172 与 n8n metadata 链路已发布/只读回读、待独立部署验收；文件开关1、case workflow disabled。Hermes td54 缺新版 description filter，本轮未替换 overlay、未执行真实文件业务；人类上传、Automation live 反向、Zac C7 和原 R1 门禁保留。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",
@@ -24868,7 +24889,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
     {
       "title": "Engineer 端",
       "completed": [
-        "Hermes Case 关闭时自动运行知识治理 Summary/Review 双角色，结构化审核结果经校验后交给 WeKnora 适配层。",
+        "Hermes 知识治理支持 Case 关闭后的 Summary/Review 与 WeKnora 适配（p2-197）；当前 Preproduction 为 intake-only：master/intake=1，其余六个执行/交付开关=0、allowlist 空，case workflow disabled（r20261022-a08be07-intake-only-r6，待独立部署验收）。Summary/Review、AI execution、双写和三目标交付未开启；真实 WeKnora 检索/业务闭环仍待证据。",
         "升级工单会进入工程师任务池。",
         "工程师可切换托管与接管模式。",
         "证据不足时会转工程师处理。",

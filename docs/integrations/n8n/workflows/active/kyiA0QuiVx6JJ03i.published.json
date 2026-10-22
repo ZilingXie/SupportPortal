@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-22T04:14:50.328Z",
+  "capturedAt": "2026-10-22T04:41:06.662Z",
   "source": {
     "workflowId": "kyiA0QuiVx6JJ03i",
     "workflowName": "[slack]Route Support",
-    "versionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
-    "publishedVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
+    "versionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
+    "publishedVersionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
     "snapshotKind": "published",
     "updatedAt": "2026-10-22T04:14:07.992Z"
   },
@@ -51,8 +51,8 @@
     "id": "kyiA0QuiVx6JJ03i",
     "name": "[slack]Route Support",
     "active": true,
-    "versionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
-    "activeVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
+    "versionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
+    "activeVersionId": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
     "nodes": [
       {
         "parameters": {
@@ -1029,12 +1029,12 @@
             "value": "r1HIW8UNuCabiOPn",
             "mode": "list",
             "cachedResultUrl": "/workflow/r1HIW8UNuCabiOPn",
-            "cachedResultName": "NonAutomate_to_slack"
+            "cachedResultName": "NonAutomate_to_slack_fixed"
           },
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
-              "Input": "={{ $('Slack Trigger').item.json }}"
+              "Input": "={{ (() => { const x = $('Slack Trigger').item.json; return { type: x.type, subtype: x.subtype || null, team: x.team, channel: x.channel, thread_ts: x.thread_ts || null, ts: x.ts || null, event_ts: x.event_ts || null, user: x.user || null, parent_user_id: x.parent_user_id || null, bot_id: x.bot_id || null, text: String(x.text || ''), files: Array.isArray(x.files) ? x.files : [], client_msg_id: x.client_msg_id || null, event_id: x.event_id || null }; })() }}"
             },
             "matchingColumns": [
               "test"
@@ -1051,7 +1051,7 @@
               }
             ],
             "attemptToConvertTypes": false,
-            "convertFieldsToString": true
+            "convertFieldsToString": false
           },
           "options": {}
         },
