@@ -309,11 +309,26 @@ class ScenarioContext:
     # ticket comment listing are the persisted trigger records a reply job's
     # timestamp must be uniquely attributed against.
     customer_requester_id: str = ""
+    relay_phase_request_id: str = ""
+    relay_phase_request_version: int = 0
+    relay_phase_started_at: datetime | None = None
+    relay_phase_deadline: datetime | None = None
 
     def stamp_turn_baseline(self) -> None:
         self.baseline_turn_ids = set(self.seen_turn_ids)
         self.baseline_reply_job_ids = set(self.seen_reply_job_ids)
         self.baseline_comment_ids = set(self.seen_comment_ids)
+
+    def start_relay_phase(self, request_id: str, request_version: int, timeout_min: int) -> None:
+        self.relay_phase_request_id = str(request_id)
+        self.relay_phase_request_version = int(request_version)
+        self.relay_phase_started_at = now_utc()
+        self.relay_phase_deadline = self.relay_phase_started_at + timedelta(minutes=timeout_min)
+
+    def relay_remaining_seconds(self) -> int:
+        if self.relay_phase_deadline is None:
+            raise AutomationTestScenarioError("relay phase deadline has not started")
+        return max(1, int((self.relay_phase_deadline - now_utc()).total_seconds()))
 
 
 class ScenarioEngine:
@@ -457,6 +472,9 @@ class ScenarioEngine:
             # A failed expectation aborts the scenario: later waits would only
             # produce confusing timeouts.
             raise AssertionError(f"{step} failed: {detail}")
+
+    def _wait_budget(self, ctx: ScenarioContext, default_seconds: int) -> int:
+        return ctx.relay_remaining_seconds() if ctx.relay_phase_deadline is not None else default_seconds
 
     # -- I/O (instance methods so tests can script them) ---------------------
 
@@ -643,7 +661,7 @@ class ScenarioEngine:
             return None
 
         try:
-            self.wait_for(f"{field_name}={expected}", probe, self.turn_timeout_min * 60)
+            self.wait_for(f"{field_name}={expected}", probe, self._wait_budget(ctx, self.turn_timeout_min * 60))
             self.record(ctx, step, True, f"{field_name}={expected}")
         except TimeoutError as exc:
             row = self.case_row(ctx)
@@ -678,7 +696,7 @@ class ScenarioEngine:
         job = self.wait_for(
             f"reply job (expect {'|'.join(sorted(expected_intents))})",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         intent = str(job.get("reply_intent") or "")
@@ -733,7 +751,7 @@ class ScenarioEngine:
         job = self.wait_for(
             f"published {expected_intent} reply content",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         content = str(job.get("content") or "")
@@ -1001,7 +1019,8 @@ class ScenarioEngine:
 
         try:
             row = self.wait_for(
-                "zendesk delivery delivered (comment + PDF uploads)", probe, self.turn_timeout_min * 60
+                "zendesk delivery delivered (comment + PDF uploads)", probe,
+                self._wait_budget(ctx, self.turn_timeout_min * 60)
             )
             self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
         except TimeoutError as exc:
@@ -1032,7 +1051,8 @@ class ScenarioEngine:
 
         try:
             row = self.wait_for(
-                "public zendesk comment delivered", probe, self.turn_timeout_min * 60
+                "public zendesk comment delivered", probe,
+                self._wait_budget(ctx, self.turn_timeout_min * 60)
             )
             ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
             self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
@@ -1993,6 +2013,23 @@ class ScenarioEngine:
             self.record(ctx, step, False, str(exc))
             raise
 
+    def wait_relay_request_dispatched(self, ctx: ScenarioContext, request_id: str, step: str) -> dict:
+        def probe():
+            rows = self.db_query(
+                "SELECT request_id, status, request_version FROM support_enablement_relay_requests "
+                "WHERE request_id = %s", (request_id,)
+            )
+            row = rows[0] if rows else None
+            return row if row and str(row.get("status") or "") == "dispatched" else None
+        try:
+            row = self.wait_for("relay request dispatched", probe, self.turn_timeout_min * 60)
+            ctx.start_relay_phase(request_id, int(row.get("request_version") or 0), self.relay_timeout_min)
+            self.record(ctx, step, True, f"request={request_id} v{row.get('request_version')}")
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
     def wait_enablement_relay_result(
         self, ctx: ScenarioContext, expected_outcomes: set[str], step: str,
         *, request_id: str | None = None,
@@ -2023,7 +2060,7 @@ class ScenarioEngine:
             row = self.wait_for(
                 f"enablement relay result (expect {'|'.join(sorted(expected_outcomes))})",
                 probe,
-                self.relay_timeout_min * 60,
+                self._wait_budget(ctx, self.relay_timeout_min * 60),
             )
             outcome = str(row.get("outcome") or "")
             ok = outcome in expected_outcomes
@@ -2242,6 +2279,9 @@ class ScenarioEngine:
             ctx, "relay request created after confirmation"
         )
         turn4_request_id = str(turn4_request.get("request_id") or "")
+        self.wait_relay_request_dispatched(
+            ctx, turn4_request_id, "relay request dispatched and relay phase started"
+        )
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
         self._observe_reused_confirmation_reply_job(
             ctx, turn4_request,
@@ -2369,6 +2409,9 @@ class ScenarioEngine:
             turn7_request_id != turn4_request_id,
             f"v1={turn4_request_id} v2={turn7_request_id}",
         )
+        self.wait_relay_request_dispatched(
+            ctx, turn7_request_id, "corrected relay request dispatched and relay phase started"
+        )
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
         self.wait_enablement_relay_result(
             ctx, {"enabled", "already_satisfied"}, "relay result: enabled (turn 7 leg)",
@@ -2417,6 +2460,10 @@ class ScenarioEngine:
         request = self.wait_enablement_relay_request(
             ctx, "ownership mismatch relay request created"
         )
+        request_id = str(request.get("request_id") or "")
+        self.wait_relay_request_dispatched(
+            ctx, request_id, "ownership relay request dispatched and relay phase started"
+        )
         self.wait_public_comment_delivered(
             ctx, "ownership submission confirmation delivered"
         )
@@ -2425,7 +2472,7 @@ class ScenarioEngine:
             ctx,
             {"ownership_mismatch"},
             "relay result: ownership mismatch (ownership turn 3)",
-            request_id=str(request.get("request_id") or ""),
+            request_id=request_id,
         )
         self.wait_reply_intent(
             ctx,
