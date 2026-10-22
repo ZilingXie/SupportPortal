@@ -378,7 +378,7 @@
     "name": "Send Hermes Message",
     "parameters": {
      "authentication": "genericCredentialType",
-     "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
+     "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, parent_user_id: input.parent_user_id || null, bot_id: input.bot_id || null, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
      "contentType": "raw",
      "genericAuthType": "httpHeaderAuth",
      "method": "POST",
@@ -430,7 +430,7 @@
       "conditions": [
        {
         "id": "1f5a928d-226b-4d6a-b756-68d6e381dc57",
-        "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && !$json.Input.bot_id && $json.Input.subtype === 'file_share' && Array.isArray($json.Input.files) && $json.Input.files.length > 0 && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
+        "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && $json.Input.bot_id === 'B08RHT5TZV2' && typeof $json.Input.parent_user_id === 'string' && $json.Input.parent_user_id.trim().length > 0 && $json.Input.subtype === 'file_share' && Array.isArray($json.Input.files) && $json.Input.files.length > 0 && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
         "operator": {
          "operation": "equals",
          "type": "boolean"

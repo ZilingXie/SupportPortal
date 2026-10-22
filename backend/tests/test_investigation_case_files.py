@@ -19,6 +19,7 @@ from backend.automation_ecs_api import create_app
 from backend.services.automation_ecs_dashboard_auth import DashboardAuthConfig
 from backend.services.automation_hermes_agent import toolsets_for_phase
 from backend.services.investigation_case_files import reference, run_scope, publish, import_zac_file
+from backend.services.investigation_case_file_store import normalize_short_description
 from backend.tests.test_investigation_route_status_fix import route_store, pg_store, finish_initial
 from backend.tests.test_investigation_attachments import FILE, MESSAGE, send
 from backend.tests.test_native_hermes_notifications import repository, TIME
@@ -27,9 +28,18 @@ BUNDLE = Path(__file__).resolve().parents[2] / 'deployment/hermes-case-files'
 DATA = b'first\nneedle: verified log sample\nlast\n'
 
 
+def test_source_aware_default_descriptions_and_control_rejection():
+    assert normalize_short_description('', managed_filename='1-zendesk-2.zip', source_system='zendesk') == 'Customer attachment 1-zendesk-2.zip'
+    assert normalize_short_description('', managed_filename='1-hermes-3.md', source_system='hermes') == 'Hermes report 1-hermes-3.md'
+    assert normalize_short_description('', managed_filename='1-zac-4.log', source_system='zac') == 'Zac file 1-zac-4.log'
+    with pytest.raises(ValueError, match='case_file_description_invalid'):
+        normalize_short_description('bad\x00text')
+
+
 @pytest.fixture
 def bound(route_store, monkeypatch):
     monkeypatch.setenv('HERMES_AGENT_API_TOKEN', 'synthetic-case-file-signing-key')
+    monkeypatch.setenv('ENGINEER_SLACK_BOT_ID', 'B08RHT5TZV2')
     monkeypatch.setenv('INVESTIGATION_CASE_FILES_ENABLED', '0')
     finish_initial(route_store)
     route_store.bind_hermes_case_thread('123', channel_id='C-TEST', thread_ts='123.45')
@@ -194,6 +204,7 @@ def test_real_processor_injects_private_work_scope(route_store, monkeypatch):
     route_store.bind_hermes_case_thread('123', channel_id='C-TEST', thread_ts='123.45')
     monkeypatch.setenv('INVESTIGATION_CASE_FILES_ENABLED', '1')
     monkeypatch.setenv('HERMES_AGENT_API_TOKEN', 'synthetic-case-file-signing-key')
+    monkeypatch.setenv('ENGINEER_SLACK_BOT_ID', 'B08RHT5TZV2')
     with patch('backend.services.investigation_attachments._slack', return_value={'file': {**FILE, 'name': 'rtc.log', 'size': len(DATA)}}), patch('backend.services.investigation_attachments._download', side_effect=transport()):
         receipt = send(route_store)
     job = route_store.claim_job(JobKind.AGENT_TURN, worker_id='file-test', lease_seconds=300)
@@ -245,6 +256,7 @@ def test_actual_bridge_scope_tool_registry_download_path_and_publish_rejection(t
         assert context.skill_allowed('support-case-files')
         assert all(t['check_fn']() for t in registry.tools)
         assert json.loads(bridge.handler('read')({'map_id': 1, 'turn_id': 'evil'}))['code'] == 'case_file_parameters_invalid'
+        assert json.loads(bridge.handler('list')({'description': 'log'}))['code'] != 'case_file_parameters_invalid'
         assert json.loads(bridge.handler('publish')({'path': '/etc/hosts', 'operation_id': 'op'}))['code'] == 'case_file_path_outside_run'
         ref = {'managed_filename': '123-engineer-1.log', 'size_bytes': len(DATA)}
         response = io.BytesIO(DATA)
