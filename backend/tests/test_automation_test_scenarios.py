@@ -324,15 +324,28 @@ class ScenarioEngineTests(unittest.TestCase):
             ]),
             ("WHERE account_case_id", [{"execution_action": "enablement"}]),
             ("WHERE account_case_id", [{"internal_email_send_status": "not_applicable"}]),
-            ("FROM support_account_reply_jobs", [{
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+            # Carrier (e1p-hermes-draft-carrier-v1): the confirmation rides a
+            # delivered Hermes draft; the legacy reply job is auxiliary only.
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-e1p-1",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53746309711252",
+                "content": (
+                    "Hi Ziling, thank you for requesting Media Relay. I've recorded "
+                    "your request for enablement review and will follow up with an "
+                    "update once the review completes."
+                ),
             }]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
                 "zendesk_comment_id": "53746309711252",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-e1p-compat",
+                "status": "persona_v8_queued",
+                "reply_intent": "submission_confirmation",
             }]),
         ]
         engine.run_scenario("E1P")
@@ -348,8 +361,9 @@ class ScenarioEngineTests(unittest.TestCase):
             [
                 "routed to enablement",
                 "enablement auto path (no internal handoff email)",
-                "submission confirmation reply",
+                "submission confirmation delivered (hermes draft)",
                 "confirmation comment delivered to Zendesk",
+                "compatibility reply job observed (auxiliary)",
             ],
         )
 
@@ -2274,3 +2288,205 @@ class RecorderEngine(ScenarioEngine):
 
     def run_e3_finalize(self):
         pass
+
+
+class E1PHermesCarrierTests(unittest.TestCase):
+    """e1p-hermes-draft-carrier-v1: the E1P confirmation gate is a delivered
+    public Hermes draft with confirmation semantics; the legacy reply job is
+    an auxiliary observation only (C1-C6)."""
+
+    CONFIRMATION = (
+        "Hi Ziling, thank you for requesting Media Relay. I've recorded your "
+        "request for enablement review and will follow up with an update once "
+        "the review completes."
+    )
+
+    def _engine(self, responses):
+        """Scripted engine whose db_query answers persistently by matcher
+        (deterministic probes for negative fixtures)."""
+        engine = ScriptedEngine()
+        engine.responses = list(responses)
+
+        def persistent_query(sql, params):
+            for matcher, rows in engine.responses:
+                if matcher in sql:
+                    return rows
+            raise AssertionError(f"unexpected query: {sql}")
+
+        engine.db_query = persistent_query
+        return engine
+
+    def _base(self, draft_row=None, delivery_row=None, compat_row=None):
+        # Ordered first-match by query-unique substrings: the draft probe
+        # joins deliveries with "dl.is_public = TRUE" (uppercase), the public
+        # comment probe filters "is_public = true" (lowercase), the case-field
+        # probes carry "WHERE account_case_id", and find_case only the
+        # generic "FROM support_account_cases".
+        responses = []
+        if draft_row is not None:
+            responses.append(("automation_hermes_case_drafts", [draft_row]))
+        if delivery_row is not None:
+            responses.append(("is_public = true", [delivery_row]))
+            responses.append(("support_account_zendesk_comment_deliveries", [delivery_row]))
+        responses.append(("WHERE account_case_id", [{
+            "execution_action": "enablement",
+            "internal_email_send_status": "not_applicable",
+        }]))
+        responses.append(("FROM support_account_cases", [{
+            "account_case_id": "AC-13605",
+            "client_ticket_id": "13605",
+            "zendesk_ticket_id": "13605",
+            "title": engine_tagged_placeholder(),
+        }]))
+        # The compatibility observation ALWAYS issues its query; a missing
+        # job is an empty result, never an unmatched query.
+        responses.append(("FROM support_account_reply_jobs", compat_row or []))
+        return responses
+
+    def _draft(self, **overrides):
+        row = {
+            "draft_id": "draft-e1p-1",
+            "draft_status": "queued",
+            "delivery_status": "delivered",
+            "zendesk_comment_id": "53746309711252",
+            "content": self.CONFIRMATION,
+        }
+        row.update(overrides)
+        return row
+
+    def _delivery(self, **overrides):
+        row = {"status": "delivered", "is_public": True, "zendesk_comment_id": "53746309711252"}
+        row.update(overrides)
+        return row
+
+    def _run_ok(self, engine):
+        engine.run_scenario("E1P")
+        self.assertTrue(engine.all_passed())
+
+    def _run_fails_at(self, engine, step_fragment):
+        with self.assertRaises((AssertionError, TimeoutError)):
+            engine.run_scenario("E1P")
+        self.assertFalse(engine.all_passed())
+        failed = [step.step for step in engine.steps if step.status == "FAIL"]
+        self.assertTrue(
+            any(step_fragment in name for name in failed),
+            msg=f"failed steps: {failed}",
+        )
+
+    def test_hermes_draft_only_without_compat_job_passes(self):
+        # Matrix 1: delivered draft, NO reply job at all.
+        engine = self._engine(self._base(
+            draft_row=self._draft(),
+            delivery_row=self._delivery(),
+            compat_row=None,
+        ))
+        self._run_ok(engine)
+        self.assertNotIn(
+            "compatibility reply job observed (auxiliary)",
+            [step.step for step in engine.steps],
+        )
+
+    def test_hermes_draft_with_queued_compat_job_passes(self):
+        # Matrix 2: the compat job is persona-owned/queued and never gates.
+        engine = self._engine(self._base(
+            draft_row=self._draft(),
+            delivery_row=self._delivery(),
+            compat_row=[{
+                "job_id": "job-e1p-compat",
+                "status": "persona_v8_queued",
+                "reply_intent": "submission_confirmation",
+            }],
+        ))
+        self._run_ok(engine)
+        aux = [s for s in engine.steps if "auxiliary" in s.step]
+        self.assertEqual(len(aux), 1)
+        self.assertIn("persona_v8_queued", aux[0].detail)
+
+    def test_legacy_reply_job_alone_without_delivery_fails(self):
+        # Matrix 3: only the old reply-job shape (published), no Hermes draft.
+        engine = self._engine(self._base(draft_row=None))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_draft_of_stale_ticket_fails(self):
+        # Matrix 4: no draft row for THIS ticket (stale-ticket fixture).
+        engine = self._engine(self._base(draft_row=None, delivery_row=self._delivery()))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_non_public_delivery_fails(self):
+        # Matrix 5: the delivery row is not public — the is_public join
+        # yields no delivered delivery.
+        engine = self._engine(self._base(
+            draft_row=self._draft(delivery_status=None, zendesk_comment_id=None),
+            delivery_row=self._delivery(is_public=False),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_queued_and_failed_delivery_fails(self):
+        # Matrix 6: delivery rows that exist but are not delivered.
+        for status in ("queued", "failed"):
+            with self.subTest(delivery_status=status):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(delivery_status=status),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_without_confirmation_semantics_fails(self):
+        # Matrix 7: delivered and public, but the text is a bare ask.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content="Hi Ziling, could you confirm your account details?"
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_claims_enablement_or_deadline_or_approval_fails(self):
+        # Matrix 8: affirmative enablement claim, deadline promise, or
+        # internal-approval wording all fail the content gate.
+        cases = {
+            "enablement claim": (
+                "Thank you for requesting Media Relay. Your request is recorded; "
+                "Media Relay has been enabled for your project."
+            ),
+            "deadline promise": (
+                "Thank you for requesting Media Relay. I've recorded your request "
+                "for enablement review; it will complete within 2 business days."
+            ),
+            "approval wording": (
+                "Thank you for requesting Media Relay. Your request is recorded for "
+                "enablement review; please approve this request by replying."
+            ),
+        }
+        for name, content in cases.items():
+            with self.subTest(case=name):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(content=content),
+                    delivery_row=self._delivery(),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_same_delivery_is_not_counted_twice(self):
+        # Matrix 9 (C6): a repeated wait over the same delivered comment
+        # cannot produce a second pass — the seen-id exclusion blocks it.
+        from backend.services.automation_test_scenarios import ScenarioContext
+
+        engine = self._engine(self._base(draft_row=self._draft()))
+        ctx = ScenarioContext("E1P")
+        ctx.zendesk_ticket_id = "13605"
+        ctx.client_ticket_id = "13605"
+        from datetime import datetime, timezone
+
+        ctx.turn_started_at = datetime.now(timezone.utc)
+        engine.wait_hermes_draft_delivered(ctx, "first wait")
+        self.assertEqual(len(engine.steps), 1)
+        # The repeat cannot pass: it times out and the failure is recorded
+        # (which re-raises as AssertionError — the engine's failure path).
+        with self.assertRaises((TimeoutError, AssertionError)):
+            engine.wait_hermes_draft_delivered(ctx, "second wait")
+        self.assertEqual(len([s for s in engine.steps if s.status == "PASS"]), 1)
+        self.assertEqual(len([s for s in engine.steps if s.status == "FAIL"]), 1)
+
+
+def engine_tagged_placeholder():
+    engine = ScriptedEngine()
+    return engine.tagged("Please enable Media Relay for our project")
