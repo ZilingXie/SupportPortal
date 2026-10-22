@@ -7,10 +7,10 @@
   "title": "14152 部署默认保留 native Hermes 与会话内再执行措辞进度修正（E3 精确回合）",
   "summary": "两个合同：(1) Preproduction 发布未指定 --automation-case-engine 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态；缺失/冲突/不可读一律 fail-closed 要求显式旗标；显式 legacy 保留既有降级授权门；新增 --hermes-persona-disabled；发布证据记录 native_hermes_config 四字段与 provenance）——根治 2026-10-21 r20261021-ebb59c8 两次人工旗标误用（enablement=manual 遗漏既有 archer 等）。(2) 14152 回归：客户在 enablement 会话中段再次要求开通（Could you help me enable the permission now?）不再 superseded→RAG fallback 转人工，而是服务端修正为进度追问——reply-sync（legacy 轮询路径）从绑定 manual review reply job 或 relay request 的真实状态生成 progress_inquiry_answer 回复（确定性 provided_answer+Persona 措辞，不承诺加速/完成时间）；native hermes 路径 tool_record_direction 对 backend_operation(enable) 提案、agent 对 continue_task message_action 同样状态门控修正为 conversation_followup/progress_inquiry 或 report_progress，绑定不可读/终态 fail-closed 转人工；E3 在 relay request 建立后、终态前新增精确回合（保留原礼貌催促为对照），断言 comment↔turn 绑定、report_progress、单一 relay request、无 RAG fallback。",
   "status": "active",
-  "next_action": "真实 E3 已授权并执行（第 4 轮 #14179，r20261021-21cceb2-replyonly-v1 线上）：turn 1-5b 共 23 步全部 PASS，C6 真实证据齐——turn 5b（14152 原句，comment 54819863470612）↔ turn-88249f1a 严格绑定，report_progress 且 reason_code=insession_enable_reuse（服务端修正 continue_task，留痕 server_correction_reason/original_action），单一 relay request enr-AC-14179-v1 未动，进度回复按绑定状态投递（comment 54819899362964），automation 持有保持，无 RAG fallback；compatibility_relay_required=false 在真实投递生效（PR#1537）。turn 6/7 relay 腿在 240 分钟窗口内未获 Mac relay 审批而超时中止（属既有 E3 合同的审批门控腿，非本任务新增回合；relay request 至 11-04 自然过期）。等待验收方对 C6 证据复验；tail 补跑需新开 E3 并在窗口内执行两次 approve_execution。前序实跑 #14169/#14171/#14176 保留待清理决策",
+  "next_action": "独立验收分层结论（2026-10-22）：代码与 C6 turn 5b 通过；Preproduction 运行部署通过但继承 provenance 证据矛盾（本条已更正，见下）；E3 完整 turn 1-7 未通过（turn 6 relay 审批 240 分钟超时中止，exit 2）；整体证据不足，p2-208 保持 active。【步数口径更正】真实 E3 #14179 原始日志为 24 步 PASS + 1 步 FAIL（第 25 步=turn 6 relay 等待超时）；此前登记的'23 步全部 PASS'应为'turn 1-5b 的 23 个业务步骤全 PASS'，不作为日志总计。【继承 provenance 补证】r20261021-4c72888-hermes-default-v1 与 r20261021-21cceb2-replyonly-v1 两个发布中 evidence.json 的 native_hermes_config.provenance=explicit×4 是 shell 层视角：pipeline 在入口完成继承解析（调用方 argv 不含任何 case 旗标）后将解析值以显式旗标透传给 deploy 子进程，shell 按显式值记录；继承决策的权威证据是 release state 的 case-config-resolution.json（inherited_live[_hermes]×4，绑定 release id/commit）+ 调用方 argv（发布脚本无 case 旗标）。两份记录分属两层、值链一致（解析值=透传值=渲染回读值），此前登记未写明分层导致表面矛盾。后续如需单一权威字段，可在 pipeline 将 provenance 透传至 deploy 证据（验收已注明当前无需改代码）。剩余门：E3 turn 6/7 补跑需新开 E3 并在窗口内执行 approve_execution×2（enr-AC-14179-v1 窗口已过期，11-04 自然失效）；四张测试工单清理待用户决策",
   "owner": "agent",
   "created_at": "2026-10-21",
-  "updated_at": "2026-10-21",
+  "updated_at": "2026-10-22",
   "acceptance_criteria": [
     "C1 Preproduction 发布未指定 engine 且当前 Route 定义可读为 hermes → 继承 hermes 并保留 agent/persona；当前配置缺失/冲突/不可读 → fail-closed 要求显式指定",
     "C2 显式 legacy 视为降级操作，继续使用既有 Hermes→legacy 授权门禁；无授权发布前拒绝",
@@ -53,13 +53,18 @@
     },
     {
       "type": "test",
-      "label": "真实 E3 #14179 turn 5b C6 证据（23 步全 PASS 含 turn 4 现代化载体与 turn 5/5b；turn 6 relay 腿审批超时中止；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包）",
+      "label": "真实 E3 #14179（run4）：原始日志 24 步 PASS + 1 步 FAIL（turn 6 relay 审批等待超时）；turn 1-5b 的 23 个业务步骤全 PASS（含 turn 4 现代化载体与 turn 5/5b）；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包",
       "url": "https://agoraio.zendesk.com/agent/tickets/14179"
     },
     {
       "type": "pr",
       "label": "PR#1536（E3 turn-4 载体现代化）与 PR#1537（reply-only compatibility_relay_required 缺陷修复，随 r20261021-21cceb2-replyonly-v1 部署）",
       "url": "https://github.com/ZilingXie/SupportPortal/pull/1537"
+    },
+    {
+      "type": "deployment",
+      "label": "C1 继承 provenance 分层补证：两发布 evidence.json(native_hermes_config.provenance=explicit×4, shell 层) 与 case-config-resolution.json(inherited_live[_hermes]×4, pipeline 层) 值链一致——调用方 argv 无 case 旗标→pipeline 解析→显式透传→渲染回读同值",
+      "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/case-config-resolution.json"
     }
   ]
 }
