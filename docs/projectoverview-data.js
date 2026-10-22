@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-22T07:03:49Z",
-  "source_base_commit": "ffe04fee2cdeb976018fd683834261da1ef2f6ab",
-  "registry_digest": "a78b8143df02b3c3ad42ba229d1ad4bbe8e84781a353e90014e785b8f513dc40",
+  "generated_at": "2026-10-22T08:09:55Z",
+  "source_base_commit": "1e75eba407198ff0a2e5aeb485ae9491f1481bed",
+  "registry_digest": "1803f2c4993f8744b6684244edd5025c15050a4a7bc511946b8312b2f7981513",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1643,6 +1643,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
           "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+          "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+          "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+          "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
         },
         {
           "type": "document",
@@ -18173,9 +18180,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放，真实文件测试仍不可开始。",
+      "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放；v4部署失败/恢复已独立复核。新增Exec readback carrier v1：health/toolsets拆分会话、逐会话marker/EOF/超时/JSON fail-closed验证，代码待独立验收，云端未重试，真实文件测试仍不可开始。",
       "status": "blocked",
-      "next_action": "对同 Draft PR#1548 的 v4 完整代码做独立验收：publisher/probe/真实loader本地回归已完成（65 passed、17 skipped）；通过并合并后按v4执行Preproduction Hermes/EFS发布，再交独立readiness验收。当前不得修改EFS、再次部署或执行真实文件样本；原R1、人类上传、Automation live反向、C7 Zac与Production边界保留。",
+      "next_action": "先对新的Hermes Exec readback carrier v1做完整代码独立验收（Draft PR、完整HEAD、8项本地测试）；通过后在稳定TD54只读复现两个独立会话，再使用全新release ID重新做Preproduction Hermes/EFS readiness。任何失败恢复TD54/旧EFS后再交独立部署复核；不得真实文件测试。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-22",
@@ -18186,7 +18193,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
         "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
-        "HERMES-METADATA-01：v3部署失败/恢复已独立复核；受控单Skill EFS交付路径已获人类授权，v4方案已独立通过，完整代码/部署验收尚待完成，ready_for_real_file_tests=false。"
+        "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。"
       ],
       "evidence": [
         {
@@ -18310,6 +18317,13 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
           "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+          "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+          "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+          "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
         }
       ]
     },
