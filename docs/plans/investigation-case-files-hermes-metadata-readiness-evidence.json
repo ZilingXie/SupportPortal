@@ -1,12 +1,12 @@
 {
   "plan": "investigation-case-files-slack-ingress-metadata-v1",
   "phase": "Hermes metadata readiness",
-  "revision": "v3",
-  "updated_at": "2026-10-22T06:03:09.495578+00:00",
+  "revision": "v4",
+  "updated_at": "2026-10-22T06:21:37.206670+00:00",
   "source_baseline": "7a1c52231e4bea3184393a065c4f93a111cea840",
-  "code_acceptance": "passed",
-  "deployment_status": "failed_readback_rolled_back",
-  "deployment_acceptance": "blocked; deployment evidence submitted for independent review",
+  "code_acceptance": "v3 passed; v4 implementation not started",
+  "deployment_status": "v4 not started; v3 failed and recovered",
+  "deployment_acceptance": "v3 deployment failed; recovery independently passed; v4 not started",
   "ready_for_real_file_tests": false,
   "baseline": {
     "generated_at": "2026-10-22T05:18:40.789805+00:00",
@@ -253,13 +253,14 @@
   "open_findings": [
     {
       "id": "HERMES-METADATA-01",
-      "status": "open; deployment readback failed and TD54 restored",
-      "reason": "image-only bridge/Skill overlay did not update actual served Skill content",
-      "next_action": "independent review of failed deployment/recovery evidence and human authorization of any EFS/profile or loader change"
+      "status": "open; v4 plan pending independent acceptance",
+      "reason": "v3 image-only overlay did not update actual EFS-served Skill; v3 deployment failed and TD54 recovered",
+      "scope_decision": "human has authorized controlled EFS single Skill update; loader and other profile changes remain excluded",
+      "next_action": "independent review of v4 plan, then implement publisher/actual-returned-content probe and submit code acceptance"
     }
   ],
   "preserved_boundaries": [
-    "No SupportPortal ECS or n8n changes",
+    "No SupportPortal API/Route/Worker ECS or n8n changes",
     "No Production",
     "No case/session/run created",
     "No Slack upload or Hermes/Zendesk/Zac business messages",
@@ -602,12 +603,79 @@
       "limitation": "local candidate probe checked bundled Skill bytes and list/view success, not the actual served content; extra live returned-content check caught the gap"
     }
   ],
-  "pending_decision": "Current scope excludes EFS/profile/loader changes. Determine and authorize the corrective delivery path before another deployment; no real file tests.",
+  "pending_decision": null,
   "documentation_checks": {
     "json": "passed",
     "project_overview": "passed",
     "feature_list": "passed",
     "git_diff_check": "passed",
     "application_tests": "not repeated for documentation-only deployment evidence; code independent acceptance preserves prior 32 passed / 17 skipped / 2 subtests"
+  },
+  "v3_independent_deployment_review": {
+    "conclusion": "deployment failed; recovery passed; real file tests prohibited",
+    "reviewed_full_head": "3686d8da673d4b9e4c2c62befd3072f5affa4bf7",
+    "pr": 1548,
+    "source": "independent review forwarded from 01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "scope": "v3 failed rollout and recovery evidence only"
+  },
+  "current_execution": {
+    "revision": "v4",
+    "status": "plan_pending_independent_acceptance",
+    "implementation": "not_started",
+    "cloud_mutations": "not_started",
+    "real_file_tests": false,
+    "authorization": {
+      "source": "human confirmed the proposed controlled single EFS Skill publication with backup/rollback, plan review first",
+      "decision": "controlled Preproduction EFS single Skill content publish",
+      "target": "/opt/data/skills/support-case-files/SKILL.md",
+      "allowed": "single file atomic replace, backup/operation metadata/temp files, existing Hermes-only rollout and rollback",
+      "excluded": [
+        "loader/gateway/context/plugin registration",
+        "other Skill/profile/config/toolset",
+        "SupportPortal API/Route/Worker",
+        "n8n",
+        "Production",
+        "case/session/run creation",
+        "business tools/messages/file transfer"
+      ]
+    },
+    "next_gate": "independent v4 plan review, followed by implementation and independent code review before merge/cloud mutations"
+  },
+  "v4_read_only_feasibility": {
+    "environment": "Preproduction",
+    "account": "891612554546",
+    "region": "us-east-1",
+    "identity": "arn:aws:iam::891612554546:user/Zac",
+    "service": "supportportal-preproduction-hermes",
+    "definition": "supportportal-preproduction-hermes:54",
+    "running": 1,
+    "pending": 0,
+    "rollout": "single COMPLETED",
+    "filesystem": "fs-0ded23be6872d82da",
+    "access_point": "fsap-068e530f8cd61c854",
+    "access_point_root": "/supportportal-preproduction-hermes-home",
+    "file": {
+      "path": "/opt/data/skills/support-case-files/SKILL.md",
+      "resolved": "/opt/data/skills/support-case-files/SKILL.md",
+      "symlink": false,
+      "uid": 10000,
+      "gid": 10000,
+      "mode": "0644",
+      "size": 1937,
+      "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "parent_writable": true,
+      "same_device_as_efs_root": true
+    },
+    "write_permission_note": "os.access/lstat/read only; no write/rename/backup/lock or permission change attempted"
+  },
+  "v4_plan_checks": {
+    "json": "passed",
+    "project_overview": "passed",
+    "feature_list": "passed",
+    "git_diff_check": "passed",
+    "application_tests": "not run: plan/documentation only",
+    "implementation": "not started",
+    "efs_publication": "not started",
+    "hermes_deployment": "not started"
   }
 }
