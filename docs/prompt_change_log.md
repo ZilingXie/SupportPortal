@@ -5290,7 +5290,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - E3 剧本第 4 回合改用现行 Hermes draft/delivery 载体（relay request + 已投递公开草稿评论 + 确认语义检查），旧 `submission_confirmation` reply job 降为辅助观察；场景包装器中止/审批超时/记录失败一律非零退出。
 - 本轮不含任何线上行为部署；合同与证据见 p2-209 任务登记与两仓 Draft PR。
 
-## 2026-10-22 — Investigation 文件 metadata readiness（p2-192，待独立验收）
+## 2026-10-22 — Investigation 文件 metadata readiness（p2-192，代码已验收；部署失败已回滚）
 
 - Hermes list schema明确 `description` 是对受控 `short_description` 的大小写无关子串过滤，与原四过滤器取交集；不增加 short_description alias，也不改变后端匹配算法。
 - support-case-files Skill补充三名称/来源与内容证据边界、无匹配不越case检索；候选overlay只替换bridge与Skill，不改Prompt catalog、模型、profile或其他toolset。仅授权Preproduction Hermes，真实文件测试仍须后续独立验收。
+
+- 部署回读：#1547 合并源码 11ef7856，Hermes immutable image a4ba1d1f / TD55 的 bridge/schema/hash 正确，但实际 skill_view 返回内容缺 short_description；按计划回滚 TD54，恢复 digest/五容器健康/ALB、其他三角色与 Terraform zero-drift。未更新 EFS/profile，无真实业务工具调用；部署未通过，失败证据另交独立复核。
