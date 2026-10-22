@@ -5289,3 +5289,8 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - SupportPortal worker 对不可解析/未绑定的 relay 结果不再"当噪音 ACK+complete"：先入统一失败/人工接管链，持久化失败态后才 ACK，relay 任务以显式 `fail_task`（agent_reported_failure）终态收尾；重复投递仅更新证据。
 - E3 剧本第 4 回合改用现行 Hermes draft/delivery 载体（relay request + 已投递公开草稿评论 + 确认语义检查），旧 `submission_confirmation` reply job 降为辅助观察；场景包装器中止/审批超时/记录失败一律非零退出。
 - 本轮不含任何线上行为部署；合同与证据见 p2-209 任务登记与两仓 Draft PR。
+
+## 2026-10-22 — Investigation 文件 metadata readiness（p2-192，待独立验收）
+
+- Hermes list schema明确 `description` 是对受控 `short_description` 的大小写无关子串过滤，与原四过滤器取交集；不增加 short_description alias，也不改变后端匹配算法。
+- support-case-files Skill补充三名称/来源与内容证据边界、无匹配不越case检索；候选overlay只替换bridge与Skill，不改Prompt catalog、模型、profile或其他toolset。仅授权Preproduction Hermes，真实文件测试仍须后续独立验收。
