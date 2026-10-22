@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T09:59:01Z",
-  "source_base_commit": "05b29d4d98aa4956fcdea8d314ec6bf1c3146f9f",
-  "registry_digest": "6a047d7c728c45c5c2dbc57a9f1b9069bd0d449d4886b2a05ec0e6ad7b2f922e",
+  "generated_at": "2026-10-21T13:52:56Z",
+  "source_base_commit": "553e3a8bbdc05615ea2a855c9253e8e57e83fa27",
+  "registry_digest": "aa2bdd5c6de090725ca34f17c2e973a208293cdab24f13b95fa1c2f43d69d956",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1837,6 +1837,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
+        },
+        {
+          "type": "test",
+          "label": "真实 E3 #14179 turn 5b C6 证据（23 步全 PASS 含 turn 4 现代化载体与 turn 5/5b；turn 6 relay 腿审批超时中止；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包）",
+          "url": "https://agoraio.zendesk.com/agent/tickets/14179"
+        },
+        {
+          "type": "pr",
+          "label": "PR#1536（E3 turn-4 载体现代化）与 PR#1537（reply-only compatibility_relay_required 缺陷修复，随 r20261021-21cceb2-replyonly-v1 部署）",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1537"
         },
         {
           "type": "decision",
@@ -19393,7 +19403,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "14152 部署默认保留 native Hermes 与会话内再执行措辞进度修正（E3 精确回合）",
       "summary": "两个合同：(1) Preproduction 发布未指定 --automation-case-engine 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态；缺失/冲突/不可读一律 fail-closed 要求显式旗标；显式 legacy 保留既有降级授权门；新增 --hermes-persona-disabled；发布证据记录 native_hermes_config 四字段与 provenance）——根治 2026-10-21 r20261021-ebb59c8 两次人工旗标误用（enablement=manual 遗漏既有 archer 等）。(2) 14152 回归：客户在 enablement 会话中段再次要求开通（Could you help me enable the permission now?）不再 superseded→RAG fallback 转人工，而是服务端修正为进度追问——reply-sync（legacy 轮询路径）从绑定 manual review reply job 或 relay request 的真实状态生成 progress_inquiry_answer 回复（确定性 provided_answer+Persona 措辞，不承诺加速/完成时间）；native hermes 路径 tool_record_direction 对 backend_operation(enable) 提案、agent 对 continue_task message_action 同样状态门控修正为 conversation_followup/progress_inquiry 或 report_progress，绑定不可读/终态 fail-closed 转人工；E3 在 relay request 建立后、终态前新增精确回合（保留原礼貌催促为对照），断言 comment↔turn 绑定、report_progress、单一 relay request、无 RAG fallback。",
       "status": "active",
-      "next_action": "已完成：代码合入 main（PR#1532=4c728884，2026-10-21）；Preproduction 发布 r20261021-4c72888-hermes-default-v1 经 C1 继承路径部署成功（发布命令未传任何 case 旗标，pipeline 从 live Route/API/Worker 解析继承 hermes/agent/persona/disabled，case-config-resolution.json 四项 provenance=inherited_live[_hermes]；deploy 全阶段 passed，rollback not_started）；实时回读 route:164 engine=hermes、api:168/worker:167 typed=disabled+agent+persona 凭据、health ready/release=ok 同 release、digests observed-match ×3、prompt pr-88298d4e0a3f active。真实 E3（turn 5b 精确回合实跑）待单独授权；存量失败簇（handoff note_comment_id、conversation 累计）另线修复",
+      "next_action": "真实 E3 已授权并执行（第 4 轮 #14179，r20261021-21cceb2-replyonly-v1 线上）：turn 1-5b 共 23 步全部 PASS，C6 真实证据齐——turn 5b（14152 原句，comment 54819863470612）↔ turn-88249f1a 严格绑定，report_progress 且 reason_code=insession_enable_reuse（服务端修正 continue_task，留痕 server_correction_reason/original_action），单一 relay request enr-AC-14179-v1 未动，进度回复按绑定状态投递（comment 54819899362964），automation 持有保持，无 RAG fallback；compatibility_relay_required=false 在真实投递生效（PR#1537）。turn 6/7 relay 腿在 240 分钟窗口内未获 Mac relay 审批而超时中止（属既有 E3 合同的审批门控腿，非本任务新增回合；relay request 至 11-04 自然过期）。等待验收方对 C6 证据复验；tail 补跑需新开 E3 并在窗口内执行两次 approve_execution。前序实跑 #14169/#14171/#14176 保留待清理决策",
       "owner": "agent",
       "created_at": "2026-10-21",
       "updated_at": "2026-10-21",
@@ -19436,6 +19446,16 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
+        },
+        {
+          "type": "test",
+          "label": "真实 E3 #14179 turn 5b C6 证据（23 步全 PASS 含 turn 4 现代化载体与 turn 5/5b；turn 6 relay 腿审批超时中止；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包）",
+          "url": "https://agoraio.zendesk.com/agent/tickets/14179"
+        },
+        {
+          "type": "pr",
+          "label": "PR#1536（E3 turn-4 载体现代化）与 PR#1537（reply-only compatibility_relay_required 缺陷修复，随 r20261021-21cceb2-replyonly-v1 部署）",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1537"
         }
       ]
     },
