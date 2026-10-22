@@ -18,8 +18,13 @@ FILE = {"id": "F123", "name": "screen.png", "mimetype": "image/png", "size": 3, 
     "shares": {"private": {"C-TEST": [{"ts": "124.01", "thread_ts": "123.45"}]}},
     "url_private_download": "https://files.slack.com/files-pri/F123/screen.png"}
 MESSAGE = {"team_id": "T-TEST", "channel_id": "C-TEST", "thread_ts": "123.45", "text": "Use this screenshot",
-    "slack_user_id": "U-TEST", "message_ts": "124.01", "source_event_id": "Ev-123",
+    "slack_user_id": "U-TEST", "parent_user_id": "U-ROOT", "bot_id": "B08RHT5TZV2", "message_ts": "124.01", "source_event_id": "Ev-123",
     "files": [{"file_id": "F123", "file_name": "untrusted-name"}]}
+
+
+@pytest.fixture(autouse=True)
+def trusted_engineer_bot(monkeypatch):
+    monkeypatch.setenv("ENGINEER_SLACK_BOT_ID", "B08RHT5TZV2")
 
 
 def send(store, payload=MESSAGE):
@@ -52,6 +57,61 @@ def test_real_feedback_entry_freezes_verified_files_to_reply_draft_and_new_round
     assert store.get_hermes_draft(draft["draft_id"])["status"] == "stale"
     with pytest.raises(Exception, match="stale"):
         store.approve_hermes_case_draft(draft["draft_id"], approver="test")
+
+
+def test_trusted_file_share_metadata_is_bounded_and_unknown_bot_fails_closed(route_store, monkeypatch):
+    monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
+    store = route_store
+    finish_initial(store)
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    unknown = {**MESSAGE, "bot_id": "B-UNKNOWN"}
+    with patch("backend.services.investigation_attachments._slack", return_value={"file": FILE}):
+        result = send(store, unknown)
+    assert result["ok"] is False
+    assert store.list_case_files("123") == []
+    def download(*args, output=None, **kwargs):
+        if output is not None:
+            output.write(b"png")
+            output.seek(0)
+            return b""
+        return b"png"
+    with patch("backend.services.investigation_attachments._slack", return_value={"file": FILE}), patch("backend.services.investigation_attachments._download", side_effect=download):
+        result = send(store, {**MESSAGE, "text": "Short description"})
+    assert result["ok"] is True, result
+    row = store.list_case_files("123")[0]
+    assert row["short_description"] == "Short description"
+    assert "short_description" in __import__("backend.services.investigation_case_files", fromlist=["reference"]).reference(row)
+    assert store.list_case_files("123")[0]["managed_filename"].startswith("123-engineer-")
+
+
+def test_short_description_overflow_uses_stable_default_and_description_filter(route_store, monkeypatch):
+    monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
+    store = route_store
+    finish_initial(store)
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    long_text = "x" * 241
+    def download(*args, output=None, **kwargs):
+        if output is not None:
+            output.write(b"png")
+            output.seek(0)
+            return b""
+        return b"png"
+    with patch("backend.services.investigation_attachments._slack", return_value={"file": FILE}), patch("backend.services.investigation_attachments._download", side_effect=download):
+        assert send(store, {**MESSAGE, "text": long_text})["ok"] is True
+    row = store.list_case_files("123")[0]
+    assert row["short_description"] == f"Engineer attachment {row['managed_filename']}"
+
+
+def test_missing_trusted_bot_configuration_fails_closed(route_store, monkeypatch):
+    monkeypatch.setenv("INVESTIGATION_CASE_FILES_ENABLED", "1")
+    monkeypatch.delenv("ENGINEER_SLACK_BOT_ID", raising=False)
+    store = route_store
+    finish_initial(store)
+    store.bind_hermes_case_thread("123", channel_id="C-TEST", thread_ts="123.45")
+    result = send(store)
+    assert result == {"ok": False, "status_code": 422, "detail": "attachments require configured trusted Slack bot"}
+    result = send(store)
+    assert result == {"ok": False, "status_code": 422, "detail": "attachments require configured trusted Slack bot"}
 
 
 @pytest.mark.parametrize("changes", [{"shares": {}}, {"user": "U-OTHER"}, {"size": 0}, {"is_external": True}])

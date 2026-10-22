@@ -29,6 +29,8 @@ class InvestigationAttachmentsN8nContractTests(unittest.TestCase):
         validator = self.nodes["Validate Hermes Attachment Mention"]
         condition = validator["parameters"]["conditions"]["conditions"][0]["leftValue"]
         self.assertIn("file_share", condition)
+        self.assertIn("B08RHT5TZV2", condition)
+        self.assertIn("parent_user_id", condition)
         self.assertIn("<@U08RVQSJQF2>", condition)
         self.assertIn("T1CBEDLJY", condition)
         self.assertIn("C0BS0N61D1R", condition)
@@ -118,6 +120,21 @@ class InvestigationAttachmentsN8nContractTests(unittest.TestCase):
             "Validate Slack Mention",
             [edge["node"] for edge in self.connections["Validate Hermes Attachment Mention"]["main"][1]],
         )
+
+    def test_parent_handoff_preserves_structured_files(self) -> None:
+        parent = json.loads((ROOT / "docs/integrations/n8n/workflows/active/kyiA0QuiVx6JJ03i.published.json").read_text())
+        execute = next(node for node in parent["workflow"]["nodes"] if node["type"] == "n8n-nodes-base.executeWorkflow")
+        params = execute["parameters"]["workflowInputs"]
+        self.assertFalse(params["convertFieldsToString"])
+        expression = params["value"]["Input"]
+        for field in ("subtype", "parent_user_id", "bot_id", "files", "client_msg_id", "event_id"):
+            self.assertIn(field, expression)
+
+    def test_child_handoff_preserves_trusted_identity(self) -> None:
+        body = self.nodes["Send Hermes Message"]["parameters"]["body"]
+        self.assertIn("parent_user_id", body)
+        self.assertIn("bot_id", body)
+        self.assertIn("input.bot_id", body)
 
 
 if __name__ == "__main__":
