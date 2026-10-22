@@ -601,11 +601,12 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13700-v1",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "8cb7aea984c4457daad802e6960e2475",
                 "request_version": 1,
                 "reply_job_id": "job-3",
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13700-v1", "status": "dispatched", "request_version": 1}]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
@@ -722,10 +723,11 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13700-v2",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "4b7634a0d0f1418b8135918292f6a507",
                 "request_version": 2,
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13700-v2", "status": "dispatched", "request_version": 2}]),
             ("FROM support_enablement_relay_results", [{
                 "outcome": "enabled",
                 "write_attempted": True,
@@ -889,11 +891,12 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "fcd0dab13017495bbe25a63bfdb236fd",
                 "request_version": 1,
                 "reply_job_id": "job-3",
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13702-v1", "status": "dispatched", "request_version": 1}]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
@@ -1442,7 +1445,7 @@ class ScenarioEngineTests(unittest.TestCase):
             ("FROM support_enablement_relay_requests", [
                 {
                     "request_id": "enr-AC-13703-v2",
-                    "status": "gated",
+                    "status": "dispatched",
                     "app_id": "4b7634a0d0f1418b8135918292f6a507",
                     "request_version": 2,
                 }
@@ -2023,6 +2026,17 @@ class WrapperExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("[WAITING_FOR_HUMAN]", out)
 
+    def test_relay_timeout_reports_waiting_for_human(self):
+        from backend.services.automation_test_scenarios import RelayPhaseTimeout
+
+        def behavior(scenario_id):
+            raise RelayPhaseTimeout("relay phase timeout: request=req-1 v1")
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 2, out)
+        self.assertIn("[WAITING_FOR_HUMAN]", out)
+
     def test_recorded_failure_without_raise_returns_nonzero(self):
         def behavior(scenario_id):
             self_running_engine.steps.append(_Step("routed"))
@@ -2042,6 +2056,65 @@ class WrapperExitCodeTests(unittest.TestCase):
         code, out = self._run_main(self_running_engine)
         self.assertEqual(code, 0, out)
         self.assertIn("[PASSED]", out)
+
+
+class RelayPhaseBudgetTests(unittest.TestCase):
+    def test_real_e3_entry_shares_remaining_budget_after_twenty_minutes(self):
+        from datetime import datetime, timezone, timedelta
+        original = ScenarioEngine._wait_with_context
+        observed = []
+        current = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+
+        def wait(engine, ctx, description, probe, seconds):
+            if ctx.relay_phase_deadline is not None:
+                expected = (ctx.relay_phase_deadline - current[0]).total_seconds()
+                self.assertEqual(seconds, expected, description)
+                observed.append((ctx.relay_phase_request_id, description, seconds))
+            result = original(engine, ctx, description, probe, seconds)
+            current[0] += timedelta(seconds=1300 if not observed else 60)
+            return result
+
+        with patch("backend.services.automation_test_scenarios.now_utc", side_effect=lambda: current[0]), patch.object(ScenarioEngine, "_wait_with_context", wait):
+            ScenarioEngineTests("test_e3_full_lifecycle_scripted").test_e3_full_lifecycle_scripted()
+        self.assertTrue(any("message_action" in item[1] for item in observed))
+        self.assertTrue(any("zendesk_ticket_status" in item[1] for item in observed))
+        self.assertEqual({item[0] for item in observed}, {"enr-AC-13700-v1", "enr-AC-13700-v2"})
+        for request_id in {item[0] for item in observed}:
+            budgets = [item[2] for item in observed if item[0] == request_id]
+            self.assertEqual(budgets, sorted(budgets, reverse=True))
+            self.assertGreater(budgets[-1], 20 * 60)
+
+    def test_expired_real_status_wait_has_no_io_and_recovers(self):
+        from datetime import datetime, timezone, timedelta
+        from backend.services.automation_test_scenarios import RelayPhaseTimeout
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("E3", client_ticket_id="ticket")
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start):
+            ctx.start_relay_phase("req-1", 1, 240)
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start + timedelta(minutes=240)), patch.object(engine, "db_query") as query, patch.object(engine, "_zendesk_request") as zendesk, patch.object(engine, "send_email") as email:
+            with self.assertRaisesRegex(RelayPhaseTimeout, "relay phase timeout: request=req-1 v1"):
+                engine.wait_case_field(ctx, "zendesk_ticket_status", "solved", "closed")
+            query.assert_not_called()
+            zendesk.assert_not_called()
+            email.assert_not_called()
+        engine.db_queue = [("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}])]
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start + timedelta(minutes=239)):
+            engine.wait_case_field(ctx, "zendesk_ticket_status", "solved", "recovered")
+        self.assertEqual(engine.steps[-1].status, "PASS")
+
+    def test_relay_phase_uses_absolute_deadline_and_can_reset(self):
+        ctx = ScenarioContext("E3")
+        with patch("backend.services.automation_test_scenarios.now_utc") as clock:
+            from datetime import datetime, timezone
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            clock.return_value = start
+            ctx.start_relay_phase("req-1", 1, 240)
+            clock.return_value = start.replace(hour=1)
+            self.assertEqual(ctx.relay_remaining_seconds(), 180 * 60)
+            ctx.start_relay_phase("req-2", 2, 240)
+            self.assertEqual(ctx.relay_phase_request_id, "req-2")
+            self.assertEqual(ctx.relay_phase_request_version, 2)
 
 
 class E3Turn4CarrierTests(unittest.TestCase):
@@ -2195,6 +2268,8 @@ class RecorderEngine(ScenarioEngine):
         self.calls.append(("db_query", (sql,), {}))
         if "support_account_reply_jobs" in sql:
             return [{"status": "persona_v8_queued"}]
+        if "support_enablement_relay_requests" in sql:
+            return [{"request_id": params[0], "status": "dispatched", "request_version": params[2]}]
         return []
 
     def run_e3_finalize(self):
