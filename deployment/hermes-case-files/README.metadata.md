@@ -75,6 +75,14 @@ changed attributes or bad backup fail closed; do not overwrite or delete evidenc
 The flock coordinates participating publishers only, not arbitrary external
 writers. The executor must retain exclusive ownership of the release window.
 
+Check-only returns `ok=false`, code `publication_unresolved`, exit1 for both
+`prepared` and `outcome_unknown`, regardless of whether target bytes are old or
+new. Its JSON retains state, pending_action and current hash/stat for readback;
+it does not mutate the record or confirm success. Only explicit apply/rollback
+may resolve that observation. Terminal state/target/intent contradictions return
+`state_conflict` and exit1. Baseline, consistent committed and consistent
+rolled_back states remain successful read-only checks.
+
 On an authorized rollback, repeat the exact release/task/hash inputs with
 `--action rollback`; it restores backup bytes and attributes atomically, or
 confirms the old state. Then restore the preflight task definition and complete

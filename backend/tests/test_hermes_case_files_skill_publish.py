@@ -322,3 +322,77 @@ def test_records_use_filesystem_identity_not_process_identity(tmp_path, monkeypa
     for name in ['record.json', 'SKILL.md.before']:
         info = (lay.records / 'r-fs-identity' / name).stat()
         assert (info.st_uid, info.st_gid, info.st_mode & 0o777) == (lay.uid, lay.gid, 0o600)
+
+
+@pytest.mark.parametrize('state', ['prepared', 'outcome_unknown'])
+@pytest.mark.parametrize('intent', ['apply', 'rollback'])
+@pytest.mark.parametrize('target_new', [False, True])
+def test_cli_check_only_rejects_unresolved_real_operations_readonly(tmp_path, monkeypatch, capsys,
+                                                                 state, intent, target_new):
+    import io
+    mod, lay, old = layout(tmp_path)
+    new = (ROOT / 'deployment/hermes-case-files/skills/support-case-files/SKILL.md').read_bytes()
+    release = 'r-unresolved'
+    if intent == 'rollback':
+        mod.publish(lay, release, OLD, NEW, action='apply', candidate=new)
+    replace = mod.os.replace
+    # Process termination leaves prepared; an I/O fault records outcome_unknown.
+    # Fail immediately before/after the actual target commit, preserving the
+    # same on-disk operation used by production recovery.
+    def interrupted_replace(src, dst):
+        if Path(dst) == lay.target:
+            if target_new == (intent == 'apply'):
+                replace(src, dst)
+            if state == 'prepared':
+                raise SystemExit('publication process interrupted')
+            raise OSError('publication result unknown')
+        return replace(src, dst)
+    monkeypatch.setattr(mod.os, 'replace', interrupted_replace)
+    with pytest.raises(SystemExit if state == 'prepared' else mod.PublicationError):
+        mod.publish(lay, release, OLD, NEW, action=intent, candidate=new)
+    monkeypatch.setattr(mod.os, 'replace', replace)
+    record_path = lay.records / release / 'record.json'
+    record = json.loads(record_path.read_text())
+    assert (record['state'], record['pending_action']) == (state, intent)
+    assert lay.target.read_bytes() == (new if target_new else old)
+    task = 'arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/' + 'b' * 32
+    metadata = {'Family': 'supportportal-preproduction-hermes', 'TaskARN': task,
+                'Cluster': 'supportportal-preproduction'}
+    monkeypatch.setenv('ECS_CONTAINER_METADATA_URI_V4', 'http://169.254.170.2/v4/synthetic')
+    monkeypatch.setattr(mod.urllib.request, 'urlopen', lambda *a, **k: io.BytesIO(json.dumps(metadata).encode()))
+    monkeypatch.setattr(mod, 'PRODUCTION_LAYOUT', lay)
+    def filesystem():
+        return {str(p.relative_to(lay.data_root)): (p.read_bytes() if p.is_file() else None,
+                p.stat().st_ino, p.stat().st_mtime_ns, p.stat().st_mode, p.stat().st_uid, p.stat().st_gid)
+                for p in lay.data_root.rglob('*')}
+    before = filesystem()
+    args = ['--release-id', release, '--expected-old-sha256', OLD,
+            '--expected-new-sha256', NEW, '--expected-task-arn', task]
+    assert mod.main(args) == 1
+    result = json.loads(capsys.readouterr().out.split('SKILL_PUBLICATION_JSON=')[1])
+    assert result['ok'] is False and result['code'] == 'publication_unresolved'
+    assert result['state'] == state and result['pending_action'] == intent
+    assert result['current']['sha256'] == (NEW if target_new else OLD)
+    assert filesystem() == before  # No lock/backup/record/target mutation by readback.
+    # Explicit original operation, after readback, resolves the state. check-only
+    # never does so implicitly or turns an unknown outcome into success.
+    mod.publish(lay, release, OLD, NEW, action=intent, candidate=new)
+    assert mod.publish(lay, release, OLD, NEW)['ok'] is True
+    assert lay.target.read_bytes() == (new if intent == 'apply' else old)
+
+
+@pytest.mark.parametrize('terminal', ['committed', 'rolled_back'])
+def test_check_only_rejects_terminal_record_with_opposite_pending_intent(tmp_path, terminal):
+    mod, lay, _ = layout(tmp_path)
+    new = (ROOT / 'deployment/hermes-case-files/skills/support-case-files/SKILL.md').read_bytes()
+    mod.publish(lay, 'r-intent', OLD, NEW, action='apply', candidate=new)
+    if terminal == 'rolled_back':
+        mod.publish(lay, 'r-intent', OLD, NEW, action='rollback')
+    path = lay.records / 'r-intent/record.json'
+    record = json.loads(path.read_text())
+    record['pending_action'] = 'rollback' if terminal == 'committed' else 'apply'
+    path.write_text(json.dumps(record))
+    before = path.read_bytes(), lay.target.read_bytes()
+    with pytest.raises(mod.PublicationError, match='state_conflict'):
+        mod.publish(lay, 'r-intent', OLD, NEW)
+    assert (path.read_bytes(), lay.target.read_bytes()) == before

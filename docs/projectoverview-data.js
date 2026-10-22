@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-22T06:50:21Z",
-  "source_base_commit": "3128b65db88fbc57f9f951165dca2671553f49d5",
-  "registry_digest": "e74f4a623642d625197f6a3fa0620cf6af65554a3c885777d411f3c652d29146",
+  "generated_at": "2026-10-22T07:03:49Z",
+  "source_base_commit": "ffe04fee2cdeb976018fd683834261da1ef2f6ab",
+  "registry_digest": "a78b8143df02b3c3ad42ba229d1ad4bbe8e84781a353e90014e785b8f513dc40",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -18173,9 +18173,9 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码待独立验收、云端未再次变更。HERMES-METADATA-01保持开放，真实文件测试仍不可开始。",
+      "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放，真实文件测试仍不可开始。",
       "status": "blocked",
-      "next_action": "对同 Draft PR#1548 的 v4 完整代码做独立验收：publisher/probe/真实loader本地回归已完成（55 passed、17 skipped）；通过并合并后按v4执行Preproduction Hermes/EFS发布，再交独立readiness验收。当前不得修改EFS、再次部署或执行真实文件样本；原R1、人类上传、Automation live反向、C7 Zac与Production边界保留。",
+      "next_action": "对同 Draft PR#1548 的 v4 完整代码做独立验收：publisher/probe/真实loader本地回归已完成（65 passed、17 skipped）；通过并合并后按v4执行Preproduction Hermes/EFS发布，再交独立readiness验收。当前不得修改EFS、再次部署或执行真实文件样本；原R1、人类上传、Automation live反向、C7 Zac与Production边界保留。",
       "owner": "agent",
       "created_at": "2026-10-09",
       "updated_at": "2026-10-22",

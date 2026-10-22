@@ -2,9 +2,9 @@
   "plan": "investigation-case-files-slack-ingress-metadata-v1",
   "phase": "Hermes metadata readiness",
   "revision": "v4",
-  "updated_at": "2026-10-22T06:49:32.979713+00:00",
+  "updated_at": "2026-10-22T07:03:47.768546+00:00",
   "source_baseline": "7a1c52231e4bea3184393a065c4f93a111cea840",
-  "code_acceptance": "v3 passed; v4 implementation completed pending independent code acceptance",
+  "code_acceptance": "v3 passed; v4 first code review failed HMR-V4-01; repaired pending independent re-review",
   "deployment_status": "v4 not started; v3 failed and recovered",
   "deployment_acceptance": "v3 deployment failed; recovery independently passed; v4 not started",
   "ready_for_real_file_tests": false,
@@ -639,7 +639,7 @@
         "business tools/messages/file transfer"
       ]
     },
-    "next_gate": "independent full v4 code acceptance before merge/cloud mutation; later independent live readiness acceptance"
+    "next_gate": "independent HMR-V4-01 repair/full HEAD re-review before merge/cloud mutation"
   },
   "v4_read_only_feasibility": {
     "environment": "Preproduction",
@@ -692,12 +692,133 @@
     "image_identity_note": "local RepoDigests retained verbatim; deployment ECR manifest digest is separately recorded and is not inferred from local RepoDigests",
     "tests": {
       "command": "PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_hermes_case_files_skill_publish.py backend/tests/test_hermes_case_files_metadata_bridge.py backend/tests/test_investigation_case_files.py backend/tests/test_hermes_case_files_v2_merge_scripts.py backend/tests/test_investigation_case_files_deploy.py",
-      "result": "55 passed, 17 skipped, 4 existing FastAPI warnings, 2 subtests passed",
-      "publisher_cases": 23,
+      "result": "65 passed, 17 skipped, 4 existing FastAPI warnings, 2 subtests passed",
+      "publisher_cases": 33,
       "limits": "skipped external PostgreSQL/cloud boundaries are not verified; local filesystem and actual loader are verified"
     },
-    "container_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-metadata-readiness-v4/container-attempt3",
+    "container_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-metadata-readiness-v4/container-attempt4-hmr-v4-01",
     "container": {
+      "generated_at": "2026-10-22T07:02:06.412257+00:00",
+      "network": "none",
+      "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes:hermes-20261022-11ef7856-metadata-v1",
+      "source_sha256": {
+        "publish_skill.py": "fc7bfe1a9f9b552ed6ee256631a29bd6bb6c9481f956c32def3d46ba6fbb3c2a",
+        "probe_metadata.py": "4e3641ff77750a8524ecc33c1df7722069f1e92a0f3bd2a17affa31f023ddfd4",
+        "verify_metadata_efs.py": "c83cb20e9638f2e5f1c4232924445dcaea23d8316f9ce9ca6e300bb9fa551c7a",
+        "verify_metadata_efs_local.py": "8f3a6f4459c597c167c5342a0af7655b2b4a559fc46157fcde4d90a1a240c293"
+      },
+      "image_id": "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+      "repo_digests": [
+        "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:47541afbb0489095fe615550c81067bf014bd6ac8ba343de9aa49d5eabd04525"
+      ],
+      "image_source": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+      "exit_code": 0,
+      "command": [
+        "podman",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--arch",
+        "amd64",
+        "--network",
+        "none",
+        "--entrypoint",
+        "python",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/deployment/hermes-case-files:/verification:ro",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/backend/tests/fixtures/hermes_case_files_old_skill.md:/old-skill.md:ro",
+        "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+        "/verification/verify_metadata_efs.py",
+        "--old-fixture",
+        "/old-skill.md"
+      ],
+      "verification": {
+        "apply_state": "committed",
+        "backend_tools_called": false,
+        "fixture_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "old_snapshot_fault": "actual_served_skill_metadata_missing",
+        "probe": {
+          "asset_sha256": {
+            "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+            "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+            "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+            "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+            "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+            "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+          },
+          "backend_tools_called": false,
+          "profile_combined_work_list_and_view": true,
+          "profile_only_and_persona_denied": true,
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+                "type": "string"
+              },
+              "extension": {
+                "type": "string"
+              },
+              "introduced_turn_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "schema_properties": [
+            "description",
+            "extension",
+            "introduced_turn_id",
+            "purpose",
+            "source"
+          ],
+          "served_content_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "served_has_short_description": true,
+          "served_resolved_path": "/tmp/hermes-metadata-efs-v4-t69vs0nj/skills/support-case-files/SKILL.md",
+          "served_source_path": "/tmp/hermes-metadata-efs-v4-t69vs0nj/skills/support-case-files/SKILL.md",
+          "sessions_created": false,
+          "skill_has_short_description": true,
+          "visible_work_skills": [
+            "hermes-zac-engineering-handoff",
+            "supportportal-investigation",
+            "support-case-files"
+          ]
+        },
+        "repeat_changed": false,
+        "rollback_bytes_equal": true,
+        "rollback_state": "rolled_back",
+        "sessions_created": false,
+        "source_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "unreviewed_content_fault": "actual_served_skill_hash_mismatch",
+        "wrong_path_fault": "actual_served_skill_path_mismatch"
+      }
+    },
+    "checks": {
+      "py_compile": "passed",
+      "json": "passed",
+      "project_overview": "passed",
+      "feature_list": "passed",
+      "git_diff_check": "passed",
+      "skill_quick_validation": "passed; approved Skill bytes unchanged"
+    },
+    "contract_evidence": {
+      "HMR-C1_C2": "existing handler/API tests retained, targeted suite passed; filter algorithms unchanged",
+      "HMR-C3": "real loader list/direct-view denies no scope, profile-only and persona in candidate container; existing negative session tests retained",
+      "HMR-C4": "publisher real filesystem/CLI/fault-recovery tests and real candidate loader regression passed",
+      "HMR-C5": "not started in v4; live deployment/readback pending",
+      "HMR-C6": "ready_for_real_file_tests=false; no business invocation/session/run or cloud mutation"
+    },
+    "next_action": "commit/push same Draft PR #1548, request full code independent acceptance; do not merge or mutate cloud yet",
+    "prior_container_attempt3": {
       "generated_at": "2026-10-22T06:47:31.203291+00:00",
       "network": "none",
       "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes:hermes-20261022-11ef7856-metadata-v1",
@@ -802,21 +923,23 @@
         "wrong_path_fault": "actual_served_skill_path_mismatch"
       }
     },
-    "checks": {
-      "py_compile": "passed",
-      "json": "passed",
-      "project_overview": "passed",
-      "feature_list": "passed",
-      "git_diff_check": "passed",
-      "skill_quick_validation": "passed; approved Skill bytes unchanged"
-    },
-    "contract_evidence": {
-      "HMR-C1_C2": "existing handler/API tests retained, targeted suite passed; filter algorithms unchanged",
-      "HMR-C3": "real loader list/direct-view denies no scope, profile-only and persona in candidate container; existing negative session tests retained",
-      "HMR-C4": "publisher real filesystem/CLI/fault-recovery tests and real candidate loader regression passed",
-      "HMR-C5": "not started in v4; live deployment/readback pending",
-      "HMR-C6": "ready_for_real_file_tests=false; no business invocation/session/run or cloud mutation"
-    },
-    "next_action": "commit/push same Draft PR #1548, request full code independent acceptance; do not merge or mutate cloud yet"
+    "repairs": [
+      {
+        "id": "HMR-V4-01",
+        "classification": "implementation",
+        "status": "repaired_pending_independent_re_review",
+        "reviewed_failed_head": "ffe04fee2cdeb976018fd683834261da1ef2f6ab",
+        "contract": "prepared/outcome_unknown are not success; check-only strictly read-only",
+        "reproduction": "real interrupted rename before/after commit with apply/rollback intent produces prepared/outcome_unknown and old/new target; previous check-only returned ok=true / CLI exit0",
+        "cause": "check-only validated ownership and terminal states but had no rejection for unresolved states or terminal pending_action mismatch",
+        "affected_boundary": "publish(check-only) return object -> main JSON marker -> exit0/1; explicit apply/rollback recovery retained",
+        "repair": "unresolved readback returns ok=false, publication_unresolved, state/pending_action/current diagnostics and CLI exit1; terminal intent contradictions fail state_conflict; rollback old-value confirmation records rollback intent",
+        "regression": "8 real filesystem/fault/CLI combinations state x intent x target old/new; assert exit1/code/diagnostics, complete path inventory/bytes/inode/mtime/mode/ownership unchanged, then explicit original-operation recovery and successful check-only; 2 terminal intent contradictions",
+        "old_logic_result": "10 new cases failed at intended assertions before source fix; 23 existing publisher cases deselected",
+        "current_result": "65 passed, 17 skipped, 4 existing warnings, 2 subtests passed; final true-loader container attempt4 passed",
+        "cloud_mutations": "not_started",
+        "real_file_tests": false
+      }
+    ]
   }
 }

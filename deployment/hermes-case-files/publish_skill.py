@@ -186,7 +186,15 @@ def publish(layout, release_id, old_hash, new_hash, *, action='check-only', cand
         if record:
             require(snapshot(backup_path)[1]['sha256'] == old_hash, 'backup_mismatch')
             require(record['state'] != 'ownership_conflict', 'ownership_conflict')
+            if record['state'] in {'prepared', 'outcome_unknown'}:
+                # Readback exposes the observed state, never confirms an
+                # unresolved operation. Only explicit apply/rollback can do so.
+                return {'ok': False, 'code': 'publication_unresolved',
+                        'state': record['state'], 'pending_action': record['pending_action'],
+                        'action': action, 'release_id': release_id, 'current': current}
             if record['state'] in {'committed', 'rolled_back'}:
+                require(record['pending_action'] ==
+                        ('apply' if record['state'] == 'committed' else 'rollback'), 'state_conflict')
                 require(current['sha256'] == (new_hash if record['state'] == 'committed' else old_hash),
                         'state_conflict')
         else:
@@ -235,7 +243,7 @@ def publish(layout, release_id, old_hash, new_hash, *, action='check-only', cand
                     raise PublicationError('outcome_unknown') from exc
             return {'ok': True, 'state': 'committed', 'changed': False, 'current': current}
         if action == 'rollback' and current['sha256'] == old_hash:
-            record.update(state='rolled_back')
+            record.update(state='rolled_back', pending_action='rollback')
             record_write(record_path, record)
             return {'ok': True, 'state': 'rolled_back', 'changed': False, 'current': current}
         if action == 'apply':

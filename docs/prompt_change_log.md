@@ -5301,4 +5301,6 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 
 - 不改变Prompt、模型、已审查Skill文本或运行toolset；强化probe核对真实skill_view内容/source/resolved path与EFS/bundled/审查hash，覆盖profile-only、persona直接加载拒绝。
 - 单Skill publisher默认只读，固定Preproduction任务和文件；备份、原子替换、未知结果回读、重复发布与受控回滚使用明确操作记录。新增真实loader禁网容器故障/恢复验证；详情见[发布说明](../deployment/hermes-case-files/README.metadata.md)。
-- v4方案独立验收已通过；55 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
+- v4方案独立验收已通过；65 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
+
+- HMR-V4-01修复：发布check-only对prepared/outcome_unknown显式非零，不改变Skill/Prompt/模型或工具调用权限；只读诊断包含当前hash与操作意图，显式恢复后才允许通过。

@@ -35,7 +35,7 @@
 
 ## 文件发布与恢复合同
 
-- check-only 严格只读，不创建锁、目录、备份、临时文件或操作记录；锁与备份仅在显式 apply/rollback 后创建。
+- check-only 严格只读，不创建锁、目录、备份、临时文件或操作记录；遇 prepared/outcome_unknown 返回 ok=false、publication_unresolved 和 exit1，并返回当前 hash/stat、状态与操作意图供只读回读；终态/目标/意图矛盾为 state_conflict/exit1。只读回读不自动确认或恢复。锁与备份仅在显式 apply/rollback 后创建。
 - 变更前确认服务/任务/AP/路径、无其他发布归属；要求固定目标为普通文件、无 symlink/路径逃逸，原 hash/stat 符合基线，候选 bytes hash 为审查值。保留相邻内容与 config 的预检 hash；不递归发布 profile。
 - 发布器使用目标对应的固定锁文件 `/opt/data/.supportportal-skill-releases/support-case-files/publish.lock` 做非阻塞独占 flock；同一发布器的重入被拒。**该锁只约束遵循协议的发布者，不冒称对任意外部写者实现文件 CAS。** 执行者拥有本次发布窗口，ECS/AP/目标 hash 发生异动即停止；不得覆盖已知外来变更。
 - 写入备份与候选、flush/fsync、核对 bytes/hash/mode/UID/GID，写 prepared 记录；候选放在目标同一父目录，提交前再次读原 hash/stat；不一致就 abort。使用 os.replace 作为内容提交点，随后目录 fsync 与 readback；不原地截断/覆盖目标，不让读者观察半文件。
@@ -74,7 +74,9 @@
 - 历史部署：v3 TD55 failed；TD54 recovery passed（独立审查 #1548 / 3686d8da…）；所有旧 artifact `.deployments/hermes-metadata-readiness-v1` 保留。
 - v4 方案：指定线程独立验收通过，绑定 `3128b65db88fbc57f9f951165dca2671553f49d5`；本地实现已完成，**完整代码独立验收待执行，EFS未修改、未再次部署，ready_for_real_file_tests=false**。当前 full HEAD 以 #1548 API 回读及交接为准。
 - 新实现：[单 Skill publisher](../../deployment/hermes-case-files/publish_skill.py)、实际返回内容 probe、[真实 loader 容器回归及复现说明](../../deployment/hermes-case-files/README.metadata.md)。固定 Preproduction ECS 任务/路径/审查 hashes，默认只读；真实临时文件、进程锁竞争、备份/属性/未知提交/回滚意图与第三方冲突通过定向测试。
-- 定向 suite：55 passed、17 skipped、4 个既有 FastAPI 弃用警告、2 subtests passed。外部数据库等 skips 不作为线上/数据库保证证明。
-- 最终禁网容器回归：`.deployments/hermes-metadata-readiness-v4/container-attempt3/`，exit0，唯一 `METADATA_EFS_LOCAL_PASSED` marker。固定 image ID `faec191f…`，真实 loader 在旧 snapshot、错误 hash、错误 path 的指定门禁失败；单文件发布后原 probe 通过，重复 apply 不替换 inode，rollback 恢复旧 bytes 后再次拒绝旧 metadata。工具源 hashes 与完整结果纳入机器记录。
+- 定向 suite：65 passed、17 skipped、4 个既有 FastAPI 弃用警告、2 subtests passed。外部数据库等 skips 不作为线上/数据库保证证明。
+- 最终禁网容器回归：`.deployments/hermes-metadata-readiness-v4/container-attempt4-hmr-v4-01/`，exit0，唯一 `METADATA_EFS_LOCAL_PASSED` marker。固定 image ID `faec191f…`，真实 loader 在旧 snapshot、错误 hash、错误 path 的指定门禁失败；单文件发布后原 probe 通过，重复 apply 不替换 inode，rollback 恢复旧 bytes 后再次拒绝旧 metadata。工具源 hashes 与完整结果纳入机器记录。
 - 上述仅证明本地代码/真实镜像 loader；live EFS AP、发布持久性、Gateway/服务健康和最终 readiness 仍需合并后云端回读及独立验收。镜像 source `11ef7856…` 与 v4 工具源码独立记录，不改旧 release。
 - 单一机器记录：[readiness evidence](investigation-case-files-hermes-metadata-readiness-evidence.json)。旧 R1、启用文件 C1–C7 未覆盖路径、人类上传、Automation live 反向、Zac真实协议、完整知识业务门禁继续保留。
+
+- 修复记录 HMR-V4-01（implementation）：此前 check-only 将 prepared/outcome_unknown 当作 ok=true，导致CLI exit0。现已实现未决非零及终态意图检查；新增8个真实rename前/后中断状态CLI组合（prepared/unknown × apply/rollback × old/new），证明JSON错误码、文件/目录/inode/mtime/权限不变和原operation显式恢复；另2个终态意图矛盾回归。旧逻辑下新增10项均在预期断言失败。修复待独立复验，不自行宣称代码验收通过。
