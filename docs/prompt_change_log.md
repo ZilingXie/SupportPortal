@@ -5304,3 +5304,5 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - v4方案独立验收已通过；65 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
 
 - HMR-V4-01修复：发布check-only对prepared/outcome_unknown显式非零，不改变Skill/Prompt/模型或工具调用权限；只读诊断包含当前hash与操作意图，显式恢复后才允许通过。
+
+2026-10-22 v4 deployment attempt failed/recovered：TD56 image-stage和EFS served-content回读通过；综合Gateway health/toolsets ECS Exec在health marker后EOF，按门禁失败。ECS circuit breaker恢复TD54，publisher显式rollback恢复旧EFS，旧probe/Gateway health、ALB、其他服务和Terraform after-rollback exit0通过。未开始真实文件测试；重复部署需先修复回读载具并独立复核。

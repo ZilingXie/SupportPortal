@@ -80,3 +80,9 @@
 - 单一机器记录：[readiness evidence](investigation-case-files-hermes-metadata-readiness-evidence.json)。旧 R1、启用文件 C1–C7 未覆盖路径、人类上传、Automation live 反向、Zac真实协议、完整知识业务门禁继续保留。
 
 - 修复记录 HMR-V4-01（implementation）：此前 check-only 将 prepared/outcome_unknown 当作 ok=true，导致CLI exit0。现已实现未决非零及终态意图检查；新增8个真实rename前/后中断状态CLI组合（prepared/unknown × apply/rollback × old/new），证明JSON错误码、文件/目录/inode/mtime/权限不变和原operation显式恢复；另2个终态意图矛盾回归。旧逻辑下新增10项均在预期断言失败。修复待独立复验，不自行宣称代码验收通过。
+
+## v4 部署失败与恢复（2026-10-22）
+
+- 代码 `c71f101d4b70c6fb50c2d1f87299d01b9be031f4` 独立通过并合并 `e9b2ed92`。发布前只读门禁、TD56 image-stage、EFS单Skill提交和实际 `skill_view` served-content hash/path均通过。
+- 综合 Gateway health/toolsets ECS Exec 在 health marker 后收到 EOF，缺少 toolsets marker；按合同判定 readiness failed，不能用部分输出代替完整回读。ECS circuit breaker 恢复 TD54；随后publisher check-only确认 committed，显式rollback恢复旧EFS bytes，记录状态 `rolled_back`，备份/UID/GID/mode和旧实际probe/Gateway health回读通过。
+- Terraform after-rollback exit0、API/Route/Worker未变、ALB healthy。`ready_for_real_file_tests=false`，不重试同一失败路径，不开始业务文件测试。详见 `/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-metadata-readiness-v4-live` 和 versioned evidence JSON。

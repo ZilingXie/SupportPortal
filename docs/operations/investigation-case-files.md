@@ -47,3 +47,5 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 发布与本地复现说明：[README.metadata.md](../../deployment/hermes-case-files/README.metadata.md)。默认check-only严格只读；apply/rollback固定目标及审查bytes，记录备份、意图与未知结果，flock仅约束参与协议的发布者。实际Skill returned-content/source/resolved path/文件与仓库三方hash须一致。最终本地禁网镜像回归包含旧内容、错误hash/path拒绝、原输入发布/重复/回滚；65 passed、17 skipped不替代live EFS/Gateway验收。验证日期：2026-10-22。
 
 HMR-V4-01修复（2026-10-22）：check-only对prepared/outcome_unknown返回publication_unresolved/exit1，携带实际hash/stat和pending_action供回读，仍无写入；终态/目标/意图矛盾返回state_conflict/exit1。先回读，再显式继续原apply或rollback，不能用check-only的读成功替代发布成功。
+
+2026-10-22 v4 deployment attempt failed/recovered：TD56 image-stage和EFS served-content回读通过；综合Gateway health/toolsets ECS Exec在health marker后EOF，按门禁失败。ECS circuit breaker恢复TD54，publisher显式rollback恢复旧EFS，旧probe/Gateway health、ALB、其他服务和Terraform after-rollback exit0通过。未开始真实文件测试；重复部署需先修复回读载具并独立复核。
