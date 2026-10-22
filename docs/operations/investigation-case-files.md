@@ -47,3 +47,6 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 发布与本地复现说明：[README.metadata.md](../../deployment/hermes-case-files/README.metadata.md)。默认check-only严格只读；apply/rollback固定目标及审查bytes，记录备份、意图与未知结果，flock仅约束参与协议的发布者。实际Skill returned-content/source/resolved path/文件与仓库三方hash须一致。最终本地禁网镜像回归包含旧内容、错误hash/path拒绝、原输入发布/重复/回滚；65 passed、17 skipped不替代live EFS/Gateway验收。验证日期：2026-10-22。
 
 HMR-V4-01修复（2026-10-22）：check-only对prepared/outcome_unknown返回publication_unresolved/exit1，携带实际hash/stat和pending_action供回读，仍无写入；终态/目标/意图矛盾返回state_conflict/exit1。先回读，再显式继续原apply或rollback，不能用check-only的读成功替代发布成功。
+
+
+2026-10-22 Hermes Exec readback carrier v1：上次v4部署失败原因为合并health/toolsets ECS Exec wrapper在health marker后EOF。本阶段新增 `deployment/hermes-case-files/gateway_readback.py`，两个独立会话分别保存stdout/stderr/退出码/超时/EOF/唯一marker/JSON；缺失、重复、半截、EOF、非零、超时均非零失败。8项真实入口回归通过；尚未重试云端、未修改EFS/任务定义、未开始真实文件测试。详见[计划](../plans/investigation-case-files-hermes-exec-readback-carrier-v1.md)。
