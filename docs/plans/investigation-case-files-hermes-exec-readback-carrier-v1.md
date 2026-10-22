@@ -19,3 +19,8 @@
 代表性实现是 [gateway_readback.py](../../deployment/hermes-case-files/gateway_readback.py)。它不依赖 wrapper exit 0，不把 health 部分结果提升为整体成功，并保留失败原始输出用于独立复核。
 
 验证：`backend/tests/test_hermes_gateway_readback.py`，8 passed；py_compile 与 `git diff --check` 通过。代码独立验收前不合并、不部署。代码通过后使用全新 release ID，在稳定 TD54 上先做两个独立只读会话，随后才决定是否进入新的 Hermes/EFS readiness 发布；本阶段 `ready_for_real_file_tests=false`。
+
+
+## Stable TD54 readback (2026-10-22)
+
+载具代码已在 `586d4db7238bfb596adcc707d5c86849b699841e` 独立通过并合并到 `3b7360e0`。在稳定 Preproduction TD54 任务 `e6dd041bfe7e49e8aeeb4b943f6bc59a` 上实际运行两个独立会话：health 与 toolsets 都产生唯一完整 marker、returncode=0，但 stdout 随后包含 `Cannot perform start session: EOF`。载具按合同输出 `GATEWAY_READBACK_FAILED={"error":"health:eof;toolsets:eof"}`，两个 JSON artifact 完整保存。没有 EFS、任务定义或业务写入，`ready_for_real_file_tests=false`。这一步表明 EOF 是两个独立会话的稳定现象；不能直接把它当 readiness 通过，后续需先确定获准的 Session Manager 终止语义/载具契约并独立验收。

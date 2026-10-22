@@ -2,9 +2,9 @@
   "plan": "investigation-case-files-slack-ingress-metadata-v1",
   "phase": "Hermes Exec readback carrier",
   "revision": "v1",
-  "updated_at": "2026-10-22T08:09:01.732622+00:00",
+  "updated_at": "2026-10-22T08:28:48.241408+00:00",
   "source_baseline": "1e75eba4",
-  "implementation_status": "completed_pending_independent_code_acceptance",
+  "implementation_status": "merged",
   "cloud_mutations": "not_started",
   "ready_for_real_file_tests": false,
   "review": null,
@@ -36,7 +36,62 @@
     "health EOF",
     "timeout"
   ],
-  "deployment": "not_started",
+  "deployment": "not_started_after_carrier_code_acceptance; blocked by stable TD54 EOF readback",
   "business_tests": "not_started",
-  "next_gate": "independent full code acceptance, then fresh TD54 read-only split-session probe"
+  "next_gate": "resolve whether Session Manager EOF is normal terminal transport or a genuine failure using an approved carrier/transport contract; then independent review before any new readiness release",
+  "merged_head": "3b7360e0",
+  "code_acceptance": {
+    "conclusion": "passed",
+    "reviewed_full_head": "586d4db7238bfb596adcc707d5c86849b699841e",
+    "pr": 1552,
+    "scope": "carrier code/local validation only",
+    "source": "independent review forwarded from 01a1349a-c8e9-7183-829d-6b158e735eb5"
+  },
+  "stable_td54_readback": {
+    "status": "failed_closed",
+    "environment": "Preproduction Hermes TD54",
+    "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/e6dd041bfe7e49e8aeeb4b943f6bc59a",
+    "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "service_stable": true,
+    "readbacks": {
+      "health": {
+        "generated_at": "2026-10-22T08:24:00.371180+00:00",
+        "stdout": "\nThe Session Manager plugin was installed successfully. Use the AWS CLI to start a session.\n\n\nStarting session with SessionId: ecs-execute-command-55dt6oensbylr39xp2ei49rh74\nGATEWAY_HEALTH_JSON={\"status\": \"ok\", \"platform\": \"hermes-agent\", \"version\": \"0.21.0\"}\nCannot perform start session: EOF\n",
+        "stderr": "",
+        "returncode": 0,
+        "timed_out": false,
+        "eof": true,
+        "marker": "GATEWAY_HEALTH_JSON",
+        "status": "failed",
+        "error": "eof",
+        "payload": null
+      },
+      "toolsets": {
+        "generated_at": "2026-10-22T08:24:04.489565+00:00",
+        "stdout": "\nThe Session Manager plugin was installed successfully. Use the AWS CLI to start a session.\n\n\nStarting session with SessionId: ecs-execute-command-vuui6fc57akvqj3j4vuscpgc9a\nGATEWAY_TOOLSETS_JSON=[{\"name\": \"skills\", \"label\": \"\\ud83d\\udcda Skills\", \"description\": \"list, view, manage\", \"enabled\": true, \"configured\": true, \"tools\": [\"skill_manage\", \"skill_view\", \"skills_list\"]}, {\"name\": \"supportportal_files\", \"label\": \"\\ud83d\\udd0c Supportportal Files\", \"description\": \"SupportPortal business tools for the Zendesk support profile: case context, direction, automation execution, investigation progress, reply drafts, publication, and escalation. Calls the SupportPortal ECS API with the Hermes agent tool token.\", \"enabled\": true, \"configured\": true, \"tools\": [\"support_case_files_download\", \"support_case_files_list\", \"support_case_files_publish\", \"support_case_files_read\", \"support_case_files_search\"]}]\nCannot perform start session: EOF\n",
+        "stderr": "",
+        "returncode": 0,
+        "timed_out": false,
+        "eof": true,
+        "marker": "GATEWAY_TOOLSETS_JSON",
+        "status": "failed",
+        "error": "eof",
+        "payload": null
+      }
+    },
+    "observed": {
+      "health_marker_complete": true,
+      "toolsets_marker_complete": true,
+      "health_eof": true,
+      "toolsets_eof": true,
+      "health_returncode": 0,
+      "toolsets_returncode": 0
+    },
+    "carrier_result": "GATEWAY_READBACK_FAILED={\"error\":\"health:eof;toolsets:eof\"}",
+    "raw_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-exec-readback-carrier-v1-live",
+    "cloud_mutations": false,
+    "business_invocations": false,
+    "ready_for_real_file_tests": false,
+    "conclusion": "Both independent sessions emitted complete markers then Session Manager reported EOF; strict carrier correctly failed closed. No new release or EFS operation started."
+  }
 }
