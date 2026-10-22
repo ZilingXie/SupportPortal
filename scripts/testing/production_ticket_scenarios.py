@@ -178,8 +178,15 @@ def main() -> int:
 
 
 def _classify_abort(exc: BaseException) -> str:
-    """Distinguish a human-approval timeout from a plain abort (C6)."""
-    if isinstance(exc, TimeoutError) and "approval" in str(exc).casefold():
+    """Distinguish relay or approval waits from a plain abort."""
+    from backend.services.automation_test_scenarios import RelayPhaseTimeout
+
+    if isinstance(exc, RelayPhaseTimeout):
+        return "waiting_for_human"
+    text = str(exc).casefold()
+    if isinstance(exc, TimeoutError) and (
+        "approval" in text or "relay" in text
+    ):
         return "waiting_for_human"
     return "aborted"
 
