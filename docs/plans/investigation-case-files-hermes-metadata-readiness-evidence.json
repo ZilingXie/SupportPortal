@@ -1,0 +1,269 @@
+{
+  "plan": "investigation-case-files-slack-ingress-metadata-v1",
+  "phase": "Hermes metadata readiness",
+  "revision": "v3",
+  "updated_at": "2026-10-22T05:28:38.465156+00:00",
+  "source_baseline": "7a1c52231e4bea3184393a065c4f93a111cea840",
+  "code_acceptance": "pending independent acceptance",
+  "deployment_status": "not_started",
+  "deployment_acceptance": "not_started",
+  "ready_for_real_file_tests": false,
+  "baseline": {
+    "generated_at": "2026-10-22T05:18:40.789805+00:00",
+    "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "service": "supportportal-preproduction-hermes",
+    "rollout": [
+      "COMPLETED"
+    ],
+    "running": 1,
+    "pending": 0,
+    "tasks": [
+      {
+        "arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/f967b27f27fe4646873015dbe8ffc916",
+        "containers": [
+          {
+            "name": "memory-panel",
+            "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "memory-core",
+            "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "ui-proxy",
+            "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "knowledge",
+            "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "hermes",
+            "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+            "health": "HEALTHY"
+          }
+        ]
+      }
+    ]
+  },
+  "baseline_probe": {
+    "asset_sha256": {
+      "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+      "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+      "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+      "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+      "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+    },
+    "backend_tools_called": false,
+    "profile_combined_work_list_and_view": true,
+    "profile_only_and_persona_denied": true,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "introduced_turn_id": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "schema_properties": [
+      "extension",
+      "introduced_turn_id",
+      "purpose",
+      "source"
+    ],
+    "sessions_created": false,
+    "skill_has_short_description": false,
+    "visible_work_skills": [
+      "hermes-zac-engineering-handoff",
+      "supportportal-investigation",
+      "support-case-files"
+    ]
+  },
+  "local_candidate": {
+    "base": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+    "tag": "localhost/hermes-case-files-metadata:pre-review-v1",
+    "image_id": "bd14b305e37537577bc297ffee9e7cbb2646a7f31b08fc064dd6e4516ae5bb3c",
+    "layers": [
+      "sha256:5222f025e44ae24949e8880713955891ae0bd339afd3adb699d66e1cd603e2fa",
+      "sha256:60ed369ed3ed848183224fcc739e2fa08d6e25601730732f7b37ef6325ab99bd",
+      "sha256:15112c9bd9e6c82340de121da0a28ea4c45f93c818e077ecefeac78f12fcbcf4",
+      "sha256:41cbd1991dc56cbf4ddde4138edd7c86982105937ab02e8db0c239713ae2ac6a",
+      "sha256:b342ea4da0c0432382a9c9b54c3572d4f4c7e1b643abd66ed7545ece941680ef",
+      "sha256:f10b39d3aa597bd179c01c93054f4dba17cc0fa4beb1ce96151d6920dd1684d5",
+      "sha256:3f1a80ea1351902d82f1ddcb73055de0989bf48b2e18a4f998a87bc4d23803b2",
+      "sha256:67fe4f8e6f9e51ae6a10d3fc91a86e72fbc01371c7a09db829f22c10715cc86d",
+      "sha256:11cb795d33b88b7352716ce16dde8bdd6fc8da219d68738ca99a8f1d19906584",
+      "sha256:0c388e2561619e090e1be2204b9fbc63463ef3baae9d013167044233ebac0f7e",
+      "sha256:006fd7e2199f6196863f2fa8d9d6d361865692f34cc7cff6f9ece8e055d30385",
+      "sha256:5644e41430fcf28f527e54797d356a0613800911f22793c727eea47d845f4425",
+      "sha256:54ee9da253444ece5bb3def6c4ef7b5ea449c8c2dadb724377465d9c0dd7cf19",
+      "sha256:ec8998472b08058168eab8e91a9989da4ad73273fc361c5dca4835290a23b55c",
+      "sha256:58a42c7cc9f9c746a10fb42b41e8e3a94606aa3601f0426b84004d3dd22fa4b2",
+      "sha256:bfd4aa0cc9336b12c48c2aa2cb1c9a44f29df1361458ceb8927dce6ea32fb4ae",
+      "sha256:2d9b5adf48cb6e61775bded468a5772a042a3762ba9f35fe8411214244f173cc",
+      "sha256:ccf7afa226765d1c27d156939f367558983b7ee9e2bb0f0564d64c9991328323",
+      "sha256:3bd0336539aa28e3d88f3cd9eebab15ca67eb94a60e88891a7b67422f3e0eadb",
+      "sha256:6c7a8e65c8210726135f02ab4313245160175f668ab2a829e893b4944a5e6702",
+      "sha256:2de9c58d679de4c59df06b5468ee23fe0342f1511e82ddadfc3b03553d96ed6c",
+      "sha256:a62676117f6c49520b091c837e9bb340d4502ace187433e6fbd7ea914ad75962",
+      "sha256:9c21d4594f811054fbc84813cd40a80f9a29cff985e286e5d0be4d2154f5380f",
+      "sha256:fc30c2b75bc56c35a90a4813661fcfff2eb4f2ed4231d3152e197437c17ae948",
+      "sha256:b37fd3041af1f7b98cba982098e116d3af0a1160a62bf9790404cd7baa99a597",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:b7d2181e00f7d91ddd83c94c642711933aea8708d3735204e9d54d627752f185",
+      "sha256:7052cb69a40d1055a19edc18afbb3e689a94a89c02003feeea8b5691c8c07af1",
+      "sha256:91708b06d33908719987b440aaf9334231cbe49f479872a25ae277d02f17cebe",
+      "sha256:0454de09951b3af8e8e65a667b1c6993de87aaf21dc2f39b5f6c1c1568a667de",
+      "sha256:646ed0b674472d07c8cc941f70ae6e0f655363a0f4f202a0820863e9ee176a64",
+      "sha256:2fde56763bbb5ada1066e052194ce9d09f978eefaebd1c7157ec909936940af5",
+      "sha256:aaea85bb9f56473cddccf2c3cc2d88dfb831aae39e068c41b59278305ab74b34",
+      "sha256:fa8e79ac274497c5aa88c8c23dca0c5155c8092a7f0bc5312ca5d6daa287b046",
+      "sha256:f2093676750050e87d7a2c4885f3dbfbbc52db52e5382675a5fa8b67d9c7e130",
+      "sha256:15bbfedf9a97d6f2fe76f4564cfbb9339ca0239cc73c7f7e32ad35e6f197c0a8",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:bf90fc3f38a851df22957f1df98dce05216e8f29c25d6881d0ea6211c66e424f",
+      "sha256:312883a001a020fd2103c29df3fa7819c7c1e979ff543d6377a83464d0f3b172",
+      "sha256:139525c47fa6d0e6533fd56da83df9df26049116c540e9c5be76773f2fe2a272",
+      "sha256:4d39badfd3d75fe96614a4de706c1711e5bb629a9a64a9f625be29e79113dee7",
+      "sha256:4e1ea0e2c8640e42f114778527f643eef4f931275214cf758496390c5cde22ca",
+      "sha256:13f319005b992cb91c987af13a53ffcc781693f42abc235e398dbb5ff1cbb852",
+      "sha256:0ae867ac1259738fe064c7c43d1905695a5d87e818c9eb754a60787af1904ba4",
+      "sha256:634b09c9e6ea1b4048ac6790a1f9717058e4a62da4370b396551047d47c00a74",
+      "sha256:06d74a30c429b0feb1513ffc52e9e8890601b46ab6c42a028d45478ef44d0638",
+      "sha256:226b1b2a38a9435722939608c5387a9976159e655ea824322d40686670a1b342",
+      "sha256:d789ed5717c58d0ae20a2035e274f155cf8b85f2046b3041ad2c8f12b4b315f6",
+      "sha256:ebd601118334c243037428765f6e2710ab25d4817b6831ba6d0396d21b69026e",
+      "sha256:0f185947177bd5a5bd65d45756005b4c9023c6b71e37bafd2ff2eeacf29cfbdc",
+      "sha256:7482f76e1601c6fe531110ec0f64087b1ccb1e3b0749858ae6bfc533a265eb4d",
+      "sha256:873ff72ea3f0df60bba5cca8ae115e5aeecd666ec3378fe322d158a289a077c7",
+      "sha256:b6bbac391dd80e0d61ff044f258a8efab8d8b12b0f6f062a946ea178d82f19bf",
+      "sha256:e9a09871c4289cf39560bd8363030a08a3c24f4fd0d760d12c3cdd265445c13b",
+      "sha256:a9e260287ca61202269d8471861d236cae2db7708ef6c911729770d84a214414",
+      "sha256:7ad80475b4400202572bc237e7a2c7b6c710c00f51638fa4707f5c3e85af29c3",
+      "sha256:754109c78538664440cf7433de1f6742408601ba4dd4aab9cf6e12eb50ebd5e8",
+      "sha256:9b7d702281203cbb01856ea892cf33e45a9a22502811e9dd9c17037b2ab1b629",
+      "sha256:8ed44a5112c36e6de8cff0a08afe0bf6a3d7ac0ddfa848dd23cb18e40e930c51",
+      "sha256:92c1137ada0b0e878a6bb0f7bbc613ebfdef65151ee1c4cda6e59ec689dff103",
+      "sha256:9079134ef5dd191394138289ae88c7dc21a2326f6aa2c9e077a79bef177adf18",
+      "sha256:3e3bfe786309bd0926e02246fc16d0dc82df3bdaf2d1e199370a81fd7fa1d415",
+      "sha256:14bc3a689f349dcddd690427de9399c5b445ac3879532a8e2a539c8e9df9583a",
+      "sha256:b60593245bc641a56f56df231d71143c9bd651697c86cfd9e4fdec46184abb48",
+      "sha256:62d2c2e4be164086b16ea316df33797abd01321b72020e2f739891c3027dd270",
+      "sha256:112dde388b1688c2e54f534b152263e773ff9c7d71308856ce64a7dcbfeb275f",
+      "sha256:c5063070efe11a13cb568f84ccc591c4c74300a76fabe174931122409b898a1e",
+      "sha256:9048de86a03efc9df8547fbe0c7b724fff682335936bf0be86a3d87a12314338",
+      "sha256:fbaefa4bfd8796529497f0b34bd908f7ba862c38011daaf1012e9c3fdb2754e6",
+      "sha256:ae0c06ae3e928e3719cd8aa06b69e21276227c3620c7f8d57b7ef6b2ea3ac95e",
+      "sha256:bac0ffec10033ec89bc0fb9842a0254f2b14151ba70d1a824a49af9b7ea2f5ac",
+      "sha256:a9c1209ec208a22920c857b20bb10c464f85587f2fcd3fc966c25a91dc6fbad6",
+      "sha256:67b7dafc2fc8e9fc266a187c4fefa4b6fff38d3955169f2ece294ec38c6e26c8",
+      "sha256:d549d79d86ca3ab3c29f71feb4fe075c028e9859dc5d6e264f92274aa508d103",
+      "sha256:40338302303d54a1731e1e21f1f9b271f2040e1679a21ac6743b7962ab073704",
+      "sha256:2a3aef0f57cc5596852a3b1ddae02f75b4b96623bd156ab4a47d9138120be6de",
+      "sha256:91be4e3ce1000c0e1d1fafca5aaa70f07bb63a818f914233274ae612accadae2",
+      "sha256:0a82d34681c79090757f307884f84ebc6fb67d30b6274c478eb48af0c1278513",
+      "sha256:c2157ba55c041c95400dfa039806e94a81288ebe1d18b3e2eb21c93bc05ca571"
+    ],
+    "probe": {
+      "asset_sha256": {
+        "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+        "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+        "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+        "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+        "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+      },
+      "backend_tools_called": false,
+      "profile_combined_work_list_and_view": true,
+      "profile_only_and_persona_denied": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "introduced_turn_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "schema_properties": [
+        "description",
+        "extension",
+        "introduced_turn_id",
+        "purpose",
+        "source"
+      ],
+      "sessions_created": false,
+      "skill_has_short_description": true,
+      "visible_work_skills": [
+        "hermes-zac-engineering-handoff",
+        "supportportal-investigation",
+        "support-case-files"
+      ]
+    }
+  },
+  "expected_assets": {
+    "deployment/hermes-case-files/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+    "deployment/hermes-case-files/skills/support-case-files/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a"
+  },
+  "verification": {
+    "new_bridge_tests": "8 passed (included in below targeted suite)",
+    "targeted_suite": "32 passed, 17 skipped, 4 pre-existing FastAPI deprecation warnings, 2 subtests passed",
+    "command": "PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test .venv/bin/python -m pytest -q backend/tests/test_hermes_case_files_metadata_bridge.py backend/tests/test_investigation_case_files.py backend/tests/test_hermes_case_files_v2_merge_scripts.py backend/tests/test_investigation_case_files_deploy.py",
+    "skips": "external PostgreSQL/notification DSN and real rebuild inputs not supplied; no database guarantees changed",
+    "local_container": "network=none; actual profile+file scope skills_list/skill_view passed; description present; no backend tools",
+    "old_schema_fault": "remove description from real loaded schema in memory; bridge handler refuses before HTTP",
+    "unchanged_asset_hashes": {
+      "gateway/platforms/api_server_runs.py": true,
+      "supportportal_file_context.py": true,
+      "supportportal_skill_profile.py": true,
+      "tools/skills_tool.py": true
+    }
+  },
+  "open_findings": [
+    {
+      "id": "HERMES-METADATA-01",
+      "status": "candidate_verified; independent code acceptance and Preproduction deployment pending"
+    }
+  ],
+  "preserved_boundaries": [
+    "No SupportPortal ECS or n8n changes",
+    "No Production",
+    "No case/session/run created",
+    "No Slack upload or Hermes/Zendesk/Zac business messages",
+    "No history replay",
+    "Original R1, live file/Automation/Zac and complete knowledge business gates retained"
+  ],
+  "raw_artifacts": ".deployments/hermes-metadata-readiness-v1",
+  "review_thread": "01a1349a-c8e9-7183-829d-6b158e735eb5"
+}
