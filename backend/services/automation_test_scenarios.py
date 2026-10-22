@@ -70,6 +70,38 @@ DETAILED_INVOICE_BODY = (
 )
 
 
+def _e1p_confirmation_content_check(content: str) -> str | None:
+    """Acceptance check (e1p-hermes-draft-carrier-v1 C3): the confirmation
+    states the request was received into the enablement review flow, never
+    claims enablement is done, promises no deadline, and never asks an
+    internal approver to reply."""
+    lowered = str(content or "").casefold()
+    received = any(
+        phrase in lowered
+        for phrase in (
+            "recorded your request", "received your request",
+            "thank you for requesting", "request has been received",
+            "submitted",
+        )
+    )
+    in_review = any(
+        phrase in lowered for phrase in ("review", "enablement", "processing")
+    )
+    if not (received and in_review):
+        return "confirmation does not state receipt into the enablement review flow"
+    close_claim = _no_affirmative_close_claim(content)
+    if close_claim:
+        return close_claim
+    if re.search(
+        r"\b(within|in)\s+(a\s+|a\s+few\s+)?\d*\s*(business\s+)?(hour|day|minute)",
+        lowered,
+    ) or "by tomorrow" in lowered:
+        return "confirmation promises a deadline"
+    if "approv" in lowered:
+        return "confirmation asks for approval (internal handoff wording)"
+    return None
+
+
 def _enablement_request_body() -> str:
     return (
         "Hello Agora team,\n\n"
@@ -1873,16 +1905,28 @@ class ScenarioEngine:
             if expected_turn_id is not None and str(row.get("turn_id") or "") != expected_turn_id:
                 return None
             comment_id = str(row.get("zendesk_comment_id") or "")
-            if comment_id and comment_id in ctx.baseline_comment_ids:
+            if comment_id and (
+                comment_id in ctx.baseline_comment_ids
+                or comment_id in ctx.seen_comment_ids
+            ):
                 # The -2min window can straddle the previous leg's delivery:
                 # only a comment id from THIS turn satisfies the wait (rows
                 # without an id are not bound — legacy scripted fixtures).
+                # seen ids are additionally excluded so a repeated wait
+                # within one turn can never re-count the same delivery
+                # (e1p-hermes-draft-carrier-v1 C6).
                 return None
             return row
 
-        row = self.wait_for(
-            "hermes draft reply delivered", probe, self.turn_timeout_min * 60
-        )
+        try:
+            row = self.wait_for(
+                "hermes draft reply delivered", probe, self.turn_timeout_min * 60
+            )
+        except TimeoutError as exc:
+            # A timed-out carrier wait must leave a recorded FAIL step, not an
+            # all-passed history that only the wrapper flags (C6).
+            self.record(ctx, step, False, str(exc))
+            raise
         ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
         ok = True
         detail = (
@@ -2128,8 +2172,41 @@ class ScenarioEngine:
             ctx, "internal_email_send_status", "not_applicable",
             "enablement auto path (no internal handoff email)",
         )
-        self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+        # Carrier contract (e1p-hermes-draft-carrier-v1, live 14183): the
+        # confirmation rides the Hermes draft pipeline to a delivered public
+        # Zendesk comment. The legacy submission_confirmation reply job is a
+        # hermes_persona compatibility identity at best — never a gate here.
+        self.wait_hermes_draft_delivered(
+            ctx, "submission confirmation delivered (hermes draft)",
+            content_check=_e1p_confirmation_content_check,
+        )
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+        self._observe_e1p_compatibility_job(ctx)
+
+    def _observe_e1p_compatibility_job(self, ctx: ScenarioContext) -> None:
+        """C5: the legacy reply job is an auxiliary observation only.
+
+        A missing job, a queued/persona job, or any other status records
+        nothing or a PASS observation — it can never fail this scenario.
+        """
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+        rows = self.db_query(
+            "SELECT job_id, status, payload->>'reply_intent' AS reply_intent "
+            "FROM support_account_reply_jobs "
+            "WHERE ticket_id = %s AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (ctx.client_ticket_id, since),
+        )
+        if not rows:
+            return
+        job = rows[0]
+        self.record(
+            ctx,
+            "compatibility reply job observed (auxiliary)",
+            True,
+            f"job={job.get('job_id')} status={job.get('status')} "
+            f"intent={job.get('reply_intent')}",
+        )
 
     def run_e3(self) -> None:
         """Preproduction enablement full lifecycle (E3).
