@@ -70,6 +70,38 @@ DETAILED_INVOICE_BODY = (
 )
 
 
+def _e1p_confirmation_content_check(content: str) -> str | None:
+    """Acceptance check (e1p-hermes-draft-carrier-v1 C3): the confirmation
+    states the request was received into the enablement review flow, never
+    claims enablement is done, promises no deadline, and never asks an
+    internal approver to reply."""
+    lowered = str(content or "").casefold()
+    received = any(
+        phrase in lowered
+        for phrase in (
+            "recorded your request", "received your request",
+            "thank you for requesting", "request has been received",
+            "submitted",
+        )
+    )
+    in_review = any(
+        phrase in lowered for phrase in ("review", "enablement", "processing")
+    )
+    if not (received and in_review):
+        return "confirmation does not state receipt into the enablement review flow"
+    close_claim = _no_affirmative_close_claim(content)
+    if close_claim:
+        return close_claim
+    if re.search(
+        r"\b(within|in)\s+(a\s+|a\s+few\s+)?\d*\s*(business\s+)?(hour|day|minute)",
+        lowered,
+    ) or "by tomorrow" in lowered:
+        return "confirmation promises a deadline"
+    if "approv" in lowered:
+        return "confirmation asks for approval (internal handoff wording)"
+    return None
+
+
 def _enablement_request_body() -> str:
     return (
         "Hello Agora team,\n\n"
@@ -266,6 +298,10 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class RelayPhaseTimeout(AutomationTestScenarioError):
+    """Test wait ended; no business mutation or cancellation is requested."""
+
+
 @dataclass
 class ScenarioStep:
     step: str
@@ -309,11 +345,26 @@ class ScenarioContext:
     # ticket comment listing are the persisted trigger records a reply job's
     # timestamp must be uniquely attributed against.
     customer_requester_id: str = ""
+    relay_phase_request_id: str = ""
+    relay_phase_request_version: int = 0
+    relay_phase_started_at: datetime | None = None
+    relay_phase_deadline: datetime | None = None
 
     def stamp_turn_baseline(self) -> None:
         self.baseline_turn_ids = set(self.seen_turn_ids)
         self.baseline_reply_job_ids = set(self.seen_reply_job_ids)
         self.baseline_comment_ids = set(self.seen_comment_ids)
+
+    def start_relay_phase(self, request_id: str, request_version: int, timeout_min: int) -> None:
+        self.relay_phase_request_id = str(request_id)
+        self.relay_phase_request_version = int(request_version)
+        self.relay_phase_started_at = now_utc()
+        self.relay_phase_deadline = self.relay_phase_started_at + timedelta(minutes=timeout_min)
+
+    def relay_remaining_seconds(self) -> int:
+        if self.relay_phase_deadline is None:
+            raise AutomationTestScenarioError("relay phase deadline has not started")
+        return max(0, (self.relay_phase_deadline - now_utc()).total_seconds())
 
 
 class ScenarioEngine:
@@ -457,6 +508,24 @@ class ScenarioEngine:
             # A failed expectation aborts the scenario: later waits would only
             # produce confusing timeouts.
             raise AssertionError(f"{step} failed: {detail}")
+
+    def _wait_with_context(self, ctx, description, probe, timeout_seconds):
+        try:
+            return self.wait_for(description, probe, timeout_seconds)
+        except TimeoutError as exc:
+            if ctx.relay_phase_deadline is not None:
+                detail = (
+                    f"relay phase timeout: request={ctx.relay_phase_request_id} "
+                    f"v{ctx.relay_phase_request_version}; {description}"
+                )
+                entry = ScenarioStep(description, "FAIL", detail)
+                self.steps.append(entry)
+                self.emit("step", entry.as_dict())
+                raise RelayPhaseTimeout(detail) from exc
+            raise
+
+    def _wait_budget(self, ctx: ScenarioContext, default_seconds: int) -> float:
+        return ctx.relay_remaining_seconds() if ctx.relay_phase_deadline is not None else default_seconds
 
     # -- I/O (instance methods so tests can script them) ---------------------
 
@@ -643,7 +712,7 @@ class ScenarioEngine:
             return None
 
         try:
-            self.wait_for(f"{field_name}={expected}", probe, self.turn_timeout_min * 60)
+            self._wait_with_context(ctx, f"{field_name}={expected}", probe, self._wait_budget(ctx, self.turn_timeout_min * 60))
             self.record(ctx, step, True, f"{field_name}={expected}")
         except TimeoutError as exc:
             row = self.case_row(ctx)
@@ -675,10 +744,10 @@ class ScenarioEngine:
                 return job
             return None
 
-        job = self.wait_for(
+        job = self._wait_with_context(ctx,
             f"reply job (expect {'|'.join(sorted(expected_intents))})",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         intent = str(job.get("reply_intent") or "")
@@ -730,10 +799,10 @@ class ScenarioEngine:
                 return job
             return None
 
-        job = self.wait_for(
+        job = self._wait_with_context(ctx,
             f"published {expected_intent} reply content",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         ctx.seen_reply_job_ids.add(str(job.get("job_id") or ""))
         content = str(job.get("content") or "")
@@ -1000,8 +1069,9 @@ class ScenarioEngine:
             return None
 
         try:
-            row = self.wait_for(
-                "zendesk delivery delivered (comment + PDF uploads)", probe, self.turn_timeout_min * 60
+            row = self._wait_with_context(ctx,
+                "zendesk delivery delivered (comment + PDF uploads)", probe,
+                self._wait_budget(ctx, self.turn_timeout_min * 60)
             )
             self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
         except TimeoutError as exc:
@@ -1031,8 +1101,9 @@ class ScenarioEngine:
             return rows[0]
 
         try:
-            row = self.wait_for(
-                "public zendesk comment delivered", probe, self.turn_timeout_min * 60
+            row = self._wait_with_context(ctx,
+                "public zendesk comment delivered", probe,
+                self._wait_budget(ctx, self.turn_timeout_min * 60)
             )
             ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
             self.record(ctx, step, True, f"zendesk_comment_id={row.get('zendesk_comment_id')}")
@@ -1620,10 +1691,10 @@ class ScenarioEngine:
                 return row
             return None
 
-        row = self.wait_for(
+        row = self._wait_with_context(ctx,
             f"hermes message_action={expected_action}",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         ctx.seen_turn_ids.add(str(row.get("turn_id") or ""))
         status = str(row.get("status") or "")
@@ -1716,10 +1787,10 @@ class ScenarioEngine:
                 return row
             return None
 
-        row = self.wait_for(
+        row = self._wait_with_context(ctx,
             f"Hermes workflow outcome={expected_outcome}",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         if binding_failure or row.get("_binding_error"):
             detail = binding_failure[-1] if binding_failure else str(row["_binding_error"])
@@ -1781,10 +1852,10 @@ class ScenarioEngine:
             )
             return rows[0] if rows else None
 
-        row = self.wait_for(
+        row = self._wait_with_context(ctx,
             f"Hermes compatibility job={job_id}",
             probe,
-            self.turn_timeout_min * 60,
+            self._wait_budget(ctx, self.turn_timeout_min * 60),
         )
         status = str(row.get("status") or "")
         intent = str(row.get("reply_intent") or "")
@@ -1873,16 +1944,35 @@ class ScenarioEngine:
             if expected_turn_id is not None and str(row.get("turn_id") or "") != expected_turn_id:
                 return None
             comment_id = str(row.get("zendesk_comment_id") or "")
-            if comment_id and comment_id in ctx.baseline_comment_ids:
+            if comment_id and (
+                comment_id in ctx.baseline_comment_ids
+                or comment_id in ctx.seen_comment_ids
+            ):
                 # The -2min window can straddle the previous leg's delivery:
                 # only a comment id from THIS turn satisfies the wait (rows
                 # without an id are not bound — legacy scripted fixtures).
+                # seen ids are additionally excluded so a repeated wait
+                # within one turn can never re-count the same delivery
+                # (e1p-hermes-draft-carrier-v1 C6).
                 return None
             return row
 
-        row = self.wait_for(
-            "hermes draft reply delivered", probe, self.turn_timeout_min * 60
-        )
+        try:
+            row = self._wait_with_context(
+                ctx,
+                "hermes draft reply delivered", probe,
+                self._wait_budget(ctx, self.turn_timeout_min * 60),
+            )
+        except TimeoutError as exc:
+            # Outside a relay phase the context wrapper re-raises without
+            # recording; a timed-out carrier wait must still leave a recorded
+            # FAIL step (C6), never an all-passed history.
+            if not any(
+                entry.step == step and entry.status == "FAIL"
+                for entry in self.steps
+            ):
+                self.record(ctx, step, False, str(exc))
+            raise
         ctx.seen_comment_ids.add(str(row.get("zendesk_comment_id") or ""))
         ok = True
         detail = (
@@ -1980,14 +2070,34 @@ class ScenarioEngine:
             return None
 
         try:
-            row = self.wait_for(
-                f"relay request {request_id} still active", probe, self.turn_timeout_min * 60
+            row = self._wait_with_context(ctx,
+                f"relay request {request_id} still active", probe, self._wait_budget(ctx, self.turn_timeout_min * 60)
             )
             self.record(
                 ctx, step, True,
                 f"request={row.get('request_id')} status={row.get('status')} "
                 f"v{row.get('request_version')}",
             )
+            return row
+        except TimeoutError as exc:
+            self.record(ctx, step, False, str(exc))
+            raise
+
+    def wait_relay_request_dispatched(self, ctx: ScenarioContext, request_id: str, step: str) -> dict:
+        def probe():
+            rows = self.db_query(
+                "SELECT request_id, status, request_version FROM support_enablement_relay_requests "
+                "WHERE request_id = %s AND ticket_id = %s AND request_version = %s",
+                (request_id, ctx.client_ticket_id, ctx.last_relay_request_version)
+            )
+            row = rows[0] if rows else None
+            return row if (row and str(row.get("status") or "") == "dispatched"
+                           and str(row.get("request_id") or "") == request_id
+                           and int(row.get("request_version") or 0) == ctx.last_relay_request_version) else None
+        try:
+            row = self.wait_for("relay request dispatched", probe, self.turn_timeout_min * 60)
+            ctx.start_relay_phase(request_id, int(row.get("request_version") or 0), self.relay_timeout_min)
+            self.record(ctx, step, True, f"request={request_id} v{row.get('request_version')}")
             return row
         except TimeoutError as exc:
             self.record(ctx, step, False, str(exc))
@@ -2020,10 +2130,10 @@ class ScenarioEngine:
             return rows[0] if rows else None
 
         try:
-            row = self.wait_for(
+            row = self._wait_with_context(ctx,
                 f"enablement relay result (expect {'|'.join(sorted(expected_outcomes))})",
                 probe,
-                self.relay_timeout_min * 60,
+                self._wait_budget(ctx, self.relay_timeout_min * 60),
             )
             outcome = str(row.get("outcome") or "")
             ok = outcome in expected_outcomes
@@ -2090,10 +2200,10 @@ class ScenarioEngine:
             return None
 
         try:
-            row = self.wait_for(
+            row = self._wait_with_context(ctx,
                 "next customer-visible product (reply job or hermes turn)",
                 probe,
-                self.turn_timeout_min * 60,
+                self._wait_budget(ctx, self.turn_timeout_min * 60),
             )
             detail = (
                 f"kind={row.get('kind')} intent={row.get('reply_intent')} "
@@ -2128,8 +2238,41 @@ class ScenarioEngine:
             ctx, "internal_email_send_status", "not_applicable",
             "enablement auto path (no internal handoff email)",
         )
-        self.wait_reply_intent(ctx, {"submission_confirmation"}, "submission confirmation reply")
+        # Carrier contract (e1p-hermes-draft-carrier-v1, live 14183): the
+        # confirmation rides the Hermes draft pipeline to a delivered public
+        # Zendesk comment. The legacy submission_confirmation reply job is a
+        # hermes_persona compatibility identity at best — never a gate here.
+        self.wait_hermes_draft_delivered(
+            ctx, "submission confirmation delivered (hermes draft)",
+            content_check=_e1p_confirmation_content_check,
+        )
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
+        self._observe_e1p_compatibility_job(ctx)
+
+    def _observe_e1p_compatibility_job(self, ctx: ScenarioContext) -> None:
+        """C5: the legacy reply job is an auxiliary observation only.
+
+        A missing job, a queued/persona job, or any other status records
+        nothing or a PASS observation — it can never fail this scenario.
+        """
+        since = (ctx.turn_started_at - timedelta(minutes=2)).isoformat()
+        rows = self.db_query(
+            "SELECT job_id, status, payload->>'reply_intent' AS reply_intent "
+            "FROM support_account_reply_jobs "
+            "WHERE ticket_id = %s AND created_at >= %s "
+            "ORDER BY created_at DESC LIMIT 1",
+            (ctx.client_ticket_id, since),
+        )
+        if not rows:
+            return
+        job = rows[0]
+        self.record(
+            ctx,
+            "compatibility reply job observed (auxiliary)",
+            True,
+            f"job={job.get('job_id')} status={job.get('status')} "
+            f"intent={job.get('reply_intent')}",
+        )
 
     def run_e3(self) -> None:
         """Preproduction enablement full lifecycle (E3).
@@ -2242,6 +2385,7 @@ class ScenarioEngine:
             ctx, "relay request created after confirmation"
         )
         turn4_request_id = str(turn4_request.get("request_id") or "")
+        self.wait_relay_request_dispatched(ctx, turn4_request_id, "relay request dispatched and relay phase started")
         self.wait_public_comment_delivered(ctx, "confirmation comment delivered to Zendesk")
         self._observe_reused_confirmation_reply_job(
             ctx, turn4_request,
@@ -2353,6 +2497,7 @@ class ScenarioEngine:
             step="not-found content asks to double-check the App ID, no enablement claim",
         )
 
+        ctx.relay_phase_deadline = None
         self.next_customer_turn(ctx, f"Thanks. The correct App ID is {E3_APPID_VALID}")
         self.wait_reply_intent(
             ctx, {"submission_confirmation"}, "re-submission confirmation (turn 7)"
@@ -2369,6 +2514,7 @@ class ScenarioEngine:
             turn7_request_id != turn4_request_id,
             f"v1={turn4_request_id} v2={turn7_request_id}",
         )
+        self.wait_relay_request_dispatched(ctx, turn7_request_id, "corrected relay request dispatched and relay phase started")
         self.emit_relay_approval_hint(ctx, timeout_min=self.relay_timeout_min)
         self.wait_enablement_relay_result(
             ctx, {"enabled", "already_satisfied"}, "relay result: enabled (turn 7 leg)",
@@ -2417,6 +2563,8 @@ class ScenarioEngine:
         request = self.wait_enablement_relay_request(
             ctx, "ownership mismatch relay request created"
         )
+        request_id = str(request.get("request_id") or "")
+        self.wait_relay_request_dispatched(ctx, request_id, "ownership relay request dispatched and relay phase started")
         self.wait_public_comment_delivered(
             ctx, "ownership submission confirmation delivered"
         )
@@ -2425,7 +2573,7 @@ class ScenarioEngine:
             ctx,
             {"ownership_mismatch"},
             "relay result: ownership mismatch (ownership turn 3)",
-            request_id=str(request.get("request_id") or ""),
+            request_id=request_id,
         )
         self.wait_reply_intent(
             ctx,

@@ -996,7 +996,7 @@
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
-              "Input": "={{ $('Slack Trigger').item.json }}"
+              "Input": "={{ (() => { const x = $('Slack Trigger').item.json; return { type: x.type, subtype: x.subtype || null, team: x.team, channel: x.channel, thread_ts: x.thread_ts || null, ts: x.ts || null, event_ts: x.event_ts || null, user: x.user || null, parent_user_id: x.parent_user_id || null, bot_id: x.bot_id || null, text: String(x.text || ''), files: Array.isArray(x.files) ? x.files : [], client_msg_id: x.client_msg_id || null, event_id: x.event_id || null }; })() }}"
             },
             "matchingColumns": [
               "test"
@@ -1013,7 +1013,7 @@
               }
             ],
             "attemptToConvertTypes": false,
-            "convertFieldsToString": true
+            "convertFieldsToString": false
           },
           "options": {}
         },

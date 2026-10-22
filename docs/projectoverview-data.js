@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-21T09:59:01Z",
-  "source_base_commit": "05b29d4d98aa4956fcdea8d314ec6bf1c3146f9f",
-  "registry_digest": "6a047d7c728c45c5c2dbc57a9f1b9069bd0d449d4886b2a05ec0e6ad7b2f922e",
+  "generated_at": "2026-10-22T08:09:55Z",
+  "source_base_commit": "1e75eba407198ff0a2e5aeb485ae9491f1481bed",
+  "registry_digest": "1803f2c4993f8744b6684244edd5025c15050a4a7bc511946b8312b2f7981513",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1636,6 +1636,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         },
         {
           "type": "document",
+          "url": "docs/plans/investigation-case-files-hermes-metadata-readiness.md",
+          "label": "Hermes metadata readiness v4方案：人类已选受控EFS单Skill发布；v3部署失败/恢复独立复核保留；v4方案已通过；本地实现完成待完整代码验收"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
+          "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+          "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+          "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+          "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
+        },
+        {
+          "type": "document",
           "url": "docs/plans/hermes-fixed-task-comment-action-r4.md",
           "label": "r4 contract/evidence record"
         },
@@ -1839,6 +1856,27 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
         },
         {
+          "type": "test",
+          "label": "真实 E3 #14179（run4）：原始日志 24 步 PASS + 1 步 FAIL（turn 6 relay 审批等待超时）；turn 1-5b 的 23 个业务步骤全 PASS（含 turn 4 现代化载体与 turn 5/5b）；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包",
+          "url": "https://agoraio.zendesk.com/agent/tickets/14179"
+        },
+        {
+          "type": "pr",
+          "label": "PR#1536（E3 turn-4 载体现代化）与 PR#1537（reply-only compatibility_relay_required 缺陷修复，随 r20261021-21cceb2-replyonly-v1 部署）",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1537"
+        },
+        {
+          "type": "deployment",
+          "label": "C1 继承 provenance 分层补证：两发布 evidence.json(native_hermes_config.provenance=explicit×4, shell 层) 与 case-config-resolution.json(inherited_live[_hermes]×4, pipeline 层) 值链一致——调用方 argv 无 case 旗标→pipeline 解析→显式透传→渲染回读同值",
+          "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/case-config-resolution.json"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布与业务验证（2026-10-22，enablement-relay-result-integrity-v1）",
+          "command": "release_automation_ecs_pipeline --release-commit 2e2d3ba599f78b18da0f90ea9c569361dbcbdf70 --prompt-release-id pr-88298d4e0a3f --through preproduction --enablement-workflow-mode archer（hermes 配置继承）→ E1P 观察 → E3 全链（新工单 14194，含 relay 腿 staged 审批）",
+          "result": "r20261021-2e2d3ba 上线：evidence complete；api:171/route:167/worker:170 全 PRIMARY 1/1，镜像 digest 三侧与 publish record 一致（worker=b740f075…），worker env release id=r20261021-2e2d3ba；顺带生效 gpt-6.1-sol 模型 pin（既定'下次部署生效'项）。E1P（14183）：业务链健康（确认经 Hermes draft 公开投递），[ABORTED]+exit2=旧 reply-job 断言载体过期（非业务失败，与 E1P 范围外，登记后续）；工单已 solved。E3（14194，--turn-timeout-min 60）：29/29 全 PASS [PASSED]，含新载体 turn4（review_requested/确认投递/relay 申请/公开评论）与 relay 腿闭环——executor 发送 kind:text 规范结果（builder 生成+哈希核对），新 worker 正确消费：申请 completed(ownership_mismatch)、结果落库 applied、专属回复 published+公开投递 54853544502804、工单 solved、relay 任务 completed/goal_met（合法业务结果的正确终态）。14184 观察单（22 PASS 后 relay 审批窗口超时）已 solved 收尾，结果未发送。剧本缺口登记：E1P 末步旧载体；relay 结果等待用 turn 预算（14184 实证）。"
+        },
+        {
           "type": "decision",
           "label": "代码验收通过（2026-10-21，enablement-relay-result-integrity-v1）",
           "command": "验收方复跑：SP 定向回归 172 passed/1 skipped（skip=本地无 PG；隔离 PG 关键测试 1 passed）；AgentRelay 309 passed/0 failed+smoke；compileall/diff --check/Node 语法通过",
@@ -1976,7 +2014,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 52,
-      "done_count": 25,
+      "done_count": 26,
       "blocked_count": 2
     },
     {
@@ -18142,19 +18180,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "title": "Investigation 附件闭环 v1",
-      "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
+      "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放；v4部署失败/恢复已独立复核。新增Exec readback carrier v1：health/toolsets拆分会话、逐会话marker/EOF/超时/JSON fail-closed验证，代码待独立验收，云端未重试，真实文件测试仍不可开始。",
       "status": "blocked",
-      "next_action": "R2-V2-B1-REPRO 已通过独立复验并 finalize 收口（PR#1529）；回归 v2 启用轮主证据链（PR#1527=main 762ef889、Hermes td54/7df5f3a3、14147/14151）。剩余独立门禁保持 waiting-for-evidence：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争。",
+      "next_action": "先对新的Hermes Exec readback carrier v1做完整代码独立验收（Draft PR、完整HEAD、8项本地测试）；通过后在稳定TD54只读复现两个独立会话，再使用全新release ID重新做Preproduction Hermes/EFS readiness。任何失败恢复TD54/旧EFS后再交独立部署复核；不得真实文件测试。",
       "owner": "agent",
       "created_at": "2026-10-09",
-      "updated_at": "2026-10-21",
+      "updated_at": "2026-10-22",
       "acceptance_criteria": [
         "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
         "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
       ],
       "blockers": [
         "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+        "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+        "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。"
       ],
       "evidence": [
         {
@@ -18268,6 +18307,23 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "document",
           "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
           "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+        },
+        {
+          "type": "document",
+          "url": "docs/plans/investigation-case-files-hermes-metadata-readiness.md",
+          "label": "Hermes metadata readiness v4方案：人类已选受控EFS单Skill发布；v3部署失败/恢复独立复核保留；v4方案已通过；本地实现完成待完整代码验收"
+        },
+        {
+          "type": "deployment",
+          "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
+          "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+        },
+        {
+          "type": "test",
+          "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+          "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+          "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+          "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
         }
       ]
     },
@@ -19393,10 +19449,10 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "14152 部署默认保留 native Hermes 与会话内再执行措辞进度修正（E3 精确回合）",
       "summary": "两个合同：(1) Preproduction 发布未指定 --automation-case-engine 时默认继承当前 Route/API/Worker 的 native Hermes 配置（engine 仅继承可读 hermes；agent/persona/typed workflow 继承实际挂载状态；缺失/冲突/不可读一律 fail-closed 要求显式旗标；显式 legacy 保留既有降级授权门；新增 --hermes-persona-disabled；发布证据记录 native_hermes_config 四字段与 provenance）——根治 2026-10-21 r20261021-ebb59c8 两次人工旗标误用（enablement=manual 遗漏既有 archer 等）。(2) 14152 回归：客户在 enablement 会话中段再次要求开通（Could you help me enable the permission now?）不再 superseded→RAG fallback 转人工，而是服务端修正为进度追问——reply-sync（legacy 轮询路径）从绑定 manual review reply job 或 relay request 的真实状态生成 progress_inquiry_answer 回复（确定性 provided_answer+Persona 措辞，不承诺加速/完成时间）；native hermes 路径 tool_record_direction 对 backend_operation(enable) 提案、agent 对 continue_task message_action 同样状态门控修正为 conversation_followup/progress_inquiry 或 report_progress，绑定不可读/终态 fail-closed 转人工；E3 在 relay request 建立后、终态前新增精确回合（保留原礼貌催促为对照），断言 comment↔turn 绑定、report_progress、单一 relay request、无 RAG fallback。",
       "status": "active",
-      "next_action": "已完成：代码合入 main（PR#1532=4c728884，2026-10-21）；Preproduction 发布 r20261021-4c72888-hermes-default-v1 经 C1 继承路径部署成功（发布命令未传任何 case 旗标，pipeline 从 live Route/API/Worker 解析继承 hermes/agent/persona/disabled，case-config-resolution.json 四项 provenance=inherited_live[_hermes]；deploy 全阶段 passed，rollback not_started）；实时回读 route:164 engine=hermes、api:168/worker:167 typed=disabled+agent+persona 凭据、health ready/release=ok 同 release、digests observed-match ×3、prompt pr-88298d4e0a3f active。真实 E3（turn 5b 精确回合实跑）待单独授权；存量失败簇（handoff note_comment_id、conversation 累计）另线修复",
+      "next_action": "独立验收分层结论（2026-10-22）：代码与 C6 turn 5b 通过；Preproduction 运行部署通过但继承 provenance 证据矛盾（本条已更正，见下）；E3 完整 turn 1-7 未通过（turn 6 relay 审批 240 分钟超时中止，exit 2）；整体证据不足，p2-208 保持 active。【步数口径更正】真实 E3 #14179 原始日志为 24 步 PASS + 1 步 FAIL（第 25 步=turn 6 relay 等待超时）；此前登记的'23 步全部 PASS'应为'turn 1-5b 的 23 个业务步骤全 PASS'，不作为日志总计。【继承 provenance 补证】r20261021-4c72888-hermes-default-v1 与 r20261021-21cceb2-replyonly-v1 两个发布中 evidence.json 的 native_hermes_config.provenance=explicit×4 是 shell 层视角：pipeline 在入口完成继承解析（调用方 argv 不含任何 case 旗标）后将解析值以显式旗标透传给 deploy 子进程，shell 按显式值记录；继承决策的权威证据是 release state 的 case-config-resolution.json（inherited_live[_hermes]×4，绑定 release id/commit）+ 调用方 argv（发布脚本无 case 旗标）。两份记录分属两层、值链一致（解析值=透传值=渲染回读值），此前登记未写明分层导致表面矛盾。后续如需单一权威字段，可在 pipeline 将 provenance 透传至 deploy 证据（验收已注明当前无需改代码）。剩余门：E3 turn 6/7 补跑需新开 E3 并在窗口内执行 approve_execution×2（enr-AC-14179-v1 窗口已过期，11-04 自然失效）；四张测试工单清理待用户决策",
       "owner": "agent",
       "created_at": "2026-10-21",
-      "updated_at": "2026-10-21",
+      "updated_at": "2026-10-22",
       "acceptance_criteria": [
         "C1 Preproduction 发布未指定 engine 且当前 Route 定义可读为 hermes → 继承 hermes 并保留 agent/persona；当前配置缺失/冲突/不可读 → fail-closed 要求显式指定",
         "C2 显式 legacy 视为降级操作，继续使用既有 Hermes→legacy 授权门禁；无授权发布前拒绝",
@@ -19436,6 +19492,21 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "type": "deployment",
           "label": "r20261021-4c72888-hermes-default-v1（C1 继承路径实跑：无 case 旗标→live 继承 hermes/agent/persona/disabled；全阶段 passed；实时回读 route:164/api:168/worker:167 + health ok）",
           "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/preproduction-deploy/evidence.json"
+        },
+        {
+          "type": "test",
+          "label": "真实 E3 #14179（run4）：原始日志 24 步 PASS + 1 步 FAIL（turn 6 relay 审批等待超时）；turn 1-5b 的 23 个业务步骤全 PASS（含 turn 4 现代化载体与 turn 5/5b）；run4 日志 /tmp/e3_p2_208_run4.log 与 DB 只读证据包",
+          "url": "https://agoraio.zendesk.com/agent/tickets/14179"
+        },
+        {
+          "type": "pr",
+          "label": "PR#1536（E3 turn-4 载体现代化）与 PR#1537（reply-only compatibility_relay_required 缺陷修复，随 r20261021-21cceb2-replyonly-v1 部署）",
+          "url": "https://github.com/ZilingXie/SupportPortal/pull/1537"
+        },
+        {
+          "type": "deployment",
+          "label": "C1 继承 provenance 分层补证：两发布 evidence.json(native_hermes_config.provenance=explicit×4, shell 层) 与 case-config-resolution.json(inherited_live[_hermes]×4, pipeline 层) 值链一致——调用方 argv 无 case 旗标→pipeline 解析→显式透传→渲染回读同值",
+          "url": ".deployments/ecs-pipeline-r20261021-4c72888-hermes-default-v1/case-config-resolution.json"
         }
       ]
     },
@@ -19443,15 +19514,15 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 1,
       "task_id": "p2-209",
       "title": "Enablement relay 结果完整性：发送端 part 契约、无效结果失败收尾、E3 现行载体与退出码（enablement-relay-result-integrity-v1）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
       "function_id": "automation-execution-loop",
       "created_at": "2026-10-21",
-      "updated_at": "2026-10-21",
+      "updated_at": "2026-10-22",
       "summary": "14158 事故修复：本地执行器回传 part 用 type 而非 kind 被 worker 解析器拒收后仍 ACK+complete（goal_met），申请搁置无失败交接。双仓修复：AgentRelay 发送入口 part/结果校验+标准结果构造；SP worker 无效结果走显式失败终态（fail_task）+失败/人工接管链+CAS+幂等；E3 第 4 回合改用现行 Hermes draft/delivery 载体；剧本包装器中止必须非零退出；skill/文档钉死 kind:text；DSN 输出三格式脱敏检测（密码不轮换）。14158 不重放；不触 Production。",
-      "next_action": "代码验收通过→收口：合并 SP#1535+AgentRelay#103→仅 Preproduction 发布（worker 含修复、digest 一致）→最小 synthetic enablement→新 E3 工单；失败立即停止；14158 不重放。",
+      "next_action": "p2-209 收口完成（代码验收→合并 SP#1535=main 2e2d3ba5+AgentRelay#103=main 66062e4→r20261021-2e2d3ba 发布→E1P 观察+E3 29/29 全链 PASS）。遗留后续项：E1P 末步载体现代化、E3 relay 腿等待预算与 240min 提示不一致、DSN 密码轮换（用户独立决定）。",
       "acceptance_criteria": [
         "错误 type 消息在 AgentRelay 发送端被阻断（含负控）",
         "无效结果到达 SP 时不按成功关闭，进入明确失败/人工接管链，不产生客户完成回复",
@@ -19461,6 +19532,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布与业务验证（2026-10-22，enablement-relay-result-integrity-v1）",
+          "command": "release_automation_ecs_pipeline --release-commit 2e2d3ba599f78b18da0f90ea9c569361dbcbdf70 --prompt-release-id pr-88298d4e0a3f --through preproduction --enablement-workflow-mode archer（hermes 配置继承）→ E1P 观察 → E3 全链（新工单 14194，含 relay 腿 staged 审批）",
+          "result": "r20261021-2e2d3ba 上线：evidence complete；api:171/route:167/worker:170 全 PRIMARY 1/1，镜像 digest 三侧与 publish record 一致（worker=b740f075…），worker env release id=r20261021-2e2d3ba；顺带生效 gpt-6.1-sol 模型 pin（既定'下次部署生效'项）。E1P（14183）：业务链健康（确认经 Hermes draft 公开投递），[ABORTED]+exit2=旧 reply-job 断言载体过期（非业务失败，与 E1P 范围外，登记后续）；工单已 solved。E3（14194，--turn-timeout-min 60）：29/29 全 PASS [PASSED]，含新载体 turn4（review_requested/确认投递/relay 申请/公开评论）与 relay 腿闭环——executor 发送 kind:text 规范结果（builder 生成+哈希核对），新 worker 正确消费：申请 completed(ownership_mismatch)、结果落库 applied、专属回复 published+公开投递 54853544502804、工单 solved、relay 任务 completed/goal_met（合法业务结果的正确终态）。14184 观察单（22 PASS 后 relay 审批窗口超时）已 solved 收尾，结果未发送。剧本缺口登记：E1P 末步旧载体；relay 结果等待用 turn 预算（14184 实证）。"
+        },
         {
           "type": "decision",
           "label": "代码验收通过（2026-10-21，enablement-relay-result-integrity-v1）",
@@ -24828,7 +24905,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "Hermes 调查链第一版（p2-154，Preproduction）：调查 work run 加载 case context 与 Tencent memory 工具（supportportal_work+common+memory toolset）；调查回合结束后 turn 收口为 awaiting_investigation_review，调查结果（summary/evidence/blockers/next_steps）直达工程师 Slack 频道；工程师在 dashboard 审阅通过完备性检查（summary 非空、无未解决 blockers、revision 未过期）后点「继续生成客户回复」，系统在同一 session/revision 开启 investigation_reply turn 续跑 persona→guardrail→人工审批→发送。Slack 原生线程流（p2-154 v1.2）：每 investigation case 发一条根消息（case opened 四行头）并绑定 Slack thread，调查结果（带 [Prepare draft]）、guardrail 通过后的草稿（带 [Approve & send]）、失败原因全部作为同一线程回复；工程师在线程 @bot 回 feedback 即触发再调查（investigation_feedback turn 仅 work、park 后新结果回线程）；按钮/反馈回调经更新版 n8n interaction/mention workflow 按 environment 分流；消息四行头取最近客户评论与 turn 稳定路由方向（investigation→technical）+持久化模型理由。persona phase 分层拼装（p2-157，Preproduction）：客户回复统一出口按 [核心不变量+人格库（Sid Warm/Bright/Precise，per-ticket 粘性分配）+渲染规则 v2+按路由回复合同] 拼装生成，人格解析失败 fail-open 默认人格；guardrail 与投递分流不变。多子 Agent 调查（设计 tab #08 全量）为后续版本。调查检索源第一块（p2-156，Preproduction）：调查 work 回合可直接查 Agora Argus 真实通话数据——argus_call_search 插件六工具（会话搜索/详情/用户会话/counter/event/VoQA）挂 common toolset 随调查回合自动下发，API key 经 SSM→task definition secret 注入，已端到端实证（模型回报的 callId 经 Argus 复核真实存在）。草稿审批消息显示草稿全文（p2-171，Preproduction）：Slack draft-pending 消息直发完整草稿内容（原 700 字符无标记预览截断已去除，Slack 即主审批面）。调查知识面（p2-158，Preproduction）：55 项 Agora 内部排障/调查技能（token/AVSync/静音/卡顿/首帧/codec/QoE 等，源出 agora-skills 私仓，剔 argus 与全部凭证文件）已装载 hermes 用户技能目录（EFS /opt/data/skills，dashboard /skills 可见，技能索引自动进调查回合 system prompt；skill_view 已于 p2-170 对全部调查/反馈回合开放——调查回合可直接读取已装载技能的枚举速查表（quit 状态/错误码/counter ID）与排障流程参考，弥补“遥测查到了却解不出枚举语义”的缺口）。Slack ad-hoc 会话（p2-161，Preproduction）：工程师在未绑定 case 的线程 @bot 即开一场无工单的 Hermes 问答会话——新端点把该线程绑定为合成工单（99 前缀 15 位，session_kind=adhoc）并跑首个 work-only 调查回合，结论以无按钮消息直接回在该线程（full 装备：Argus 工具+agora 技能 skill_view+memory）；此后同线程再 @ 自动走既有 investigation_feedback 再调查流；draft/审批/Zendesk 投递对 ad-hoc 会话结构性关闭；附带修复 reviewer_feedback 不进 run 输入的既有缺口（惠及真实 case 的 feedback 回合）。",
         "调查 Wiki 检索（p2-177，Preproduction 已验证；Production 未推广）：Hermes investigation/ad-hoc Work 回合按 Agent 固定资产绑定分页发现 Wiki，仅搜索和读取已绑定页面；结果保留 Wiki ID 与页面路径，长页可续读，部分失败显式报告。历史文章保留来源，不自动裁定当前 SDK 最新版本。",
         "原生 Investigation 续轮与关闭（p2-190，Preproduction 技术发布通过，最终运行验收方式待用户确认）：首次有效 Investigation 后客户消息在原 session/thread 仅跑 work，工程师可见完整原文；ticket.updated 状态与通知 intent 同事务保存，未知发送结果不自动重发。可信工程师明确 `close the case` 可调用已注册 work tool/skill 将绑定票设为 solved，无客户自动回复；客户感谢/请求关闭、引用与历史均不赋权。SP/Hermes/n8n 版本与工具/技能实际回读通过；没有授权隔离业务 fixture，自然闭环样本未验证。",
-        "Investigation 附件闭环 v1（p2-192，既有代码验收保留；发布修复及完整业务证据未闭环，n8n 附件入口已补 Preproduction Hermes binding gate）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。Production-bound 与未绑定附件显式忽略，不进入 adhoc；旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。R2 统一管理名称、Slack Map、绑定 Investigation 文件工具/Skill与显式审批附件快照已实现待独立代码验收，未部署；Zac真实获取等待证据。",
+        "Investigation 附件闭环 v1（p2-192，既有代码验收保留；发布修复及完整业务证据未闭环，n8n 附件入口已补 Preproduction Hermes binding gate）：客户附件到绑定 Slack thread；工程师文字+文件+@Hermes 绑定当前 turn/draft，审批后正文和全部附件一次发送到 Zendesk。Production-bound 与未绑定附件显式忽略，不进入 adhoc；旧版本拒发，未知结果先精确回读，不使用 S3、不保存二进制、不自动读图。R2统一管理名称、Slack Map、绑定Investigation文件工具/Skill与审批快照已有独立代码及v2范围验收；metadata/bot和schema列级部署回读通过。Hermes v3部署失败/TD54恢复已独立复核；人类已授权受控EFS单Skill更新，readiness v4方案已独立验收，单Skill发布器/served-content探针与真实loader本地回归完成，待完整代码独立验收，尚未再次部署，尚不可开始真实文件测试；原R1、未覆盖业务和Zac门禁保留。",
         "Enablement 的 Media Relay 请求默认走人工开通流程：客户确认回复公开送达后发送内部开通邮件，人工在 Archer 开通并回复 enabled 后 AI 发布完成回复并关单（p2-149 起回退自动直连）；Archer 自动开通保留为可切换模式 `ENABLEMENT_WORKFLOW_MODE=archer`（manual 为默认，p2-163 起 auto 经 AgentRelay 派发、Mac Pilot 执行：四步执行+两次审批+独立回读、load=10 不降配、ECS 零 Archer 写入、失败进统一失败链，切换入口不变）。",
         "AI 持有的 enablement 会话支持中段追问的受限自动答复（p2-178，Preproduction）：知识问句经可信 docs 检索由 Persona 生成一次公开答案（附参考来源），进度催促按绑定的 relay 申请实际状态作答且不承诺加速；无可信依据、状态不可确认或明确要求人工决定时完成真实人工交接（私有 note+回原队列+负责人通知），已完成人工交接的工单不再被后续客户评论自动夺回；relay 查无项目改发专门回复并保持自动化持有，客户更正 App ID 即开新版本申请。",
         "对话支持上传图片和 txt/log/md 文件。",

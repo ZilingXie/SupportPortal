@@ -100,7 +100,7 @@ rtk proxy python -m pytest -q -rs backend/tests/test_automation_ecs_store_postgr
 
 [Production 工单回归 Runbook](../testing/production_ticket_regression_runbook.md) 的明确范围是 legacy `/production`；[EC2 Nginx](../../deployment/nginx/supportportal.conf) 将 `/automation/test/` 指向这一链路。不能直接用它证明 ECS Preproduction 或 ECS Production 的业务验收。
 
-[CLI](../../scripts/testing/production_ticket_scenarios.py) 与网页共用 [ScenarioEngine](../../backend/services/automation_test_scenarios.py)，会加载配置。`--list` 列举剧本，`--check` 连接 DB/SMTP/IMAP 但不发信；`--scenario` 会运行真实业务链路。2026-10-21（p2-209）：E3 第 4 回合以现行 Hermes draft/delivery 载体断言（relay request + 已投递公开草稿评论；旧 `submission_confirmation` reply job 仅辅助观察）；包装器对中止/审批超时/记录失败一律非零退出（`passed/aborted/waiting_for_human/failed` 分态输出），不再出现"已记录步骤全 PASS 即 exit 0"。现有 CLI 的显式选项为 `E1/E2/F1/S1/all`，引擎另有 `D1`；选取方式以当前 CLI 和网页实现为准。
+[CLI](../../scripts/testing/production_ticket_scenarios.py) 与网页共用 [ScenarioEngine](../../backend/services/automation_test_scenarios.py)，会加载配置。`--list` 列举剧本，`--check` 连接 DB/SMTP/IMAP 但不发信；`--scenario` 会运行真实业务链路。2026-10-22（e1p-hermes-draft-carrier-v1）：E1P 最终确认同样改用 Hermes draft+公开投递载体断言（含确认语义内容检查：已收到/进入 review、不声称已启用、不承诺时限、不含审批措辞），旧 `submission_confirmation` reply job 降为辅助观察；draft/public-delivery 等待超时会记录 FAIL 步骤（不再出现“已记录步骤全 PASS 即 exit 0”）。2026-10-21（p2-209）：E3 第 4 回合以现行 Hermes draft/delivery 载体断言（relay request + 已投递公开草稿评论；旧 `submission_confirmation` reply job 仅辅助观察）；包装器对中止/审批超时/记录失败一律非零退出（`passed/aborted/waiting_for_human/failed` 分态输出），不再出现"已记录步骤全 PASS 即 exit 0"。现有 CLI 的显式选项为 `E1/E2/F1/S1/all`，引擎另有 `D1`；选取方式以当前 CLI 和网页实现为准。
 
 ECS Preproduction 的 PP 剧本（PP-EN-QUICK、PP-EN-DUP）不走上述 legacy 链路，而是独立 CLI `python -m scripts.testing.preproduction`（故意不注册进 `/automation/test` 控制台）；前置按场景分档（DUP 不需要 pilot/relay 客户端），命令与通过标准见同一 Runbook §9。
 

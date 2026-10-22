@@ -5,19 +5,20 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "R1：客户 Zendesk 附件到 Slack；工程师文字+文件+@Hermes绑定 turn/draft，审批后随公开正文送 Zendesk。不使用 S3、不保存二进制、不自动读图。 R2：Slack Map统一名称、受限Hermes文件工具/Skill、显式审批快照；独立代码验收通过；Preproduction schema 016 与 API/Route/Worker 已发布，文件保持关闭，无附件 synthetic 14057 关闭状态 C1-C6 独立验收通过。启用文件链路尚未部署。2026-10-20 启用前证据轮：当前线上 r20261019-21c6eed 全关闭复核（live 422 三入口、Map 0、Hermes 无文件 Skill/toolset）、当前 main 主套件 290/0 含隔离 PG、bundle 五门禁 passed；发现 overlay 插件目录覆盖 live zac consult 差异风险与并发发布车辆 r20261020-8e8e495，均记录为启用前置。 2026-10-20 v2 启用轮执行完成待独立验收：三方合并 Hermes overlay（ zac consult 保留）+ 修复 PR#1524（case_task investigation 方向提升 binding）+ 两次 Preproduction 发布（现行 r20261020-0bd735e-case-files-enable-r2，开关=1）+ 14147 代表性闭环（Map/list·read·search/快照/Zendesk 评论 54778303456916+附件）+ live 负向；C1-C6 通过，C7 继续 waiting-for-evidence。 R2-V2-B1 修复后第二轮独立验收通过（PR#1527 HEAD bc8d31f2，范围=修复+C1-C6）；开放边界如实保留（人类上传传输跳、Automation live 反向、C7、Production、R1 门禁）。",
+  "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放；v4部署失败/恢复已独立复核。新增Exec readback carrier v1：health/toolsets拆分会话、逐会话marker/EOF/超时/JSON fail-closed验证，代码待独立验收，云端未重试，真实文件测试仍不可开始。",
   "status": "blocked",
-  "next_action": "R2-V2-B1-REPRO 已通过独立复验并 finalize 收口（PR#1529）；回归 v2 启用轮主证据链（PR#1527=main 762ef889、Hermes td54/7df5f3a3、14147/14151）。剩余独立门禁保持 waiting-for-evidence：Slack→n8n 真实人类上传路径、Automation 路径 live 反向调用、C7 Zac 真实文件接口/样本、Production 单独授权；观察项=工单自动 solve 与审批时序竞争。",
+  "next_action": "先对新的Hermes Exec readback carrier v1做完整代码独立验收（Draft PR、完整HEAD、8项本地测试）；通过后在稳定TD54只读复现两个独立会话，再使用全新release ID重新做Preproduction Hermes/EFS readiness。任何失败恢复TD54/旧EFS后再交独立部署复核；不得真实文件测试。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-21",
+  "updated_at": "2026-10-22",
   "acceptance_criteria": [
     "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
     "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
   ],
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
-    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。"
+    "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
+    "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。"
   ],
   "evidence": [
     {
@@ -131,6 +132,23 @@
       "type": "document",
       "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
       "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+    },
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-case-files-hermes-metadata-readiness.md",
+      "label": "Hermes metadata readiness v4方案：人类已选受控EFS单Skill发布；v3部署失败/恢复独立复核保留；v4方案已通过；本地实现完成待完整代码验收"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
+      "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+    },
+    {
+      "type": "test",
+      "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+      "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+      "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+      "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
     }
   ]
 }

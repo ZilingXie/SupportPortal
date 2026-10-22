@@ -9,6 +9,7 @@ from uuid import uuid4
 import psycopg
 import pytest
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 from backend.automation_ecs_route_worker import RouteWorker
 from backend.repositories.ticket_repository import PostgresTicketRepository
@@ -16,6 +17,7 @@ from backend.services.automation_ecs_contracts import DeliveryStatus, JobKind
 from backend.services.automation_ecs_contracts import SCHEMA_REVISION
 from backend.services.automation_ecs_runtime import AutomationEcsSettings
 from backend.services.automation_ecs_store import PostgresAutomationEcsStore
+from backend.services.investigation_case_file_store import FILE_TABLE_DDL
 from backend.tests.test_automation_ecs_route_worker import _decision
 from backend.tests.test_automation_ecs_store import _event
 
@@ -296,6 +298,37 @@ def test_postgres_binding_without_env_stays_unpinned(store: PostgresAutomationEc
     binding = store.get_hermes_case_binding("123")
     assert binding is not None
     assert binding["agent_model"] is None
+
+
+def test_postgres_case_file_metadata_schema016_roundtrip_and_unique(store: PostgresAutomationEcsStore) -> None:
+    with store._connect() as connection, connection.cursor() as cursor:
+        cursor.execute(sql.SQL("SELECT column_name FROM information_schema.columns WHERE table_schema=%s AND table_name='investigation_case_files' AND column_name='short_description'"), (store.settings.db_schema,))
+        assert cursor.fetchone()['column_name'] == 'short_description'
+    first = store.register_case_file(case_id='pg-case', source_system='zendesk', source_file_id='same',
+        original_filename='customer.zip', content_type='application/zip', size_bytes=3, purpose='customer', provenance={'channel_id':'C','thread_ts':'1','source_event_id':'e'})
+    second = store.register_case_file(case_id='pg-case', source_system='zendesk', source_file_id='same',
+        original_filename='customer.zip', content_type='application/zip', size_bytes=3, purpose='customer', provenance={'channel_id':'C','thread_ts':'1','source_event_id':'e'})
+    assert first['id'] == second['id']
+    assert second['short_description'].startswith('Customer attachment ')
+    updated = store.update_case_file('pg-case', first['id'], short_description='Customer supplied log')
+    assert updated['short_description'] == 'Customer supplied log'
+    assert store.get_case_file('pg-case', first['id'])['short_description'] == 'Customer supplied log'
+
+
+def test_postgres_schema016_additive_upgrade_preserves_legacy_case_file() -> None:
+    schema = f"supportportal_production_ecs_test_{uuid4().hex[:10]}"
+    _seed_schema_revision(schema, "automation-ecs-001")
+    value = _migration_store(schema)
+    try:
+        with psycopg.connect(DSN) as connection, connection.cursor() as cursor:
+            legacy_ddl = FILE_TABLE_DDL.replace("    short_description TEXT NOT NULL DEFAULT '',\n", "")
+            cursor.execute(sql.SQL("CREATE TABLE {} ({})").format(sql.Identifier(schema, 'investigation_case_files'), sql.SQL(legacy_ddl)))
+            cursor.execute(sql.SQL("INSERT INTO {} (namespace, case_id, source_system, source_file_id, original_filename, managed_filename, content_type, size_bytes, purpose, provenance) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)").format(sql.Identifier(schema, 'investigation_case_files')), (value.settings.job_namespace, 'legacy-case', 'zendesk', 'legacy-file', 'customer.log', 'legacy-zendesk-1.log', 'text/plain', 3, 'customer', Jsonb({'channel_id':'C','thread_ts':'1','source_event_id':'legacy'})))
+        value.migrate()
+        row = value.list_case_files('legacy-case')[0]
+        assert row['short_description'] == 'Customer attachment legacy-zendesk-1.log'
+    finally:
+        _drop_schema(schema)
 
 
 def test_postgres_turn_run_pins_model_and_effort_once(store: PostgresAutomationEcsStore) -> None:

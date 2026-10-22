@@ -1,0 +1,6 @@
+ARG HERMES_BASE_IMAGE
+FROM ${HERMES_BASE_IMAGE}
+# Apply to the verified live immutable digest. Preserve gateway, context,
+# plugin registration, Investigation profiles and all other image assets.
+COPY case_files_bridge.py /opt/hermes/plugins/supportportal_agent_tools/case_files_bridge.py
+COPY skills/support-case-files/SKILL.md /opt/hermes/case-files-skill/SKILL.md

@@ -37,3 +37,16 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 2026-10-20 B1 修复：Hermes td54（镜像 `7df5f3a3`）起，Investigation profile 与文件 scope 同时绑定时 `support-case-files` 可列出可加载（`_supportportal_listing_visible` 共享谓词 + `file_skill_visible`）；重建 overlay 用 `deployment/hermes-case-files/v2-merge/merge_b1_fix.py`，验证用 `verify_b1.py`（含双 scope 组合矩阵）。
 
 2026-10-21 R2-V2-B1-REPRO 修复轮（独立复验未通过后）：v2-merge 四脚本（merge_b1_fix / merge_overlay_v2 / verify_b1 / verify_merged_overlay）去除全部机器路径，输入/输出改 CLI 参数（`CF_*`/`SUPPORTPORTAL_ROOT` 环境变量回退，SupportPortal 根默认取脚本所在检出，缺参 fail-closed）；重建程序与命令固化于 [v2-merge/README](../../deployment/hermes-case-files/v2-merge/README.md)。可复现性证据：以保留的现行 live 输入重建，重建树与 td54 构建树及部署镜像 `7df5f3a3` 内 12 个 overlay 文件逐字节一致，本地重建镜像与 td54 镜像 ID/rootfs 层逐位一致且容器内功能探针通过；干净目录冒烟测试（合成锚点输入、子进程、清空环境）入库 `test_hermes_case_files_v2_merge_scripts.py`。v2 三方合并链同样参数化并复跑 `MERGE_OK`+`VERIFY_OK`（其现行输出含 B1 的 `file_skill_visible` 助手，与 td49 时代树在该文件上的差异为预期）。
+
+2026-10-22 Hermes metadata readiness：[v3计划](../plans/investigation-case-files-hermes-metadata-readiness.md)。main已有description后端合同而live td54为旧bridge/Skill时，以已回读的live immutable digest为base，通过 `Dockerfile.overlay-metadata` 只覆盖两个文件，保留gateway/context/profile。代码验收后才发布Hermes，部署前核对TD无并发变化、其他容器/secret/EFS/network配置不变；`probe_metadata.py --require-description`须以真实镜像/线上Python运行并核对JSON marker和hash，不能用Exec wrapper exit0代替成功。无session/run/backend工具调用，真实传输仍需独立验收。
+
+2026-10-22 v3 image-only 发布实际失败：TD55 bundled Skill/hash/schema 正确，但实际 `skill_view` 返回内容缺少 `short_description`，执行器恢复 TD54 并完成健康/ALB/digest 与 Terraform zero-drift 回读。以后候选与 live 探针必须检查实际返回内容及 `_source_path`，仅检查 `/opt/hermes/case-files-skill/SKILL.md` 和 load success 不足；当时 v3 授权不含 EFS/profile/loader 修改，因此停止继续修复；后续新增授权以 v4 条目为准。[失败及回滚证据](../plans/investigation-case-files-hermes-metadata-readiness-evidence.json)。
+
+2026-10-22 v4（方案已独立验收；本地实现完成，云端未执行）：人类已确认受控更新 EFS `/opt/data/skills/support-case-files/SKILL.md`，仅单文件原子替换、备份和回滚，不改 loader/config/其他profile。[修订方案](../plans/investigation-case-files-hermes-metadata-readiness.md)已通过；发布器及实际返回内容/path/hash探针、本地真实loader回归已完成，完整代码独立验收后才部署；复用已审查 immutable 镜像时分别记录镜像源与工具源，不重写历史release。v3部署失败、恢复通过的独立结论保留，当前真实文件测试仍禁止。
+
+发布与本地复现说明：[README.metadata.md](../../deployment/hermes-case-files/README.metadata.md)。默认check-only严格只读；apply/rollback固定目标及审查bytes，记录备份、意图与未知结果，flock仅约束参与协议的发布者。实际Skill returned-content/source/resolved path/文件与仓库三方hash须一致。最终本地禁网镜像回归包含旧内容、错误hash/path拒绝、原输入发布/重复/回滚；65 passed、17 skipped不替代live EFS/Gateway验收。验证日期：2026-10-22。
+
+HMR-V4-01修复（2026-10-22）：check-only对prepared/outcome_unknown返回publication_unresolved/exit1，携带实际hash/stat和pending_action供回读，仍无写入；终态/目标/意图矛盾返回state_conflict/exit1。先回读，再显式继续原apply或rollback，不能用check-only的读成功替代发布成功。
+
+
+2026-10-22 Hermes Exec readback carrier v1：上次v4部署失败原因为合并health/toolsets ECS Exec wrapper在health marker后EOF。本阶段新增 `deployment/hermes-case-files/gateway_readback.py`，两个独立会话分别保存stdout/stderr/退出码/超时/EOF/唯一marker/JSON；缺失、重复、半截、EOF、非零、超时均非零失败。8项真实入口回归通过；尚未重试云端、未修改EFS/任务定义、未开始真实文件测试。详见[计划](../plans/investigation-case-files-hermes-exec-readback-carrier-v1.md)。

@@ -178,8 +178,13 @@
 > 仅适用于旧链路，勿对 Preproduction 运行。
 
 - **剧本**：`E1P`（enablement 自动链）——`[zac test]` 工单 → n8n（按 requester 路由）→
-  preprod intake → route=enablement → 确认回复 published → Zendesk 公开评论 delivered。
+  preprod intake → route=enablement → 确认回复经 **Hermes draft 公开投递**（2026-10-22
+  e1p-hermes-draft-carrier-v1：断言 draft delivered + 确认语义内容检查 + 公开评论
+  delivered；旧 `submission_confirmation` reply job 仅为辅助观察，缺失或 queued 不影响
+  判定；超时会记录 FAIL 并非零退出）。
   全程无人工回合；enablement relay 终局（enabled+solved）不在本剧本断言范围。
+- **超时提示**：relay 腿相关等待使用 turn 预算（默认 20 分钟）；涉及人工审批窗口的
+  场景用 `--turn-timeout-min 60` 预留审批时间（14184 实证）。
 - **环境变量**（本机 CLI 运行，DSN 从 SSM 取，勿写入仓库）：
   ```bash
   export AUTOMATION_TEST_DB_DSN="$(aws ssm get-parameter \
