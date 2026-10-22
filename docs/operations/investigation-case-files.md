@@ -42,4 +42,6 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 
 2026-10-22 v3 image-only 发布实际失败：TD55 bundled Skill/hash/schema 正确，但实际 `skill_view` 返回内容缺少 `short_description`，执行器恢复 TD54 并完成健康/ALB/digest 与 Terraform zero-drift 回读。以后候选与 live 探针必须检查实际返回内容及 `_source_path`，仅检查 `/opt/hermes/case-files-skill/SKILL.md` 和 load success 不足；当时 v3 授权不含 EFS/profile/loader 修改，因此停止继续修复；后续新增授权以 v4 条目为准。[失败及回滚证据](../plans/investigation-case-files-hermes-metadata-readiness-evidence.json)。
 
-2026-10-22 v4方案（未执行）：人类已确认受控更新 EFS `/opt/data/skills/support-case-files/SKILL.md`，仅单文件原子替换、备份和回滚，不改 loader/config/其他profile。先独立验收[修订方案](../plans/investigation-case-files-hermes-metadata-readiness.md)，实现发布器及实际返回内容/path/hash探针，再独立代码验收后才部署；复用已审查 immutable 镜像时分别记录镜像源与工具源，不重写历史release。v3部署失败、恢复通过的独立结论保留，当前真实文件测试仍禁止。
+2026-10-22 v4（方案已独立验收；本地实现完成，云端未执行）：人类已确认受控更新 EFS `/opt/data/skills/support-case-files/SKILL.md`，仅单文件原子替换、备份和回滚，不改 loader/config/其他profile。[修订方案](../plans/investigation-case-files-hermes-metadata-readiness.md)已通过；发布器及实际返回内容/path/hash探针、本地真实loader回归已完成，完整代码独立验收后才部署；复用已审查 immutable 镜像时分别记录镜像源与工具源，不重写历史release。v3部署失败、恢复通过的独立结论保留，当前真实文件测试仍禁止。
+
+发布与本地复现说明：[README.metadata.md](../../deployment/hermes-case-files/README.metadata.md)。默认check-only严格只读；apply/rollback固定目标及审查bytes，记录备份、意图与未知结果，flock仅约束参与协议的发布者。实际Skill returned-content/source/resolved path/文件与仓库三方hash须一致。最终本地禁网镜像回归包含旧内容、错误hash/path拒绝、原输入发布/重复/回滚；55 passed、17 skipped不替代live EFS/Gateway验收。验证日期：2026-10-22。

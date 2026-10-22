@@ -1,6 +1,6 @@
 # Investigation 文件 Hermes metadata readiness
 
-计划名称：`investigation-case-files-slack-ingress-metadata-v1` / Hermes metadata readiness。修订：**v4（2026-10-22，方案待独立验收，尚未实施）**。
+计划名称：`investigation-case-files-slack-ingress-metadata-v1` / Hermes metadata readiness。修订：**v4（2026-10-22，方案已独立验收；实现完成，待完整代码独立验收）**。
 
 目标：以受控 EFS 单 Skill 发布补齐 `HERMES-METADATA-01`，使 live bridge 的 description schema 与实际 skill_view 返回内容属于同一已审查版本。本轮不执行真实文件测试。
 
@@ -58,7 +58,7 @@
 
 ## 实现、验证与发布步骤
 
-1. **方案验收停点。** 先提交本 v4 文档和授权记录给指定线程；通过前不实现发布器、不合并 #1548、不改云端。
+1. **方案验收已通过。** 指定线程已独立验收 v4 方案，绑定 `3128b65db88fbc57f9f951165dca2671553f49d5`。允许本地实现；完整代码独立验收通过前不合并 #1548、不改云端。
 2. 方案通过后在本分支实现 publisher 与 strengthened probe，增加 `backend/tests/test_hermes_case_files_skill_publish.py`。使用真实临时文件系统、实际 CLI/loader；只 mock 外部 AWS 通道。测试旧 snapshot 被实际返回内容门拒绝、新 snapshot 通过；错误路径/hash、备份失败、锁竞争、rename前失败原文件完整、rename后结果未知通过原 operation读回、重复apply不重复替换、受控rollback恢复原 bytes/stat；第三方内容冲突不得覆盖。
 3. 用已有 candidate immutable image 禁网运行真实 Skill loader，将临时旧 Skill fixture 放到其正常 skills路径（模拟 EFS），必须在 actual_served_skill 检查失败；以本地 publisher 更新同一 fixture后重跑原 probe通过。故障只在本地，线上不刻意损坏文件。保留 fresh run ID、镜像 digest、stdout/stderr/exitcode 与断言，缺 marker 一律失败。
 4. 定向验证命令：`PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test .venv/bin/python -m pytest -q backend/tests/test_hermes_case_files_skill_publish.py backend/tests/test_hermes_case_files_metadata_bridge.py backend/tests/test_investigation_case_files.py backend/tests/test_hermes_case_files_v2_merge_scripts.py backend/tests/test_investigation_case_files_deploy.py`；另执行实际 candidate 容器故障/恢复探针、Skill quick validation、py_compile、JSON、Overview、feature list、diff check。外部 DSN skips 保留、不算数据库保证证明。新代码完整 HEAD 独立验收，先前 #1547 的无影响证据继续保留。
@@ -72,5 +72,9 @@
 
 - 既有代码：#1547 / reviewed d6ed18b9… / merged 11ef7856…；32 passed、17 skipped、2 subtests。其证据不等同 v4 新发布器或实际Skill检查通过。
 - 历史部署：v3 TD55 failed；TD54 recovery passed（独立审查 #1548 / 3686d8da…）；所有旧 artifact `.deployments/hermes-metadata-readiness-v1` 保留。
-- v4：仅完成方案、范围授权及只读可行性回读；**工具实现未开始、EFS未修改、未再次部署、方案独立验收待执行**。当前 full HEAD 以 #1548 API 回读为准，PR携带本次提交。
+- v4 方案：指定线程独立验收通过，绑定 `3128b65db88fbc57f9f951165dca2671553f49d5`；本地实现已完成，**完整代码独立验收待执行，EFS未修改、未再次部署，ready_for_real_file_tests=false**。当前 full HEAD 以 #1548 API 回读及交接为准。
+- 新实现：[单 Skill publisher](../../deployment/hermes-case-files/publish_skill.py)、实际返回内容 probe、[真实 loader 容器回归及复现说明](../../deployment/hermes-case-files/README.metadata.md)。固定 Preproduction ECS 任务/路径/审查 hashes，默认只读；真实临时文件、进程锁竞争、备份/属性/未知提交/回滚意图与第三方冲突通过定向测试。
+- 定向 suite：55 passed、17 skipped、4 个既有 FastAPI 弃用警告、2 subtests passed。外部数据库等 skips 不作为线上/数据库保证证明。
+- 最终禁网容器回归：`.deployments/hermes-metadata-readiness-v4/container-attempt3/`，exit0，唯一 `METADATA_EFS_LOCAL_PASSED` marker。固定 image ID `faec191f…`，真实 loader 在旧 snapshot、错误 hash、错误 path 的指定门禁失败；单文件发布后原 probe 通过，重复 apply 不替换 inode，rollback 恢复旧 bytes 后再次拒绝旧 metadata。工具源 hashes 与完整结果纳入机器记录。
+- 上述仅证明本地代码/真实镜像 loader；live EFS AP、发布持久性、Gateway/服务健康和最终 readiness 仍需合并后云端回读及独立验收。镜像 source `11ef7856…` 与 v4 工具源码独立记录，不改旧 release。
 - 单一机器记录：[readiness evidence](investigation-case-files-hermes-metadata-readiness-evidence.json)。旧 R1、启用文件 C1–C7 未覆盖路径、人类上传、Automation live 反向、Zac真实协议、完整知识业务门禁继续保留。

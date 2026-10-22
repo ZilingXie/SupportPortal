@@ -5296,3 +5296,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - support-case-files Skill补充三名称/来源与内容证据边界、无匹配不越case检索；候选overlay只替换bridge与Skill，不改Prompt catalog、模型、profile或其他toolset。仅授权Preproduction Hermes，真实文件测试仍须后续独立验收。
 
 - 部署回读：#1547 合并源码 11ef7856，Hermes immutable image a4ba1d1f / TD55 的 bridge/schema/hash 正确，但实际 skill_view 返回内容缺 short_description；按计划回滚 TD54，恢复 digest/五容器健康/ALB、其他三角色与 Terraform zero-drift。未更新 EFS/profile，无真实业务工具调用；部署未通过，失败证据另交独立复核。
+
+## 2026-10-22 — Hermes metadata readiness v4 验证与单Skill发布工具（p2-192，待独立代码验收）
+
+- 不改变Prompt、模型、已审查Skill文本或运行toolset；强化probe核对真实skill_view内容/source/resolved path与EFS/bundled/审查hash，覆盖profile-only、persona直接加载拒绝。
+- 单Skill publisher默认只读，固定Preproduction任务和文件；备份、原子替换、未知结果回读、重复发布与受控回滚使用明确操作记录。新增真实loader禁网容器故障/恢复验证；详情见[发布说明](../deployment/hermes-case-files/README.metadata.md)。
+- v4方案独立验收已通过；55 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
