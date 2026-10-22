@@ -1,20 +1,58 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-08T13:59:48.798Z",
+  "capturedAt": "2026-10-22T04:07:33.087Z",
   "source": {
-    "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "kyiA0QuiVx6JJ03i",
     "workflowName": "[slack]Route Support",
-    "snapshotKind": "published",
     "versionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
-    "draftVersionId": "c41c09db-3924-40ed-9d48-f51c571e584e",
     "publishedVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
-    "updatedAt": "2026-09-16T04:11:24.191Z",
-    "parentFolderId": "Uj4fViHZGMeAhqTa"
+    "snapshotKind": "published",
+    "updatedAt": "2026-09-16T04:11:24.191Z"
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "credentials": "Credential references retained; rebind redacted literals before restore.",
+    "redactedValues": [
+      {
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.0.value",
+        "reason": "literal secret or email"
+      },
+      {
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.0.value",
+        "reason": "secret-like header"
+      },
+      {
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.1.value",
+        "reason": "secret-like header"
+      },
+      {
+        "path": "workflow.nodes.3.parameters.headerParameters.parameters.2.value",
+        "reason": "secret-like header"
+      },
+      {
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.0.value",
+        "reason": "literal secret or email"
+      },
+      {
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.0.value",
+        "reason": "secret-like header"
+      },
+      {
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.1.value",
+        "reason": "secret-like header"
+      },
+      {
+        "path": "workflow.nodes.17.parameters.headerParameters.parameters.2.value",
+        "reason": "secret-like header"
+      }
+    ]
   },
   "workflow": {
+    "id": "kyiA0QuiVx6JJ03i",
     "name": "[slack]Route Support",
-    "description": "监听 Slack 消息，经 AI 筛选和支持请求判定后创建 Zendesk 工单并回传链接；缺少团队资料时等待人工补全。指定内部频道的线程消息通过子流程转交 SupportPortal ECS Production。",
+    "active": true,
+    "versionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
+    "activeVersionId": "ba9403ed-0989-4319-9661-d021df3b20e4",
     "nodes": [
       {
         "parameters": {
@@ -122,15 +160,15 @@
             "parameters": [
               {
                 "name": "Authorization",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               },
               {
                 "name": "Cookie",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               },
               {
                 "name": "cookie",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               }
             ]
           },
@@ -532,15 +570,15 @@
             "parameters": [
               {
                 "name": "Authorization",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               },
               {
                 "name": "Cookie",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               },
               {
                 "name": "cookie",
-                "value": "__REDACTED__"
+                "value": "__REDACTED_LITERAL__"
               }
             ]
           },
@@ -996,7 +1034,7 @@
           "workflowInputs": {
             "mappingMode": "defineBelow",
             "value": {
-              "Input": "={{ (() => { const x = $('Slack Trigger').item.json; return { type: x.type, subtype: x.subtype || null, team: x.team, channel: x.channel, thread_ts: x.thread_ts || null, ts: x.ts || null, event_ts: x.event_ts || null, user: x.user || null, parent_user_id: x.parent_user_id || null, bot_id: x.bot_id || null, text: String(x.text || ''), files: Array.isArray(x.files) ? x.files : [], client_msg_id: x.client_msg_id || null, event_id: x.event_id || null }; })() }}"
+              "Input": "={{ $('Slack Trigger').item.json }}"
             },
             "matchingColumns": [
               "test"
@@ -1013,7 +1051,7 @@
               }
             ],
             "attemptToConvertTypes": false,
-            "convertFieldsToString": false
+            "convertFieldsToString": true
           },
           "options": {}
         },
@@ -1359,50 +1397,6 @@
       "timeSavedMode": "fixed",
       "availableInMCP": true,
       "executionOrder": "v1"
-    },
-    "nodeGroups": [],
-    "tags": []
-  },
-  "restoreNotes": {
-    "activeAtCapture": true,
-    "redactedValues": [
-      {
-        "nodeName": "create_ticket",
-        "path": "workflow.nodes.3.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "create_ticket",
-        "path": "workflow.nodes.3.parameters.headerParameters.parameters.1.value",
-        "field": "Cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "create_ticket",
-        "path": "workflow.nodes.3.parameters.headerParameters.parameters.2.value",
-        "field": "cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "Add_Comment",
-        "path": "workflow.nodes.17.parameters.headerParameters.parameters.0.value",
-        "field": "Authorization",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "Add_Comment",
-        "path": "workflow.nodes.17.parameters.headerParameters.parameters.1.value",
-        "field": "Cookie",
-        "reason": "secret_named_field"
-      },
-      {
-        "nodeName": "Add_Comment",
-        "path": "workflow.nodes.17.parameters.headerParameters.parameters.2.value",
-        "field": "cookie",
-        "reason": "secret_named_field"
-      }
-    ],
-    "credentials": "Credential references retained; rebind redacted literals before restore."
+    }
   }
 }

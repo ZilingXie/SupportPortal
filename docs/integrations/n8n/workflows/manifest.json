@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-14T03:36:18.864Z",
+  "generatedAt": "2026-10-22T04:07:33.087Z",
   "projectId": "sbTCwK2d5D7GOKQb",
   "workflowCount": 15,
   "source": "n8n MCP get_workflow_details sanitized payload",
@@ -188,13 +188,13 @@
       "name": "[slack]Forward Thread|Prod+Preprod",
       "description": "供 [slack]Route Support 调用：校验指定内部频道内由人发送的线程 @提及消息，先解析 ECS Production 的 Engineer Case 线程绑定并转发；未命中时解析 ECS Preproduction 的 Hermes 线程绑定，命中则作为调查反馈转发，仍未命中则作为 ad-hoc 会话首问转发（p2-161）。",
       "parentFolderId": "Uj4fViHZGMeAhqTa",
-      "updatedAt": "2026-10-09T17:23:13.835Z",
-      "publishedVersionId": "b02f3ed5-667b-4633-be2c-ede582fcdf23",
+      "updatedAt": "2026-10-13T03:25:31.323Z",
+      "publishedVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
       "draftVersionId": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
-      "draftMatchesPublished": false,
+      "draftMatchesPublished": true,
       "nodeCount": 13,
       "publishedFile": "active/r1HIW8UNuCabiOPn.published.json",
-      "draftFile": "drafts/r1HIW8UNuCabiOPn.draft.json",
+      "draftFile": null,
       "publishedRedactionCount": 0,
       "draftRedactionCount": 0
     },
@@ -240,8 +240,8 @@
       "nodeCount": 32,
       "publishedFile": "active/kyiA0QuiVx6JJ03i.published.json",
       "draftFile": "drafts/kyiA0QuiVx6JJ03i.draft.json",
-      "publishedRedactionCount": 6,
-      "draftRedactionCount": 6
+      "publishedRedactionCount": 8,
+      "draftRedactionCount": 8
     }
   ]
 }
