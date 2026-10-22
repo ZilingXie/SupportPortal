@@ -955,7 +955,11 @@
     },
     "scope": "asset/profile directory and authenticated toolset registry readback; no session/run/tool execution",
     "file_context_source_sha256_matches_main": true,
-    "description_filter_matches_main": false
+    "description_filter_matches_main": false,
+    "expected_main_sha256": {
+      "Skill": "1162f33f5e7908ee47baa0c959e7ea35e31af62d45c6366e76389b16e0e0a708",
+      "bridge": "2e9fad5f4c467bf2ba35305dfa9836f122cb15662caa50f596c0109ce2f61834"
+    }
   },
   "operations": {
     "terraform": "native darwin_arm64 Terraform 1.9.8 with official SHA256 verification; no apply; refreshable AWS credential_process retained",
@@ -1005,6 +1009,6 @@
     "published_snapshot_contract_tests": "5 passed; backend/tests/test_investigation_attachments_n8n_contract.py",
     "project_overview": "passed",
     "feature_list": "passed",
-    "diff_check": "passed before final commit; rerun after main integration"
+    "diff_check": "passed on origin/main...HEAD after main integration; docs-only delta"
   }
 }
