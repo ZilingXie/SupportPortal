@@ -511,8 +511,12 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     message_text = str(event.get("message_text") or "").strip()
     if not all((event_id, event_type, message_text)):
         raise EngineerSlackDeliveryError("engineer_slack_event_invalid")
-    is_root = event_type in _ROOT_EVENT_TYPES
     normalized_thread_ts = str(thread_ts or "").strip()
+    # A root event type stays a root only when NO thread anchor is supplied;
+    # the knowledge review flow reuses the same event type for its C2
+    # thread-reply re-delivery (and case-bound candidates), and dropping the
+    # explicit anchor here would spill those into the channel root.
+    is_root = event_type in _ROOT_EVENT_TYPES and not normalized_thread_ts
     if not is_root and not normalized_thread_ts:
         raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
     if event_type in _HERMES_THREAD_EVENT_TYPES and not normalized_thread_ts:
