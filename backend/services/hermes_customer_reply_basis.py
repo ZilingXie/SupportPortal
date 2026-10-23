@@ -387,6 +387,78 @@ def _contains_authorized_claim(text: str, basis: dict[str, Any], pattern: re.Pat
     return any(any(token in value for token in markers) for value in normalized_values)
 
 
+_SUBMISSION_BIZDAY_RE = re.compile(
+    r"business\s+days?|weekdays?|monday\s*(?:through|to|-)\s*friday", re.IGNORECASE
+)
+_SUBMISSION_UPDATE_RE = re.compile(
+    r"keep\s+you\s+posted|keep\s+you\s+updated|update\s+you|updates?\b|"
+    r"let\s+you\s+know|notify\s+you|follow\s+up|reach\s+out|"
+    r"hear\s+(?:from\s+us|anything)",
+    re.IGNORECASE,
+)
+_SUBMISSION_PREMATURE_RE = re.compile(
+    r"\b(?:enabled|activated|provisioned)\b", re.IGNORECASE
+)
+
+
+def _positive_enablement_claim(text: str) -> bool:
+    """An affirmative clause claiming the feature is already enabled."""
+    for clause in re.split(r"(?<=[.!?])\s+|[;\n]+", str(text or "")):
+        clause = clause.strip()
+        if not clause or "?" in clause:
+            continue
+        if re.search(
+            r"\b(?:not|never|cannot|can't|won't|don't|doesn't|didn't|isn't|aren't|wasn't|weren't|"
+            r"hasn't|haven't|hadn't|unable|until|pending|awaiting)\b",
+            clause,
+            re.IGNORECASE,
+        ):
+            continue
+        if _SUBMISSION_PREMATURE_RE.search(clause):
+            return True
+    return False
+
+
+def _validate_enablement_submission_confirmation(text: str, basis: dict[str, Any]) -> None:
+    """p2-211 persona-draft-contract-gate: the enablement review-requested
+    draft IS the submission confirmation. Gate it on the same natural
+    contract the account pipeline enforces (p2-210), so the Hermes native
+    draft path can never deliver the 14202/14225 shape.
+
+    Auto path (internal_email_send_reason=enablement_auto_review): explicit
+    receipt + review + business-day handling + update commitment, no 24h
+    promise, no premature enablement claim. Manual path: receipt and the
+    status prohibitions only (its 24-hour copy is its own contract).
+    """
+    from backend.services.automation_persona import (
+        STIFF_NEGATIVE_ENABLEMENT_STATUS_RE,
+        SUBMISSION_RECEIPT_RE,
+    )
+
+    conclusion = (
+        basis.get("trusted_conclusion")
+        if isinstance(basis.get("trusted_conclusion"), dict)
+        else {}
+    )
+    lowered = str(text or "").casefold()
+    if STIFF_NEGATIVE_ENABLEMENT_STATUS_RE.search(lowered):
+        raise HermesReplyBasisError("submission_confirmation_stiff_negative_status")
+    if not SUBMISSION_RECEIPT_RE.search(lowered):
+        raise HermesReplyBasisError("submission_confirmation_receipt_missing")
+    if _positive_enablement_claim(text):
+        raise HermesReplyBasisError("submission_confirmation_premature_enablement")
+    if str(conclusion.get("internal_email_send_reason") or "") != "enablement_auto_review":
+        return
+    if re.search(r"24\s*[-\s]?hours?", lowered):
+        raise HermesReplyBasisError("submission_confirmation_24h_promise")
+    if not _SUBMISSION_BIZDAY_RE.search(lowered):
+        raise HermesReplyBasisError("submission_confirmation_business_day_missing")
+    if not _SUBMISSION_UPDATE_RE.search(lowered):
+        raise HermesReplyBasisError("submission_confirmation_update_commitment_missing")
+    if not re.search(r"review", lowered):
+        raise HermesReplyBasisError("submission_confirmation_review_missing")
+
+
 def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[str, Any]:
     """Fail closed on safety/fact conflicts while allowing natural wording."""
     text = str(content or "").strip()
@@ -410,6 +482,12 @@ def validate_customer_reply_draft(content: str, basis: dict[str, Any]) -> dict[s
     if str(basis.get("source_direction") or basis.get("direction") or "") == "automation":
         if str(basis.get("trusted_conclusion", {}).get("status") or "") == "human_review_required":
             raise HermesReplyBasisError("human_review_reply_forbidden")
+        _conclusion = basis.get("trusted_conclusion") or {}
+        if (
+            str(basis.get("route") or basis.get("source_route") or "") == "enablement"
+            and str(_conclusion.get("outcome") or "") == "review_requested"
+        ):
+            _validate_enablement_submission_confirmation(text, basis)
     greeting_count = len(re.findall(r"\bhi\s+[^,\n]+,", text, re.I))
     if greeting_count > 1:
         raise HermesReplyBasisError("duplicate_greeting")

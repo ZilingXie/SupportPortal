@@ -5311,3 +5311,8 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 新增 persona 内容合同 `_assert_enablement_submission_confirmation_contract`（validate_account_reply_contract 真实入口，behavior=enablement 且 intent=submission_confirmation）：auto 路径必含 感谢/收到+review+business-day+更新承诺，拒绝 stiff 否定句（14202 原文形态）、提前启用声明、24h 承诺；manual 路径仅继承禁句，24 小时文案与工作日合同保留（C5 隔离）。
 - 场景验收同步：E1P/E3 turn-4/PP-A1 共用的确认内容检查统一为同一语义合同（新增 business-day 与更新承诺必需、stiff 否定句拒绝、24h 拒绝）。
 - 不改 catalog Prompt（hermes-automation-enablement-manual 保持 v2，其 Submission confirmations 措辞与 24h 合并表述披露为后续项）；无 Prompt Release 操作。
+
+## 2026-10-23 — Persona 内容合同接入 Hermes native draft 路径（p2-211 persona-draft-contract-gate，待独立验收）
+
+- `validate_customer_reply_draft`（server-owned basis 门禁，`tool_save_reply_draft` 真实入口）新增 enablement review_requested 确认合同：共享 p2-210 的 `STIFF_NEGATIVE_ENABLEMENT_STATUS_RE`/`SUBMISSION_RECEIPT_RE`（单一事实源；按 14225 实文扩族 been confirmed(yet)/requested a review）；auto 路径（enablement_auto_review）另需 business-day+更新承诺、拒 24h 与提前启用；manual 仅禁句+receipt（24h 表述由既有 basis 时间承诺守卫管辖）。
+- 违规=HermesToolError（模型 run 内可重写=有限重生成）；重写仍失败则无 draft 落库（fail-closed 走既有失败链）。无 Prompt catalog 改动、无 Prompt Release 操作。
