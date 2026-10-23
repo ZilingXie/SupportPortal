@@ -58,9 +58,11 @@ def derive_probe_definition(task_definition: Mapping[str, Any]) -> dict[str, Any
     mounted = {m.get("sourceVolume") for m in hermes.get("mountPoints", [])}
     result = {k: task_definition[k] for k in TASK_KEYS if k in task_definition}
     result["family"] = f"{task_definition['family']}-probe"
-    result["containerDefinitions"] = [
-        {k: v for k, v in hermes.items() if k in CONTAINER_KEYS}
+    probe_container = {k: v for k, v in hermes.items() if k in CONTAINER_KEYS}
+    probe_container["mountPoints"] = [
+        {**mount, "readOnly": True} for mount in hermes.get("mountPoints", [])
     ]
+    result["containerDefinitions"] = [probe_container]
     result["volumes"] = [
         v for v in task_definition.get("volumes", []) if v.get("name") in mounted
     ]

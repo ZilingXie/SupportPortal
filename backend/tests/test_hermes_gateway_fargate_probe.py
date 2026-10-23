@@ -34,7 +34,7 @@ def test_derive_probe_definition_keeps_only_hermes_and_its_mounts():
         ],
         "containerDefinitions": [
             {"name": "sidecar", "image": "sidecar"},
-            {"name": "hermes", "image": "hermes", "mountPoints": [{"sourceVolume": "hermes-home"}],
+            {"name": "hermes", "image": "hermes", "mountPoints": [{"sourceVolume": "hermes-home", "readOnly": False}],
              "secrets": [{"name": "API_SERVER_KEY", "valueFrom": "ssm"}], "logConfiguration": {"logDriver": "awslogs"}},
         ],
         "status": "ACTIVE",
@@ -45,6 +45,7 @@ def test_derive_probe_definition_keeps_only_hermes_and_its_mounts():
     assert [v["name"] for v in result["volumes"]] == ["hermes-home"]
     assert "status" not in result
     assert result["containerDefinitions"][0]["secrets"] == definition["containerDefinitions"][1]["secrets"]
+    assert result["containerDefinitions"][0]["mountPoints"] == [{"sourceVolume": "hermes-home", "readOnly": True}]
 
 
 @pytest.mark.parametrize("lines,error", [
