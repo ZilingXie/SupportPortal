@@ -18,5 +18,12 @@
     "预设同步不覆盖非 system 内容（库内 v2/v3 教学保留）"
   ],
   "blockers": [],
-  "evidence": []
+  "evidence": [
+    {
+      "type": "test",
+      "label": "验收轮 1 修复（F1 default-support 覆盖缺口 + marker/内容 pin 更新）",
+      "command": "PG persona 套件（RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true，22 passed 含 3 新增）+ persona/zendesk/native/catalog/worker-compat/rerun/scenarios/basis 回归 380 passed/231 subtests + compileall/diff --check",
+      "result": "F1：非 system 保护规则=有 operator 内容时——sid-* 一律保护；default-support 仅在已有 system 版本（已被 preset 体系接管）后保护，纯 legacy（无 system 版本）仍按既有合同一次性 bootstrap 迁移（legacy 历史四测原样通过）。新增 3 项 PG 测试：default-support 教学版本在 marker 变更 seed 后保持 published；同 marker 重复 seed 幂等；sticky assignment 钉定版本在 seed skip 后不漂移。连带更新：rerun 工具 APPROVED_PERSONA_V2 pin（新 marker+content sha256，审批版本 v2→v3）；catalog 测试改 preset 派生（清存量漂移）；worker compat marker v3；preset 版本 pin v2。"
+    }
+  ]
 }

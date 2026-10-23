@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T10:41:57Z",
-  "source_base_commit": "ec76139b754ee3450e8410c0ba985262cb9b0384",
-  "registry_digest": "dacfeb10ad4de902b1918494fcb5fee44d3a0014472efa45e662188972444f4b",
+  "generated_at": "2026-10-23T12:39:26Z",
+  "source_base_commit": "18c7180bb8338d4dc41c93e51492f66ac16d9d35",
+  "registry_digest": "7b05c36e6bc0793d4c8287e7721bd49506c5ad2a8ac7912c97a7934e43dfed6f",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1941,6 +1941,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "persona-draft-contract-gate v1 实施（待独立验收）",
           "command": "真实入口 tool_save_reply_draft 测试矩阵（test_hermes_native_enablement_regression 16 passed）+ persona/scenarios/basis/context/fraud 回归 258 passed/131 subtests + compileall/diff --check",
           "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 default-support 覆盖缺口 + marker/内容 pin 更新）",
+          "command": "PG persona 套件（RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true，22 passed 含 3 新增）+ persona/zendesk/native/catalog/worker-compat/rerun/scenarios/basis 回归 380 passed/231 subtests + compileall/diff --check",
+          "result": "F1：非 system 保护规则=有 operator 内容时——sid-* 一律保护；default-support 仅在已有 system 版本（已被 preset 体系接管）后保护，纯 legacy（无 system 版本）仍按既有合同一次性 bootstrap 迁移（legacy 历史四测原样通过）。新增 3 项 PG 测试：default-support 教学版本在 marker 变更 seed 后保持 published；同 marker 重复 seed 幂等；sticky assignment 钉定版本在 seed skip 后不漂移。连带更新：rerun 工具 APPROVED_PERSONA_V2 pin（新 marker+content sha256，审批版本 v2→v3）；catalog 测试改 preset 派生（清存量漂移）；worker compat marker v3；preset 版本 pin v2。"
         },
         {
           "type": "test",
@@ -19708,7 +19714,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "预设同步不覆盖非 system 内容（库内 v2/v3 教学保留）"
       ],
       "blockers": [],
-      "evidence": []
+      "evidence": [
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 default-support 覆盖缺口 + marker/内容 pin 更新）",
+          "command": "PG persona 套件（RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true，22 passed 含 3 新增）+ persona/zendesk/native/catalog/worker-compat/rerun/scenarios/basis 回归 380 passed/231 subtests + compileall/diff --check",
+          "result": "F1：非 system 保护规则=有 operator 内容时——sid-* 一律保护；default-support 仅在已有 system 版本（已被 preset 体系接管）后保护，纯 legacy（无 system 版本）仍按既有合同一次性 bootstrap 迁移（legacy 历史四测原样通过）。新增 3 项 PG 测试：default-support 教学版本在 marker 变更 seed 后保持 published；同 marker 重复 seed 幂等；sticky assignment 钉定版本在 seed skip 后不漂移。连带更新：rerun 工具 APPROVED_PERSONA_V2 pin（新 marker+content sha256，审批版本 v2→v3）；catalog 测试改 preset 派生（清存量漂移）；worker compat marker v3；preset 版本 pin v2。"
+        }
+      ]
     },
     {
       "schema_version": 2,

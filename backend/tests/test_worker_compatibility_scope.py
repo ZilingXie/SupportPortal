@@ -439,7 +439,7 @@ class SidPreciseSeedV2Tests(unittest.TestCase):
         from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 
         sid = [p for p in ACCOUNT_PERSONA_PRESETS if p.persona_key == "sid-precise"][0]
-        self.assertEqual(sid.seed_marker, "Seeded Sid Precise preset v2")
+        self.assertEqual(sid.seed_marker, "Seeded Sid Precise preset v3")
         self.assertIn("precise does", sid.instruction)
         self.assertIn("acknowledging", sid.instruction)
 

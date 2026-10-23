@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
+import uuid
 import psycopg
 from dotenv import load_dotenv
 from psycopg import sql
@@ -1223,3 +1224,149 @@ class AccountPersonaPostgresTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PersonaSeedProtectionPostgresTests(unittest.TestCase):
+    """p2-212 F1: a deployed preset never supersedes operator content —
+    for EVERY persona, default-support included."""
+
+    def setUp(self) -> None:
+        if os.getenv("RUN_ACCOUNT_PERSONA_POSTGRES_TEST", "").strip().lower() != "true":
+            self.skipTest("set RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true")
+        self.dsn = os.getenv("TICKET_DB_DSN", "").strip()
+        self.migration_dsn = os.getenv("TICKET_DB_MIGRATION_DSN", "").strip()
+        if not self.dsn or not self.migration_dsn:
+            self.fail("TICKET_DB_DSN and TICKET_DB_MIGRATION_DSN are required")
+        self._schema = f"p2_212_persona_seed_{uuid.uuid4().hex[:12]}"
+        self.repository = PostgresTicketRepository(
+            dsn=self.dsn,
+            schema=self._schema,
+            migration_dsn=self.migration_dsn,
+        )
+        self.repository.initialize()
+        self.addCleanup(self._drop)
+        self.addCleanup(self.repository.close)
+
+    def _drop(self) -> None:
+        with psycopg.connect(self.migration_dsn, autocommit=True) as connection:
+            connection.execute(f'DROP SCHEMA IF EXISTS "{self._schema}" CASCADE')
+
+    def _ensure_presets(self) -> None:
+        with psycopg.connect(self.migration_dsn, connect_timeout=10) as connection:
+            with connection.transaction(), connection.cursor() as cursor:
+                self.repository._ensure_account_persona_presets(cursor)
+
+    def _personas(self) -> dict[str, dict[str, Any]]:
+        return {p["persona_key"]: p for p in self.repository.list_account_personas()}
+
+    def test_default_support_teaching_version_survives_marker_bumped_seed(self):
+        self._ensure_presets()
+        draft = self.repository.create_account_persona_draft(
+            DEFAULT_PERSONA_KEY,
+            content={"instruction": "Operator teaching voice", "opener": ""},
+            change_note="Operator teaching publication",
+            based_on_version=1,
+            actor_id="operator-1",
+            created_at="2026-10-23T00:00:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            DEFAULT_PERSONA_KEY,
+            draft["version"],
+            actor_id="operator-1",
+            published_at="2026-10-23T00:01:00+00:00",
+        )
+        # Simulate a later deploy whose preset content changed (new marker).
+        import backend.services.account_admin as account_admin
+
+        bumped = tuple(
+            preset.__class__(
+                persona_key=preset.persona_key,
+                display_name=preset.display_name,
+                instruction=preset.instruction,
+                seed_marker=preset.seed_marker + "-r2",
+            )
+            for preset in account_admin.ACCOUNT_PERSONA_PRESETS
+        )
+        original = account_admin.ACCOUNT_PERSONA_PRESETS
+        account_admin.ACCOUNT_PERSONA_PRESETS = bumped
+        try:
+            self._ensure_presets()
+        finally:
+            account_admin.ACCOUNT_PERSONA_PRESETS = original
+        personas = self._personas()
+        warm = personas[DEFAULT_PERSONA_KEY]
+        self.assertEqual(warm["published_version"], draft["version"])
+        published = [v for v in warm["versions"] if v["status"] == "published"]
+        self.assertEqual(len(published), 1)
+        self.assertEqual(published[0]["created_by"], "operator-1")
+        self.assertEqual(published[0]["content"]["instruction"], "Operator teaching voice")
+
+    def test_repeat_seed_with_same_markers_is_idempotent(self):
+        self._ensure_presets()
+        before = {
+            key: [v["version"] for v in persona["versions"]]
+            for key, persona in self._personas().items()
+        }
+        self._ensure_presets()
+        after = {
+            key: [v["version"] for v in persona["versions"]]
+            for key, persona in self._personas().items()
+        }
+        self.assertEqual(before, after)
+
+    def test_sticky_assignment_keeps_pinned_version_across_seed_skip(self):
+        self._ensure_presets()
+        ticket_id = "TK-P2-212-STICKY"
+        self.repository.save_ticket(
+            {
+                "ticket_id": ticket_id,
+                "customer_id": "C-p2-212",
+                "requester": "sticky@example.com",
+                "subject": "p2-212 sticky pin",
+                "status": "open",
+                "created_at": "2026-10-23T00:00:00+00:00",
+                "updated_at": "2026-10-23T00:00:00+00:00",
+                "messages": [],
+            }
+        )
+        assignment = self.repository.resolve_account_persona(ticket_id)
+        pinned_key = assignment["persona_key"]
+        pinned_version = assignment["version"]
+        # Operator publishes a new teaching version afterwards.
+        draft = self.repository.create_account_persona_draft(
+            pinned_key,
+            content={"instruction": "Later operator voice", "opener": ""},
+            change_note="Later publication",
+            based_on_version=None,
+            actor_id="operator-2",
+            created_at="2026-10-23T00:02:00+00:00",
+        )
+        self.repository.publish_account_persona_version(
+            pinned_key,
+            draft["version"],
+            actor_id="operator-2",
+            published_at="2026-10-23T00:03:00+00:00",
+        )
+        # A later deploy with a bumped marker skips seeding (non-system
+        # content) and must not move the sticky pin.
+        import backend.services.account_admin as account_admin
+
+        bumped = tuple(
+            preset.__class__(
+                persona_key=preset.persona_key,
+                display_name=preset.display_name,
+                instruction=preset.instruction,
+                seed_marker=preset.seed_marker + "-r3",
+            )
+            for preset in account_admin.ACCOUNT_PERSONA_PRESETS
+        )
+        original = account_admin.ACCOUNT_PERSONA_PRESETS
+        account_admin.ACCOUNT_PERSONA_PRESETS = bumped
+        try:
+            self._ensure_presets()
+        finally:
+            account_admin.ACCOUNT_PERSONA_PRESETS = original
+        resolved = self.repository.resolve_account_persona(ticket_id)
+        self.assertEqual(resolved["persona_key"], pinned_key)
+        self.assertEqual(resolved["version"], pinned_version)
+        self.assertIn("voice", str((resolved.get("content") or {}).get("instruction") or ""))

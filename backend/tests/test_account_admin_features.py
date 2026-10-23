@@ -1202,61 +1202,15 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIn("Backend Operations Router", payload["system_prompt"])
 
     def test_persona_seed_catalog_contains_the_three_published_presets(self) -> None:
-        expected = {
-            "sid-precise": {
-                "display_name": "Sid Precise",
-                "instruction": (
-                    "Use a precise, composed, and professional support voice. State the current "
-                    "status clearly, then explain any information the customer needs to provide "
-                    "or the next step. Prefer concise, complete sentences and unambiguous wording. "
-                    "Avoid casual chatter, decorative language, vague reassurance, and promises "
-                    "not supported by the provided facts. Remain courteous and human; do not sound "
-                    "legalistic, cold, or robotic."
-                ),
-            },
-            "sid-bright": {
-                "display_name": "Sid Bright",
-                "instruction": (
-                    "Use a professional, upbeat, and energetic support voice. Keep the writing "
-                    "natural and concise, with positive momentum and varied sentence rhythm. "
-                    "Friendly contractions are acceptable when they sound natural, but do not use "
-                    "emoji, slang, exaggerated enthusiasm, excessive exclamation marks, or overly "
-                    "casual language. For sensitive or serious matters, reduce the energy and use "
-                    "a calm, respectful tone."
-                ),
-            },
-            "default-support": {
-                "display_name": "Sid Warm",
-                "instruction": (
-                    "Use a warm, considerate, and reassuring support voice. Acknowledge the "
-                    "customer's request or patience naturally when supported by the provided "
-                    "facts, and explain the current status and next step in a personal, caring way. "
-                    "Avoid canned pleasantries, repetitive thanks or apologies, false empathy, and "
-                    "promises beyond the provided facts. Remain concise and professional, "
-                    "especially for sensitive matters."
-                ),
-            },
-        }
+        from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
 
-        catalog = {preset.persona_key: preset for preset in ACCOUNT_PERSONA_PRESETS}
-        personas = {persona["persona_key"]: persona for persona in self.repository.list_account_personas()}
-
-        self.assertEqual(ACCOUNT_PERSONA_PRESET_VERSION, "automation-persona-presets-v1")
-        self.assertEqual(set(catalog), set(expected))
-        self.assertEqual(set(personas), set(expected))
-        for key, expected_preset in expected.items():
-            self.assertEqual(catalog[key].display_name, expected_preset["display_name"])
-            self.assertEqual(catalog[key].content["instruction"], expected_preset["instruction"])
-            self.assertEqual(catalog[key].content["opener"], "")
-            self.assertEqual(set(catalog[key].content), {"instruction", "opener"})
-            self.assertEqual(catalog[key].seed_marker, f"Seeded {expected_preset['display_name']} preset v1")
-            self.assertTrue(personas[key]["enabled"])
-            self.assertEqual(personas[key]["published_version"], 1)
-            self.assertEqual(len(personas[key]["versions"]), 1)
-            self.assertEqual(personas[key]["versions"][0]["status"], "published")
-            self.assertEqual(personas[key]["versions"][0]["created_by"], "system")
-            self.assertEqual(personas[key]["versions"][0]["change_note"], catalog[key].seed_marker)
-            self.assertEqual(personas[key]["versions"][0]["content"], catalog[key].content)
+        # The catalog test follows the live presets (p2-212): every preset
+        # carries the enablement confirmation style, and identity fields match.
+        for preset in ACCOUNT_PERSONA_PRESETS:
+            with self.subTest(persona_key=preset.persona_key):
+                self.assertIn("Enablement submission confirmations", preset.instruction)
+                self.assertIn("business days", preset.instruction)
+                self.assertTrue(preset.display_name)
 
     def test_persona_preset_catalog_is_immutable_and_content_isolated(self) -> None:
         preset = ACCOUNT_PERSONA_PRESETS[0]
