@@ -308,3 +308,98 @@ def test_draft_flow_environment_check_still_enforced(monkeypatch) -> None:
     )
     assert result["ok"] is False
     assert "environment mismatch" in result["detail"]
+
+
+# --------------------------------------------------------------- delivery
+
+
+class _RecordingPoster:
+    def __init__(self) -> None:
+        self.posts = []
+
+    def post_engineer_slack_event(self, event, thread_ts=None):
+        self.posts.append({"event": dict(event), "thread_ts": thread_ts})
+        return {
+            "event_id": event.get("event_id"),
+            "status": "delivered",
+            "failure_code": None,
+            "slack_channel_id": "C-REVIEW",
+            "slack_message_ts": "1700.001",
+            "slack_thread_ts": str(thread_ts or "") or "1700.001",
+        }
+
+
+def test_root_delivery_carries_buttons_and_change_line() -> None:
+    from backend.services.engineer_slack import _action_blocks
+    from backend.services.knowledge_slack_review import (
+        deliver_knowledge_review_notification,
+    )
+
+    host = _Host()
+    promotion_id = _parked(host)
+    poster = _RecordingPoster()
+
+    result = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=poster, now_value=NOW
+    )
+
+    assert result["status"] == "delivered"
+    posted = poster.posts[0]
+    event = posted["event"]
+    assert event["action"] == "knowledge_review"
+    assert event["knowledge_promotion_id"] == promotion_id
+    assert "*Change:* new article" in event["message_text"]
+    assert "Promotion ID" not in event["message_text"]
+    assert "Source:" not in event["message_text"]
+    blocks = _action_blocks(event)
+    assert blocks and blocks[0]["type"] == "actions"
+    ids = [b["action_id"] for b in blocks[0]["elements"]]
+    assert ids == ["knowledge_approve", "knowledge_reject"]
+    assert all(b["value"] == promotion_id for b in blocks[0]["elements"])
+
+
+def test_thread_redelivery_also_carries_buttons() -> None:
+    """A re-delivery replying inside the bound thread keeps the buttons."""
+    from backend.services.engineer_slack import _action_blocks
+    from backend.services.knowledge_slack_review import (
+        deliver_knowledge_review_notification,
+    )
+
+    host = _Host()
+    promotion_id = _parked(host)
+    first = _RecordingPoster()
+    deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=first, now_value=NOW
+    )
+    assert first.posts[0]["thread_ts"] is None, "first send roots a thread"
+
+    # Redelivery window: operator maintenance (the preprod SQL reset) moves
+    # a delivered row back to a reclaimable expired 'queued' claim while
+    # KEEPING the thread binding and the original message ts — the worker's
+    # crash-recovery path then re-sends as a thread reply.
+    with host._assignment_lock:
+        state_row = host._weknora_promotion_state()[promotion_id]
+        state_row.update(
+            slack_review_status="queued",
+            slack_review_owner_token=None,
+            slack_review_claimed_at="2026-10-11T07:00:00+00:00",
+        )
+    redeliver_poster = _RecordingPoster()
+    result = deliver_knowledge_review_notification(
+        host, _row(host, promotion_id), slack_client=redeliver_poster, now_value=NOW,
+    )
+
+    assert result["status"] == "delivered"
+    posted = redeliver_poster.posts[0]
+    assert posted["thread_ts"] == "1700.001", "re-delivery replies in the bound thread"
+    assert posted["event"]["event_id"].endswith(":resend"), (
+        "a re-delivery after a successful post uses a distinct deterministic id"
+    )
+    event = posted["event"]
+    assert event["action"] == "knowledge_review"
+    assert event["knowledge_promotion_id"] == promotion_id
+    blocks = _action_blocks(event)
+    assert blocks and blocks[0]["type"] == "actions"
+    assert [b["action_id"] for b in blocks[0]["elements"]] == [
+        "knowledge_approve", "knowledge_reject",
+    ]
