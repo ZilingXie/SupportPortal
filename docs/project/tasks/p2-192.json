@@ -5,12 +5,12 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放；v4部署失败/恢复已独立复核。新增Exec readback carrier v1：health/toolsets拆分会话、逐会话marker/EOF/超时/JSON fail-closed验证，代码待独立验收，云端未重试，真实文件测试仍不可开始。",
+  "summary": "Investigation 附件既有 R1/R2、metadata 与 Hermes 发布/验收历史证据保留。当前 F1：自然 human file_share 经 Slack Trigger 丢失 team，旧 n8n 校验未命中，14245 旧文件 Map=0。用户选择方案 A，现已实现现有 Slack credential 的 auth.test/channel/replies 来源核验后补可信 team；child draft ff147b6e，live7400713d未变。146 项本地及云端隔离正负例通过，待 Draft PR#1545 完整HEAD独立代码验收。另确认当前 live API 仍要求附件trusted bot+parent，不能伪装真人来源；用户已明确本轮只完成draft/隔离验收，保留API兼容阻塞，不发布live、不部署应用。C2/readiness未释放。",
   "status": "blocked",
-  "next_action": "先对新的Hermes Exec readback carrier v1做完整代码独立验收（Draft PR、完整HEAD、8项本地测试）；通过后在稳定TD54只读复现两个独立会话，再使用全新release ID重新做Preproduction Hermes/EFS readiness。任何失败恢复TD54/旧EFS后再交独立部署复核；不得真实文件测试。",
+  "next_action": "交指定线程独立验收 PR#1545 的 F1 draft/隔离范围、完整HEAD与 current_repair 证据；保留同一工作区和Draft PR。F1-API-01留待另行授权的API兼容设计/实现/验收/Preproduction部署；本轮禁止live发布、旧文件F0CBQTEP1S5重传或事件重放、手写Map及Hermes C3。原R1/C7/Production边界保留。",
   "owner": "agent",
   "created_at": "2026-10-09",
-  "updated_at": "2026-10-22",
+  "updated_at": "2026-10-24",
   "acceptance_criteria": [
     "C1-C10/L1 与新增发布门禁 G1-G4 见 docs/plans/investigation-attachments-v1.md；业务样本另需授权。",
     "R2 C1-C7及分层证据见 docs/plans/investigation-case-files-r2.md；本地隔离测试不能替代云端或业务闭环。"
@@ -18,7 +18,9 @@
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
     "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
-    "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。"
+    "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。",
+    "F1-CODE-REVIEW：n8n human file_share 方案A draft ff147b6e 实现及隔离验证完成，待完整HEAD独立验收；不可自验释放。",
+    "F1-API-01：当前live源码3d60e9a的附件handler要求trusted bot+parent，真人bot_id=null被拒绝；用户明确本轮保留该阻塞，不改API/部署应用，不发布n8n live。C2仍自然上传失败、ready_for_real_file_tests=false；既有Hermes发布证据不被本轮代替。"
   ],
   "evidence": [
     {
@@ -154,6 +156,11 @@
       "type": "deployment",
       "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
       "label": "2026-10-22 metadata v2：schema 列级正式迁移、bot 基线→intake-only 正式发布、n8n 精确版本和 Hermes 只读差异；待独立部署验收，业务零注入"
+    },
+    {
+      "type": "test",
+      "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+      "label": "F1 v1-repair-1 current_repair：146 passed；n8n draft198401正例+198402–198407负例；198408/198409真实Slack只读来源拒绝，所有业务写入pin；旧文件Map=0，未发布live；待独立代码验收"
     }
   ]
 }

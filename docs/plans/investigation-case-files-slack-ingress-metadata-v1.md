@@ -1,6 +1,36 @@
 # Investigation Slack ingress metadata v1
 
-修订：v2（2026-10-22，合并已批准的 WeKnora intake-only 发布范围）。代码独立验收已通过并合入 main；Preproduction 发布及只读回读已完成、待独立部署验收；Hermes 新 metadata filter 尚未部署，不能宣称真实文件测试就绪。执行证据见 `investigation-case-files-slack-ingress-metadata-v1-evidence.json`。
+当前修订：**v1-repair-1（F1 / 方案 A，2026-10-24）**。仅完成 n8n human file_share 草稿修复和隔离验证，待完整 HEAD 独立代码验收。用户已明确选择：本轮保留 API 兼容阻塞，**不发布 live、不部署 SupportPortal**。`ready_for_real_file_tests=false`。
+
+当前合同与脱敏结果以 [证据的 current_repair](investigation-case-files-slack-ingress-metadata-v1-evidence.json) 为准；其余 v2 字段和下方历史内容保留当时的范围，不代表本轮已发布或业务通过。
+
+## 当前 F1 修复与停止点
+
+- 工作区：`.worktrees/investigation-case-files-slack-ingress-metadata-v1`，分支 `codex/investigation-case-files-slack-bot-config-v1`，继续 Draft PR #1545。
+- 起点：`a37757f062458ba9c3f6bd7928d99fd7314ba2f1`；同步主干的合并提交 `ce75bbf4` 保留双方 Task/evidence，Overview 通过生成器重建。
+- live parent：`8f5f02d4-5448-45cb-b9f3-3499e7c254e8`；live child：`7400713d-c7e3-436d-9e05-fa53d6674fd7`，均未改变。
+- 新 child draft：`ff147b6e-888a-4564-9824-fcc1676469c9`，18 节点；原 bot/普通文字节点及分支保留，只改变 human 入口和发送器的可信输入选择。
+- 已验证根因：n8n 2.38.7 Slack Trigger 仅输出 `req.body.event`，丢弃 envelope team；自然 human file_share 无 team，原 child 两个校验器均不命中。
+
+用户选择的方案 A 已实现：候选 human file_share 经现有 Slack credential 的 `auth.test`、`conversations.info`、`conversations.replies` 三次 GET，核对 workspace/channel、准确消息 ts/thread/user/text/mention、文件 id/owner/name/type/size 后，才从 API `auth.team_id` 补入 team。没有 `file.user_team` 或静态回退；显式错误 team 不予修复。未经核验的 event_id/标记和私有 URL 不进入可信输入。API/超时/不完整返回或来源不匹配均停止，之后仍需原 Investigation binding gate；附件不降级到 Production/adhoc。
+
+| 合同 | 验证 | 边界 |
+| --- | --- | --- |
+| F1-A1 真实入口 | 实际 snapshot 表达式、Code、边和发送 payload 经 Node VM 执行；native n8n draft 正例 `198401` 到 mock sender | 所有外部写入均拦截，不是业务投递 |
+| F1-A2 来源与 fail closed | API 缺失/错误 team、channel/thread/user/file/parent/client/mention、重复身份、分页/失败/超时均拒绝 | 本地实际图负例；云端 `198402`–`198407` 核对路径 |
+| F1-A3 回归与载具自检 | trusted bot/parent 严格门禁及普通文字分支保留；故意绕过 verification、错误接 adhoc 被载具检出 | 无实际 SupportPortal 请求 |
+| F1-A4 实际 Slack 只读 | `198408`：真实 auth/channel 一致，不存在的准确消息被拒绝；`198409`：只读旧消息，合成 actor 不匹配被拒绝 | 真实 GET；所有业务端点 pin，未重放旧事件 |
+| F1-API-01 | live `/health/release` 返回 `3d60e9a5f4d9d976cd0fcd0d7dda852be44d5045`；该提交的 handler 附件仍要求 trusted bot+parent | 用户明确留待后续；本轮不改 API、不发布 live |
+
+本地命令：根目录 `.venv/bin/python -m pytest backend/tests/test_n8n_human_file_share.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_n8n_snapshot_identity.py backend/tests/test_n8n_source_only_contracts.py -q`，**146 passed**。Native n8n 节点配置 6/6 valid，原子更新 validationWarnings 为空。旧快照测试的两个未变知识 workflow 继续逐字比较；Slack 更新绑定实际 live/draft ID，保留全部身份冲突负例，移除过期数量而非放宽校验。
+
+旧上传 `F0CBQTEP1S5` 仍在原 thread；只读数据库回读 case/file Map 均 0、namespace 总数 4。本轮未重新上传、未转发原上传事件、未调用附件 API、未手写 Map，未调用 Hermes C3。C2 仍为自然上传失败且未重试，C7 waiting-for-evidence，业务去重未通过重放测试。
+
+允许的下一步：将 PR 完整 HEAD、draft bytes、隔离 execution 和脱敏证据交指定线程独立验收。本轮验收范围只包含 n8n 修复；通过也不授权本轮 live 发布或 API 部署。保留工作区和 Draft PR。
+
+## 历史 v2（2026-10-22）
+
+以下记录历史 metadata/bot 与 WeKnora intake-only 发布范围；不以其中当时的 pending 状态替代上方本轮结论。
 
 ## 当前执行合同
 

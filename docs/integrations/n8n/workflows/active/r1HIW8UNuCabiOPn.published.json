@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-22T04:41:06.662Z",
+  "capturedAt": "2026-10-23T16:22:32.739Z",
   "source": {
     "workflowId": "r1HIW8UNuCabiOPn",
     "workflowName": "[slack]Forward Thread|Prod+Preprod",
@@ -548,6 +548,7 @@
       "availableInMCP": true,
       "executionOrder": "v1",
       "errorWorkflow": "dV5vNA6l1MbDMHZt"
-    }
+    },
+    "nodeGroups": []
   }
 }

@@ -1,0 +1,814 @@
+{
+  "schemaVersion": 1,
+  "capturedAt": "2026-10-23T16:28:41.014Z",
+  "source": {
+    "workflowId": "r1HIW8UNuCabiOPn",
+    "workflowName": "[slack]Forward Thread|Prod+Preprod",
+    "versionId": "ff147b6e-888a-4564-9824-fcc1676469c9",
+    "publishedVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
+    "snapshotKind": "draft",
+    "updatedAt": "2026-10-23T16:28:10.031Z"
+  },
+  "restoreNotes": {
+    "activeAtCapture": true,
+    "credentials": "Credential references retained; rebind redacted literals before restore.",
+    "redactedValues": []
+  },
+  "workflow": {
+    "id": "r1HIW8UNuCabiOPn",
+    "name": "[slack]Forward Thread|Prod+Preprod",
+    "active": true,
+    "versionId": "ff147b6e-888a-4564-9824-fcc1676469c9",
+    "activeVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
+    "nodes": [
+      {
+        "parameters": {
+          "workflowInputs": {
+            "values": [
+              {
+                "name": "Input",
+                "type": "any"
+              }
+            ]
+          }
+        },
+        "type": "n8n-nodes-base.executeWorkflowTrigger",
+        "typeVersion": 1.1,
+        "position": [
+          -528,
+          112
+        ],
+        "id": "68283eda-f124-42b7-a12f-53aa23da5fee",
+        "name": "When Executed by Another Workflow"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1f5a928d-226b-4d6a-b756-68d6e381dc57",
+                "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && !$json.Input.bot_id && !$json.Input.subtype && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -304,
+          112
+        ],
+        "id": "7cdcb087-dbd0-4b54-8b5c-9248e0c5c724",
+        "name": "Validate Slack Mention"
+      },
+      {
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/production/api/integrations/slack/engineer-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "id": "11fb7c88-9b12-4e47-b38c-c25fd558eaec",
+        "name": "Resolve Active Binding1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -80,
+          112
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "6f6e1a10-4c54-4e89-a912-000000000006",
+                "leftValue": "={{ $json.status === 'bound' && !!$json.engineer_case_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "1d9cf1ac-bc4f-42c1-b2c1-ac8e2de74df3",
+        "name": "Bound Case Thread1",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          144,
+          112
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/production/api/integrations/slack/engineer-cases/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ JSON.stringify({\n  schema_version: 1,\n  event_id:\n    $('When Executed by Another Workflow').item.json.Input.client_msg_id ||\n    [\n      $('When Executed by Another Workflow').item.json.Input.team,\n      $('When Executed by Another Workflow').item.json.Input.channel,\n      $('When Executed by Another Workflow').item.json.Input.ts\n    ].join(':'),\n  engineer_case_id: $json.engineer_case_id,\n  slack_user_id:\n    $('When Executed by Another Workflow').item.json.Input.user,\n  text: String(\n    $('When Executed by Another Workflow').item.json.Input.text || ''\n  ).replace(/<@U08RVQSJQF2>/g, '').trim(),\n  occurred_at: new Date(\n    Number(\n      $('When Executed by Another Workflow').item.json.Input.event_ts ||\n      $('When Executed by Another Workflow').item.json.Input.ts\n    ) * 1000\n  ).toISOString()\n}) }}",
+          "options": {}
+        },
+        "id": "4c032328-47b0-45f2-9e5d-c7516baddeb2",
+        "name": "Send Message To SupportPortal1",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          368,
+          112
+        ],
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "QpzesdEzLCm98H1C",
+            "name": "2_SupportPortal"
+          }
+        }
+      },
+      {
+        "id": "d6293681-67f1-4f7e-8829-a594ca431aa1",
+        "name": "Resolve Hermes Binding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          144,
+          320
+        ],
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "719d3ceb-aae7-4bb7-9ed7-f6d2b9a152ea",
+        "name": "Hermes Bound Thread",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          368,
+          320
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.status === 'bound' && !!$json.zendesk_ticket_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "6393db9c-2a55-4e46-a966-8f6edc9b04b1",
+        "name": "Send Hermes Message",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          592,
+          320
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/messages",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ (() => { const original = $('When Executed by Another Workflow').item.json.Input; const input = original.subtype === 'file_share' && !original.bot_id ? $('Verify Human Slack Source').item.json.Input : original; if (!/^\\d+\\.\\d+$/.test(String(input.ts || ''))) throw new Error('Authentic Slack message ts required'); return JSON.stringify({ team_id: input.team, channel_id: input.channel, thread_ts: input.thread_ts, slack_user_id: input.user, parent_user_id: input.parent_user_id || null, bot_id: input.bot_id || null, text: String(input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim(), raw_text: String(input.text || ''), bot_user_id: 'U08RVQSJQF2', source_event_id: input.event_id || input.client_msg_id || [input.team,input.channel,input.ts].join(':'), message_ts: input.ts, files: (Array.isArray(input.files) ? input.files : []).map(f => ({file_id: String(f.id), file_name: String(f.name || ''), content_type: String(f.mimetype || 'application/octet-stream'), size_bytes: Number(f.size || 0)})) }); })() }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "936675c8-ca63-4e51-ad8e-d9fcc9ee86bb",
+        "name": "Send Adhoc Session",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          592,
+          480
+        ],
+        "parameters": {
+          "method": "POST",
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/adhoc-sessions",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendBody": true,
+          "contentType": "raw",
+          "rawContentType": "application/json",
+          "body": "={{ (() => { const input = $('When Executed by Another Workflow').item.json.Input; if (Array.isArray(input.files) && input.files.length) throw new Error('Attachments require a bound Investigation thread'); return JSON.stringify({ team_id: 'T1CBEDLJY', channel_id: 'C0BS0N61D1R', thread_ts: $('When Executed by Another Workflow').item.json.Input.thread_ts, slack_user_id: $('When Executed by Another Workflow').item.json.Input.user, text: String($('When Executed by Another Workflow').item.json.Input.text || '').replace(/<@U08RVQSJQF2>/g, '').trim() }); })() }}",
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "p2192-validate-attachment-mention",
+        "name": "Validate Hermes Attachment Mention",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -528,
+          320
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "1f5a928d-226b-4d6a-b756-68d6e381dc57",
+                "leftValue": "={{ $json.Input.type === 'message' && $json.Input.team === 'T1CBEDLJY' && $json.Input.channel === 'C0BS0N61D1R' && typeof $json.Input.thread_ts === 'string' && $json.Input.thread_ts.trim().length > 0 && typeof $json.Input.user === 'string' && $json.Input.user.trim().length > 0 && $json.Input.bot_id === 'B08RHT5TZV2' && typeof $json.Input.parent_user_id === 'string' && $json.Input.parent_user_id.trim().length > 0 && $json.Input.subtype === 'file_share' && Array.isArray($json.Input.files) && $json.Input.files.length > 0 && typeof $json.Input.text === 'string' && $json.Input.text.includes('<@U08RVQSJQF2>') && $json.Input.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0 }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "p2192-resolve-hermes-attachment-binding",
+        "name": "Resolve Hermes Attachment Binding",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          -304,
+          480
+        ],
+        "parameters": {
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/thread-bindings/resolve",
+          "authentication": "genericCredentialType",
+          "genericAuthType": "httpHeaderAuth",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "team_id",
+                "value": "T1CBEDLJY"
+              },
+              {
+                "name": "channel_id",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "thread_ts",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.thread_ts }}"
+              }
+            ]
+          },
+          "options": {}
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
+      },
+      {
+        "id": "p2192-hermes-attachment-bound",
+        "name": "Hermes Attachment Bound",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -80,
+          480
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.status === 'bound' && !!$json.zendesk_ticket_id }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "p2192-ignore-non-investigation-attachment",
+        "name": "Ignore Non-Investigation Attachment",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          144,
+          560
+        ],
+        "parameters": {
+          "jsCode": "return [];"
+        }
+      },
+      {
+        "id": "p2192-human-file-candidate",
+        "name": "Human File Share Candidate",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          -800,
+          720
+        ],
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            },
+            "conditions": [
+              {
+                "id": "p2192-human-file-condition",
+                "leftValue": "={{ (() => { const i = $json.Input; return !!i && i.type === 'message' && i.subtype === 'file_share' && !i.bot_id && !i.bot_profile && i.channel === 'C0BS0N61D1R' && (i.team == null || i.team === 'T1CBEDLJY') && /^\\d+\\.\\d+$/.test(String(i.thread_ts || '')) && /^\\d+\\.\\d+$/.test(String(i.ts || '')) && i.ts !== i.thread_ts && typeof i.user === 'string' && /^U[A-Z0-9]+$/.test(i.user) && i.user !== 'U08RVQSJQF2' && Array.isArray(i.files) && i.files.length > 0 && i.files.length <= 10 && i.files.every(f => f && typeof f.id === 'string' && /^F[A-Z0-9]+$/.test(f.id)) && typeof i.text === 'string' && i.text.includes('<@U08RVQSJQF2>') && i.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0; })() }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "p2192-auth-test",
+        "name": "Verify Slack Credential Workspace",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          -576,
+          720
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://slack.com/api/auth.test",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "slackApi",
+          "options": {
+            "timeout": 10000,
+            "response": {
+              "response": {
+                "responseFormat": "json"
+              }
+            },
+            "redirect": {
+              "redirect": {
+                "followRedirects": false
+              }
+            }
+          }
+        },
+        "onError": "stopWorkflow",
+        "retryOnFail": false,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "id": "p2192-conversations-info",
+        "name": "Read Human Slack Channel",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          -352,
+          720
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://slack.com/api/conversations.info",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "slackApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "channel",
+                "value": "C0BS0N61D1R"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000,
+            "response": {
+              "response": {
+                "responseFormat": "json"
+              }
+            },
+            "redirect": {
+              "redirect": {
+                "followRedirects": false
+              }
+            }
+          }
+        },
+        "onError": "stopWorkflow",
+        "retryOnFail": false,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "id": "p2192-conversations-replies",
+        "name": "Read Human Slack Message",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.5,
+        "position": [
+          -128,
+          720
+        ],
+        "parameters": {
+          "method": "GET",
+          "url": "https://slack.com/api/conversations.replies",
+          "authentication": "predefinedCredentialType",
+          "nodeCredentialType": "slackApi",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "channel",
+                "value": "C0BS0N61D1R"
+              },
+              {
+                "name": "ts",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.thread_ts }}"
+              },
+              {
+                "name": "oldest",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.ts }}"
+              },
+              {
+                "name": "latest",
+                "value": "={{ $('When Executed by Another Workflow').item.json.Input.ts }}"
+              },
+              {
+                "name": "inclusive",
+                "value": "true"
+              },
+              {
+                "name": "limit",
+                "value": "2"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 10000,
+            "response": {
+              "response": {
+                "responseFormat": "json"
+              }
+            },
+            "redirect": {
+              "redirect": {
+                "followRedirects": false
+              }
+            }
+          }
+        },
+        "onError": "stopWorkflow",
+        "retryOnFail": false,
+        "credentials": {
+          "slackApi": {
+            "id": "UFeOoSgYxSmNuCnS",
+            "name": "Zac_Slack_user"
+          }
+        }
+      },
+      {
+        "id": "p2192-verify-human-source",
+        "name": "Verify Human Slack Source",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          96,
+          720
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const input = $('When Executed by Another Workflow').first().json.Input;\nconst auth = $('Verify Slack Credential Workspace').first().json;\nconst info = $('Read Human Slack Channel').first().json;\nconst replies = $input.first().json;\nfunction requireSource(ok, reason) {\n  if (!ok) throw new Error('human_file_source_unverified: ' + reason);\n}\nrequireSource($input.all().length === 1 && $('When Executed by Another Workflow').all().length === 1, 'single input required');\nrequireSource(auth.ok === true && auth.team_id === 'T1CBEDLJY', 'credential workspace');\nrequireSource(info.ok === true && info.channel?.id === 'C0BS0N61D1R' && info.channel.context_team_id === auth.team_id, 'channel workspace');\nrequireSource(input.team == null || input.team === auth.team_id, 'event workspace');\nrequireSource(input.type === 'message' && input.subtype === 'file_share' && !input.bot_id && !input.bot_profile && input.channel === info.channel.id, 'human channel');\nrequireSource(/^U[A-Z0-9]+$/.test(String(input.user || '')) && input.user !== 'U08RVQSJQF2', 'human actor');\nrequireSource(/^\\d+\\.\\d+$/.test(String(input.ts || '')) && /^\\d+\\.\\d+$/.test(String(input.thread_ts || '')) && input.ts !== input.thread_ts, 'thread reply');\nrequireSource(replies.ok === true && Array.isArray(replies.messages) && replies.has_more !== true && !replies.response_metadata?.next_cursor, 'complete replies response');\nconst matches = replies.messages.filter(m => m.ts === input.ts);\nrequireSource(matches.length === 1, 'unique exact message');\nconst message = matches[0];\nrequireSource(message.type === 'message' && (!message.subtype || message.subtype === 'file_share') && !message.bot_id && !message.bot_profile && message.user === input.user && message.thread_ts === input.thread_ts, 'message actor/thread');\nrequireSource(typeof input.text === 'string' && message.text === input.text && message.text.includes('<@U08RVQSJQF2>') && message.text.replace(/<@U08RVQSJQF2>/g, '').trim().length > 0, 'mention/text');\nrequireSource(!input.client_msg_id || input.client_msg_id === message.client_msg_id, 'client message identity');\nrequireSource(!input.parent_user_id || input.parent_user_id === message.parent_user_id, 'parent identity');\nrequireSource(Array.isArray(input.files) && input.files.length > 0 && input.files.length <= 10 && Array.isArray(message.files) && message.files.length === input.files.length, 'file count');\nconst ids = input.files.map(f => f?.id);\nrequireSource(new Set(ids).size === ids.length && ids.every(id => typeof id === 'string' && /^F[A-Z0-9]+$/.test(id)), 'unique file identities');\nconst files = ids.map(id => {\n  const matchingFiles = message.files.filter(f => f.id === id);\n  requireSource(matchingFiles.length === 1, 'file membership');\n  const file = matchingFiles[0];\n  const offered = input.files.find(f => f.id === id);\n  requireSource(file.user === message.user && !file.is_tombstoned && !file.is_external && typeof file.name === 'string' && file.name.length > 0 && typeof file.mimetype === 'string' && Number.isSafeInteger(file.size) && file.size > 0 && file.size <= 50 * 1024 * 1024, 'file owner/metadata');\n  requireSource(offered.name === file.name && offered.mimetype === file.mimetype && offered.size === file.size, 'file metadata match');\n  return {id: file.id, name: file.name, mimetype: file.mimetype, size: file.size};\n});\nreturn [{json: {Input: {\n  type: message.type, subtype: 'file_share', team: auth.team_id, channel: info.channel.id,\n  ts: message.ts, thread_ts: message.thread_ts, user: message.user,\n  parent_user_id: message.parent_user_id || null, bot_id: null,\n  text: message.text, client_msg_id: message.client_msg_id || null, files\n}}, pairedItem: {item: 0}}];"
+        },
+        "onError": "stopWorkflow",
+        "retryOnFail": false
+      }
+    ],
+    "connections": {
+      "Validate Slack Mention": {
+        "main": [
+          [
+            {
+              "node": "Resolve Active Binding1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Active Binding1": {
+        "main": [
+          [
+            {
+              "node": "Bound Case Thread1",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Bound Case Thread1": {
+        "main": [
+          [
+            {
+              "node": "Send Message To SupportPortal1",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Resolve Hermes Binding",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Hermes Binding": {
+        "main": [
+          [
+            {
+              "node": "Hermes Bound Thread",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Hermes Bound Thread": {
+        "main": [
+          [
+            {
+              "node": "Send Hermes Message",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Send Adhoc Session",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Validate Hermes Attachment Mention": {
+        "main": [
+          [
+            {
+              "node": "Resolve Hermes Attachment Binding",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Validate Slack Mention",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Resolve Hermes Attachment Binding": {
+        "main": [
+          [
+            {
+              "node": "Hermes Attachment Bound",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Hermes Attachment Bound": {
+        "main": [
+          [
+            {
+              "node": "Send Hermes Message",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Ignore Non-Investigation Attachment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "When Executed by Another Workflow": {
+        "main": [
+          [
+            {
+              "node": "Human File Share Candidate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Human File Share Candidate": {
+        "main": [
+          [
+            {
+              "node": "Verify Slack Credential Workspace",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Validate Hermes Attachment Mention",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Slack Credential Workspace": {
+        "main": [
+          [
+            {
+              "node": "Read Human Slack Channel",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Human Slack Channel": {
+        "main": [
+          [
+            {
+              "node": "Read Human Slack Message",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Read Human Slack Message": {
+        "main": [
+          [
+            {
+              "node": "Verify Human Slack Source",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Verify Human Slack Source": {
+        "main": [
+          [
+            {
+              "node": "Resolve Hermes Attachment Binding",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "settings": {
+      "binaryMode": "separate",
+      "availableInMCP": true,
+      "executionOrder": "v1",
+      "errorWorkflow": "dV5vNA6l1MbDMHZt"
+    },
+    "nodeGroups": []
+  }
+}

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "plan": "investigation-case-files-slack-ingress-metadata-v1",
-  "revision": "v2",
-  "updated_at": "2026-10-22T05:02:17.340499+00:00",
-  "execution_status": "preproduction_deployed_and_read_back; independent deployment acceptance pending; Hermes metadata gap retained",
-  "overall_acceptance": "waiting-for-independent-acceptance",
+  "revision": "v1-repair-1",
+  "updated_at": "2026-10-23T16:36:18.189729+00:00",
+  "execution_status": "n8n_draft_repair_implemented; no_live_publication_by_user_scope; API_compatibility_deferred",
+  "overall_acceptance": "waiting-for-independent-n8n-code-acceptance",
   "ready_for_real_file_tests": false,
   "source": {
     "integrated_main": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
@@ -1010,5 +1010,230 @@
     "project_overview": "passed",
     "feature_list": "passed",
     "diff_check": "passed on origin/main...HEAD after main integration; docs-only delta"
+  },
+  "historical_v2_revision": "v2",
+  "evidence_scope_note": "current_repair is the current contract. Remaining v2 fields retain historical deployment/readback evidence and must not be interpreted as this repair runtime status.",
+  "current_repair": {
+    "finding": "F1",
+    "revision": "v1-repair-1",
+    "scope": "n8n draft and isolation only; user explicitly deferred API changes and live publication",
+    "status": "implemented_waiting_for_independent_code_acceptance",
+    "root_cause": "Slack Trigger returns req.body.event, losing envelope team; natural human file_share had no team and neither old child validator matched.",
+    "authorization": {
+      "source_verification": "User selected A: existing Slack credential auth.test + conversations.info + conversations.replies; fail closed, preserve strict bot branch.",
+      "latest_scope": "User chose n8n draft/isolation only; API compatibility remains blocked, do not publish live."
+    },
+    "workflow": {
+      "id": "r1HIW8UNuCabiOPn",
+      "captured_at": "2026-10-23T16:33:53.320Z",
+      "activeVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
+      "draftVersionId": "ff147b6e-888a-4564-9824-fcc1676469c9",
+      "nodeCount": 18,
+      "active_unchanged": true,
+      "snapshot": "docs/integrations/n8n/workflows/drafts/r1HIW8UNuCabiOPn.draft.json",
+      "parent_active_version": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
+      "snapshot_sha256": "98ca70d221bf77aadbd72cd3f9cc1d2f28b068f25a4d3bda6a87dcd7771aeb87"
+    },
+    "contracts": [
+      {
+        "id": "F1-A1",
+        "result": "isolated_pass",
+        "mechanism": "human candidate -> auth.test -> conversations.info -> exact range conversations.replies -> Verify Human Slack Source -> existing Investigation binding -> mocked sender"
+      },
+      {
+        "id": "F1-A2",
+        "result": "isolated_pass",
+        "mechanism": "Only API auth.team_id is injected, after channel.context_team_id matches; no file.user_team/static fallback. Exact message ts/thread/user/text/mention/file owner/id/name/type/size checked. Unverified event_id/flags/private URLs discarded."
+      },
+      {
+        "id": "F1-A3",
+        "result": "isolated_pass",
+        "mechanism": "Absent/wrong API workspace, explicit wrong event team, wrong channel/thread/user/file, missing mention, duplicate identities, incomplete replies, non-2xx/timeout/JSON errors stop before binding/send."
+      },
+      {
+        "id": "F1-A4",
+        "result": "isolated_pass",
+        "mechanism": "Strict trusted bot validator, parent requirements and ordinary text Production/adhoc routing unchanged. Files never use Production/adhoc fallback."
+      },
+      {
+        "id": "F1-A5",
+        "result": "read_only_pass",
+        "mechanism": "auth.test and conversations.info live API verified; deliberately nonexistent message and fake-actor source readback correctly rejected; no original event replay or external write."
+      }
+    ],
+    "verification": {
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_n8n_human_file_share.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_n8n_snapshot_identity.py backend/tests/test_n8n_source_only_contracts.py -q",
+      "result": "146 passed in 11.77s",
+      "carrier": "Native Node VM executes actual snapshot expressions, Code and graph edges; all HTTP boundaries inert. Cloud manual tests execute n8n logic with I/O pinned; sender payload evaluated by local runner, not claimed as a live HTTP send.",
+      "canaries": "Bypassing verification cannot access normalized sender input; misrouting files into adhoc throws. Existing validator negative identity tests retained.",
+      "snapshot_test_repair": "Historical knowledge snapshots remain byte-exact. Slack has authorized fresh readback; fixed obsolete counts 15/4/56 -> 15/3/52 and pins published7400713d/draftff147b6e; identity conflict negative tests unchanged.",
+      "node_validation": "6/6 valid; atomic update validationWarnings=[]; existing Slack credential ID re-read matches UFeOoSgYxSmNuCnS; no new credential",
+      "static_checks": {
+        "snapshot_validator": "passed: 15 published, 3 divergent drafts, 52 redactions; 2 local candidates; 29 existing LEGACY-EXPOSED warnings retained",
+        "project_overview": "passed",
+        "feature_list": "passed",
+        "diff_check": "passed after trimming changelog EOF blank line"
+      }
+    },
+    "cloud_isolation": [
+      {
+        "name": "positive",
+        "executionId": "198401",
+        "status": "success",
+        "last_node": "Send Hermes Message",
+        "verify_status": "success",
+        "mock_send_executed": true,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "wrong-api-team",
+        "executionId": "198402",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "missing-api-team",
+        "executionId": "198403",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "wrong-file",
+        "executionId": "198404",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "unbound",
+        "executionId": "198405",
+        "status": "success",
+        "last_node": "Ignore Non-Investigation Attachment",
+        "verify_status": "success",
+        "mock_send_executed": false,
+        "ignore_executed": true,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "bot-strict",
+        "executionId": "198406",
+        "status": "success",
+        "last_node": "Validate Slack Mention",
+        "verify_status": "not_executed",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "missing-mention",
+        "executionId": "198407",
+        "status": "success",
+        "last_node": "Validate Slack Mention",
+        "verify_status": "not_executed",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      }
+    ],
+    "live_slack_api": {
+      "captured_at": "2026-10-23T16:30:05.895Z",
+      "execution": {
+        "id": "198408",
+        "status": "error",
+        "mode": "manual",
+        "startedAt": "2026-10-23T16:29:47.615Z",
+        "stoppedAt": "2026-10-23T16:29:47.813Z"
+      },
+      "kind": "live_slack_read_only_nonexistent_message_no_business_replay",
+      "auth": {
+        "ok": true,
+        "team_id": "T1CBEDLJY"
+      },
+      "channel": {
+        "ok": true,
+        "id": "C0BS0N61D1R",
+        "context_team_id": "T1CBEDLJY"
+      },
+      "replies": {
+        "ok": true,
+        "message_count": 1,
+        "has_more": false,
+        "next_cursor_present": false
+      },
+      "verified_node_status": "error",
+      "send_node_executed": false,
+      "external_write_boundaries": "all pinned; attachment resolver pinned ignored_unbound",
+      "original_file_replayed": false
+    },
+    "old_upload": {
+      "captured_at": "2026-10-23T16:31:35.028Z",
+      "executionId": "198409",
+      "status": "error",
+      "read_only": true,
+      "original_payload_replayed": false,
+      "synthetic_actor_differs": true,
+      "slack": {
+        "ok": true,
+        "matching_message_present": true,
+        "file_present": true,
+        "file_id": "F0CBQTEP1S5",
+        "file_name": "synthetic-engineer-14245-278e033b162b.log",
+        "size": 498,
+        "mimetype": "text/plain",
+        "file_owner_matches_message": true,
+        "thread_matches": true,
+        "parent_user_present": true,
+        "client_msg_id_present": true
+      },
+      "send_node_executed": false,
+      "failure": "human_file_source_unverified: message actor/thread [line 6]",
+      "external_writes": "all pinned"
+    },
+    "old_map_readback": {
+      "captured_at": "2026-10-23T16:33:20.109838+00:00",
+      "read_only": true,
+      "case_id": "14245",
+      "slack_file_id": "F0CBQTEP1S5",
+      "case_map_count": 0,
+      "file_map_count": 0,
+      "namespace_map_count": 4,
+      "status": "verified",
+      "method": "SSM DSN held in memory; psycopg read-only transaction with statement timeout; three count SELECTs, no service mutation"
+    },
+    "api_compatibility": {
+      "id": "F1-API-01",
+      "status": "blocked_deferred_by_user",
+      "live_release": "r20261023-3d60e9a-opfallback",
+      "live_commit": "3d60e9a5f4d9d976cd0fcd0d7dda852be44d5045",
+      "readback": "GET /automation/preproduction/health/release; then git show exact live commit source",
+      "path": "backend/services/automation_hermes_slack_actions.py",
+      "line": 338,
+      "contract": "Any files require trusted bot_id and parent_user_id; verified human branch preserves bot_id=null. Current application would reject human attachments with 422. No API was called to test this; established by source at observed live commit.",
+      "route": "backend/automation_ecs_api.py:1809",
+      "decision": "No API code/deployment or n8n live publication in this round. Do not fabricate bot/parent identity."
+    },
+    "business": {
+      "C2": "failed_natural_ingress_validation_no_map; not retried; draft isolation does not release C2",
+      "C3": "not_executed",
+      "C7": "waiting-for-evidence",
+      "ready_for_real_file_tests": false,
+      "deduplication": "No replay/deduplication business test was performed; this patch introduces no dedup cache.",
+      "production": "untouched",
+      "hermes": "not called",
+      "zac": "not called"
+    },
+    "next_action": "Independent review of full PR HEAD / draft bytes and evidence only. Preserve Draft PR/worktree. No merge, live publish, SupportPortal deployment, old event replay or C3 in this round."
   }
 }

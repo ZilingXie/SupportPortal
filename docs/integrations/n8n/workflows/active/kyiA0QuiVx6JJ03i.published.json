@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-10-22T04:41:06.662Z",
+  "capturedAt": "2026-10-23T16:22:32.717Z",
   "source": {
     "workflowId": "kyiA0QuiVx6JJ03i",
     "workflowName": "[slack]Route Support",
@@ -160,15 +160,15 @@
             "parameters": [
               {
                 "name": "Authorization",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               },
               {
                 "name": "Cookie",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               },
               {
                 "name": "cookie",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               }
             ]
           },
@@ -570,15 +570,15 @@
             "parameters": [
               {
                 "name": "Authorization",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               },
               {
                 "name": "Cookie",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               },
               {
                 "name": "cookie",
-                "value": "__REDACTED_LITERAL__"
+                "value": "__REDACTED_SECRET__"
               }
             ]
           },
@@ -1397,6 +1397,7 @@
       "timeSavedMode": "fixed",
       "availableInMCP": true,
       "executionOrder": "v1"
-    }
+    },
+    "nodeGroups": []
   }
 }
