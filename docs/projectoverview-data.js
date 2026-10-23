@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T05:53:34Z",
-  "source_base_commit": "d10d3a4f8449e51cf66f422f1304c846cae68f28",
-  "registry_digest": "e013eb0a2dd48d990dba503b6ea5b7de5662cae03f2395abdbfaafc5efeb1454",
+  "generated_at": "2026-10-23T08:05:24Z",
+  "source_base_commit": "90c8c1cdce0dd95b3ba7eae5f4571fa3ef60e748",
+  "registry_digest": "c4f5060dfbf8152c1c56d314b20d020205b34c03db3f84f68d378dba429f2668",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1925,6 +1925,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
         },
         {
+          "type": "deployment",
+          "label": "Preproduction 发布、真实验证与 persona 风格收口（2026-10-23，persona-draft-contract-gate v1）",
+          "command": "release pipeline --release-commit 90c8c1cd --through preproduction → 新 synthetic E1P 14227（门禁验证）→ persona v2 发布（方案 A）→ 新 synthetic E1P 14228（风格验证）",
+          "result": "r20261023-90c8c1c 上线（api:177/route:171/worker:175，digest 三侧一致，evidence complete）。14227：门禁实弹生效——14202/14225 形态零外泄（drafts=0/deliveries=0/Zendesk 无确认），但 fail-closed 接管（hermes 侧 persona 未学新合同，模型无法过门禁），根因=生成 prompt 面（persona 库 default-support/sid-bright/sid-precise v1）未含三要素+禁句指令。方案 A（用户批准）：经 repository 正规 draft+publish 路径为全部三个 persona 发布 v2/v2/v3（附加 enablement 确认三要素+禁句+禁期限段），回读 published addendum=True。14228（persona=default-support v2）：**自然合规确认公开投递**（'Thank you for your request. I've submitted your Media Relay request for internal review. Reviews are handled on business days (Monday–Friday), and I'll keep you posted as soon as there's an update.'）——E1P [PASSED] 5/5 exit 0（含 draft 内容检查三要素）。披露：①14227 收尾 solved、relay 未发；②并行线程于两次发布之间又部署 api:178/worker:176 且 ENABLEMENT_WORKFLOW_MODE=manual（14228 走 manual 流产生既有 human_review 升级私有注记+案件 human_review_required——非本轮引入，模式归属并行线程）；③代码侧 ACCOUNT_PERSONA_PRESETS 仍是 v1 文案（fail-open fallback 与未来 seed 未同步，登记为后续项）。"
+        },
+        {
           "type": "decision",
           "label": "独立代码验收通过（2026-10-23，persona-draft-contract-gate v1）",
           "command": "验收方复跑：native enablement regression 16 passed；persona/场景/basis/context/fraud 235 passed/32 skipped；边界（14225/requested a review/hasn't been confirmed yet）通过；compileall/diff --check/Overview 通过",
@@ -2044,7 +2050,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 54,
-      "done_count": 27,
+      "done_count": 28,
       "blocked_count": 2
     },
     {
@@ -19645,7 +19651,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 1,
       "task_id": "p2-211",
       "title": "Persona 提交确认合同接入 Hermes native draft 生成路径（persona-draft-contract-gate v1）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
@@ -19653,7 +19659,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
       "summary": "p2-210 真实验证（工单 14225）实证：新验证器在 reply-job publish 链路正确拒收 14202 形态回复，但 Hermes native draft 路径（worker hermes persona phase → hermes_draft_prepared/queued → 直接投递）绕过 validate_account_reply_contract，生硬否定句仍公开投递（评论 54890160373140）。本任务把 submission_confirmation（推广为 hermes persona 内容合同）接入 draft 生成路径：生成后投递前过合同门禁，失败走有限重生成→fail-closed（C4 原意），不投递违约内容。前置：p2-210 已上线 r20261023-9b1f8e1。",
-      "next_action": "验收通过→finalize PR#1556→仅 Preprod 发布→新 synthetic E1P 三侧回读（14202/14225 形态端到端拦截验证）。",
+      "next_action": "已收口：门禁+persona 风格双上线并经 14227/14228 实弹验证（违约零投递+合规自然投递+E1P 5/5）。后续项：代码侧 persona 预设同步（fallback/seed 合同一致）；并行线程 manual 模式下的 E1P 观察由该线归属。",
       "acceptance_criteria": [
         "native draft 路径生成的 submission_confirmation 违约内容（stiff negative/缺三要素）不投递",
         "违约触发有限重生成，重生成仍失败则 fail-closed 转人工，不投递、不伪造",
@@ -19662,6 +19668,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布、真实验证与 persona 风格收口（2026-10-23，persona-draft-contract-gate v1）",
+          "command": "release pipeline --release-commit 90c8c1cd --through preproduction → 新 synthetic E1P 14227（门禁验证）→ persona v2 发布（方案 A）→ 新 synthetic E1P 14228（风格验证）",
+          "result": "r20261023-90c8c1c 上线（api:177/route:171/worker:175，digest 三侧一致，evidence complete）。14227：门禁实弹生效——14202/14225 形态零外泄（drafts=0/deliveries=0/Zendesk 无确认），但 fail-closed 接管（hermes 侧 persona 未学新合同，模型无法过门禁），根因=生成 prompt 面（persona 库 default-support/sid-bright/sid-precise v1）未含三要素+禁句指令。方案 A（用户批准）：经 repository 正规 draft+publish 路径为全部三个 persona 发布 v2/v2/v3（附加 enablement 确认三要素+禁句+禁期限段），回读 published addendum=True。14228（persona=default-support v2）：**自然合规确认公开投递**（'Thank you for your request. I've submitted your Media Relay request for internal review. Reviews are handled on business days (Monday–Friday), and I'll keep you posted as soon as there's an update.'）——E1P [PASSED] 5/5 exit 0（含 draft 内容检查三要素）。披露：①14227 收尾 solved、relay 未发；②并行线程于两次发布之间又部署 api:178/worker:176 且 ENABLEMENT_WORKFLOW_MODE=manual（14228 走 manual 流产生既有 human_review 升级私有注记+案件 human_review_required——非本轮引入，模式归属并行线程）；③代码侧 ACCOUNT_PERSONA_PRESETS 仍是 v1 文案（fail-open fallback 与未来 seed 未同步，登记为后续项）。"
+        },
         {
           "type": "decision",
           "label": "独立代码验收通过（2026-10-23，persona-draft-contract-gate v1）",

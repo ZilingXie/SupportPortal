@@ -5316,3 +5316,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 
 - `validate_customer_reply_draft`（server-owned basis 门禁，`tool_save_reply_draft` 真实入口）新增 enablement review_requested 确认合同：共享 p2-210 的 `STIFF_NEGATIVE_ENABLEMENT_STATUS_RE`/`SUBMISSION_RECEIPT_RE`（单一事实源；按 14225 实文扩族 been confirmed(yet)/requested a review）；auto 路径（enablement_auto_review）另需 business-day+更新承诺、拒 24h 与提前启用；manual 仅禁句+receipt（24h 表述由既有 basis 时间承诺守卫管辖）。
 - 违规=HermesToolError（模型 run 内可重写=有限重生成）；重写仍失败则无 draft 落库（fail-closed 走既有失败链）。无 Prompt catalog 改动、无 Prompt Release 操作。
+
+## 2026-10-23 — Persona 库 v2：enablement 确认三要素风格（p2-211 方案 A，Preproduction runtime）
+
+- Preproduction persona 库（`support_account_prompt_versions`）经 repository 正规 draft+publish 为 `default-support`(v2)、`sid-bright`(v2)、`sid-precise`(v3) 追加同一段指令：enablement 提交确认须含 感谢+已提交内部 review+business days(Monday-Friday)+有更新即通知；禁 'not yet enabled / not yet confirmed as enabled / pending activation / awaiting enablement' 等状态免责句；禁具体期限承诺（如 24 小时）。
+- 目的：让 hermes 侧 persona（p2-211 draft 门禁的生成方）具备产出合规确认的风格指引——与 automation_persona v33（account 管线）及场景/验证器三方合同一致。
+- 验证：工单 14228（default-support v2）确认回复公开投递且三要素齐备，E1P 5/5 PASS。runtime 变更不涉及 catalog Prompt/Prompt Release；代码侧 `ACCOUNT_PERSONA_PRESETS` 预设同步为后续项。
