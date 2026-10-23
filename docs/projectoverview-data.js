@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T02:04:12Z",
-  "source_base_commit": "739614015f818d9f6ce86816728769aa008a8efe",
-  "registry_digest": "0485c04f5f8c378541be72fb2e5587ee3a67361948e3e396b8dd9c6e50198656",
+  "generated_at": "2026-10-23T03:10:49Z",
+  "source_base_commit": "032119d7ee24c19f4e8e5832d73531cda3c19c86",
+  "registry_digest": "0d1da2e31714026b3ff37a8235e5da56c0b322f453ba20ca1dd8ca517a2a1ba0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1905,6 +1905,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "DSN 脱敏（C7）",
           "command": "pytest backend/tests/test_dsn_redaction.py -q；compileall；git diff --check",
           "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
+        },
+        {
+          "type": "decision",
+          "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
+          "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1554 HEAD 032119d7）：F1 单一正则双入口一致、9 类否定表达全拒；F2 receipt 双路径通用、裸 Thanks 拒收；14202 负控/manual 24h 正控/business-day 正控确认。允许下一步：合并→仅 Preproduction 部署→新 synthetic E1P→draft/公开评论/Zendesk 三侧独立回读。"
         },
         {
           "type": "test",
@@ -19588,7 +19594,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-22",
       "updated_at": "2026-10-23",
       "summary": "14202 根因：persona submission_confirmation 无内容合同验证分支，模型在正确的 review 语义后补了生硬否定句（Media Relay is not yet confirmed as enabled）且漏掉 prompt 要求的 business-day 说明。修复：persona v33（策略加入三要素+反例禁句+风格参考）；新增 _assert_enablement_submission_confirmation_contract（auto 路径必含感谢/收到+review+business-day+更新承诺，拒 stiff negative/提前启用/24h；manual 仅继承禁句，24h 文案保留）；场景检查统一为单一共享合同（E1P/E3 turn-4/PP-A1 同语义）。不触 Production；不重放 14202；hermes 手册（catalog prompt）本轮不改并披露。",
-      "next_action": "实施完成待独立代码验收（Draft PR）；通过后 Preprod 部署+新 synthetic E1P 三侧独立回读。",
+      "next_action": "验收通过→finalize PR#1554→仅 Preprod 部署（persona v33 随应用发布）→新 synthetic E1P 工单三侧独立回读（不重放 14202/不触 Production）。",
       "acceptance_criteria": [
         "14202 原文与 stiff-negative 变体在 persona 验证器被拒（真实入口 validate_account_reply_contract）",
         "自然正控（感谢+review+business-day+keep posted）通过；manual 24h 文案继续通过",
@@ -19597,6 +19603,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "decision",
+          "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
+          "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1554 HEAD 032119d7）：F1 单一正则双入口一致、9 类否定表达全拒；F2 receipt 双路径通用、裸 Thanks 拒收；14202 负控/manual 24h 正控/business-day 正控确认。允许下一步：合并→仅 Preproduction 部署→新 synthetic E1P→draft/公开评论/Zendesk 三侧独立回读。"
+        },
         {
           "type": "test",
           "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
