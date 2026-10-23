@@ -563,3 +563,285 @@ def ensure_production_automation_ownership(
         failure_detail=getattr(failure_exc, "detail", None) if failure_exc is not None else None,
         updated_at=updated_at,
     )
+
+
+# --------------------------------------------------------------------------
+# p2-212: Investigation customer-reply ownership.
+#
+# This is a DEDICATED entry point for the Investigation chain — it never calls
+# ownership_gate_eligible() (that requires a registered automation route,
+# which investigation-direction cases do not have). The caller must complete
+# the delivery identity check BEFORE calling; this helper owns only the
+# Zendesk ownership state machine.
+# --------------------------------------------------------------------------
+
+INVESTIGATION_OWNERSHIP_ORIGIN_KIND = "investigation_customer_reply"
+INVESTIGATION_OWNERSHIP_EVENT_TYPE = "zendesk_investigation_reply_ownership"
+
+# Terminal Zendesk statuses where assignment must never run.
+_ZENDESK_TERMINAL_STATUSES = frozenset({"solved", "closed"})
+
+
+def extract_investigation_delivery_identity(
+    delivery: dict[str, Any] | None,
+) -> dict[str, str] | None:
+    """Return the server-owned Investigation identity from a delivery dict.
+
+    The identity rides as an attachments marker (``_hermes_origin_kind`` =
+    ``investigation_customer_reply``) written at queue time. Returns None
+    when the delivery is not an Investigation customer reply; returns a
+    dict with at least ``origin_kind`` when it is (the other fields may
+    be empty strings — the caller decides whether the identity is
+    complete enough to proceed)."""
+    if not isinstance(delivery, dict):
+        return None
+    attachments = delivery.get("attachments")
+    if not isinstance(attachments, list):
+        return None
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        if str(attachment.get("_hermes_origin_kind") or "") == INVESTIGATION_OWNERSHIP_ORIGIN_KIND:
+            return {
+                "origin_kind": INVESTIGATION_OWNERSHIP_ORIGIN_KIND,
+                "source_turn_id": str(attachment.get("_hermes_source_turn_id") or ""),
+                "source_direction": str(attachment.get("_hermes_source_direction") or ""),
+                "source_turn_kind": str(attachment.get("_hermes_source_turn_kind") or ""),
+            }
+    return None
+
+
+def _investigation_result(
+    account_case: dict[str, Any],
+    *,
+    state: str,
+    updated_at: str,
+    assignee_id: str | None = None,
+    group_id: str | None = None,
+    failure_code: str | None = None,
+    failure_category: str | None = None,
+    ticket_status: str = "",
+    failure_detail: str | None = None,
+) -> dict[str, Any]:
+    """Persist the ownership state and return a plain result dict."""
+    _persist_ownership_state(
+        account_case,
+        state=state,
+        assignee_id=assignee_id,
+        group_id=group_id,
+        failure_code=failure_code,
+        failure_category=failure_category,
+        zendesk_status_code=None,
+        blocking_comment_id=None,
+        failure_detail=failure_detail,
+        updated_at=updated_at,
+    )
+    return {
+        "state": state,
+        "assignee_id": assignee_id,
+        "group_id": group_id,
+        "failure_code": failure_code,
+        "failure_category": failure_category,
+        "ticket_status": ticket_status,
+        "updated_at": updated_at,
+    }
+
+
+def ensure_investigation_reply_ownership(
+    account_case: dict[str, Any],
+    *,
+    delivery: dict[str, Any],
+    updated_at: str,
+    repository: Any = None,
+) -> dict[str, Any]:
+    """Assign the configured AI to an Investigation ticket after a confirmed
+    customer public reply.
+
+    Contract (p2-212): the caller guarantees the public comment is already
+    delivered and readback-confirmed; this helper reads the Zendesk
+    ownership snapshot, assigns when the ticket has no assignee, and
+    persists the result. It never changes the delivery's own status.
+
+    The ``repository`` parameter persists the ownership event and the
+    updated account case; when omitted, the state is only written into
+    the in-memory account_case dict (tests use this to assert state
+    transitions before persisting)."""
+    ticket_id = str(account_case.get("zendesk_ticket_id") or "").strip()
+    if not ticket_id:
+        return _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_FAILED,
+            updated_at=updated_at,
+            failure_code="investigation_ownership_identity_missing",
+            failure_category="permanent",
+            failure_detail="account case has no zendesk_ticket_id",
+        )
+
+    # Idempotency: if the context already says assigned by the AI, no PUT.
+    context = _ownership_context(account_case)
+    previous = context.get(OWNERSHIP_CONTEXT_KEY)
+    if isinstance(previous, dict) and previous.get("state") == OWNERSHIP_STATE_ASSIGNED:
+        return {
+            "state": "already_assigned",
+            "assignee_id": previous.get("assignee_id"),
+            "group_id": previous.get("group_id"),
+            "failure_code": None,
+            "idempotent": True,
+            "updated_at": updated_at,
+        }
+
+    # Read the live snapshot (includes full comment scan for human replies).
+    try:
+        snapshot = read_ticket_ownership_snapshot(ticket_id=ticket_id)
+    except Exception as exc:  # noqa: BLE001 — snapshot failure is outcome_unknown
+        return _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            updated_at=updated_at,
+            failure_code="investigation_ownership_snapshot_failed",
+            failure_category="outcome_unknown",
+            failure_detail=str(exc)[:300],
+        )
+
+    ticket_status = str(getattr(snapshot, "ticket_status", "") or "")
+
+    # Terminal states: never assign.
+    if ticket_status.lower() in _ZENDESK_TERMINAL_STATUSES:
+        return _investigation_result(
+            account_case,
+            state="skipped_terminal",
+            updated_at=updated_at,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="investigation_ownership_ticket_closed",
+            failure_category="policy",
+            ticket_status=ticket_status,
+        )
+
+    # Human already replied publicly: keep human ownership.
+    if snapshot.human_replied:
+        return _investigation_result(
+            account_case,
+            state="human_replied",
+            updated_at=updated_at,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="investigation_ownership_human_replied",
+            failure_category="policy",
+            ticket_status=ticket_status,
+        )
+
+    # Already owned by the configured AI: idempotent no-op.
+    ai_assignee = str(getattr(snapshot, "ai_assignee_id", "") or "")
+    ai_group = str(getattr(snapshot, "ai_group_id", "") or "")
+    if ai_assignee and snapshot.assignee_id == ai_assignee:
+        result = _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_ASSIGNED,
+            updated_at=updated_at,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            ticket_status=ticket_status,
+        )
+        result["state"] = "already_assigned"
+        return result
+
+    # A non-AI assignee already holds the ticket: skip, keep human.
+    existing_assignee = str(getattr(snapshot, "assignee_id", "") or "")
+    if existing_assignee and existing_assignee != ai_assignee:
+        return _investigation_result(
+            account_case,
+            state="skipped_human_owned",
+            updated_at=updated_at,
+            assignee_id=existing_assignee,
+            group_id=snapshot.group_id,
+            failure_code="investigation_ownership_human_owned",
+            failure_category="policy",
+            ticket_status=ticket_status,
+        )
+
+    # No assignee: attempt the assignment via the existing safe-update path.
+    try:
+        assignment = assign_ticket_to_configured_ai(
+            ticket_id=ticket_id,
+            ownership_snapshot=snapshot,
+        )
+    except ZendeskCommentError as exc:
+        # A 409 means concurrent modification: re-read; if a human took it,
+        # stop; if still empty, the caller's next drain re-enters here.
+        status = getattr(exc, "status_code", None) or 0
+        if status == 409:
+            try:
+                snapshot2 = read_ticket_ownership_snapshot(ticket_id=ticket_id)
+                if snapshot2.assignee_id and snapshot2.assignee_id != str(
+                    getattr(snapshot2, "ai_assignee_id", "") or ""
+                ):
+                    return _investigation_result(
+                        account_case,
+                        state="skipped_human_owned",
+                        updated_at=updated_at,
+                        assignee_id=snapshot2.assignee_id,
+                        group_id=snapshot2.group_id,
+                        failure_code="investigation_ownership_human_owned",
+                        failure_category="policy",
+                        ticket_status=str(getattr(snapshot2, "ticket_status", "") or ""),
+                    )
+                # Still unassigned after 409: safe to report the assignment
+                # attempt outcome; the next delivery re-drain retries.
+                return _investigation_result(
+                    account_case,
+                    state=OWNERSHIP_STATE_FAILED,
+                    updated_at=updated_at,
+                    failure_code="investigation_ownership_assignment_conflict",
+                    failure_category="retryable",
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        category = getattr(exc, "category", "")
+        state = (
+            OWNERSHIP_STATE_OUTCOME_UNKNOWN
+            if category == "outcome_unknown" or status >= 500
+            else OWNERSHIP_STATE_FAILED
+        )
+        return _investigation_result(
+            account_case,
+            state=state,
+            updated_at=updated_at,
+            failure_code="investigation_ownership_assignment_failed",
+            failure_category=category or "permanent",
+            failure_detail=str(getattr(exc, "error_code", "") or "")[:200],
+        )
+
+    # Readback: confirm the assignment actually landed.
+    try:
+        readback = read_ticket_ownership_snapshot(ticket_id=ticket_id)
+        if readback.assignee_id and readback.assignee_id == ai_assignee:
+            return _investigation_result(
+                account_case,
+                state=OWNERSHIP_STATE_ASSIGNED,
+                updated_at=updated_at,
+                assignee_id=readback.assignee_id,
+                group_id=readback.group_id,
+                ticket_status=str(getattr(readback, "ticket_status", "") or ""),
+            )
+        # Readback shows a different assignee: treat as unverified.
+        return _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            updated_at=updated_at,
+            assignee_id=readback.assignee_id,
+            group_id=readback.group_id,
+            failure_code="investigation_ownership_assignment_unverified",
+            failure_category="outcome_unknown",
+            ticket_status=str(getattr(readback, "ticket_status", "") or ""),
+        )
+    except Exception:  # noqa: BLE001
+        return _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            updated_at=updated_at,
+            assignee_id=assignment.assignee_id,
+            group_id=assignment.group_id,
+            failure_code="investigation_ownership_readback_unknown",
+            failure_category="outcome_unknown",
+        )
