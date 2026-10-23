@@ -153,11 +153,11 @@ def test_run_probe_success_uses_stopped_exit_zero_paginates_and_deregisters(tmp_
 @pytest.mark.parametrize("exit_code", [1, None])
 def test_run_probe_rejects_nonzero_or_unknown_exit_and_deregisters(tmp_path, exit_code):
     mod = load()
-    runner = FakeRunner(mod, exit_code=exit_code if exit_code is not None else 0)
+    base_runner = FakeRunner(mod, exit_code=exit_code if exit_code is not None else 0)
+    runner = base_runner
     if exit_code is None:
-        original = runner
         def unknown(argv, **kwargs):
-            result = original(argv, **kwargs)
+            result = base_runner(argv, **kwargs)
             if "describe-tasks" in " ".join(argv):
                 result.stdout = json.dumps({"tasks": [{"lastStatus": "STOPPED", "containers": [{}]}]})
             return result
@@ -165,10 +165,9 @@ def test_run_probe_rejects_nonzero_or_unknown_exit_and_deregisters(tmp_path, exi
     with pytest.raises(mod.ProbeError):
         mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
                       runner=runner, sleep=lambda _: None)
-    calls = runner.calls if hasattr(runner, "calls") else original.calls
-    assert any("deregister-task-definition" in " ".join(c) for c in calls)
-    assert len(original.temp_paths) == 2
-    assert all(not path.exists() for path in original.temp_paths)
+    assert any("deregister-task-definition" in " ".join(c) for c in base_runner.calls)
+    assert len(base_runner.temp_paths) == 2
+    assert all(not path.exists() for path in base_runner.temp_paths)
 
 
 def test_run_probe_rejects_cloudwatch_duplicate_and_cleans_up(tmp_path):
