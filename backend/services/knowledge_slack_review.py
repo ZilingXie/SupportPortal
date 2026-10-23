@@ -103,23 +103,14 @@ def _build_review_message(promotion: dict[str, Any]) -> str:
     if rationale:
         lines.append(f"*Rationale:* {rationale[:400]}")
     source_id = str(promotion.get("source_id") or "").strip()
-    lines.extend(
-        [
-            "",
-            f"*Source:* `{str(promotion.get('source_type') or '')}:{source_id}`"
-            f" (version `{str(promotion.get('source_version') or '')}`)",
-            f"*Promotion ID:* `{str(promotion.get('promotion_id') or '')}`",
-            "Reply in this thread, @-mentioning this bot first, with a decision:",
-        ]
-    )
     mention = _knowledge_review_reply_mention()
     lines.extend(
         [
-            f"• {mention} `knowledge reject` — reject this candidate",
-            f"• {mention} `knowledge approve <new|supplement|replace|merge> "
-            "[target=<object_id>] [base_version=<version>] <complete body>`",
-            "• For supplement/replace/merge add `target=<object_id> base_version=<version>` before the body",
-            "Or use the knowledge promotion decision API directly.",
+            "",
+            "---",
+            f"_{mention} reply here to decide:_",
+            f"• `{mention} knowledge reject` — reject",
+            f"• `{mention} knowledge approve new` — approve & write to WeKnora",
         ]
     )
     return "\n".join(lines)

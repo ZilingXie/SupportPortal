@@ -26,7 +26,7 @@ from backend.services.automation_hermes_tools import (
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_slack_actions")
 
-_ALLOWED_ACTIONS = frozenset({"prepare_draft", "approve_draft"})
+_ALLOWED_ACTIONS = frozenset({"prepare_draft", "approve_draft", "knowledge_approve", "knowledge_reject"})
 
 
 def _invalid(detail: str, status_code: int = 422) -> dict[str, Any]:
@@ -64,9 +64,61 @@ def handle_slack_hermes_action(
         # Ad-hoc sessions answer in-thread only; the draft/approve chain (and
         # the Zendesk publication behind it) must stay structurally unreachable.
         return _invalid("actions are not supported for ad-hoc sessions")
+    if action in {"knowledge_approve", "knowledge_reject"}:
+        return _handle_knowledge_action(repository, action, payload)
     if action == "prepare_draft":
         return _prepare_draft(store, ticket_id, payload, environment)
     return _approve_draft(store, repository, ticket_id, payload, environment)
+
+
+def _handle_knowledge_action(
+    repository: Any,
+    action: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Handle knowledge approve/reject button clicks (stage6-csd-10 step 5).
+
+    The button's value carries the promotion_id. Reject parks the promotion
+    terminally with zero external writes. Approve submits a new-decision
+    resolution that re-enters the full external write contract (idempotency,
+    version protection) — never a bypass.
+    """
+    promotion_id = str(payload.get("value") or payload.get("promotion_id") or "").strip()
+    if not promotion_id:
+        return _invalid("knowledge action requires a promotion_id")
+
+    rows = repository.list_weknora_promotions()
+    current = next(
+        (row for row in rows or [] if isinstance(row, dict)
+         and str(row.get("promotion_id") or "") == promotion_id),
+        None,
+    )
+    if current is None:
+        return _invalid("promotion not found", status_code=404)
+    if str(current.get("status") or "") != "human_review":
+        return _already("knowledge_decision", "promotion is not awaiting human review")
+
+    from datetime import datetime, timezone as _tz
+    _now = datetime.now(_tz.utc).isoformat()
+    if action == "knowledge_reject":
+        repository.decide_weknora_promotion(
+            promotion_id, decision="reject", decided_by="slack_button",
+            note="rejected via Slack button", decided_at=_now)
+        return {"ok": True, "action": "knowledge_reject", "promotion_id": promotion_id,
+                "response_text": f"✅ Rejected `{promotion_id[:20]}…` — no WeKnora write."}
+
+    # approve: submit a new-decision resolution with the candidate's content
+    candidate = current.get("candidate_payload") or {}
+    content = str(candidate.get("content") or "").strip()
+    title = str(candidate.get("title") or "").strip()
+    if not content:
+        return _invalid("approve requires candidate content; use reply-based approve")
+    repository.decide_weknora_promotion(
+        promotion_id, decision="approve", decided_by="slack_button",
+        note="approved via Slack button", decided_at=_now,
+        resolution={"action": "new", "content": content, "title": title})
+    return {"ok": True, "action": "knowledge_approve", "promotion_id": promotion_id,
+            "response_text": f"✅ Approved — queued for WeKnora write."}
 
 
 def _prepare_draft(
