@@ -96,30 +96,28 @@ def _build_review_message(promotion: dict[str, Any]) -> str:
         if len(proposed) > 1500:
             display += "… (truncated — full text in the review queue API)"
         lines.extend(["", "*Proposed content:*", "```", display, "```"])
+    decision = str(candidate.get("decision") or promotion.get("decision") or "").strip()
     target = str(candidate.get("target_object_id") or "").strip()
+    base_version = str(candidate.get("base_version") or "").strip()
     if target:
-        lines.append(f"*Target:* `{target}` (base version `{str(candidate.get('base_version') or '') or 'n/a'}`)")
+        lines.append(
+            f"*Change:* updates existing `{target}`"
+            + (f" (base version `{base_version}`)" if base_version else "")
+            + f" — action `{decision or 'update'}`"
+        )
+    else:
+        lines.append("*Change:* new article — no existing WeKnora entry")
     rationale = str(candidate.get("note") or "").strip()
     if rationale:
         lines.append(f"*Rationale:* {rationale[:400]}")
     source_id = str(promotion.get("source_id") or "").strip()
-    lines.extend(
-        [
-            "",
-            f"*Source:* `{str(promotion.get('source_type') or '')}:{source_id}`"
-            f" (version `{str(promotion.get('source_version') or '')}`)",
-            f"*Promotion ID:* `{str(promotion.get('promotion_id') or '')}`",
-            "Reply in this thread, @-mentioning this bot first, with a decision:",
-        ]
-    )
     mention = _knowledge_review_reply_mention()
     lines.extend(
         [
-            f"• {mention} `knowledge reject` — reject this candidate",
-            f"• {mention} `knowledge approve <new|supplement|replace|merge> "
-            "[target=<object_id>] [base_version=<version>] <complete body>`",
-            "• For supplement/replace/merge add `target=<object_id> base_version=<version>` before the body",
-            "Or use the knowledge promotion decision API directly.",
+            "",
+            "---",
+            f"_Decide with the buttons below, or reply here: "
+            f"`{mention} knowledge reject` / `{mention} knowledge approve new`_",
         ]
     )
     return "\n".join(lines)
@@ -168,6 +166,12 @@ def deliver_knowledge_review_notification(
         poster = _slack_module
 
     event_id = knowledge_review_event_id(promotion_id)
+    if str(promotion.get("slack_review_message_ts") or "").strip():
+        # Re-delivery after an earlier successful post (e.g. a format
+        # refresh): a distinct deterministic id keeps Slack's client_msg_id
+        # duplicate suppression from swallowing the resend while staying
+        # idempotent across repeated resends.
+        event_id = f"{event_id}:resend"
     owner_token = f"knowledge-review-delivery:{uuid4().hex}"
     from datetime import datetime, timedelta
 
@@ -333,12 +337,17 @@ def _thread_event(event_id: str, promotion: dict[str, Any], message_text: str) -
         # Standalone promotion replying in a captured thread: a stable
         # non-empty case identity keeps the thread event schema valid.
         case_id = f"knowledge-review:{str(promotion.get('source_id') or '')[:80]}"
-    return build_engineer_case_thread_event(
+    event = build_engineer_case_thread_event(
         event_id=event_id,
         event_type="knowledge_review_required",
         engineer_case_id=case_id,
         message_text=message_text,
     )
+    # The re-delivery path replies inside the bound review thread; those
+    # messages carry the same decision buttons as the root form.
+    event["action"] = "knowledge_review"
+    event["knowledge_promotion_id"] = str(promotion.get("promotion_id") or "").strip()
+    return event
 
 
 __all__ = [
