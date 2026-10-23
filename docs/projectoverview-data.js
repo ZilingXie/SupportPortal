@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T13:46:12Z",
-  "source_base_commit": "2ea994b524df5b723319236f4826f4a02ce0dfeb",
-  "registry_digest": "a8070b466e690a34c2b5d401a2f69860bc0e63a88960707e5dc5946c119e96e8",
+  "generated_at": "2026-10-23T15:44:38Z",
+  "source_base_commit": "3d60e9a5f4d9d976cd0fcd0d7dda852be44d5045",
+  "registry_digest": "abdfd4d16e957c9261f421b6ca55c46bae9d2e3c4db33528e860d2b261bc7337",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5660,6 +5660,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "部署 worker 镜像（digest 869fba39）内探针 9 项 ALL_PASS：F1 修复代码源码验证（fresh re-read 在 _ensure_case_thread 后/无 or-binding 回退/四守卫 binding_reread_failed+thread_creation_failed+channel_missing+channel_mismatch/native-only 作用域/legacy 仅无 repo 路径）+ 分条构建功能部署在位"
+        },
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布上线（2026-10-23，r20261023-8329bb2）",
+          "command": "release pipeline --release-commit 8329bb26（当前 tip，含 p2-212 squash 5c9d2321 与他线 #1560-1562）--prompt-release-id pr-88298d4e0a3f --through preproduction，复刻 r20261023-ec76139 旗标面（engine=hermes/persona/agent on/case-workflow=disabled/enablement=manual/knowledge 全套）",
+          "result": "上线完成并独立核验：api:183/route:175/worker:182 全部 PRIMARY COMPLETED、running 1/1、steady state；完成时点 evidence 三侧 digest 一致（api sha256:4ddd019b…/route sha256:8386233c…/worker sha256:c21268a5…）；phase-attempts 全链通过（route_worker_rollout/heartbeat/api_rollout/collector/activation/release_note）。披露：部署成功后的部署后校验调用撞本机文件系统间歇 ENOENT（macOS 目录条目抖动，见会话记录）把本地 evidence.json 改写为 failed_before_activation——非部署事实；随后两次 resume 分别再撞文件抖动与被推进后的 main 拒绝（release-source 门禁：3d60e9a5 已在 8329bb26 之后，本车辆按规则关闭）。终态以独立 describe-services+digest 对账为准。运维事件全记：RDS SG 临时加 117.135.92.229/32（发布后已删除）、aws login 凭证过期经浏览器重授权、AWS TLS 间歇 SSL-EOF 风暴改走 7890 代理后稳定。"
+        },
+        {
+          "type": "decision",
+          "label": "代码独立验收通过（2026-10-23，三轮修复后）",
+          "command": "验收方复验 Draft PR#1558 最终评审 HEAD（R3 修复后 0ad5a060→合并前经 merge 追赶至 3f799cab，四份评审文件与 0ad5a060 零差异）",
+          "result": "通过（F1-F7 全部在位：实时快照权威/组双检/身份完整性/事件写保护/status 三态门/queue 侧 origin 自证/readback 复检 status+human_replied；专项 47 passed/0 skipped 含真实隔离 PG；409 分支不误报 assigned）。允许合并与 Preproduction 发布。"
         },
         {
           "type": "test",
@@ -19769,7 +19781,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
       "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",
       "status": "active",
-      "next_action": "R3 修复已推送（Draft PR#1558 HEAD 20f5ecc36），等待独立复验；通过前不合并不部署。",
+      "next_action": "真实业务验证待窗口：真实 Investigation 工单走完草稿批准→公开投递→ownership 自动接管链路后回读（代码验收与 Preproduction 发布均已完成）。",
       "owner": "agent",
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
@@ -19789,6 +19801,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布上线（2026-10-23，r20261023-8329bb2）",
+          "command": "release pipeline --release-commit 8329bb26（当前 tip，含 p2-212 squash 5c9d2321 与他线 #1560-1562）--prompt-release-id pr-88298d4e0a3f --through preproduction，复刻 r20261023-ec76139 旗标面（engine=hermes/persona/agent on/case-workflow=disabled/enablement=manual/knowledge 全套）",
+          "result": "上线完成并独立核验：api:183/route:175/worker:182 全部 PRIMARY COMPLETED、running 1/1、steady state；完成时点 evidence 三侧 digest 一致（api sha256:4ddd019b…/route sha256:8386233c…/worker sha256:c21268a5…）；phase-attempts 全链通过（route_worker_rollout/heartbeat/api_rollout/collector/activation/release_note）。披露：部署成功后的部署后校验调用撞本机文件系统间歇 ENOENT（macOS 目录条目抖动，见会话记录）把本地 evidence.json 改写为 failed_before_activation——非部署事实；随后两次 resume 分别再撞文件抖动与被推进后的 main 拒绝（release-source 门禁：3d60e9a5 已在 8329bb26 之后，本车辆按规则关闭）。终态以独立 describe-services+digest 对账为准。运维事件全记：RDS SG 临时加 117.135.92.229/32（发布后已删除）、aws login 凭证过期经浏览器重授权、AWS TLS 间歇 SSL-EOF 风暴改走 7890 代理后稳定。"
+        },
+        {
+          "type": "decision",
+          "label": "代码独立验收通过（2026-10-23，三轮修复后）",
+          "command": "验收方复验 Draft PR#1558 最终评审 HEAD（R3 修复后 0ad5a060→合并前经 merge 追赶至 3f799cab，四份评审文件与 0ad5a060 零差异）",
+          "result": "通过（F1-F7 全部在位：实时快照权威/组双检/身份完整性/事件写保护/status 三态门/queue 侧 origin 自证/readback 复检 status+human_replied；专项 47 passed/0 skipped 含真实隔离 PG；409 分支不误报 assigned）。允许合并与 Preproduction 发布。"
+        },
         {
           "type": "test",
           "label": "R3 修复轮实施（2026-10-23，待独立复验）",
