@@ -330,7 +330,7 @@ class _RecordingPoster:
 
 
 def test_root_delivery_carries_buttons_and_change_line() -> None:
-    from backend.services.engineer_slack import _action_blocks
+    from backend.services.engineer_slack import _action_blocks, _message_payload
     from backend.services.knowledge_slack_review import (
         deliver_knowledge_review_notification,
     )
@@ -351,6 +351,9 @@ def test_root_delivery_carries_buttons_and_change_line() -> None:
     assert "*Change:* new article" in event["message_text"]
     assert "Promotion ID" not in event["message_text"]
     assert "Source:" not in event["message_text"]
+    # C1 root: the real payload builder must NOT attach a thread anchor.
+    payload = _message_payload(event, thread_ts=posted["thread_ts"])
+    assert "thread_ts" not in payload
     blocks = _action_blocks(event)
     assert blocks and blocks[0]["type"] == "actions"
     ids = [b["action_id"] for b in blocks[0]["elements"]]
@@ -398,6 +401,14 @@ def test_thread_redelivery_also_carries_buttons() -> None:
     event = posted["event"]
     assert event["action"] == "knowledge_review"
     assert event["knowledge_promotion_id"] == promotion_id
+    # C2 thread reply: the REAL payload builder must keep the thread anchor —
+    # root event types may not silently spill an anchored reply into the
+    # channel root (the fake poster only records the argument, so prove the
+    # payload here).
+    from backend.services.engineer_slack import _action_blocks, _message_payload
+
+    payload = _message_payload(event, thread_ts=posted["thread_ts"])
+    assert payload.get("thread_ts") == "1700.001"
     blocks = _action_blocks(event)
     assert blocks and blocks[0]["type"] == "actions"
     assert [b["action_id"] for b in blocks[0]["elements"]] == [
