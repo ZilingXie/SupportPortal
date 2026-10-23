@@ -731,3 +731,71 @@ class ReviewRound2Regressions(unittest.TestCase):
             [e for e in repo.events if e["type"] == "zendesk_investigation_reply_ownership"],
             [],
         )
+
+
+class ReviewRound3Regressions(unittest.TestCase):
+    """Round-3 review regressions: F7 readback re-verification."""
+
+    def _assign_and_readback(self, readback_snapshot, initial_status="open"):
+        case = _account_case()
+        snapshot1 = _snapshot(assignee_id="", ticket_status=initial_status)
+        assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
+        with patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            side_effect=[snapshot1, readback_snapshot],
+        ), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+            return_value=assignment,
+        ) as assign:
+            result = ensure_investigation_reply_ownership(
+                case, delivery=_delivery(), updated_at="2026-10-23T00:00:00Z"
+            )
+        return result, assign
+
+    def test_f7_readback_terminal_reports_skipped_terminal(self):
+        # The race: ticket was open and unassigned at the gate, the PUT landed,
+        # but by readback time the ticket is solved — the verdict must not be
+        # `assigned` even though assignee/group both match.
+        result, assign = self._assign_and_readback(
+            _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status="solved")
+        )
+        self.assertEqual(result["state"], "skipped_terminal")
+        self.assertEqual(result["failure_code"], "investigation_ownership_ticket_closed")
+        assign.assert_called_once()  # the PUT itself ran; only the verdict changed
+
+    def test_f7_readback_empty_status_outcome_unknown(self):
+        result, _ = self._assign_and_readback(
+            _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status="")
+        )
+        self.assertEqual(result["state"], OWNERSHIP_STATE_OUTCOME_UNKNOWN)
+        self.assertEqual(result["failure_code"], "investigation_ownership_status_unconfirmed")
+
+    def test_f7_readback_unknown_status_value_outcome_unknown(self):
+        result, _ = self._assign_and_readback(
+            _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status="mystery")
+        )
+        self.assertEqual(result["state"], OWNERSHIP_STATE_OUTCOME_UNKNOWN)
+        self.assertEqual(result["failure_code"], "investigation_ownership_status_unconfirmed")
+
+    def test_f7_readback_human_replied_reports_human_replied(self):
+        result, _ = self._assign_and_readback(
+            _snapshot(
+                assignee_id="ai-agent-1",
+                group_id="ai-group-1",
+                ticket_status="open",
+                human_replied=True,
+                blocking_comment_id="c9",
+            )
+        )
+        self.assertEqual(result["state"], "human_replied")
+        self.assertEqual(result["failure_code"], "investigation_ownership_human_replied")
+        self.assertNotEqual(result["state"], "assigned")
+
+    def test_f7_readback_actionable_clean_still_assigned(self):
+        # The positive control: a clean actionable readback with the AI holder
+        # and no human reply still reports assigned.
+        result, assign = self._assign_and_readback(
+            _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status="pending")
+        )
+        self.assertEqual(result["state"], "assigned")
+        assign.assert_called_once()

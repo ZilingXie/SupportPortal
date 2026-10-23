@@ -844,14 +844,53 @@ def ensure_investigation_reply_ownership(
         readback = read_ticket_ownership_snapshot(ticket_id=ticket_id)
         readback_assignee = str(readback.assignee_id or "")
         readback_group = str(readback.group_id or "")
+        readback_status = str(getattr(readback, "ticket_status", "") or "")
         if readback_assignee == ai_assignee and readback_group == ai_group:
+            # F7 (review): the readback must re-verify the SAME live conditions
+            # that authorized the assignment. A terminal or unconfirmable
+            # status, or a human reply that landed inside the assignment race
+            # window, must not be reported as assigned.
+            readback_class = classify_zendesk_ticket_status(readback_status)
+            if readback_class == "terminal":
+                return _investigation_result(
+                    account_case,
+                    state="skipped_terminal",
+                    updated_at=updated_at,
+                    assignee_id=readback.assignee_id,
+                    group_id=readback.group_id,
+                    failure_code="investigation_ownership_ticket_closed",
+                    failure_category="policy",
+                    ticket_status=readback_status,
+                )
+            if readback_class != "actionable":
+                return _investigation_result(
+                    account_case,
+                    state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+                    updated_at=updated_at,
+                    assignee_id=readback.assignee_id,
+                    group_id=readback.group_id,
+                    failure_code="investigation_ownership_status_unconfirmed",
+                    failure_category="outcome_unknown",
+                    ticket_status=readback_status,
+                )
+            if getattr(readback, "human_replied", False):
+                return _investigation_result(
+                    account_case,
+                    state="human_replied",
+                    updated_at=updated_at,
+                    assignee_id=readback.assignee_id,
+                    group_id=readback.group_id,
+                    failure_code="investigation_ownership_human_replied",
+                    failure_category="policy",
+                    ticket_status=readback_status,
+                )
             return _investigation_result(
                 account_case,
                 state=OWNERSHIP_STATE_ASSIGNED,
                 updated_at=updated_at,
                 assignee_id=readback.assignee_id,
                 group_id=readback.group_id,
-                ticket_status=str(getattr(readback, "ticket_status", "") or ""),
+                ticket_status=readback_status,
             )
         # Readback shows a different assignee: treat as unverified.
         return _investigation_result(
