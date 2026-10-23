@@ -5322,3 +5322,9 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - Preproduction persona 库（`support_account_prompt_versions`）经 repository 正规 draft+publish 为 `default-support`(v2)、`sid-bright`(v2)、`sid-precise`(v3) 追加同一段指令：enablement 提交确认须含 感谢+已提交内部 review+business days(Monday-Friday)+有更新即通知；禁 'not yet enabled / not yet confirmed as enabled / pending activation / awaiting enablement' 等状态免责句；禁具体期限承诺（如 24 小时）。
 - 目的：让 hermes 侧 persona（p2-211 draft 门禁的生成方）具备产出合规确认的风格指引——与 automation_persona v33（account 管线）及场景/验证器三方合同一致。
 - 验证：工单 14228（default-support v2）确认回复公开投递且三要素齐备，E1P 5/5 PASS。runtime 变更不涉及 catalog Prompt/Prompt Release；代码侧 `ACCOUNT_PERSONA_PRESETS` 预设同步为后续项。
+
+## 2026-10-24 — Investigation human file_share F1（仅 n8n draft）
+
+- 计划 `investigation-case-files-slack-ingress-metadata-v1 / v1-repair-1`：新增 Slack API 来源核验后补 team 的人工附件分支；保留既有 trusted bot 和普通文字路由，保留 `raw_text`/bot mention 元数据。不改变模型、Prompt 或 Hermes 工具。
+- 当前只有 draft `ff147b6e-888a-4564-9824-fcc1676469c9`，live `7400713d-c7e3-436d-9e05-fa53d6674fd7` 未发布；146 项本地测试、云端隔离正负例及只读 Slack API 探针见 [当前合同](plans/investigation-case-files-slack-ingress-metadata-v1.md)。
+- 用户明确不发布 live、不部署应用；API trusted-bot-only 兼容阻塞保留，C2/readiness 未释放，未调用 C3。

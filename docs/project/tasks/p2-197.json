@@ -158,6 +158,11 @@
       "label": "n8n Handle Action 交互流 knowledge 分支发布 + 快照刷新",
       "command": "n8n update_workflow FKv8vtZBQk6tH4Gt + publish（active=21bc0580）；validate_workflow_snapshots.py",
       "result": "passed（Knowledge Action 分支路由 knowledge_approve/reject→SP actions 端点，汇聚既有 response_url consume 链；探针 execution 198269=无效 promotion 404 零状态变更；快照 15 published 校验通过，PR#1561 入库）"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-slack-ingress-metadata-v1-evidence.json",
+      "label": "2026-10-22 已批准 intake-only 合并发布：正式 pipeline/三角色 digest/schema/Prompt/全部开关回读，待独立部署验收；零业务注入，完整知识闭环未验收"
     }
   ]
 }

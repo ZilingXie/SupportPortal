@@ -12,17 +12,31 @@ ROOT = Path(__file__).resolve().parents[2]
 SNAPSHOTS = ROOT / "docs/integrations/n8n/workflows"
 HISTORICAL_COMMIT = "4ecea0431f1b84490bab4bf51220faeef815e6b2"
 WORKFLOWS = ["GgDxPEWtW7ltT5BW", "MM3Z3T469Eru3Q1I", "r1HIW8UNuCabiOPn"]
+HISTORICAL_WORKFLOWS = WORKFLOWS[:2]
+CURRENT_COUNTS = (15, 3, 52)
 
 
 def test_restored_history_is_byte_exact_and_local_candidates_are_separate():
-    for workflow_id in WORKFLOWS:
+    # Only the Slack forwarding workflow was authorized for a fresh live/draft
+    # capture. Knowledge workflow history must remain byte-exact.
+    for workflow_id in HISTORICAL_WORKFLOWS:
         for kind, directory in (("published", "active"), ("draft", "drafts")):
             path = SNAPSHOTS / directory / f"{workflow_id}.{kind}.json"
             original = subprocess.check_output([
                 "git", "show", f"{HISTORICAL_COMMIT}:{path.relative_to(ROOT)}",
             ], cwd=ROOT)
             assert path.read_bytes() == original
-    assert validate(SNAPSHOTS) == (15, 4, 56)
+    assert validate(SNAPSHOTS) == CURRENT_COUNTS
+
+
+def test_authorized_slack_capture_pins_unchanged_live_and_unpublished_repair():
+    published = json.loads((SNAPSHOTS / 'active/r1HIW8UNuCabiOPn.published.json').read_text())
+    draft = json.loads((SNAPSHOTS / 'drafts/r1HIW8UNuCabiOPn.draft.json').read_text())
+    assert published['source']['versionId'] == '7400713d-c7e3-436d-9e05-fa53d6674fd7'
+    assert draft['source']['versionId'] == 'ff147b6e-888a-4564-9824-fcc1676469c9'
+    assert draft['source']['publishedVersionId'] == published['source']['versionId']
+    assert len(published['workflow']['nodes']) == 13
+    assert len(draft['workflow']['nodes']) == 18
 
 
 @pytest.mark.parametrize("workflow_id", WORKFLOWS)
@@ -54,7 +68,7 @@ def test_consistent_internal_versions_are_accepted(tmp_path, workflow_id):
         snapshot["workflow"]["versionId"] = item[f"{kind}VersionId"]
         snapshot["workflow"]["activeVersionId"] = item["publishedVersionId"]
         path.write_text(json.dumps(snapshot))
-    assert validate(root) == (15, 4, 56)
+    assert validate(root) == CURRENT_COUNTS
 
 
 @pytest.mark.parametrize("location,field", [

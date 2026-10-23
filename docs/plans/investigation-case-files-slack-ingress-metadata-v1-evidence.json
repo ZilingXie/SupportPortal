@@ -1,0 +1,1243 @@
+{
+  "schema_version": 1,
+  "plan": "investigation-case-files-slack-ingress-metadata-v1",
+  "revision": "v1-repair-1",
+  "updated_at": "2026-10-23T16:36:18.189729+00:00",
+  "execution_status": "n8n_draft_repair_implemented; no_live_publication_by_user_scope; API_compatibility_deferred",
+  "overall_acceptance": "waiting-for-independent-n8n-code-acceptance",
+  "ready_for_real_file_tests": false,
+  "source": {
+    "integrated_main": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+    "metadata_pr": "https://github.com/ZilingXie/SupportPortal/pull/1540",
+    "metadata_reviewed_head": "dbe0ae1c93dfa1f8cbc80affc396b588f5465f35",
+    "bot_pr": "https://github.com/ZilingXie/SupportPortal/pull/1544",
+    "bot_reviewed_head": "1e8965c63e9653c5e95571bbc117b7bc3201ed50",
+    "code_acceptance": "independent acceptance passed; both PRs merged",
+    "new_runtime_source_changes_this_execution": false
+  },
+  "authorization": {
+    "environment": "preproduction",
+    "schema": "reviewed add-only short_description migration via formal Fargate bootstrap task",
+    "knowledge_stage": "intake-only",
+    "n8n": "reviewed Input/file_share/metadata parameter rollout; preserve raw_text and other nodes",
+    "hermes": "readback only; no overlay/profile changes",
+    "prohibited": [
+      "case creation",
+      "Slack file upload",
+      "Hermes/Zendesk/Zac business messages",
+      "history replay",
+      "Production mutation",
+      "implicit Terraform apply"
+    ]
+  },
+  "migration": {
+    "generated_at": "2026-10-22T04:13:04.059469+00:00",
+    "schema_revision": "automation-ecs-016",
+    "columns": [
+      [
+        "short_description",
+        "text",
+        "NO"
+      ]
+    ],
+    "migration_task_exit_code": 0,
+    "status": "passed",
+    "task_definition": "supportportal-preproduction-schema-bootstrap:45",
+    "task_arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/6f156be69d4a4aefa10e0b405067382c",
+    "definition_deregistered": true,
+    "artifact": ".deployments/ecs-pipeline-r20261022-a08be07/schema-bootstrap-metadata/readback.json",
+    "observation": "check_schema only checks revision; column was missing at revision 016, so the original rollout was stopped before service updates and the formal migration task ran separately"
+  },
+  "bot_baseline": {
+    "status": "complete",
+    "release_id": "r20261022-a08be07",
+    "git_commit": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+    "checks": {
+      "cloudwatch": "passed",
+      "ec2_backup": "passed",
+      "ecr": "passed",
+      "heartbeats": "passed",
+      "prompt_activation": "active",
+      "prompt_sync": "active",
+      "prompt_sync_attempts": 0,
+      "prompt_sync_classification": "",
+      "prompt_sync_retryable": false,
+      "prompt_target_state": "passed",
+      "prompt_target_state_attempts": 1,
+      "prompt_target_state_classification": "",
+      "prompt_target_state_retryable": false,
+      "provider_probe": "passed",
+      "public_health": "passed",
+      "rollback": "not_started",
+      "schema_bootstrap": "not_requested",
+      "source_prompt": "passed",
+      "suspension_recipients": "passed",
+      "terraform_post_deploy_zero_drift": "passed",
+      "terraform_zero_drift": "passed"
+    },
+    "components": {
+      "api": {
+        "expected_digest": "sha256:e0011dd1784137a4af5455de36fadd9caf784f975b43db1170671ec4baf9257f",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:173",
+        "observed_digest": "sha256:e0011dd1784137a4af5455de36fadd9caf784f975b43db1170671ec4baf9257f",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:171",
+        "runtime_verified": true
+      },
+      "route": {
+        "expected_digest": "sha256:6939f4c33f9e540de212f9332587208081fabe4797ee81cf5402935075b455f3",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:168",
+        "observed_digest": "sha256:6939f4c33f9e540de212f9332587208081fabe4797ee81cf5402935075b455f3",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:167",
+        "runtime_verified": true
+      },
+      "worker": {
+        "expected_digest": "sha256:55ad01772ccfcdf20e2b993ede3b94cf0e866c6ecdedd871089fbfb7c0c0d6b8",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:171",
+        "observed_digest": "sha256:55ad01772ccfcdf20e2b993ede3b94cf0e866c6ecdedd871089fbfb7c0c0d6b8",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:170",
+        "runtime_verified": true
+      }
+    },
+    "artifact": ".deployments/ecs-pipeline-r20261022-a08be07/preproduction-deploy/evidence.json",
+    "knowledge_master": "0",
+    "bot_id_api_worker": "B08RHT5TZV2",
+    "file_switch_api_worker": "1",
+    "timing_limit": "official timing reports SLO breach; rollback not exercised",
+    "timing_summary": {
+      "controllable_seconds": 557.212,
+      "ecs_wait_seconds": 486.915,
+      "normal_release_slo_seconds": 900,
+      "slo_breach": true,
+      "target_range_seconds": {
+        "max": 900,
+        "min": 600
+      },
+      "total_seconds": 1044.127
+    },
+    "pipeline_timing": {
+      "controllable_seconds": 1006.253,
+      "deployment_stages": [
+        {
+          "duration_seconds": 109.584,
+          "finished_ms": 1792641871235,
+          "stage": "preproduction.preflight",
+          "started_ms": 1792641761651,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 110.65,
+          "finished_ms": 1792641981918,
+          "stage": "preproduction.prompt_schema",
+          "started_ms": 1792641871268,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 181.596,
+          "finished_ms": 1792642992347,
+          "stage": "preproduction.preflight",
+          "started_ms": 1792642810751,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 41.892,
+          "finished_ms": 1792643034295,
+          "stage": "preproduction.prompt_schema",
+          "started_ms": 1792642992403,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 272.127,
+          "finished_ms": 1792643660582,
+          "stage": "preproduction.route_worker_rollout",
+          "started_ms": 1792643388455,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 3.927,
+          "finished_ms": 1792643665947,
+          "stage": "preproduction.heartbeat",
+          "started_ms": 1792643662020,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 214.788,
+          "finished_ms": 1792643880773,
+          "stage": "preproduction.api_rollout",
+          "started_ms": 1792643665985,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 83.073,
+          "finished_ms": 1792643963877,
+          "stage": "preproduction.collector",
+          "started_ms": 1792643880804,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 23.346,
+          "finished_ms": 1792643987260,
+          "stage": "preproduction.activation",
+          "started_ms": 1792643963914,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 3.144,
+          "finished_ms": 1792643990444,
+          "stage": "preproduction.release_note",
+          "started_ms": 1792643987300,
+          "status": "passed"
+        }
+      ],
+      "ecs_wait_seconds": 486.915,
+      "normal_release_slo_seconds": 900,
+      "schema_version": "automation-ecs-release-pipeline-v1",
+      "slo_breach": true,
+      "stages": [
+        {
+          "duration_seconds": 122.276,
+          "finished_at": "2026-10-22T03:31:17.052526Z",
+          "stage": "codebuild",
+          "started_at": "2026-10-22T03:29:14.777248Z",
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 183.684,
+          "finished_at": "2026-10-22T04:20:03.548890Z",
+          "stage": "preproduction_preflight",
+          "started_at": "2026-10-22T04:16:59.864052Z",
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 1187.208,
+          "finished_at": "2026-10-22T04:39:50.759577Z",
+          "stage": "preproduction_deploy",
+          "started_at": "2026-10-22T04:20:03.553140Z",
+          "status": "passed"
+        }
+      ],
+      "target_range_seconds": {
+        "max": 900,
+        "min": 600
+      },
+      "total_seconds": 1493.168
+    }
+  },
+  "final_release": {
+    "release_id": "r20261022-a08be07-intake-only-r6",
+    "status": "passed",
+    "artifact": ".deployments/ecs-pipeline-r20261022-a08be07-intake-only-r6/preproduction-deploy/evidence.json",
+    "expected_knowledge": {
+      "master": "1",
+      "source_allowlist": "",
+      "switches": {
+        "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+        "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0",
+        "KNOWLEDGE_AI_EXECUTION_ENABLED": "0",
+        "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+        "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+        "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+        "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0"
+      }
+    },
+    "hermes_case_workflow_mode": "disabled",
+    "git_commit": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+    "generated_at": "2026-10-22T05:01:35Z",
+    "checks": {
+      "cloudwatch": "passed",
+      "ec2_backup": "passed",
+      "ecr": "passed",
+      "heartbeats": "passed",
+      "prompt_activation": "active",
+      "prompt_sync": "active",
+      "prompt_sync_attempts": 1,
+      "prompt_sync_classification": "",
+      "prompt_sync_retryable": false,
+      "prompt_target_state": "not_started",
+      "prompt_target_state_attempts": 0,
+      "prompt_target_state_classification": "",
+      "prompt_target_state_retryable": false,
+      "provider_probe": "passed",
+      "public_health": "passed",
+      "rollback": "not_started",
+      "schema_bootstrap": "skipped_current",
+      "source_prompt": "passed",
+      "suspension_recipients": "passed",
+      "terraform_post_deploy_zero_drift": "passed",
+      "terraform_zero_drift": "passed"
+    },
+    "components": {
+      "api": {
+        "expected_digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+        "observed_digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:173",
+        "runtime_verified": true
+      },
+      "route": {
+        "expected_digest": "sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+        "observed_digest": "sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:168",
+        "runtime_verified": true
+      },
+      "worker": {
+        "expected_digest": "sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+        "new_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+        "observed_digest": "sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+        "old_task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:171",
+        "runtime_verified": true
+      }
+    },
+    "timing_summary": {
+      "controllable_seconds": 329.647,
+      "ecs_wait_seconds": 438.954,
+      "normal_release_slo_seconds": 900,
+      "slo_breach": false,
+      "target_range_seconds": {
+        "max": 900,
+        "min": 600
+      },
+      "total_seconds": 768.601
+    },
+    "phase_timings": [
+      {
+        "duration_seconds": 123.445,
+        "finished_ms": 1792644305012,
+        "phase": "preflight",
+        "started_ms": 1792644181567,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 104.639,
+        "finished_ms": 1792644409682,
+        "phase": "prompt_schema",
+        "started_ms": 1792644305043,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 275.093,
+        "finished_ms": 1792645028355,
+        "phase": "route_worker_rollout",
+        "started_ms": 1792644753262,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 3.464,
+        "finished_ms": 1792645033279,
+        "phase": "heartbeat",
+        "started_ms": 1792645029815,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 163.861,
+        "finished_ms": 1792645197177,
+        "phase": "api_rollout",
+        "started_ms": 1792645033316,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 71.341,
+        "finished_ms": 1792645268587,
+        "phase": "collector",
+        "started_ms": 1792645197246,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 24.052,
+        "finished_ms": 1792645292673,
+        "phase": "activation",
+        "started_ms": 1792645268621,
+        "status": "passed"
+      },
+      {
+        "duration_seconds": 2.706,
+        "finished_ms": 1792645295421,
+        "phase": "release_note",
+        "started_ms": 1792645292715,
+        "status": "passed"
+      }
+    ],
+    "runtime_readback": {
+      "api": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "rollout": [
+          "COMPLETED"
+        ],
+        "containers": [
+          {
+            "name": "api",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/preproduction@sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+            "environment": {
+              "RUNTIME_SCHEMA_MODE": "check",
+              "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+              "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+              "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+              "KNOWLEDGE_AI_EXECUTION_ENABLED": "0",
+              "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+              "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+              "HERMES_CASE_WORKFLOW_MODE": "disabled",
+              "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
+              "KNOWLEDGE_SOURCE_ALLOWLIST": "",
+              "ENGINEER_SLACK_BOT_ID": "B08RHT5TZV2",
+              "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0",
+              "INVESTIGATION_CASE_FILES_ENABLED": "1"
+            }
+          }
+        ],
+        "tasks": [
+          {
+            "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/d44f642622e747479f4e6974e6fb6742",
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+            "status": "RUNNING",
+            "containers": [
+              {
+                "name": "api",
+                "digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+                "health": "HEALTHY"
+              }
+            ]
+          }
+        ]
+      },
+      "route": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "rollout": [
+          "COMPLETED"
+        ],
+        "containers": [
+          {
+            "name": "route",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/preproduction@sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+            "environment": {
+              "RUNTIME_SCHEMA_MODE": "check"
+            }
+          }
+        ],
+        "tasks": [
+          {
+            "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/8966a4179e3044dba94d9a88670c4035",
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+            "status": "RUNNING",
+            "containers": [
+              {
+                "name": "route",
+                "digest": "sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+                "health": "UNKNOWN"
+              }
+            ]
+          }
+        ]
+      },
+      "worker": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "rollout": [
+          "COMPLETED"
+        ],
+        "containers": [
+          {
+            "name": "worker",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/preproduction@sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+            "environment": {
+              "RUNTIME_SCHEMA_MODE": "check",
+              "KNOWLEDGE_DUALWRITE_WORKER_ENABLED": "0",
+              "KNOWLEDGE_AI_EXECUTION_ENABLED": "0",
+              "KNOWLEDGE_SLACK_NOTIFY_ENABLED": "0",
+              "KNOWLEDGE_AGENT_MEMORY_DELIVERY_ENABLED": "0",
+              "HERMES_CASE_WORKFLOW_MODE": "disabled",
+              "KNOWLEDGE_SUMMARY_REVIEW_ENABLED": "0",
+              "INVESTIGATION_CASE_FILES_ENABLED": "1",
+              "KNOWLEDGE_SOURCE_INTAKE_ENABLED": "1",
+              "HERMES_KNOWLEDGE_WORKFLOW_ENABLED": "1",
+              "KNOWLEDGE_WEKNORA_DELIVERY_ENABLED": "0",
+              "KNOWLEDGE_SOURCE_ALLOWLIST": "",
+              "ENGINEER_SLACK_BOT_ID": "B08RHT5TZV2"
+            }
+          }
+        ],
+        "tasks": [
+          {
+            "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/76b3fdedcdd24b089cd98be8d1b045dd",
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+            "status": "RUNNING",
+            "containers": [
+              {
+                "name": "worker",
+                "digest": "sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+                "health": "UNKNOWN"
+              }
+            ]
+          }
+        ]
+      },
+      "hermes": {
+        "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+        "desired": 1,
+        "running": 1,
+        "pending": 0,
+        "rollout": [
+          "COMPLETED"
+        ],
+        "containers": [
+          {
+            "name": "memory-core",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+            "environment": {}
+          },
+          {
+            "name": "hermes",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+            "environment": {}
+          },
+          {
+            "name": "memory-panel",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+            "environment": {}
+          },
+          {
+            "name": "ui-proxy",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+            "environment": {}
+          },
+          {
+            "name": "knowledge",
+            "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+            "environment": {}
+          }
+        ],
+        "tasks": [
+          {
+            "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/f967b27f27fe4646873015dbe8ffc916",
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+            "status": "RUNNING",
+            "containers": [
+              {
+                "name": "memory-panel",
+                "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+                "health": "HEALTHY"
+              },
+              {
+                "name": "memory-core",
+                "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+                "health": "HEALTHY"
+              },
+              {
+                "name": "ui-proxy",
+                "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+                "health": "HEALTHY"
+              },
+              {
+                "name": "knowledge",
+                "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+                "health": "HEALTHY"
+              },
+              {
+                "name": "hermes",
+                "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+                "health": "HEALTHY"
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "health_readback": {
+      "status": {
+        "live": 200,
+        "ready": 200,
+        "release": 200
+      },
+      "release": {
+        "status": "ok",
+        "provenance": {
+          "environment": "preproduction",
+          "service_role": "api",
+          "runtime_identity": "ip-172-31-33-143.ec2.internal",
+          "release_id": "r20261022-a08be07-intake-only-r6",
+          "git_commit": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+          "image_digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+          "build_time": "2026-10-22T03:52:30Z",
+          "schema_revision": "automation-ecs-016",
+          "prompt_release_id": "pr-88298d4e0a3f",
+          "db_resource_id": "supportportal-preproduction",
+          "db_schema": "supportportal_preproduction",
+          "job_namespace": "supportportal-preproduction",
+          "contracts": {
+            "intake": "automation-intake-v1",
+            "route": "automation-route-v1",
+            "processing": "automation-processing-v1",
+            "execution": "automation-execution-v1",
+            "heartbeat": "automation-heartbeat-v1"
+          }
+        },
+        "hermes_case_workflow": {
+          "mode": "disabled",
+          "turn_contract_version": "v1",
+          "output_contract_version": "v1",
+          "producer_contract_version": null
+        }
+      }
+    },
+    "column_readback": {
+      "generated_at": "2026-10-22T04:59:48.404324+00:00",
+      "schema_revision": "automation-ecs-016",
+      "columns": [
+        [
+          "short_description",
+          "text",
+          "NO"
+        ]
+      ],
+      "transaction_read_only": "on",
+      "status": "passed"
+    },
+    "readback_artifact": ".deployments/ecs-pipeline-r20261022-a08be07-intake-only-r6/final-readback.json",
+    "rollback_exercised": false,
+    "readback_assertions": {
+      "release_source_schema_prompt_digest_match": true,
+      "all_three_services_completed": true,
+      "api_worker_expected_config_exact_match": true,
+      "live_ready_release_http_200": true,
+      "readonly_schema_column_check": true
+    },
+    "manifest": {
+      "artifact_kind": "registry",
+      "build_time": "2026-10-22T03:52:30Z",
+      "components": {
+        "api": {
+          "digest": "sha256:8d742f252636c23dce20faa1e88b9275d15e5b2cc4f772bf9edf227771b7bebd",
+          "platform": "linux/amd64",
+          "role": "api",
+          "tag": "api-r20261022-a08be07-intake-only-r6"
+        },
+        "route": {
+          "digest": "sha256:4d4f4f29085293c8519086ac9eec842d2983dc94b42f1a3241a23c70d4d66b04",
+          "platform": "linux/amd64",
+          "role": "route",
+          "tag": "route-r20261022-a08be07-intake-only-r6"
+        },
+        "worker": {
+          "digest": "sha256:8bd7d9db7b52f93e640a8cf2eb697ab700ebdaca8ea555638ec24c3099597ffa",
+          "platform": "linux/amd64",
+          "role": "worker",
+          "tag": "worker-r20261022-a08be07-intake-only-r6"
+        }
+      },
+      "contracts": {
+        "execution": "automation-execution-v1",
+        "heartbeat": "automation-heartbeat-v1",
+        "intake": "automation-intake-v1",
+        "processing": "automation-processing-v1",
+        "route": "automation-route-v1"
+      },
+      "git_commit": "a08be077334b1e6d5a1f2f43ba21216465b89fe9",
+      "platform": "linux/amd64",
+      "prompt_release_id": "pr-88298d4e0a3f",
+      "release_id": "r20261022-a08be07-intake-only-r6",
+      "schema_revision": "automation-ecs-016",
+      "schema_version": "automation-release-v2"
+    },
+    "official_deployment_status": "complete",
+    "pipeline_exit_code": 0,
+    "pipeline_timing": {
+      "controllable_seconds": 938.412,
+      "deployment_stages": [
+        {
+          "duration_seconds": 123.445,
+          "finished_ms": 1792644305012,
+          "stage": "preproduction.preflight",
+          "started_ms": 1792644181567,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 104.639,
+          "finished_ms": 1792644409682,
+          "stage": "preproduction.prompt_schema",
+          "started_ms": 1792644305043,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 275.093,
+          "finished_ms": 1792645028355,
+          "stage": "preproduction.route_worker_rollout",
+          "started_ms": 1792644753262,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 3.464,
+          "finished_ms": 1792645033279,
+          "stage": "preproduction.heartbeat",
+          "started_ms": 1792645029815,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 163.861,
+          "finished_ms": 1792645197177,
+          "stage": "preproduction.api_rollout",
+          "started_ms": 1792645033316,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 71.341,
+          "finished_ms": 1792645268587,
+          "stage": "preproduction.collector",
+          "started_ms": 1792645197246,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 24.052,
+          "finished_ms": 1792645292673,
+          "stage": "preproduction.activation",
+          "started_ms": 1792645268621,
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 2.706,
+          "finished_ms": 1792645295421,
+          "stage": "preproduction.release_note",
+          "started_ms": 1792645292715,
+          "status": "passed"
+        }
+      ],
+      "ecs_wait_seconds": 438.954,
+      "normal_release_slo_seconds": 900,
+      "schema_version": "automation-ecs-release-pipeline-v1",
+      "slo_breach": true,
+      "stages": [
+        {
+          "duration_seconds": 123.114,
+          "finished_at": "2026-10-22T03:53:42.959592Z",
+          "stage": "codebuild",
+          "started_at": "2026-10-22T03:51:39.845045Z",
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 134.567,
+          "finished_at": "2026-10-22T04:42:56.198852Z",
+          "stage": "preproduction_preflight",
+          "started_at": "2026-10-22T04:40:41.631507Z",
+          "status": "passed"
+        },
+        {
+          "duration_seconds": 1119.685,
+          "finished_at": "2026-10-22T05:01:35.733108Z",
+          "stage": "preproduction_deploy",
+          "started_at": "2026-10-22T04:42:56.203010Z",
+          "status": "passed"
+        }
+      ],
+      "target_range_seconds": {
+        "max": 900,
+        "min": 600
+      },
+      "total_seconds": 1377.366
+    },
+    "check_notes": {
+      "prompt_target_state": "not_started is the resume-only target-state operation; this deployment used prompt sync/validate plus activation preflight. source_prompt passed; prompt_sync and prompt_activation active. Not claimed as an executed target-state check.",
+      "schema_bootstrap": "skipped_current in final release; required short_description was added and independently read back via separate formal task :45 before either service rollout.",
+      "rollback": "not_started; no rollback rehearsal performed.",
+      "timing": "pipeline total 1377.366s exceeds 900s SLO; deployment phase summary 768.601s is a narrower metric. Bot baseline pipeline total 1493.168s also exceeds SLO."
+    }
+  },
+  "n8n": {
+    "status": "published_and_independently_read_back_by_executor",
+    "parent": {
+      "id": "kyiA0QuiVx6JJ03i",
+      "previous_published": "ba9403ed-0989-4319-9661-d021df3b20e4",
+      "previous_draft": "c41c09db-3924-40ed-9d48-f51c571e584e",
+      "published": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8"
+    },
+    "child": {
+      "id": "r1HIW8UNuCabiOPn",
+      "previous_published": "4ed2c0c3-65ef-42d4-a1bd-442379638e0e",
+      "published": "7400713d-c7e3-436d-9e05-fa53d6674fd7"
+    },
+    "only_expected_nodes_changed": true,
+    "connections_preserved": true,
+    "raw_text_preserved": true,
+    "metadata_fields": [
+      "parent_user_id",
+      "bot_id"
+    ],
+    "parent_input_structured": true,
+    "convert_fields_to_string": false,
+    "trusted_bot": "B08RHT5TZV2",
+    "subtype": "file_share",
+    "expression_checks": {
+      "source": "actual remote n8n draft expressions",
+      "checks_passed": 8,
+      "valid_event": true,
+      "invalid_events_rejected": 6,
+      "metadata_preserved": true,
+      "raw_text_preserved": true,
+      "workflow_execution_created": false
+    },
+    "snapshot_validation": "15 published, 2 divergent drafts, 2 local candidates; passed",
+    "prepublish_snapshot_commit": "3d453fd6",
+    "draft_snapshot_commit": "c1b2fde1",
+    "workflow_execution_created": false
+  },
+  "hermes": {
+    "image": {
+      "generated_at": "2026-10-22T04:47:44.052592+00:00",
+      "service": "supportportal-preproduction-hermes",
+      "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+      "running": 1,
+      "pending": 0,
+      "rollout": [
+        "COMPLETED"
+      ],
+      "containers": [
+        {
+          "name": "memory-panel",
+          "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+          "imageDigest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        },
+        {
+          "name": "memory-core",
+          "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+          "imageDigest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        },
+        {
+          "name": "ui-proxy",
+          "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+          "imageDigest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        },
+        {
+          "name": "knowledge",
+          "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+          "imageDigest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        },
+        {
+          "name": "hermes",
+          "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+          "imageDigest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+          "lastStatus": "RUNNING",
+          "healthStatus": "HEALTHY"
+        }
+      ]
+    },
+    "toolsets": [
+      {
+        "name": "skills",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "skill_manage",
+          "skill_view",
+          "skills_list"
+        ]
+      },
+      {
+        "name": "supportportal_files",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "support_case_files_download",
+          "support_case_files_list",
+          "support_case_files_publish",
+          "support_case_files_read",
+          "support_case_files_search"
+        ]
+      },
+      {
+        "name": "supportportal_investigation",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "support_save_investigation_progress",
+          "support_zac_consult"
+        ]
+      },
+      {
+        "name": "supportportal_persona",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "support_save_reply_draft"
+        ]
+      },
+      {
+        "name": "supportportal_route",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "support_record_direction"
+        ]
+      },
+      {
+        "name": "supportportal_work",
+        "enabled": true,
+        "configured": true,
+        "tools": [
+          "support_close_case",
+          "support_execute_automation_action"
+        ]
+      }
+    ],
+    "assets": {
+      "/opt/hermes/case-files-skill": {
+        "exists": true,
+        "is_dir": true,
+        "items": [
+          "SKILL.md"
+        ],
+        "sha256": null
+      },
+      "/opt/hermes/investigation-profiles": {
+        "exists": true,
+        "is_dir": true,
+        "items": [
+          "supportportal-investigation-v1",
+          "supportportal-investigation-v1/support-close-case",
+          "supportportal-investigation-v1/supportportal-investigation",
+          "supportportal-investigation-v1/hermes-zac-engineering-handoff",
+          "supportportal-investigation-v1/support-close-case/SKILL.md",
+          "supportportal-investigation-v1/supportportal-investigation/references",
+          "supportportal-investigation-v1/supportportal-investigation/SKILL.md",
+          "supportportal-investigation-v1/hermes-zac-engineering-handoff/SKILL.md",
+          "supportportal-investigation-v1/supportportal-investigation/references/counter_ids.md"
+        ],
+        "sha256": null
+      },
+      "/opt/data/profiles": {
+        "exists": false,
+        "is_dir": false,
+        "items": [],
+        "sha256": null
+      }
+    },
+    "asset_hashes": [
+      {
+        "path": "/opt/hermes/case-files-skill/SKILL.md",
+        "exists": true,
+        "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "mentions_description": true
+      },
+      {
+        "path": "/opt/hermes/plugins/supportportal_agent_tools/case_files_bridge.py",
+        "exists": true,
+        "sha256": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+        "mentions_description": true
+      },
+      {
+        "path": "/opt/hermes/supportportal_file_context.py",
+        "exists": true,
+        "sha256": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+        "mentions_description": false
+      }
+    ],
+    "description_filter": {
+      "list_filter_schema": [
+        "source",
+        "extension",
+        "purpose",
+        "introduced_turn_id"
+      ],
+      "skill_documents_short_description": false,
+      "case_skill_present": true
+    },
+    "scope": "asset/profile directory and authenticated toolset registry readback; no session/run/tool execution",
+    "file_context_source_sha256_matches_main": true,
+    "description_filter_matches_main": false,
+    "expected_main_sha256": {
+      "Skill": "1162f33f5e7908ee47baa0c959e7ea35e31af62d45c6366e76389b16e0e0a708",
+      "bridge": "2e9fad5f4c467bf2ba35305dfa9836f122cb15662caa50f596c0109ce2f61834"
+    }
+  },
+  "operations": {
+    "terraform": "native darwin_arm64 Terraform 1.9.8 with official SHA256 verification; no apply; refreshable AWS credential_process retained",
+    "terraform_binary_sha256": "873d7b925d08578fb6bb9c12c7cd92ae73e289e07c360f2fdd69f9036b7baaab",
+    "preserved_releases": [
+      "r20261022-a08be07",
+      "r20261022-a08be07-intake-only-r6"
+    ],
+    "original_checkpoint_identity_not_rewritten": true,
+    "interrupted_before_service_update": [
+      "missing short_description discovered",
+      "user authorized combined intake-only scope"
+    ],
+    "podman_observation": "machine started but was unavailable between command sessions; Podman Terraform wrapper also cannot use the macOS credential_process unchanged"
+  },
+  "open_findings": [
+    {
+      "id": "HERMES-METADATA-01",
+      "status": "waiting-for-evidence",
+      "finding": "Live td54 bridge/Skill lack the new description filter. Readback-only scope does not replace the overlay. Full metadata feature readiness is not released."
+    },
+    {
+      "id": "LIVE-FILE-C1-C7",
+      "status": "not_executed",
+      "finding": "No new real Slack/Zendesk file transfer, case isolation, live Automation negative probe or Zac protocol validation was performed."
+    },
+    {
+      "id": "R1-AND-KNOWLEDGE-BUSINESS",
+      "status": "retained",
+      "finding": "Original p2-192 R1/business gates and p2-197 real intake/WeKnora retrieval/delivery gates remain separate; no historical execution replay."
+    }
+  ],
+  "review_handoff": {
+    "thread": "01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "status": "prepared; pending independent deployment/readback acceptance",
+    "gate_scope": "deployment/readback records only; code acceptance remains previously passed"
+  },
+  "reproduction": {
+    "formal_evidence": ".deployments/ecs-pipeline-r20261022-a08be07-intake-only-r6/preproduction-deploy/evidence.json",
+    "runtime_readback": "AWS ecs describe-services/list-tasks/describe-tasks/describe-task-definition (api, route, worker, hermes); retain only selected nonsecret env keys and image metadata. GET https://supportcenter.stellarix.space/automation/preproduction/health/{live,ready,release}. Compare observed task/image/commit/release/schema/Prompt to immutable manifest and formal evidence.",
+    "schema_readback": "psycopg options=-c default_transaction_read_only=on; SELECT revision FROM supportportal_preproduction.automation_runtime_schema WHERE singleton=TRUE; SELECT column_name,data_type,is_nullable FROM information_schema.columns WHERE table_schema='supportportal_preproduction' AND table_name='investigation_case_files' AND column_name='short_description'; SHOW transaction_read_only",
+    "n8n": "published/draft snapshots under docs/integrations/n8n/workflows; python3 scripts/n8n/validate_workflow_snapshots.py",
+    "hermes_readback": "authenticated GET localhost:8642/v1/toolsets through ECS Exec; file existence/hash and ast/JSON schema extraction only. No session/run/tool execution."
+  },
+  "local_verification": {
+    "snapshot_validator": "passed; 15 published, 2 divergent drafts, 2 local candidates, 52 redacted values; 29 pre-existing LEGACY-EXPOSED warnings retained",
+    "published_snapshot_contract_tests": "5 passed; backend/tests/test_investigation_attachments_n8n_contract.py",
+    "project_overview": "passed",
+    "feature_list": "passed",
+    "diff_check": "passed on origin/main...HEAD after main integration; docs-only delta"
+  },
+  "historical_v2_revision": "v2",
+  "evidence_scope_note": "current_repair is the current contract. Remaining v2 fields retain historical deployment/readback evidence and must not be interpreted as this repair runtime status.",
+  "current_repair": {
+    "finding": "F1",
+    "revision": "v1-repair-1",
+    "scope": "n8n draft and isolation only; user explicitly deferred API changes and live publication",
+    "status": "implemented_waiting_for_independent_code_acceptance",
+    "root_cause": "Slack Trigger returns req.body.event, losing envelope team; natural human file_share had no team and neither old child validator matched.",
+    "authorization": {
+      "source_verification": "User selected A: existing Slack credential auth.test + conversations.info + conversations.replies; fail closed, preserve strict bot branch.",
+      "latest_scope": "User chose n8n draft/isolation only; API compatibility remains blocked, do not publish live."
+    },
+    "workflow": {
+      "id": "r1HIW8UNuCabiOPn",
+      "captured_at": "2026-10-23T16:33:53.320Z",
+      "activeVersionId": "7400713d-c7e3-436d-9e05-fa53d6674fd7",
+      "draftVersionId": "ff147b6e-888a-4564-9824-fcc1676469c9",
+      "nodeCount": 18,
+      "active_unchanged": true,
+      "snapshot": "docs/integrations/n8n/workflows/drafts/r1HIW8UNuCabiOPn.draft.json",
+      "parent_active_version": "8f5f02d4-5448-45cb-b9f3-3499e7c254e8",
+      "snapshot_sha256": "98ca70d221bf77aadbd72cd3f9cc1d2f28b068f25a4d3bda6a87dcd7771aeb87"
+    },
+    "contracts": [
+      {
+        "id": "F1-A1",
+        "result": "isolated_pass",
+        "mechanism": "human candidate -> auth.test -> conversations.info -> exact range conversations.replies -> Verify Human Slack Source -> existing Investigation binding -> mocked sender"
+      },
+      {
+        "id": "F1-A2",
+        "result": "isolated_pass",
+        "mechanism": "Only API auth.team_id is injected, after channel.context_team_id matches; no file.user_team/static fallback. Exact message ts/thread/user/text/mention/file owner/id/name/type/size checked. Unverified event_id/flags/private URLs discarded."
+      },
+      {
+        "id": "F1-A3",
+        "result": "isolated_pass",
+        "mechanism": "Absent/wrong API workspace, explicit wrong event team, wrong channel/thread/user/file, missing mention, duplicate identities, incomplete replies, non-2xx/timeout/JSON errors stop before binding/send."
+      },
+      {
+        "id": "F1-A4",
+        "result": "isolated_pass",
+        "mechanism": "Strict trusted bot validator, parent requirements and ordinary text Production/adhoc routing unchanged. Files never use Production/adhoc fallback."
+      },
+      {
+        "id": "F1-A5",
+        "result": "read_only_pass",
+        "mechanism": "auth.test and conversations.info live API verified; deliberately nonexistent message and fake-actor source readback correctly rejected; no original event replay or external write."
+      }
+    ],
+    "verification": {
+      "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_n8n_human_file_share.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_n8n_snapshot_identity.py backend/tests/test_n8n_source_only_contracts.py -q",
+      "result": "146 passed on verification_head after latest main integration",
+      "carrier": "Native Node VM executes actual snapshot expressions, Code and graph edges; all HTTP boundaries inert. Cloud manual tests execute n8n logic with I/O pinned; sender payload evaluated by local runner, not claimed as a live HTTP send.",
+      "canaries": "Bypassing verification cannot access normalized sender input; misrouting files into adhoc throws. Existing validator negative identity tests retained.",
+      "snapshot_test_repair": "Historical knowledge snapshots remain byte-exact. Slack has authorized fresh readback; fixed obsolete counts 15/4/56 -> 15/3/52 and pins published7400713d/draftff147b6e; identity conflict negative tests unchanged.",
+      "node_validation": "6/6 valid; atomic update validationWarnings=[]; existing Slack credential ID re-read matches UFeOoSgYxSmNuCnS; no new credential",
+      "static_checks": {
+        "snapshot_validator": "passed: 15 published, 3 divergent drafts, 52 redactions; 2 local candidates; 29 existing LEGACY-EXPOSED warnings retained",
+        "project_overview": "passed",
+        "feature_list": "passed",
+        "diff_check": "passed after trimming changelog EOF blank line"
+      },
+      "integration_impact": "origin/main advanced only knowledge review notification event-id implementation/tests (2 files); F1 workflow, runner and assertions unchanged. Full 146 targeted checks rerun after integration. Subsequent evidence-only commit does not alter behavior."
+    },
+    "cloud_isolation": [
+      {
+        "name": "positive",
+        "executionId": "198401",
+        "status": "success",
+        "last_node": "Send Hermes Message",
+        "verify_status": "success",
+        "mock_send_executed": true,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "wrong-api-team",
+        "executionId": "198402",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "missing-api-team",
+        "executionId": "198403",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "wrong-file",
+        "executionId": "198404",
+        "status": "error",
+        "last_node": "Verify Human Slack Source",
+        "verify_status": "error",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "unbound",
+        "executionId": "198405",
+        "status": "success",
+        "last_node": "Ignore Non-Investigation Attachment",
+        "verify_status": "success",
+        "mock_send_executed": false,
+        "ignore_executed": true,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "bot-strict",
+        "executionId": "198406",
+        "status": "success",
+        "last_node": "Validate Slack Mention",
+        "verify_status": "not_executed",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      },
+      {
+        "name": "missing-mention",
+        "executionId": "198407",
+        "status": "success",
+        "last_node": "Validate Slack Mention",
+        "verify_status": "not_executed",
+        "mock_send_executed": false,
+        "ignore_executed": false,
+        "all_external_boundaries_pinned": true
+      }
+    ],
+    "live_slack_api": {
+      "captured_at": "2026-10-23T16:30:05.895Z",
+      "execution": {
+        "id": "198408",
+        "status": "error",
+        "mode": "manual",
+        "startedAt": "2026-10-23T16:29:47.615Z",
+        "stoppedAt": "2026-10-23T16:29:47.813Z"
+      },
+      "kind": "live_slack_read_only_nonexistent_message_no_business_replay",
+      "auth": {
+        "ok": true,
+        "team_id": "T1CBEDLJY"
+      },
+      "channel": {
+        "ok": true,
+        "id": "C0BS0N61D1R",
+        "context_team_id": "T1CBEDLJY"
+      },
+      "replies": {
+        "ok": true,
+        "message_count": 1,
+        "has_more": false,
+        "next_cursor_present": false
+      },
+      "verified_node_status": "error",
+      "send_node_executed": false,
+      "external_write_boundaries": "all pinned; attachment resolver pinned ignored_unbound",
+      "original_file_replayed": false
+    },
+    "old_upload": {
+      "captured_at": "2026-10-23T16:31:35.028Z",
+      "executionId": "198409",
+      "status": "error",
+      "read_only": true,
+      "original_payload_replayed": false,
+      "synthetic_actor_differs": true,
+      "slack": {
+        "ok": true,
+        "matching_message_present": true,
+        "file_present": true,
+        "file_id": "F0CBQTEP1S5",
+        "file_name": "synthetic-engineer-14245-278e033b162b.log",
+        "size": 498,
+        "mimetype": "text/plain",
+        "file_owner_matches_message": true,
+        "thread_matches": true,
+        "parent_user_present": true,
+        "client_msg_id_present": true
+      },
+      "send_node_executed": false,
+      "failure": "human_file_source_unverified: message actor/thread [line 6]",
+      "external_writes": "all pinned"
+    },
+    "old_map_readback": {
+      "captured_at": "2026-10-23T16:33:20.109838+00:00",
+      "read_only": true,
+      "case_id": "14245",
+      "slack_file_id": "F0CBQTEP1S5",
+      "case_map_count": 0,
+      "file_map_count": 0,
+      "namespace_map_count": 4,
+      "status": "verified",
+      "method": "SSM DSN held in memory; psycopg read-only transaction with statement timeout; three count SELECTs, no service mutation"
+    },
+    "api_compatibility": {
+      "id": "F1-API-01",
+      "status": "blocked_deferred_by_user",
+      "live_release": "r20261023-3d60e9a-opfallback",
+      "live_commit": "3d60e9a5f4d9d976cd0fcd0d7dda852be44d5045",
+      "readback": "GET /automation/preproduction/health/release; then git show exact live commit source",
+      "path": "backend/services/automation_hermes_slack_actions.py",
+      "line": 338,
+      "contract": "Any files require trusted bot_id and parent_user_id; verified human branch preserves bot_id=null. Current application would reject human attachments with 422. No API was called to test this; established by source at observed live commit.",
+      "route": "backend/automation_ecs_api.py:1809",
+      "decision": "No API code/deployment or n8n live publication in this round. Do not fabricate bot/parent identity."
+    },
+    "business": {
+      "C2": "failed_natural_ingress_validation_no_map; not retried; draft isolation does not release C2",
+      "C3": "not_executed",
+      "C7": "waiting-for-evidence",
+      "ready_for_real_file_tests": false,
+      "deduplication": "No replay/deduplication business test was performed; this patch introduces no dedup cache.",
+      "production": "untouched",
+      "hermes": "not called",
+      "zac": "not called"
+    },
+    "next_action": "Independent review of full PR HEAD / draft bytes and evidence only. Preserve Draft PR/worktree. No merge, live publish, SupportPortal deployment, old event replay or C3 in this round.",
+    "implementation_commit": "8b3f7981949eac83fd453fa31b8e31b934dbdc1c",
+    "integrated_main": "8201dd79295ec97c8def09f82022a7814568e9a5",
+    "verification_head": "446a49d3e3ca6e01a1ec7ca350a53d3d68676e1d"
+  }
+}

@@ -46,6 +46,14 @@ pending不是成功；available必须验证实际thread share。unavailable记�
 
 发布与本地复现说明：[README.metadata.md](../../deployment/hermes-case-files/README.metadata.md)。默认check-only严格只读；apply/rollback固定目标及审查bytes，记录备份、意图与未知结果，flock仅约束参与协议的发布者。实际Skill returned-content/source/resolved path/文件与仓库三方hash须一致。最终本地禁网镜像回归包含旧内容、错误hash/path拒绝、原输入发布/重复/回滚；65 passed、17 skipped不替代live EFS/Gateway验收。验证日期：2026-10-22。
 
+### Human file_share 来源核验（2026-10-24，仅 draft）
+
+[F1 修复合同与证据](../plans/investigation-case-files-slack-ingress-metadata-v1.md)：Slack Trigger 2.38.7 丢弃 envelope team 时，禁止使用 `file.user_team` 或静态值补齐。human candidate 使用父工作流现有 Slack credential 做三个限时 GET：`auth.test`、`conversations.info`、准确 ts 范围的 `conversations.replies`；全部来源断言通过后才注入 API team，文件仍须命中 Investigation binding。Code 节点只校验/筛选数据，不做网络请求，不产生 bot 身份。API 不成功、缺少可信字段、超时和分页/来源歧义均 fail closed，保留已有错误链，不新增重试或去重资源。
+
+测试通过 `test_workflow` 执行当前 draft，所有 SupportPortal 写入/绑定请求 pin 为隔离响应；纯逻辑正负例连同 Slack 请求亦 pin。实际 Slack GET 探针只读取来源，使用不匹配的合成身份，必在来源校验停止。原始 execution、pin data、私有 URL、resume token 不进入仓库，仅记录 execution ID、状态和允许字段。复现 fixture/实际图载具：`backend/tests/test_n8n_human_file_share.py`、`backend/tests/fixtures/n8n_human_file_share_runner.cjs`。节点校验及 146 项定向测试通过；published/draft snapshots 已独立回读并经 validator 校验。
+
+当前 live child `7400713d-c7e3-436d-9e05-fa53d6674fd7` 不变，修复 draft `ff147b6e-888a-4564-9824-fcc1676469c9` 待独立代码验收。**不得发布该 draft**：当前 live 源码的附件入口只接受 trusted bot+parent，人工来源必须保持 `bot_id=null`；用户已明确本轮只验收 draft、保留 API 兼容阻塞。不得伪造 bot/parent、重放旧文件事件或调用 Hermes C3。来源门禁通过不等同于 API 接受、Map 登记或文件读取通过。
+
 HMR-V4-01修复（2026-10-22）：check-only对prepared/outcome_unknown返回publication_unresolved/exit1，携带实际hash/stat和pending_action供回读，仍无写入；终态/目标/意图矛盾返回state_conflict/exit1。先回读，再显式继续原apply或rollback，不能用check-only的读成功替代发布成功。
 
 
