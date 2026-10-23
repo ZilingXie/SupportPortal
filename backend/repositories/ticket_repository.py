@@ -11230,7 +11230,7 @@ class PostgresTicketRepository(
                 )
                 if cur.fetchone() is not None:
                     continue
-                # p2-212 F1: a deployed preset must never supersede an
+                # p2-213 F1: a deployed preset must never supersede an
                 # operator-published version on ANY persona, default-support
                 # included. The one exception is the legacy bootstrap: a
                 # persona with operator content and NO system-seeded version

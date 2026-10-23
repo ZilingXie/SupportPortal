@@ -1202,7 +1202,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIn("Backend Operations Router", payload["system_prompt"])
 
     def test_persona_seed_catalog_contains_the_three_published_presets(self) -> None:
-        # p2-212 F2: the full storage read-back contract is preserved — exactly
+        # p2-213 F2: the full storage read-back contract is preserved — exactly
         # three personas, enabled, one published system version each, marker
         # and stored content matching the catalog — while the content
         # expectation now derives from the live presets (each carrying the
@@ -1221,7 +1221,7 @@ class AccountAdminFeatureTests(unittest.TestCase):
         for key in expected_keys:
             preset = catalog[key]
             with self.subTest(persona_key=key):
-                # Catalog semantic floor (p2-212): every preset teaches the
+                # Catalog semantic floor (p2-213): every preset teaches the
                 # natural enablement confirmation style.
                 self.assertIn("Enablement submission confirmations", preset.instruction)
                 self.assertIn("business days", preset.instruction)

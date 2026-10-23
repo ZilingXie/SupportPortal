@@ -5323,7 +5323,7 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - 目的：让 hermes 侧 persona（p2-211 draft 门禁的生成方）具备产出合规确认的风格指引——与 automation_persona v33（account 管线）及场景/验证器三方合同一致。
 - 验证：工单 14228（default-support v2）确认回复公开投递且三要素齐备，E1P 5/5 PASS。runtime 变更不涉及 catalog Prompt/Prompt Release；代码侧 `ACCOUNT_PERSONA_PRESETS` 预设同步为后续项。
 
-## 2026-10-23 — Persona 库内容加载修复 + 内置预设同步（p2-212 persona-library-content-loading，待独立验收）
+## 2026-10-23 — Persona 库内容加载修复 + 内置预设同步（p2-213 persona-library-content-loading，待独立验收）
 
 - 修复 `resolve_persona_style`（hermes 回复 persona 解析）：改用 `resolve_account_persona`（对 sticky 分配 JOIN 返回钉定版本 content）替代只含身份字段的 `get_account_persona_assignment`——此前所有已分配 persona 的工单一律回退代码默认预设，persona 库内容（含 p2-211 方案 A 的三 persona v2/v3 教学）从未进入 hermes 回复 prompt（14239 实证：fallback_default → turn-4 确认无 draft）。
 - 代码内置三预设（`ACCOUNT_PERSONA_PRESETS`，automation-persona-presets-v1→v2）同步 enablement 提交确认三要素+禁句指令（与 p2-210/p2-211 合同一致），seed marker 升级；预设同步遇非 system 内容不覆盖（库内教学版本保留）。
