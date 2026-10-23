@@ -2428,6 +2428,161 @@ def _complete_hermes_customer_reply_side_effects(delivery: dict[str, Any]) -> No
             message_id=message_id,
             reply_intent=reply_intent,
         )
+    # p2-212: Investigation customer-reply ownership assignment. Runs only
+    # after the public comment is already delivered+readback-confirmed (the
+    # caller's precondition). Ownership failure NEVER changes the delivery
+    # status — the customer reply stays delivered; the ownership outcome is
+    # separately persisted and reported.
+    _ensure_investigation_reply_ownership(delivery, account_case, account_case_id, message_id)
+
+
+def _ensure_investigation_reply_ownership(
+    delivery: dict[str, Any],
+    account_case: dict[str, Any],
+    account_case_id: str,
+    message_id: str,
+) -> None:
+    """Assign the configured AI after a confirmed Investigation public reply.
+
+    The identity check reads the server-owned ``_hermes_origin_kind``
+    marker from the delivery's attachments — only an
+    ``investigation_customer_reply`` origin with a valid Investigation
+    direction/turn_kind enters the ownership helper. Any failure inside
+    the helper is logged and recorded without affecting the delivery."""
+    from backend.services.account_automation_ownership import (
+        INVESTIGATION_REPLY_ORIGIN_TURN_KINDS,
+        ensure_investigation_reply_ownership,
+        extract_investigation_delivery_identity,
+    )
+
+    identity = extract_investigation_delivery_identity(delivery)
+    if identity is None:
+        return  # not an Investigation customer reply
+    # F3 (review): full identity completeness — direction, turn_id, AND
+    # turn_kind must all be present and valid. Only explicit Investigation
+    # turn kinds are accepted; anything else is rejected without guessing.
+    direction = str(identity.get("source_direction") or "").strip()
+    source_turn_id = str(identity.get("source_turn_id") or "").strip()
+    source_turn_kind = str(identity.get("source_turn_kind") or "").strip()
+    identity_code = None
+    if direction != "investigation":
+        identity_code = "investigation_ownership_identity_mismatch"
+    elif not source_turn_id:
+        identity_code = "investigation_ownership_identity_missing"
+    elif source_turn_kind not in INVESTIGATION_REPLY_ORIGIN_TURN_KINDS:
+        identity_code = "investigation_ownership_identity_mismatch"
+    if identity_code is not None:
+        LOGGER.warning(
+            "investigation_ownership_identity_rejected account_case_id=%s message_id=%s code=%s direction=%r turn_id=%r turn_kind=%r",
+            account_case_id,
+            message_id,
+            identity_code,
+            direction,
+            source_turn_id,
+            source_turn_kind,
+        )
+        try:
+            ticket_repository.record_event(
+                str(account_case.get("zendesk_ticket_id") or "") or None,
+                "zendesk_investigation_reply_ownership",
+                {
+                    "account_case_id": account_case_id,
+                    "state": "skipped_identity_rejected",
+                    "failure_code": identity_code,
+                    "source_direction": direction,
+                    "source_turn_id": source_turn_id,
+                    "source_turn_kind": source_turn_kind,
+                    "message_id": message_id,
+                },
+            )
+        except Exception:  # noqa: BLE001 — F4: event write failure must not bubble
+            LOGGER.exception(
+                "investigation_ownership_identity_event_failed account_case_id=%s message_id=%s code=%s",
+                account_case_id,
+                message_id,
+                identity_code,
+            )
+        return
+    try:
+        result = ensure_investigation_reply_ownership(
+            account_case,
+            delivery=delivery,
+            updated_at=now_iso(),
+        )
+    except Exception:
+        LOGGER.exception(
+            "investigation_ownership_failed account_case_id=%s message_id=%s",
+            account_case_id,
+            message_id,
+        )
+        try:
+            ticket_repository.record_event(
+                str(account_case.get("zendesk_ticket_id") or "") or None,
+                "zendesk_investigation_reply_ownership",
+                {
+                    "account_case_id": account_case_id,
+                    "state": "failed",
+                    "failure_code": "investigation_ownership_unexpected_error",
+                    "message_id": message_id,
+                },
+            )
+        except Exception:  # noqa: BLE001 — F4: event write failure must not bubble
+            LOGGER.exception(
+                "investigation_ownership_error_event_failed account_case_id=%s message_id=%s",
+                account_case_id,
+                message_id,
+            )
+        return
+    # F4: persist the ownership event and the updated account case — each
+    # write is individually guarded; a failure here records the outcome as
+    # persist-failed and never changes the already-delivered customer reply.
+    state = str(result.get("state") or "")
+    event_persist_failed = False
+    try:
+        ticket_repository.record_event(
+            str(account_case.get("zendesk_ticket_id") or "") or None,
+            "zendesk_investigation_reply_ownership",
+            {
+                "account_case_id": account_case_id,
+                "state": state,
+                "assignee_id": result.get("assignee_id"),
+                "group_id": result.get("group_id"),
+                "failure_code": result.get("failure_code"),
+                "source_turn_id": identity.get("source_turn_id"),
+                "message_id": message_id,
+            },
+        )
+    except Exception:  # noqa: BLE001 — F4
+        event_persist_failed = True
+        LOGGER.exception(
+            "investigation_ownership_result_event_failed account_case_id=%s message_id=%s state=%s",
+            account_case_id,
+            message_id,
+            state,
+        )
+    try:
+        ticket_repository.save_account_case(account_case)
+    except Exception:
+        event_persist_failed = True
+        LOGGER.exception(
+            "investigation_ownership_context_save_failed account_case_id=%s message_id=%s",
+            account_case_id,
+            message_id,
+        )
+    if event_persist_failed:
+        LOGGER.warning(
+            "investigation_ownership_persist_incomplete account_case_id=%s message_id=%s state=%s — ownership result computed but persistence incomplete",
+            account_case_id,
+            message_id,
+            state,
+        )
+    LOGGER.info(
+        "investigation_reply_ownership account_case_id=%s message_id=%s state=%s failure_code=%s",
+        account_case_id,
+        message_id,
+        state,
+        result.get("failure_code"),
+    )
 
 
 def _deliver_hermes_zendesk_comment(delivery: dict[str, Any]) -> None:

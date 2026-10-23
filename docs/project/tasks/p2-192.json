@@ -5,9 +5,9 @@
   "module_id": "account-automation",
   "function_id": "automation-execution-loop",
   "title": "Investigation 附件闭环 v1",
-  "summary": "Investigation 附件：R1 客户/工程师附件经绑定 Slack thread、turn/draft 和审批送 Zendesk；原 R1 发布复审/真实业务门禁保留。R2 统一命名、Slack Map、受限 Hermes 文件工具/Skill与审批快照已通过独立代码验收；关闭态 synthetic 14057、v2 启用轮 C1-C6（14147/14151）和 B1 修复有历史独立通过证据，不能扩大到未覆盖路径。2026-10-22 metadata/bot 代码 PR#1540/#1544 已独立验收并合并；正式 schema task 补齐 short_description TEXT NOT NULL；Preproduction r20261022-a08be07-intake-only-r6 已发布并只读回读（API174/Route169/Worker172、文件开关1、bot B08RHT5TZV2、case workflow disabled），n8n 两条已发布并回读，等待本轮独立部署验收。Hermes 保持 td54，bridge/Skill 缺新版 description filter，未替换 overlay，不能宣布真实文件测试就绪；本轮未创建 case、传文件、发业务消息或重放。",
+  "summary": "Investigation 附件：R1客户/工程师文件经绑定Slack thread、turn/draft和审批送Zendesk，原R1发布复审/真实业务门禁保留。R2统一命名、Slack Map、受限Hermes文件工具/Skill与审批快照已独立代码验收；关闭态synthetic14057和v2启用轮C1-C6（14147/14151）及B1修复有历史独立通过证据。2026-10-22 metadata/bot代码#1540/#1544合并，schema016 short_description TEXT NOT NULL、应用r6/API174/Route169/Worker172和n8n metadata回读经PR#1545独立部署验收通过（文件1、case workflow disabled）。Hermes readiness v3代码#1547已独立验收；TD55实际Skill内容门禁失败、TD54恢复均已独立复核。根因是loader从EFS提供旧Skill；人类已授权受控单Skill EFS更新及备份回滚，v4方案已独立验收（3128b65d）；单Skill发布器、实际served内容/hash/path探针和真实loader本地回归已完成，完整代码首轮发现HMR-V4-01（未决check-only误报成功），已修复待独立复验、云端未再次变更。HERMES-METADATA-01保持开放；v4部署失败/恢复已独立复核。新增Exec readback carrier v1：health/toolsets拆分会话、逐会话marker/EOF/超时/JSON fail-closed验证，代码待独立验收，云端未重试，真实文件测试仍不可开始。",
   "status": "blocked",
-  "next_action": "交指定线程独立验收 metadata v2 部署/回读证据；HERMES-METADATA-01：另行授权并审核 Hermes overlay/Profile 更新后再回读新版 description filter/Skill。保留 Slack→n8n 人类上传、Automation live 反向、C7 Zac 真实文件协议、原 R1 发布/业务门禁及 Production 单独授权；本轮不注入业务样本。",
+  "next_action": "先对新的Hermes Exec readback carrier v1做完整代码独立验收（Draft PR、完整HEAD、8项本地测试）；通过后在稳定TD54只读复现两个独立会话，再使用全新release ID重新做Preproduction Hermes/EFS readiness。任何失败恢复TD54/旧EFS后再交独立部署复核；不得真实文件测试。",
   "owner": "agent",
   "created_at": "2026-10-09",
   "updated_at": "2026-10-22",
@@ -18,7 +18,7 @@
   "blockers": [
     "F-R1-DEPLOY-01：门禁修复已授权并实现；独立复审及新正式 pipeline 尚未完成，原 failed_before_activation / rollback succeeded 证据原样保留。",
     "R2-ZAC：真实鉴权文件获取协议/样本未确认，waiting-for-evidence（C7；zac 咨询能力本身已 live 验证保留）。",
-    "HERMES-METADATA-01：live td54 bridge/Skill 缺新版 description filter；本轮仅只读回读，未替换 overlay，不具备真实文件测试就绪结论。"
+    "HERMES-METADATA-01：v4 deployment failure/recovery已独立通过；根因为合并Gateway health/toolsets ECS Exec readback在health后EOF。Exec readback carrier v1已实现并待代码独立验收；当前不得重试部署或真实文件测试。"
   ],
   "evidence": [
     {
@@ -132,6 +132,23 @@
       "type": "document",
       "url": "https://github.com/ZilingXie/SupportPortal/pull/1527",
       "label": "v2 第二轮独立验收通过（2026-10-20，HEAD bc8d31f2）：R2-V2-B1 修复+C1-C6 范围；C7/Production/人类上传路径不在声明内"
+    },
+    {
+      "type": "document",
+      "url": "docs/plans/investigation-case-files-hermes-metadata-readiness.md",
+      "label": "Hermes metadata readiness v4方案：人类已选受控EFS单Skill发布；v3部署失败/恢复独立复核保留；v4方案已通过；本地实现完成待完整代码验收"
+    },
+    {
+      "type": "deployment",
+      "url": "docs/plans/investigation-case-files-hermes-metadata-readiness-evidence.json",
+      "label": "2026-10-22 Hermes image-only发布失败与TD54回滚证据（非部署通过）：新digest a4ba1d1f、实际Skill内容缺metadata；恢复健康与Terraform zero-drift，未执行业务调用"
+    },
+    {
+      "type": "test",
+      "label": "Hermes Exec readback carrier v1（待独立代码验收）",
+      "command": "pytest backend/tests/test_hermes_gateway_readback.py；py_compile；git diff --check",
+      "result": "8 passed；编译及diff检查通过。health/toolsets分离会话；EOF、非零、半截JSON、缺失/重复marker、超时均fail closed。无云端变更。",
+      "scope": "载具代码与本地验证；ready_for_real_file_tests=false"
     },
     {
       "type": "deployment",

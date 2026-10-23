@@ -1,0 +1,42 @@
+{
+  "plan": "investigation-case-files-slack-ingress-metadata-v1",
+  "phase": "Hermes Exec readback carrier",
+  "revision": "v1",
+  "updated_at": "2026-10-22T08:09:01.732622+00:00",
+  "source_baseline": "1e75eba4",
+  "implementation_status": "completed_pending_independent_code_acceptance",
+  "cloud_mutations": "not_started",
+  "ready_for_real_file_tests": false,
+  "review": null,
+  "contracts": {
+    "ERC-1": "split health/toolsets ECS Exec sessions",
+    "ERC-2": "per-session raw output/exit/timeout/EOF/marker/JSON record",
+    "ERC-3": "missing/duplicate/truncated/EOF/nonzero/timeout fail closed",
+    "ERC-4": "both complete markers required",
+    "ERC-5": "no cloud/business mutation"
+  },
+  "tests": {
+    "command": "PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_hermes_gateway_readback.py",
+    "result": "8 passed",
+    "py_compile": "passed",
+    "git_diff_check": "passed"
+  },
+  "artifacts": {
+    "carrier": "deployment/hermes-case-files/gateway_readback.py",
+    "tests": "backend/tests/test_hermes_gateway_readback.py",
+    "readme": "deployment/hermes-case-files/README.gateway-readback.md",
+    "plan": "docs/plans/investigation-case-files-hermes-exec-readback-carrier-v1.md"
+  },
+  "failure_regressions": [
+    "toolsets EOF",
+    "toolsets nonzero",
+    "truncated JSON",
+    "missing marker",
+    "duplicate marker",
+    "health EOF",
+    "timeout"
+  ],
+  "deployment": "not_started",
+  "business_tests": "not_started",
+  "next_gate": "independent full code acceptance, then fresh TD54 read-only split-session probe"
+}

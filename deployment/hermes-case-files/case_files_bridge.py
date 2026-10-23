@@ -95,7 +95,8 @@ def _schema(properties, required=()):
 STRING = {'type': 'string'}
 INTEGER = {'type': 'integer'}
 SCHEMAS = {
-    'list': _schema({k: STRING for k in ('source', 'extension', 'purpose', 'introduced_turn_id', 'description')}),
+    'list': _schema({**{k: STRING for k in ('source', 'extension', 'purpose', 'introduced_turn_id')},
+        'description': {'type': 'string', 'description': 'Case-insensitive substring of controlled short_description metadata; combined with the other filters.'}}),
     'download': _schema({'map_id': INTEGER}, ('map_id',)),
     'read': _schema({'map_id': INTEGER, 'start_line': INTEGER, 'line_count': INTEGER, 'member': STRING}, ('map_id',)),
     'search': _schema({'map_id': INTEGER, 'query': STRING, 'member': STRING}, ('map_id', 'query')),

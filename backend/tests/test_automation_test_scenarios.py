@@ -324,15 +324,26 @@ class ScenarioEngineTests(unittest.TestCase):
             ]),
             ("WHERE account_case_id", [{"execution_action": "enablement"}]),
             ("WHERE account_case_id", [{"internal_email_send_status": "not_applicable"}]),
-            ("FROM support_account_reply_jobs", [{
-                "status": "published",
-                "reply_intent": "submission_confirmation",
-                "close_after_publish": None,
+            # Carrier (e1p-hermes-draft-carrier-v1): the confirmation rides a
+            # delivered Hermes draft; the legacy reply job is auxiliary only.
+            ("FROM automation_hermes_case_drafts", [{
+                "draft_id": "draft-e1p-1",
+                "draft_status": "queued",
+                "delivery_status": "delivered",
+                "zendesk_comment_id": "53746309711252",
+                "content": (
+                    "Hi Ziling, thank you for requesting Media Relay. I've submitted your request for internal review, and I'll keep you posted as soon as I have an update. Reviews are handled on business days, Monday through Friday."
+                ),
             }]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
                 "zendesk_comment_id": "53746309711252",
+            }]),
+            ("FROM support_account_reply_jobs", [{
+                "job_id": "job-e1p-compat",
+                "status": "persona_v8_queued",
+                "reply_intent": "submission_confirmation",
             }]),
         ]
         engine.run_scenario("E1P")
@@ -348,8 +359,9 @@ class ScenarioEngineTests(unittest.TestCase):
             [
                 "routed to enablement",
                 "enablement auto path (no internal handoff email)",
-                "submission confirmation reply",
+                "submission confirmation delivered (hermes draft)",
                 "confirmation comment delivered to Zendesk",
+                "compatibility reply job observed (auxiliary)",
             ],
         )
 
@@ -595,17 +607,20 @@ class ScenarioEngineTests(unittest.TestCase):
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000104",
                 "content": (
-                    "Hi Ziling, thanks for correcting the App ID. I have recorded your Media "
-                    "Relay enablement request for review and will follow up with an update."
+                    "Hi Ziling, thanks for correcting the App ID. I've submitted your "
+                    "request for internal review and will keep you posted as soon as I "
+                    "have an update. Reviews are handled on business days, Monday "
+                    "through Friday."
                 ),
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13700-v1",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "8cb7aea984c4457daad802e6960e2475",
                 "request_version": 1,
                 "reply_job_id": "job-3",
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13700-v1", "status": "dispatched", "request_version": 1}]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
@@ -722,10 +737,11 @@ class ScenarioEngineTests(unittest.TestCase):
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13700-v2",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "4b7634a0d0f1418b8135918292f6a507",
                 "request_version": 2,
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13700-v2", "status": "dispatched", "request_version": 2}]),
             ("FROM support_enablement_relay_results", [{
                 "outcome": "enabled",
                 "write_attempted": True,
@@ -885,15 +901,20 @@ class ScenarioEngineTests(unittest.TestCase):
                 "draft_status": "queued",
                 "delivery_status": "delivered",
                 "zendesk_comment_id": "53820000000304",
-                "content": "Hi Ziling, I have recorded your Media Relay request for review.",
+                "content": (
+                    "Hi Ziling, I've submitted your Media Relay request for internal "
+                    "review and will update you. Reviews are handled on business days, "
+                    "Monday through Friday."
+                ),
             }]),
             ("FROM support_enablement_relay_requests", [{
                 "request_id": "enr-AC-13702-v1",
-                "status": "gated",
+                "status": "dispatched",
                 "app_id": "fcd0dab13017495bbe25a63bfdb236fd",
                 "request_version": 1,
                 "reply_job_id": "job-3",
             }]),
+            ("WHERE request_id = %s AND ticket_id = %s", [{"request_id": "enr-AC-13702-v1", "status": "dispatched", "request_version": 1}]),
             ("FROM support_account_zendesk_comment_deliveries", [{
                 "status": "delivered",
                 "is_public": True,
@@ -1442,7 +1463,7 @@ class ScenarioEngineTests(unittest.TestCase):
             ("FROM support_enablement_relay_requests", [
                 {
                     "request_id": "enr-AC-13703-v2",
-                    "status": "gated",
+                    "status": "dispatched",
                     "app_id": "4b7634a0d0f1418b8135918292f6a507",
                     "request_version": 2,
                 }
@@ -2023,6 +2044,17 @@ class WrapperExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("[WAITING_FOR_HUMAN]", out)
 
+    def test_relay_timeout_reports_waiting_for_human(self):
+        from backend.services.automation_test_scenarios import RelayPhaseTimeout
+
+        def behavior(scenario_id):
+            raise RelayPhaseTimeout("relay phase timeout: request=req-1 v1")
+
+        self_running_engine = self._engine(behavior)
+        code, out = self._run_main(self_running_engine)
+        self.assertEqual(code, 2, out)
+        self.assertIn("[WAITING_FOR_HUMAN]", out)
+
     def test_recorded_failure_without_raise_returns_nonzero(self):
         def behavior(scenario_id):
             self_running_engine.steps.append(_Step("routed"))
@@ -2042,6 +2074,65 @@ class WrapperExitCodeTests(unittest.TestCase):
         code, out = self._run_main(self_running_engine)
         self.assertEqual(code, 0, out)
         self.assertIn("[PASSED]", out)
+
+
+class RelayPhaseBudgetTests(unittest.TestCase):
+    def test_real_e3_entry_shares_remaining_budget_after_twenty_minutes(self):
+        from datetime import datetime, timezone, timedelta
+        original = ScenarioEngine._wait_with_context
+        observed = []
+        current = [datetime(2026, 1, 1, tzinfo=timezone.utc)]
+
+        def wait(engine, ctx, description, probe, seconds):
+            if ctx.relay_phase_deadline is not None:
+                expected = (ctx.relay_phase_deadline - current[0]).total_seconds()
+                self.assertEqual(seconds, expected, description)
+                observed.append((ctx.relay_phase_request_id, description, seconds))
+            result = original(engine, ctx, description, probe, seconds)
+            current[0] += timedelta(seconds=1300 if not observed else 60)
+            return result
+
+        with patch("backend.services.automation_test_scenarios.now_utc", side_effect=lambda: current[0]), patch.object(ScenarioEngine, "_wait_with_context", wait):
+            ScenarioEngineTests("test_e3_full_lifecycle_scripted").test_e3_full_lifecycle_scripted()
+        self.assertTrue(any("message_action" in item[1] for item in observed))
+        self.assertTrue(any("zendesk_ticket_status" in item[1] for item in observed))
+        self.assertEqual({item[0] for item in observed}, {"enr-AC-13700-v1", "enr-AC-13700-v2"})
+        for request_id in {item[0] for item in observed}:
+            budgets = [item[2] for item in observed if item[0] == request_id]
+            self.assertEqual(budgets, sorted(budgets, reverse=True))
+            self.assertGreater(budgets[-1], 20 * 60)
+
+    def test_expired_real_status_wait_has_no_io_and_recovers(self):
+        from datetime import datetime, timezone, timedelta
+        from backend.services.automation_test_scenarios import RelayPhaseTimeout
+        engine = ScriptedEngine()
+        ctx = ScenarioContext("E3", client_ticket_id="ticket")
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start):
+            ctx.start_relay_phase("req-1", 1, 240)
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start + timedelta(minutes=240)), patch.object(engine, "db_query") as query, patch.object(engine, "_zendesk_request") as zendesk, patch.object(engine, "send_email") as email:
+            with self.assertRaisesRegex(RelayPhaseTimeout, "relay phase timeout: request=req-1 v1"):
+                engine.wait_case_field(ctx, "zendesk_ticket_status", "solved", "closed")
+            query.assert_not_called()
+            zendesk.assert_not_called()
+            email.assert_not_called()
+        engine.db_queue = [("WHERE account_case_id", [{"zendesk_ticket_status": "solved"}])]
+        with patch("backend.services.automation_test_scenarios.now_utc", return_value=start + timedelta(minutes=239)):
+            engine.wait_case_field(ctx, "zendesk_ticket_status", "solved", "recovered")
+        self.assertEqual(engine.steps[-1].status, "PASS")
+
+    def test_relay_phase_uses_absolute_deadline_and_can_reset(self):
+        ctx = ScenarioContext("E3")
+        with patch("backend.services.automation_test_scenarios.now_utc") as clock:
+            from datetime import datetime, timezone
+            start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+            clock.return_value = start
+            ctx.start_relay_phase("req-1", 1, 240)
+            clock.return_value = start.replace(hour=1)
+            self.assertEqual(ctx.relay_remaining_seconds(), 180 * 60)
+            ctx.start_relay_phase("req-2", 2, 240)
+            self.assertEqual(ctx.relay_phase_request_id, "req-2")
+            self.assertEqual(ctx.relay_phase_request_version, 2)
 
 
 class E3Turn4CarrierTests(unittest.TestCase):
@@ -2195,7 +2286,253 @@ class RecorderEngine(ScenarioEngine):
         self.calls.append(("db_query", (sql,), {}))
         if "support_account_reply_jobs" in sql:
             return [{"status": "persona_v8_queued"}]
+        if "support_enablement_relay_requests" in sql:
+            return [{"request_id": params[0], "status": "dispatched", "request_version": params[2]}]
         return []
 
     def run_e3_finalize(self):
         pass
+
+
+class E1PHermesCarrierTests(unittest.TestCase):
+    """e1p-hermes-draft-carrier-v1: the E1P confirmation gate is a delivered
+    public Hermes draft with confirmation semantics; the legacy reply job is
+    an auxiliary observation only (C1-C6)."""
+
+    CONFIRMATION = (
+        "Hi Ziling, thank you for requesting Media Relay. I've submitted your request for internal review, and I'll keep you posted as soon as I have an update. Reviews are handled on business days, Monday through Friday."
+    )
+
+    def _engine(self, responses):
+        """Scripted engine whose db_query answers persistently by matcher
+        (deterministic probes for negative fixtures)."""
+        engine = ScriptedEngine()
+        engine.responses = list(responses)
+
+        def persistent_query(sql, params):
+            for matcher, rows in engine.responses:
+                if matcher in sql:
+                    return rows
+            raise AssertionError(f"unexpected query: {sql}")
+
+        engine.db_query = persistent_query
+        return engine
+
+    def _base(self, draft_row=None, delivery_row=None, compat_row=None):
+        # Ordered first-match by query-unique substrings: the draft probe
+        # joins deliveries with "dl.is_public = TRUE" (uppercase), the public
+        # comment probe filters "is_public = true" (lowercase), the case-field
+        # probes carry "WHERE account_case_id", and find_case only the
+        # generic "FROM support_account_cases".
+        responses = []
+        if draft_row is not None:
+            responses.append(("automation_hermes_case_drafts", [draft_row]))
+        if delivery_row is not None:
+            responses.append(("is_public = true", [delivery_row]))
+            responses.append(("support_account_zendesk_comment_deliveries", [delivery_row]))
+        responses.append(("WHERE account_case_id", [{
+            "execution_action": "enablement",
+            "internal_email_send_status": "not_applicable",
+        }]))
+        responses.append(("FROM support_account_cases", [{
+            "account_case_id": "AC-13605",
+            "client_ticket_id": "13605",
+            "zendesk_ticket_id": "13605",
+            "title": engine_tagged_placeholder(),
+        }]))
+        # The compatibility observation ALWAYS issues its query; a missing
+        # job is an empty result, never an unmatched query.
+        responses.append(("FROM support_account_reply_jobs", compat_row or []))
+        return responses
+
+    def _draft(self, **overrides):
+        row = {
+            "draft_id": "draft-e1p-1",
+            "draft_status": "queued",
+            "delivery_status": "delivered",
+            "zendesk_comment_id": "53746309711252",
+            "content": self.CONFIRMATION,
+        }
+        row.update(overrides)
+        return row
+
+    def _delivery(self, **overrides):
+        row = {"status": "delivered", "is_public": True, "zendesk_comment_id": "53746309711252"}
+        row.update(overrides)
+        return row
+
+    def _run_ok(self, engine):
+        engine.run_scenario("E1P")
+        self.assertTrue(engine.all_passed())
+
+    def _run_fails_at(self, engine, step_fragment):
+        with self.assertRaises((AssertionError, TimeoutError)):
+            engine.run_scenario("E1P")
+        self.assertFalse(engine.all_passed())
+        failed = [step.step for step in engine.steps if step.status == "FAIL"]
+        self.assertTrue(
+            any(step_fragment in name for name in failed),
+            msg=f"failed steps: {failed}",
+        )
+
+    def test_hermes_draft_only_without_compat_job_passes(self):
+        # Matrix 1: delivered draft, NO reply job at all.
+        engine = self._engine(self._base(
+            draft_row=self._draft(),
+            delivery_row=self._delivery(),
+            compat_row=None,
+        ))
+        self._run_ok(engine)
+        self.assertNotIn(
+            "compatibility reply job observed (auxiliary)",
+            [step.step for step in engine.steps],
+        )
+
+    def test_hermes_draft_with_queued_compat_job_passes(self):
+        # Matrix 2: the compat job is persona-owned/queued and never gates.
+        engine = self._engine(self._base(
+            draft_row=self._draft(),
+            delivery_row=self._delivery(),
+            compat_row=[{
+                "job_id": "job-e1p-compat",
+                "status": "persona_v8_queued",
+                "reply_intent": "submission_confirmation",
+            }],
+        ))
+        self._run_ok(engine)
+        aux = [s for s in engine.steps if "auxiliary" in s.step]
+        self.assertEqual(len(aux), 1)
+        self.assertIn("persona_v8_queued", aux[0].detail)
+
+    def test_legacy_reply_job_alone_without_delivery_fails(self):
+        # Matrix 3: only the old reply-job shape (published), no Hermes draft.
+        engine = self._engine(self._base(draft_row=None))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_draft_of_stale_ticket_fails(self):
+        # Matrix 4: no draft row for THIS ticket (stale-ticket fixture).
+        engine = self._engine(self._base(draft_row=None, delivery_row=self._delivery()))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_non_public_delivery_fails(self):
+        # Matrix 5: the delivery row is not public — the is_public join
+        # yields no delivered delivery.
+        engine = self._engine(self._base(
+            draft_row=self._draft(delivery_status=None, zendesk_comment_id=None),
+            delivery_row=self._delivery(is_public=False),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_queued_and_failed_delivery_fails(self):
+        # Matrix 6: delivery rows that exist but are not delivered.
+        for status in ("queued", "failed"):
+            with self.subTest(delivery_status=status):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(delivery_status=status),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_with_stiff_negative_status_fails(self):
+        # e1p-natural-submission-confirmation-v1: the 14202 shape — correct
+        # review semantics plus a stiff negative status sentence — fails.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content=self.CONFIRMATION
+                + " Media Relay is not yet confirmed as enabled."
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_with_f1_variant_status_fails(self):
+        # F1 repair: common word orders / synonyms of the stiff negative
+        # status sentence must fail the scenario gate too.
+        variants = (
+            "Media Relay is not enabled yet.",
+            "Media Relay is not currently enabled.",
+            "Media Relay is still awaiting activation.",
+            "Media Relay remains disabled.",
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(content=self.CONFIRMATION + " " + variant),
+                    delivery_row=self._delivery(),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_with_thanks_only_no_receipt_fails(self):
+        # F2 repair: thanks + review + business-day + update commitment
+        # without an explicit received/recorded/submitted statement fails.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content=(
+                    "Thanks for your request. We are reviewing it with our "
+                    "internal team and will keep you posted. Reviews are "
+                    "handled on business days, Monday through Friday."
+                )
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_without_confirmation_semantics_fails(self):
+        # Matrix 7: delivered and public, but the text is a bare ask.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content="Hi Ziling, could you confirm your account details?"
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_claims_enablement_or_deadline_or_approval_fails(self):
+        # Matrix 8: affirmative enablement claim, deadline promise, or
+        # internal-approval wording all fail the content gate.
+        cases = {
+            "enablement claim": (
+                "Thank you for requesting Media Relay. Your request is recorded; "
+                "Media Relay has been enabled for your project."
+            ),
+            "deadline promise": (
+                "Thank you for requesting Media Relay. I've recorded your request "
+                "for enablement review; it will complete within 2 business days."
+            ),
+            "approval wording": (
+                "Thank you for requesting Media Relay. Your request is recorded for "
+                "enablement review; please approve this request by replying."
+            ),
+        }
+        for name, content in cases.items():
+            with self.subTest(case=name):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(content=content),
+                    delivery_row=self._delivery(),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_same_delivery_is_not_counted_twice(self):
+        # Matrix 9 (C6): a repeated wait over the same delivered comment
+        # cannot produce a second pass — the seen-id exclusion blocks it.
+        from backend.services.automation_test_scenarios import ScenarioContext
+
+        engine = self._engine(self._base(draft_row=self._draft()))
+        ctx = ScenarioContext("E1P")
+        ctx.zendesk_ticket_id = "13605"
+        ctx.client_ticket_id = "13605"
+        from datetime import datetime, timezone
+
+        ctx.turn_started_at = datetime.now(timezone.utc)
+        engine.wait_hermes_draft_delivered(ctx, "first wait")
+        self.assertEqual(len(engine.steps), 1)
+        # The repeat cannot pass: it times out and the failure is recorded
+        # (which re-raises as AssertionError — the engine's failure path).
+        with self.assertRaises((TimeoutError, AssertionError)):
+            engine.wait_hermes_draft_delivered(ctx, "second wait")
+        self.assertEqual(len([s for s in engine.steps if s.status == "PASS"]), 1)
+        self.assertEqual(len([s for s in engine.steps if s.status == "FAIL"]), 1)
+
+
+def engine_tagged_placeholder():
+    engine = ScriptedEngine()
+    return engine.tagged("Please enable Media Relay for our project")

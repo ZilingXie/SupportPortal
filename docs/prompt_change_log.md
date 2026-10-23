@@ -5289,3 +5289,36 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - SupportPortal worker 对不可解析/未绑定的 relay 结果不再"当噪音 ACK+complete"：先入统一失败/人工接管链，持久化失败态后才 ACK，relay 任务以显式 `fail_task`（agent_reported_failure）终态收尾；重复投递仅更新证据。
 - E3 剧本第 4 回合改用现行 Hermes draft/delivery 载体（relay request + 已投递公开草稿评论 + 确认语义检查），旧 `submission_confirmation` reply job 降为辅助观察；场景包装器中止/审批超时/记录失败一律非零退出。
 - 本轮不含任何线上行为部署；合同与证据见 p2-209 任务登记与两仓 Draft PR。
+
+## 2026-10-22 — Investigation 文件 metadata readiness（p2-192，代码已验收；部署失败已回滚）
+
+- Hermes list schema明确 `description` 是对受控 `short_description` 的大小写无关子串过滤，与原四过滤器取交集；不增加 short_description alias，也不改变后端匹配算法。
+- support-case-files Skill补充三名称/来源与内容证据边界、无匹配不越case检索；候选overlay只替换bridge与Skill，不改Prompt catalog、模型、profile或其他toolset。仅授权Preproduction Hermes，真实文件测试仍须后续独立验收。
+
+- 部署回读：#1547 合并源码 11ef7856，Hermes immutable image a4ba1d1f / TD55 的 bridge/schema/hash 正确，但实际 skill_view 返回内容缺 short_description；按计划回滚 TD54，恢复 digest/五容器健康/ALB、其他三角色与 Terraform zero-drift。未更新 EFS/profile，无真实业务工具调用；部署未通过，失败证据另交独立复核。
+
+## 2026-10-22 — Hermes metadata readiness v4 验证与单Skill发布工具（p2-192，待独立代码验收）
+
+- 不改变Prompt、模型、已审查Skill文本或运行toolset；强化probe核对真实skill_view内容/source/resolved path与EFS/bundled/审查hash，覆盖profile-only、persona直接加载拒绝。
+- 单Skill publisher默认只读，固定Preproduction任务和文件；备份、原子替换、未知结果回读、重复发布与受控回滚使用明确操作记录。新增真实loader禁网容器故障/恢复验证；详情见[发布说明](../deployment/hermes-case-files/README.metadata.md)。
+- v4方案独立验收已通过；65 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
+
+- HMR-V4-01修复：发布check-only对prepared/outcome_unknown显式非零，不改变Skill/Prompt/模型或工具调用权限；只读诊断包含当前hash与操作意图，显式恢复后才允许通过。
+
+## 2026-10-22 — E1P 自然提交确认合同（p2-210 e1p-natural-submission-confirmation-v1，待独立验收）
+
+- `AUTOMATION_PERSONA_PROMPT_VERSION` v32 → **v33**：submission_confirmation 基础策略加入"积极表述 review 状态、禁止 'not yet enabled'/'pending activation' 等状态免责句"；自动路径（activation_sla=business-day review）附加块从两要素扩为三要素（已提交内部 review + business days 处理 + 有更新即通知）并给出自然风格参考。
+- 新增 persona 内容合同 `_assert_enablement_submission_confirmation_contract`（validate_account_reply_contract 真实入口，behavior=enablement 且 intent=submission_confirmation）：auto 路径必含 感谢/收到+review+business-day+更新承诺，拒绝 stiff 否定句（14202 原文形态）、提前启用声明、24h 承诺；manual 路径仅继承禁句，24 小时文案与工作日合同保留（C5 隔离）。
+- 场景验收同步：E1P/E3 turn-4/PP-A1 共用的确认内容检查统一为同一语义合同（新增 business-day 与更新承诺必需、stiff 否定句拒绝、24h 拒绝）。
+- 不改 catalog Prompt（hermes-automation-enablement-manual 保持 v2，其 Submission confirmations 措辞与 24h 合并表述披露为后续项）；无 Prompt Release 操作。
+
+## 2026-10-23 — Persona 内容合同接入 Hermes native draft 路径（p2-211 persona-draft-contract-gate，待独立验收）
+
+- `validate_customer_reply_draft`（server-owned basis 门禁，`tool_save_reply_draft` 真实入口）新增 enablement review_requested 确认合同：共享 p2-210 的 `STIFF_NEGATIVE_ENABLEMENT_STATUS_RE`/`SUBMISSION_RECEIPT_RE`（单一事实源；按 14225 实文扩族 been confirmed(yet)/requested a review）；auto 路径（enablement_auto_review）另需 business-day+更新承诺、拒 24h 与提前启用；manual 仅禁句+receipt（24h 表述由既有 basis 时间承诺守卫管辖）。
+- 违规=HermesToolError（模型 run 内可重写=有限重生成）；重写仍失败则无 draft 落库（fail-closed 走既有失败链）。无 Prompt catalog 改动、无 Prompt Release 操作。
+
+## 2026-10-23 — Persona 库 v2：enablement 确认三要素风格（p2-211 方案 A，Preproduction runtime）
+
+- Preproduction persona 库（`support_account_prompt_versions`）经 repository 正规 draft+publish 为 `default-support`(v2)、`sid-bright`(v2)、`sid-precise`(v3) 追加同一段指令：enablement 提交确认须含 感谢+已提交内部 review+business days(Monday-Friday)+有更新即通知；禁 'not yet enabled / not yet confirmed as enabled / pending activation / awaiting enablement' 等状态免责句；禁具体期限承诺（如 24 小时）。
+- 目的：让 hermes 侧 persona（p2-211 draft 门禁的生成方）具备产出合规确认的风格指引——与 automation_persona v33（account 管线）及场景/验证器三方合同一致。
+- 验证：工单 14228（default-support v2）确认回复公开投递且三要素齐备，E1P 5/5 PASS。runtime 变更不涉及 catalog Prompt/Prompt Release；代码侧 `ACCOUNT_PERSONA_PRESETS` 预设同步为后续项。

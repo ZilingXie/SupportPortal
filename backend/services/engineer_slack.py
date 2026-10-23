@@ -387,6 +387,34 @@ def _action_blocks(event: dict[str, Any]) -> list[dict[str, Any]] | None:
             guardrail_id=str(event.get("guardrail_id") or "").strip() or None,
             guardrail_version=str(event.get("guardrail_version") or "").strip() or None,
         )
+    elif action == "knowledge_review":
+        promotion_id = str(event.get("knowledge_promotion_id") or "").strip()
+        if not promotion_id:
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        # Two buttons: reject (danger) and approve (primary). The value
+        # carries only the promotion_id; the interaction handler resolves
+        # the decision from the action_id.
+        return [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "✅ Approve"},
+                        "action_id": "knowledge_approve",
+                        "value": promotion_id,
+                        "style": "primary",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "❌ Reject"},
+                        "action_id": "knowledge_reject",
+                        "value": promotion_id,
+                        "style": "danger",
+                    },
+                ],
+            }
+        ]
     elif action == "summarize":
         required = ("output_id", "output_digest", "episode", "conversation_version")
         if not investigation_id or any(event.get(field) in (None, "") for field in required):
@@ -483,8 +511,12 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     message_text = str(event.get("message_text") or "").strip()
     if not all((event_id, event_type, message_text)):
         raise EngineerSlackDeliveryError("engineer_slack_event_invalid")
-    is_root = event_type in _ROOT_EVENT_TYPES
     normalized_thread_ts = str(thread_ts or "").strip()
+    # A root event type stays a root only when NO thread anchor is supplied;
+    # the knowledge review flow reuses the same event type for its C2
+    # thread-reply re-delivery (and case-bound candidates), and dropping the
+    # explicit anchor here would spill those into the channel root.
+    is_root = event_type in _ROOT_EVENT_TYPES and not normalized_thread_ts
     if not is_root and not normalized_thread_ts:
         raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
     if event_type in _HERMES_THREAD_EVENT_TYPES and not normalized_thread_ts:
@@ -1078,15 +1110,20 @@ class SlackOperatorResolutionError(RuntimeError):
 
 
 def resolve_slack_operator(
-    user_id: str, *, bot_user_id: str | None = None
+    user_id: str, *, bot_user_id: str | None = None, require_email: bool = True
 ) -> dict[str, Any]:
     """Resolve a Slack user id to a verified operator identity (stage 4 C4).
 
     Uses the engineer Slack bot token to call ``users.info`` and proves:
-    ``ok=true``, the returned user id equals the requested one, and a non-empty
-    email. Bot self-messages are refused up front. The result carries the
-    slack user id, the email, and a display name; nothing from the inbound
-    payload can override it.
+    ``ok=true``, the returned user id equals the requested one, and (by
+    default) a non-empty email. Bot self-messages are refused up front. The
+    result carries the slack user id, the email, and a display name; nothing
+    from the inbound payload can override it.
+
+    ``require_email=False`` accepts a VERIFIED user whose email is not
+    visible to the app (the workspace app may lack the ``users:read.email``
+    scope): the users.info lookup still proves the user exists, and the
+    caller records the Slack user id as the operator fact with ``email=None``.
     """
     normalized_user_id = str(user_id or "").strip()
     if not normalized_user_id:
@@ -1134,15 +1171,15 @@ def resolve_slack_operator(
         )
     profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
     email = str(profile.get("email") or "").strip()
-    if not email:
+    display = str(profile.get("real_name") or profile.get("display_name") or "").strip()
+    if not email and require_email:
         raise SlackOperatorResolutionError(
             "empty_email", f"Slack user {normalized_user_id!r} has no email on record"
         )
-    display = str(profile.get("real_name") or profile.get("display_name") or "").strip()
     return {
         "slack_user_id": normalized_user_id,
-        "email": email,
-        "display_name": display or email,
+        "email": email or None,
+        "display_name": display or email or normalized_user_id,
     }
 
 
@@ -1168,11 +1205,14 @@ def build_knowledge_review_root_event(
         raise ValueError(
             "knowledge review root event requires event id, promotion id, and message"
         )
-    return {
+    event = {
         "schema_version": ENGINEER_SLACK_SCHEMA_VERSION,
         "event_id": normalized_event_id,
         "event_type": "knowledge_review_required",
         "engineer_case_id": "knowledge-review",
         "promotion_id": normalized_promotion,
         "message_text": normalized_message,
+        "action": "knowledge_review",
+        "knowledge_promotion_id": normalized_promotion,
     }
+    return event

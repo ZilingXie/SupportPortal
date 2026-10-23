@@ -105,7 +105,7 @@ class AutomationPersonaTests(unittest.TestCase):
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         responses = [
             SimpleNamespace(text="Hi Maya, we are reviewing this request.", model_name="persona-model"),
-            SimpleNamespace(text="We are reviewing this request.", model_name="persona-model"),
+            SimpleNamespace(text="We have received your request and are reviewing it.", model_name="persona-model"),
         ]
         with patch(
             "backend.services.automation_persona.resolve_model_profile", return_value=profile
@@ -362,7 +362,7 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm and concise"}},
                 account_scope=True,
             )
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         self.assertNotIn("abcdefabcdefabcdefabcdefabcdefab", invoke.call_args.kwargs["user_prompt"])
 
     def test_enablement_submission_facts_use_canonical_name_without_identifiers(self) -> None:
@@ -653,7 +653,7 @@ class AutomationPersonaTests(unittest.TestCase):
                     behavior="quota",
                     reply_intent="submission_confirmation",
                 ),
-                "Thanks for sending this. I am reviewing it internally and will keep you posted.",
+                "Thanks for sending this. We have received your request and are reviewing it internally; I will keep you posted.",
                 ("For submission_confirmation",),
                 ("For request_missing_information", "For an Enablement submission"),
             ),
@@ -667,7 +667,7 @@ class AutomationPersonaTests(unittest.TestCase):
                     conversation_context=enablement_language_context(),
                 ),
                 (
-                    "Thanks for sending this. I am reviewing it internally and will keep you posted. "
+                    "Thanks for sending this. We have received your request and are reviewing it internally; I will keep you posted. "
                     "Activation may take up to 24 hours, and changes roll out Monday-Friday."
                 ),
                 ("For submission_confirmation", "For an Enablement submission"),
@@ -915,7 +915,7 @@ class AutomationPersonaTests(unittest.TestCase):
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
-                "Thank you for reaching out. We are reviewing it with our internal team and will keep you posted "
+                "Thank you for reaching out. We have received your request and are reviewing it with our internal team and will keep you posted "
                 "as soon as we have an update. Activation may take up to 24 hours, and the change window is "
                 "Monday-Friday.\n\nWe appreciate your patience."
             ),
@@ -969,7 +969,7 @@ class AutomationPersonaTests(unittest.TestCase):
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
-                "The assigned Support Engineer has started coordinating the request with the internal team, and the "
+                "We have submitted your request for review, and the assigned Support Engineer has started coordinating with the internal team; the "
                 "case is currently in progress with them. The assigned Support Engineer will continue monitoring the "
                 "request and proactively update you when there is progress. Activation may take up to 24 hours, "
                 "and the change window is Monday-Friday."
@@ -984,13 +984,16 @@ class AutomationPersonaTests(unittest.TestCase):
                 persona_assignment={"content": {"instruction": "Warm", "signature": "Best,\nSid"}},
                 account_scope=True,
             )
-        self.assertIn("The assigned Support Engineer has started", result.content)
+        # Third-person job-title narration stays prompt guidance; the body
+        # passes once it carries explicit receipt semantics (v33 contract).
+        self.assertIn("assigned Support Engineer has started", result.content)
+        self.assertIn("submitted your request for review", result.content)
 
     def test_old_submission_facts_are_normalized_before_v9_prompt(self) -> None:
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
-                "We are reviewing the request with our internal team and will keep you posted. Activation may take "
+                "We have received your request and are reviewing it with our internal team and will keep you posted. Activation may take "
                 "up to 24 hours, and the change window is Monday-Friday."
             ),
             model_name="persona-model",
@@ -1109,7 +1112,7 @@ class AutomationPersonaTests(unittest.TestCase):
             result.content,
             f"Hi Taylor,\n\n{response.text}",
         )
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         user_prompt = invoke.call_args.kwargs["user_prompt"]
         self.assertIn("Ask for every missing-information field", system_prompt)
@@ -1284,14 +1287,14 @@ class AutomationPersonaTests(unittest.TestCase):
         responses = [
             SimpleNamespace(
                 text=(
-                    "Hi Jack, I am coordinating the request with our internal team and will keep you updated. "
+                    "Hi Jack, I have submitted the request for review with our internal team and will keep you updated. "
                     "Activation may take up to 24 hours, and the change window is Monday-Friday."
                 ),
                 model_name="persona-model",
             ),
             SimpleNamespace(
                 text=(
-                    "I am coordinating the request with our internal team and will keep you updated. Activation "
+                    "I have submitted the request for review with our internal team and will keep you updated. Activation "
                     "may take up to 24 hours, and the change window is Monday-Friday."
                 ),
                 model_name="persona-model",
@@ -1313,8 +1316,8 @@ class AutomationPersonaTests(unittest.TestCase):
 
         self.assertEqual(
             result.content,
-            "Hi Jack,\n\nI am coordinating the request with our internal team and will keep you updated. Activation may "
-            "take up to 24 hours, and the change window is Monday-Friday.",
+            "Hi Jack,\n\nI have submitted the request for review with our internal team and will keep you updated. "
+            "Activation may take up to 24 hours, and the change window is Monday-Friday.",
         )
         self.assertEqual(invoke.call_count, 2)
         self.assertEqual(result.safety_issue_codes, ("automation_persona_greeting_forbidden",))
@@ -1622,14 +1625,14 @@ class AutomationPersonaTests(unittest.TestCase):
             "behavior": "enablement",
             "reply_intent": "submission_confirmation",
         }
-        validate_account_reply_contract("We are reviewing the request.", facts)
+        validate_account_reply_contract("We have received the request and are reviewing it.", facts)
         validate_account_reply_contract(
-            "I am coordinating activation and will keep you updated. It may take up to 24 hours, and the change "
+            "I have submitted the request and am coordinating activation; I will keep you updated. It may take up to 24 hours, and the change "
             "window is Monday-Friday.",
             facts,
         )
         validate_account_reply_contract(
-            "Activation will not happen within 24 hours; changes occur Monday-Friday.",
+            "The request has been submitted. Activation will not happen within 24 hours; changes occur Monday-Friday.",
             facts,
         )
 
@@ -1637,7 +1640,7 @@ class AutomationPersonaTests(unittest.TestCase):
         profile = SimpleNamespace(has_invocation_credentials=lambda: True, model="persona-model")
         response = SimpleNamespace(
             text=(
-                "Thank you for providing the requested information. I am reviewing the request with our internal "
+                "Thank you for providing the requested information. I have submitted the request for review with our internal "
                 "team and will keep you updated."
             ),
             model_name="persona-model",
@@ -1661,7 +1664,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertEqual(result.content, f"Hi Customer,\n\n{response.text}")
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         self.assertEqual(invoke.call_count, 1)
         self.assertEqual(result.generation_attempts, 1)
 
@@ -1676,7 +1679,7 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         facts["conversation_context"] = enablement_language_context()
         bodies = (
-            "I am reviewing the request and will keep you updated. Activation may take up to 24 hours, and "
+            "I have submitted the request for review and will keep you updated. Activation may take up to 24 hours, and "
             "the change window is Monday-Friday.",
             "I've logged the request. Changes run Monday-Friday and activation can take up to 24 hours; I'll keep "
             "you posted.",
@@ -1712,7 +1715,7 @@ class AutomationPersonaTests(unittest.TestCase):
         )
         facts["conversation_context"] = enablement_language_context()
         response = SimpleNamespace(
-            text="I am reviewing the request and will keep you updated.",
+            text="I have submitted the request for review and will keep you updated.",
             model_name="persona-model",
         )
         with patch(
@@ -1983,7 +1986,7 @@ class AutomationPersonaTests(unittest.TestCase):
             )
 
         self.assertTrue(result.content.startswith("Hi Ziling,\n\n"))
-        self.assertEqual(result.prompt_version, "automation-persona-v32")
+        self.assertEqual(result.prompt_version, "automation-persona-v33")
         system_prompt = invoke.call_args.kwargs["system_prompt"]
         self.assertIn("already enabled", system_prompt)
         self.assertIn("closing this case", system_prompt)
@@ -2466,3 +2469,232 @@ class DetailedInvoiceFieldExtractorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EnablementSubmissionConfirmationNaturalContractTests(unittest.TestCase):
+    """e1p-natural-submission-confirmation-v1 (p2-210): the auto-path
+    confirmation thanks, submits for review, states business-day handling,
+    and commits to an update — never a stiff negative enablement status.
+    Verified through the real validate_account_reply_contract entry."""
+
+    AUTO_REPLY_14202 = (
+        "Hi Ziling, Thank you for your request to enable Media Relay to bridge "
+        "presenters between channels. I've submitted your enablement request for "
+        "review; Media Relay is not yet confirmed as enabled."
+    )
+    NATURAL_AUTO = (
+        "Thanks for sending your Media Relay request. I've submitted it for "
+        "internal review, and I'll keep you posted as soon as I have an update. "
+        "Reviews are handled on business days, Monday through Friday."
+    )
+    MANUAL_24H = (
+        "Thanks for sending this over — I've logged the request and will handle "
+        "the rest on my side. Activation usually completes within 24 hours and "
+        "changes go out on weekdays, so I'll keep an eye on it and update you "
+        "once it's live."
+    )
+
+    def _auto_facts(self) -> dict:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            submitted=True,
+            customer_name="Ada Customer",
+        )
+        # The auto (Archer) path overrides the SLA before the reply job is
+        # created, exactly like automation_account_intake does.
+        facts["activation_sla"] = "business-day review"
+        facts["conversation_context"] = enablement_language_context()
+        return facts
+
+    def _manual_facts(self) -> dict:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            submitted=True,
+            customer_name="Ada Customer",
+        )
+        facts["conversation_context"] = enablement_language_context()
+        return facts
+
+    def test_auto_natural_reply_passes(self) -> None:
+        normalized, _close = validate_account_reply_contract(
+            self.NATURAL_AUTO, self._auto_facts()
+        )
+        self.assertEqual(
+            normalized["reply_intent"], "submission_confirmation"
+        )
+
+    def test_14202_original_reply_is_rejected(self) -> None:
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "stiff_negative_status"
+        ):
+            validate_account_reply_contract(
+                self.AUTO_REPLY_14202, self._auto_facts()
+            )
+
+    def test_stiff_negative_variants_are_rejected_on_both_paths(self) -> None:
+        variants = {
+            "not yet enabled": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Media Relay is not yet enabled.",
+            ),
+            "hasn't been enabled": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Media Relay hasn't been enabled yet.",
+            ),
+            "pending activation": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Your request is pending activation.",
+            ),
+            "awaiting enablement": self.NATURAL_AUTO.replace(
+                "Reviews are handled on business days, Monday through Friday.",
+                "Your project is awaiting enablement.",
+            ),
+        }
+        for name, reply in variants.items():
+            for path, facts in (
+                ("auto", self._auto_facts()),
+                ("manual", self._manual_facts()),
+            ):
+                with self.subTest(variant=name, path=path):
+                    with self.assertRaisesRegex(
+                        AutomationPersonaError, "stiff_negative_status"
+                    ):
+                        validate_account_reply_contract(reply, facts)
+
+    def test_auto_path_requires_business_day_and_update_commitment(self) -> None:
+        missing_bizday = (
+            "Thanks for your message. I've submitted your request for internal "
+            "review and will update you as soon as there is news."
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "business_day_missing"
+        ):
+            validate_account_reply_contract(
+                missing_bizday, self._auto_facts()
+            )
+        missing_update = (
+            "Thanks for your Media Relay request. It is submitted for internal "
+            "review. Reviews are handled on business days, Monday through Friday."
+        )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "update_commitment_missing"
+        ):
+            validate_account_reply_contract(
+                missing_update, self._auto_facts()
+            )
+
+    def test_auto_path_rejects_24h_promise_and_premature_enablement(self) -> None:
+        with self.assertRaisesRegex(AutomationPersonaError, "24h_promise"):
+            validate_account_reply_contract(
+                self.NATURAL_AUTO.replace(
+                    "Reviews are handled on business days, "
+                    "Monday through Friday.",
+                    "It should complete within 24 hours.",
+                ),
+                self._auto_facts(),
+            )
+        with self.assertRaisesRegex(
+            AutomationPersonaError, "premature_enablement"
+        ):
+            validate_account_reply_contract(
+                self.NATURAL_AUTO.replace(
+                    "Reviews are handled on business days, "
+                    "Monday through Friday.",
+                    "Media Relay is enabled on your project.",
+                ),
+                self._auto_facts(),
+            )
+
+    def test_manual_24h_copy_keeps_passing(self) -> None:
+        # C5: the manual path keeps its own 24-hour + weekday contract; the
+        # stiff-negative prohibition is the only new constraint it inherits.
+        normalized, _close = validate_account_reply_contract(
+            self.MANUAL_24H, self._manual_facts()
+        )
+        self.assertEqual(
+            normalized["reply_intent"], "submission_confirmation"
+        )
+
+
+class EnablementSubmissionConfirmationRepairTests(unittest.TestCase):
+    """F1/F2 (e1p-natural-submission-confirmation-v1, repair round): the
+    negative-status family covers common word orders and synonyms, and a
+    bare 'Thanks' is style, never receipt."""
+
+    NATURAL = (
+        "Thanks for sending your Media Relay request. I've submitted it for "
+        "internal review, and I'll keep you posted as soon as I have an "
+        "update. Reviews are handled on business days, Monday through Friday."
+    )
+    F1_VARIANTS = (
+        "Media Relay is not enabled yet.",
+        "Media Relay is not currently enabled.",
+        "Media Relay is still awaiting activation.",
+        "Media Relay remains disabled.",
+        "Media Relay is disabled.",
+        "Media Relay has not been enabled yet.",
+        "Your request is awaiting activation.",
+        "Your project is pending enablement.",
+        "The feature is inactive.",
+    )
+    THANKS_ONLY = (
+        "Thanks for your request. We are reviewing it with our internal team "
+        "and will keep you posted. Reviews are handled on business days, "
+        "Monday through Friday."
+    )
+
+    def _facts(self, sla: str) -> dict:
+        facts = build_account_automation_reply_facts(
+            handler="enablement",
+            action="enablement",
+            missing_fields=[],
+            collected_fields={
+                "app_id": "abcdefabcdefabcdefabcdefabcdefab",
+                "requested_feature": "media_relay",
+            },
+            submitted=True,
+            customer_name="Ada Customer",
+        )
+        facts["activation_sla"] = sla
+        facts["conversation_context"] = enablement_language_context()
+        return facts
+
+    def test_f1_variant_family_rejected_on_both_paths(self):
+        for variant in self.F1_VARIANTS:
+            reply = f"{self.NATURAL} {variant}"
+            for path, sla in (("auto", "business-day review"), ("manual", "up to 24 hours")):
+                with self.subTest(variant=variant, path=path):
+                    with self.assertRaisesRegex(
+                        AutomationPersonaError, "stiff_negative_status"
+                    ):
+                        validate_account_reply_contract(reply, self._facts(sla))
+
+    def test_f2_thanks_without_receipt_rejected_on_both_paths(self):
+        for path, sla in (("auto", "business-day review"), ("manual", "up to 24 hours")):
+            with self.subTest(path=path):
+                with self.assertRaisesRegex(
+                    AutomationPersonaError, "receipt_missing"
+                ):
+                    validate_account_reply_contract(self.THANKS_ONLY, self._facts(sla))
+
+    def test_natural_and_manual_positives_still_pass(self):
+        validate_account_reply_contract(self.NATURAL, self._facts("business-day review"))
+        manual_24h = (
+            "Thanks for sending this over — I've logged the request and will "
+            "handle the rest on my side. Activation usually completes within 24 "
+            "hours and changes go out on weekdays, so I'll keep an eye on it "
+            "and update you once it's live."
+        )
+        validate_account_reply_contract(manual_24h, self._facts("up to 24 hours"))

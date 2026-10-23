@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "task_id": "p2-210",
+  "title": "E1P 自然提交确认合同：自动路径 business-day 语义+拒绝生硬否定状态句（e1p-natural-submission-confirmation-v1）",
+  "status": "done",
+  "owner": "zac",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "created_at": "2026-10-22",
+  "updated_at": "2026-10-23",
+  "summary": "14202 根因：persona submission_confirmation 无内容合同验证分支，模型在正确的 review 语义后补了生硬否定句（Media Relay is not yet confirmed as enabled）且漏掉 prompt 要求的 business-day 说明。修复：persona v33（策略加入三要素+反例禁句+风格参考）；新增 _assert_enablement_submission_confirmation_contract（auto 路径必含感谢/收到+review+business-day+更新承诺，拒 stiff negative/提前启用/24h；manual 仅继承禁句，24h 文案保留）；场景检查统一为单一共享合同（E1P/E3 turn-4/PP-A1 同语义）。不触 Production；不重放 14202；hermes 手册（catalog prompt）本轮不改并披露。",
+  "next_action": "已收口：验证器上线 r20261023-9b1f8e1 并在真实验证中正确拒收 14202 形态；native draft 路径绕过缺口移交 p2-211（persona-draft-contract-gate）实施接入；工单 14225 已 solved、relay 结果未发。",
+  "acceptance_criteria": [
+    "14202 原文与 stiff-negative 变体在 persona 验证器被拒（真实入口 validate_account_reply_contract）",
+    "自然正控（感谢+review+business-day+keep posted）通过；manual 24h 文案继续通过",
+    "E1P/E3 场景确认检查与 persona 合同一致（同一语义合同）",
+    "新 synthetic E1P 工单三侧回读含自然语义、不含否定句"
+  ],
+  "blockers": [],
+  "evidence": [
+    {
+      "type": "deployment",
+      "label": "Preproduction 发布与真实验证（2026-10-23，e1p-natural-submission-confirmation-v1）",
+      "command": "release pipeline --release-commit 9b1f8e1b --through preproduction（首轮回滚=ECR 拉取竞态，--resume 后通过）→ 新 synthetic E1P 工单 14225",
+      "result": "r20261023-9b1f8e1 上线（api:175/route:170/worker:173，digest 三侧一致，evidence complete）。真实验证：E1P 三步 PASS 后 draft 内容检查正确拒收 14202 同款回复（'Enablement hasn't been confirmed yet'——F1 stiff negative + F2 receipt/三要素缺失双命中）=新验证器在场景门禁生效；但该回复仍经 Hermes native draft 路径公开投递（评论 54890160373140）+relay 申请照常派发=该路径绕过 validate_account_reply_contract，C4 的重生成/fail-closed 在 draft 链无实现。处置（用户选 A）：工单 14225 solved（内部注记缺口），relay 结果不发（申请到期清扫收尾）；缺口立 p2-211（persona-draft-contract-gate）承接：draft 生成后投递前过合同门禁+有限重生成+fail-closed。p2-210 以'验证器已上线并在 reply-job 链路+场景门禁生效；draft 路径缺口由 p2-211 承接'收口。"
+    },
+    {
+      "type": "decision",
+      "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
+      "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
+      "result": "通过（PR#1554 HEAD 032119d7）：F1 单一正则双入口一致、9 类否定表达全拒；F2 receipt 双路径通用、裸 Thanks 拒收；14202 负控/manual 24h 正控/business-day 正控确认。允许下一步：合并→仅 Preproduction 部署→新 synthetic E1P→draft/公开评论/Zendesk 三侧独立回读。"
+    },
+    {
+      "type": "test",
+      "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
+      "command": "pytest persona Repair+NaturalContract（10 passed/28 subtests）+ scenarios 71 passed/11 subtests + persona/context/basis 回归 + compileall/diff --check",
+      "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
+    }
+  ]
+}

@@ -180,6 +180,10 @@ def wait_enablement_relay_dispatched(engine: Any, ctx: ScenarioContext, step: st
         ctx, step, True,
         f"request={row.get('request_id')} dispatch_status={row.get('dispatch_status')}",
     )
+    ctx.start_relay_phase(
+        str(row.get("request_id") or ""), int(row.get("request_version") or 0),
+        engine.relay_timeout_min,
+    )
     return row
 
 

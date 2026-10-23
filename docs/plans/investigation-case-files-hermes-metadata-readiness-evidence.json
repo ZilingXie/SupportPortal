@@ -1,0 +1,945 @@
+{
+  "plan": "investigation-case-files-slack-ingress-metadata-v1",
+  "phase": "Hermes metadata readiness",
+  "revision": "v4",
+  "updated_at": "2026-10-22T07:03:47.768546+00:00",
+  "source_baseline": "7a1c52231e4bea3184393a065c4f93a111cea840",
+  "code_acceptance": "v3 passed; v4 first code review failed HMR-V4-01; repaired pending independent re-review",
+  "deployment_status": "v4 not started; v3 failed and recovered",
+  "deployment_acceptance": "v3 deployment failed; recovery independently passed; v4 not started",
+  "ready_for_real_file_tests": false,
+  "baseline": {
+    "generated_at": "2026-10-22T05:18:40.789805+00:00",
+    "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "service": "supportportal-preproduction-hermes",
+    "rollout": [
+      "COMPLETED"
+    ],
+    "running": 1,
+    "pending": 0,
+    "tasks": [
+      {
+        "arn": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/f967b27f27fe4646873015dbe8ffc916",
+        "containers": [
+          {
+            "name": "memory-panel",
+            "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "memory-core",
+            "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "ui-proxy",
+            "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "knowledge",
+            "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+            "health": "HEALTHY"
+          },
+          {
+            "name": "hermes",
+            "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+            "health": "HEALTHY"
+          }
+        ]
+      }
+    ]
+  },
+  "baseline_probe": {
+    "asset_sha256": {
+      "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+      "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+      "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+      "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+      "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+    },
+    "backend_tools_called": false,
+    "profile_combined_work_list_and_view": true,
+    "profile_only_and_persona_denied": true,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "extension": {
+          "type": "string"
+        },
+        "introduced_turn_id": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "schema_properties": [
+      "extension",
+      "introduced_turn_id",
+      "purpose",
+      "source"
+    ],
+    "sessions_created": false,
+    "skill_has_short_description": false,
+    "visible_work_skills": [
+      "hermes-zac-engineering-handoff",
+      "supportportal-investigation",
+      "support-case-files"
+    ]
+  },
+  "local_candidate": {
+    "base": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+    "tag": "localhost/hermes-case-files-metadata:pre-review-v1",
+    "image_id": "bd14b305e37537577bc297ffee9e7cbb2646a7f31b08fc064dd6e4516ae5bb3c",
+    "layers": [
+      "sha256:5222f025e44ae24949e8880713955891ae0bd339afd3adb699d66e1cd603e2fa",
+      "sha256:60ed369ed3ed848183224fcc739e2fa08d6e25601730732f7b37ef6325ab99bd",
+      "sha256:15112c9bd9e6c82340de121da0a28ea4c45f93c818e077ecefeac78f12fcbcf4",
+      "sha256:41cbd1991dc56cbf4ddde4138edd7c86982105937ab02e8db0c239713ae2ac6a",
+      "sha256:b342ea4da0c0432382a9c9b54c3572d4f4c7e1b643abd66ed7545ece941680ef",
+      "sha256:f10b39d3aa597bd179c01c93054f4dba17cc0fa4beb1ce96151d6920dd1684d5",
+      "sha256:3f1a80ea1351902d82f1ddcb73055de0989bf48b2e18a4f998a87bc4d23803b2",
+      "sha256:67fe4f8e6f9e51ae6a10d3fc91a86e72fbc01371c7a09db829f22c10715cc86d",
+      "sha256:11cb795d33b88b7352716ce16dde8bdd6fc8da219d68738ca99a8f1d19906584",
+      "sha256:0c388e2561619e090e1be2204b9fbc63463ef3baae9d013167044233ebac0f7e",
+      "sha256:006fd7e2199f6196863f2fa8d9d6d361865692f34cc7cff6f9ece8e055d30385",
+      "sha256:5644e41430fcf28f527e54797d356a0613800911f22793c727eea47d845f4425",
+      "sha256:54ee9da253444ece5bb3def6c4ef7b5ea449c8c2dadb724377465d9c0dd7cf19",
+      "sha256:ec8998472b08058168eab8e91a9989da4ad73273fc361c5dca4835290a23b55c",
+      "sha256:58a42c7cc9f9c746a10fb42b41e8e3a94606aa3601f0426b84004d3dd22fa4b2",
+      "sha256:bfd4aa0cc9336b12c48c2aa2cb1c9a44f29df1361458ceb8927dce6ea32fb4ae",
+      "sha256:2d9b5adf48cb6e61775bded468a5772a042a3762ba9f35fe8411214244f173cc",
+      "sha256:ccf7afa226765d1c27d156939f367558983b7ee9e2bb0f0564d64c9991328323",
+      "sha256:3bd0336539aa28e3d88f3cd9eebab15ca67eb94a60e88891a7b67422f3e0eadb",
+      "sha256:6c7a8e65c8210726135f02ab4313245160175f668ab2a829e893b4944a5e6702",
+      "sha256:2de9c58d679de4c59df06b5468ee23fe0342f1511e82ddadfc3b03553d96ed6c",
+      "sha256:a62676117f6c49520b091c837e9bb340d4502ace187433e6fbd7ea914ad75962",
+      "sha256:9c21d4594f811054fbc84813cd40a80f9a29cff985e286e5d0be4d2154f5380f",
+      "sha256:fc30c2b75bc56c35a90a4813661fcfff2eb4f2ed4231d3152e197437c17ae948",
+      "sha256:b37fd3041af1f7b98cba982098e116d3af0a1160a62bf9790404cd7baa99a597",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:b7d2181e00f7d91ddd83c94c642711933aea8708d3735204e9d54d627752f185",
+      "sha256:7052cb69a40d1055a19edc18afbb3e689a94a89c02003feeea8b5691c8c07af1",
+      "sha256:91708b06d33908719987b440aaf9334231cbe49f479872a25ae277d02f17cebe",
+      "sha256:0454de09951b3af8e8e65a667b1c6993de87aaf21dc2f39b5f6c1c1568a667de",
+      "sha256:646ed0b674472d07c8cc941f70ae6e0f655363a0f4f202a0820863e9ee176a64",
+      "sha256:2fde56763bbb5ada1066e052194ce9d09f978eefaebd1c7157ec909936940af5",
+      "sha256:aaea85bb9f56473cddccf2c3cc2d88dfb831aae39e068c41b59278305ab74b34",
+      "sha256:fa8e79ac274497c5aa88c8c23dca0c5155c8092a7f0bc5312ca5d6daa287b046",
+      "sha256:f2093676750050e87d7a2c4885f3dbfbbc52db52e5382675a5fa8b67d9c7e130",
+      "sha256:15bbfedf9a97d6f2fe76f4564cfbb9339ca0239cc73c7f7e32ad35e6f197c0a8",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:5f70bf18a086007016e948b04aed3b82103a36bea41755b6cddfaf10ace3c6ef",
+      "sha256:bf90fc3f38a851df22957f1df98dce05216e8f29c25d6881d0ea6211c66e424f",
+      "sha256:312883a001a020fd2103c29df3fa7819c7c1e979ff543d6377a83464d0f3b172",
+      "sha256:139525c47fa6d0e6533fd56da83df9df26049116c540e9c5be76773f2fe2a272",
+      "sha256:4d39badfd3d75fe96614a4de706c1711e5bb629a9a64a9f625be29e79113dee7",
+      "sha256:4e1ea0e2c8640e42f114778527f643eef4f931275214cf758496390c5cde22ca",
+      "sha256:13f319005b992cb91c987af13a53ffcc781693f42abc235e398dbb5ff1cbb852",
+      "sha256:0ae867ac1259738fe064c7c43d1905695a5d87e818c9eb754a60787af1904ba4",
+      "sha256:634b09c9e6ea1b4048ac6790a1f9717058e4a62da4370b396551047d47c00a74",
+      "sha256:06d74a30c429b0feb1513ffc52e9e8890601b46ab6c42a028d45478ef44d0638",
+      "sha256:226b1b2a38a9435722939608c5387a9976159e655ea824322d40686670a1b342",
+      "sha256:d789ed5717c58d0ae20a2035e274f155cf8b85f2046b3041ad2c8f12b4b315f6",
+      "sha256:ebd601118334c243037428765f6e2710ab25d4817b6831ba6d0396d21b69026e",
+      "sha256:0f185947177bd5a5bd65d45756005b4c9023c6b71e37bafd2ff2eeacf29cfbdc",
+      "sha256:7482f76e1601c6fe531110ec0f64087b1ccb1e3b0749858ae6bfc533a265eb4d",
+      "sha256:873ff72ea3f0df60bba5cca8ae115e5aeecd666ec3378fe322d158a289a077c7",
+      "sha256:b6bbac391dd80e0d61ff044f258a8efab8d8b12b0f6f062a946ea178d82f19bf",
+      "sha256:e9a09871c4289cf39560bd8363030a08a3c24f4fd0d760d12c3cdd265445c13b",
+      "sha256:a9e260287ca61202269d8471861d236cae2db7708ef6c911729770d84a214414",
+      "sha256:7ad80475b4400202572bc237e7a2c7b6c710c00f51638fa4707f5c3e85af29c3",
+      "sha256:754109c78538664440cf7433de1f6742408601ba4dd4aab9cf6e12eb50ebd5e8",
+      "sha256:9b7d702281203cbb01856ea892cf33e45a9a22502811e9dd9c17037b2ab1b629",
+      "sha256:8ed44a5112c36e6de8cff0a08afe0bf6a3d7ac0ddfa848dd23cb18e40e930c51",
+      "sha256:92c1137ada0b0e878a6bb0f7bbc613ebfdef65151ee1c4cda6e59ec689dff103",
+      "sha256:9079134ef5dd191394138289ae88c7dc21a2326f6aa2c9e077a79bef177adf18",
+      "sha256:3e3bfe786309bd0926e02246fc16d0dc82df3bdaf2d1e199370a81fd7fa1d415",
+      "sha256:14bc3a689f349dcddd690427de9399c5b445ac3879532a8e2a539c8e9df9583a",
+      "sha256:b60593245bc641a56f56df231d71143c9bd651697c86cfd9e4fdec46184abb48",
+      "sha256:62d2c2e4be164086b16ea316df33797abd01321b72020e2f739891c3027dd270",
+      "sha256:112dde388b1688c2e54f534b152263e773ff9c7d71308856ce64a7dcbfeb275f",
+      "sha256:c5063070efe11a13cb568f84ccc591c4c74300a76fabe174931122409b898a1e",
+      "sha256:9048de86a03efc9df8547fbe0c7b724fff682335936bf0be86a3d87a12314338",
+      "sha256:fbaefa4bfd8796529497f0b34bd908f7ba862c38011daaf1012e9c3fdb2754e6",
+      "sha256:ae0c06ae3e928e3719cd8aa06b69e21276227c3620c7f8d57b7ef6b2ea3ac95e",
+      "sha256:bac0ffec10033ec89bc0fb9842a0254f2b14151ba70d1a824a49af9b7ea2f5ac",
+      "sha256:a9c1209ec208a22920c857b20bb10c464f85587f2fcd3fc966c25a91dc6fbad6",
+      "sha256:67b7dafc2fc8e9fc266a187c4fefa4b6fff38d3955169f2ece294ec38c6e26c8",
+      "sha256:d549d79d86ca3ab3c29f71feb4fe075c028e9859dc5d6e264f92274aa508d103",
+      "sha256:40338302303d54a1731e1e21f1f9b271f2040e1679a21ac6743b7962ab073704",
+      "sha256:2a3aef0f57cc5596852a3b1ddae02f75b4b96623bd156ab4a47d9138120be6de",
+      "sha256:91be4e3ce1000c0e1d1fafca5aaa70f07bb63a818f914233274ae612accadae2",
+      "sha256:0a82d34681c79090757f307884f84ebc6fb67d30b6274c478eb48af0c1278513",
+      "sha256:c2157ba55c041c95400dfa039806e94a81288ebe1d18b3e2eb21c93bc05ca571"
+    ],
+    "probe": {
+      "asset_sha256": {
+        "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+        "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+        "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+        "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+        "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+      },
+      "backend_tools_called": false,
+      "profile_combined_work_list_and_view": true,
+      "profile_only_and_persona_denied": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "introduced_turn_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "schema_properties": [
+        "description",
+        "extension",
+        "introduced_turn_id",
+        "purpose",
+        "source"
+      ],
+      "sessions_created": false,
+      "skill_has_short_description": true,
+      "visible_work_skills": [
+        "hermes-zac-engineering-handoff",
+        "supportportal-investigation",
+        "support-case-files"
+      ]
+    }
+  },
+  "expected_assets": {
+    "deployment/hermes-case-files/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+    "deployment/hermes-case-files/skills/support-case-files/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a"
+  },
+  "verification": {
+    "new_bridge_tests": "8 passed (included in below targeted suite)",
+    "targeted_suite": "32 passed, 17 skipped, 4 pre-existing FastAPI deprecation warnings, 2 subtests passed",
+    "command": "PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test .venv/bin/python -m pytest -q backend/tests/test_hermes_case_files_metadata_bridge.py backend/tests/test_investigation_case_files.py backend/tests/test_hermes_case_files_v2_merge_scripts.py backend/tests/test_investigation_case_files_deploy.py",
+    "skips": "external PostgreSQL/notification DSN and real rebuild inputs not supplied; no database guarantees changed",
+    "local_container": "network=none; actual profile+file scope skills_list/skill_view passed; description present; no backend tools",
+    "old_schema_fault": "remove description from real loaded schema in memory; bridge handler refuses before HTTP",
+    "unchanged_asset_hashes": {
+      "gateway/platforms/api_server_runs.py": true,
+      "supportportal_file_context.py": true,
+      "supportportal_skill_profile.py": true,
+      "tools/skills_tool.py": true
+    }
+  },
+  "open_findings": [
+    {
+      "id": "HERMES-METADATA-01",
+      "status": "open; v4 plan passed, implementation completed pending independent code acceptance and live readiness",
+      "reason": "v3 image-only overlay did not update actual EFS-served Skill; v3 deployment failed and TD54 recovered",
+      "scope_decision": "human has authorized controlled EFS single Skill update; loader and other profile changes remain excluded",
+      "next_action": "independent full v4 code review; matching pass releases authorized merge and Preproduction Hermes/EFS publication, followed by independent live readiness review"
+    }
+  ],
+  "preserved_boundaries": [
+    "No SupportPortal API/Route/Worker ECS or n8n changes",
+    "No Production",
+    "No case/session/run created",
+    "No Slack upload or Hermes/Zendesk/Zac business messages",
+    "No history replay",
+    "Original R1, live file/Automation/Zac and complete knowledge business gates retained"
+  ],
+  "raw_artifacts": ".deployments/hermes-metadata-readiness-v1",
+  "review_thread": "01a1349a-c8e9-7183-829d-6b158e735eb5",
+  "reviewed_full_head": "d6ed18b9b03157adb23f5f7f39bfe5393445972e",
+  "code_pr": "https://github.com/ZilingXie/SupportPortal/pull/1547",
+  "merged_source": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+  "published_release": {
+    "release_id": "hermes-20261022-11ef7856-metadata-v1",
+    "source_commit": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+    "reviewed_head": "d6ed18b9b03157adb23f5f7f39bfe5393445972e",
+    "base_image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+    "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+    "digest": "sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+    "local_image_id": "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+    "published_at": "2026-10-22T05:37:49.789328+00:00",
+    "architecture": "linux/amd64",
+    "container_probe": {
+      "asset_sha256": {
+        "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+        "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+        "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+        "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+        "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+      },
+      "backend_tools_called": false,
+      "profile_combined_work_list_and_view": true,
+      "profile_only_and_persona_denied": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+            "type": "string"
+          },
+          "extension": {
+            "type": "string"
+          },
+          "introduced_turn_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "schema_properties": [
+        "description",
+        "extension",
+        "introduced_turn_id",
+        "purpose",
+        "source"
+      ],
+      "sessions_created": false,
+      "skill_has_short_description": true,
+      "visible_work_skills": [
+        "hermes-zac-engineering-handoff",
+        "supportportal-investigation",
+        "support-case-files"
+      ]
+    }
+  },
+  "deployment_attempt": {
+    "started_at": "2026-10-22T05:39:51.954397+00:00",
+    "release": "hermes-20261022-11ef7856-metadata-v1",
+    "old_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "new_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:55",
+    "only_hermes_image_changed": true,
+    "status": "failed",
+    "rollback": "succeeded",
+    "failure_type": "AssertionError"
+  },
+  "registered_definition_comparison": {
+    "checked_at": "2026-10-22T05:56:51.468837+00:00",
+    "old_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "attempted_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:55",
+    "only_hermes_image_changed": true,
+    "attempted_image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d"
+  },
+  "attempted_live_probe": {
+    "asset_sha256": {
+      "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+      "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+      "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+      "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+      "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+      "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+    },
+    "backend_tools_called": false,
+    "profile_combined_work_list_and_view": true,
+    "profile_only_and_persona_denied": true,
+    "schema": {
+      "additionalProperties": false,
+      "properties": {
+        "description": {
+          "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+          "type": "string"
+        },
+        "extension": {
+          "type": "string"
+        },
+        "introduced_turn_id": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        }
+      },
+      "required": [],
+      "type": "object"
+    },
+    "schema_properties": [
+      "description",
+      "extension",
+      "introduced_turn_id",
+      "purpose",
+      "source"
+    ],
+    "sessions_created": false,
+    "skill_has_short_description": true,
+    "visible_work_skills": [
+      "hermes-zac-engineering-handoff",
+      "supportportal-investigation",
+      "support-case-files"
+    ]
+  },
+  "deployment_failure": {
+    "stage": "actual skill_view returned content metadata check",
+    "observed": "image asset and description schema passed; actual skill_view content did not contain short_description",
+    "marker": "READBACK_FAILED=AssertionError:",
+    "gateway_readback": "not_executed; stopped at preceding gate",
+    "business_tools_called": false,
+    "read_only_probe_reproduction": {
+      "environment": "Preproduction Hermes image Python, through ECS Exec; synthetic process-local scope only",
+      "embedded_versioned_probe_sha256": "15127b250c1e84f75d27a9cc8df4a8425670013f4e4005558ef65709aa3f9536",
+      "python_source": "import base64,sys,json,hashlib\nsys.path.insert(0,\"/opt/hermes\")\nfrom tools import skills_tool\noriginal=skills_tool.skill_view\nserved=[]\ndef capture(*args,**kwargs):\n result=original(*args,**kwargs)\n parsed=json.loads(result)\n if parsed.get(\"success\"):served.append(parsed)\n return result\nskills_tool.skill_view=capture\nsys.argv=[\"probe_metadata.py\",\"--require-description\"]\nexec(compile(base64.b64decode('IiIiUmVhZC1vbmx5IEhlcm1lcyBtZXRhZGF0YS9Ta2lsbCBwcm9iZS4gTm8gc2Vzc2lvbiwgcnVuIG9yIGJhY2tlbmQgdG9vbCBjYWxscy4KClJ1biB3aXRoIHRoZSBpbWFnZSdzIFB5dGhvbjogcHJvYmVfbWV0YWRhdGEucHkgWy0tcm9vdCAvb3B0L2hlcm1lc10KVXNlIC0tcmVxdWlyZS1kZXNjcmlwdGlvbiBvbmx5IGZvciB0aGUgY2FuZGlkYXRlL25ldyBkZXBsb3ltZW50LgpUaGUgc3ludGhldGljIHNjb3BlIGNhbm5vdCBhdXRoZW50aWNhdGUgdG8gU3VwcG9ydFBvcnRhbCBhbmQgc3RheXMgcHJvY2Vzcy1sb2NhbC4KIiIiCmltcG9ydCBhcmdwYXJzZQppbXBvcnQgaGFzaGxpYgppbXBvcnQgaW1wb3J0bGliLnV0aWwKaW1wb3J0IGpzb24KZnJvbSBwYXRobGliIGltcG9ydCBQYXRoCmltcG9ydCBzeXMKCgpkZWYgcHJvYmUocm9vdCwgcmVxdWlyZV9kZXNjcmlwdGlvbj1GYWxzZSk6CiAgICBzeXMucGF0aC5pbnNlcnQoMCwgc3RyKHJvb3QpKQogICAgaW1wb3J0IHN1cHBvcnRwb3J0YWxfZmlsZV9jb250ZXh0IGFzIGNvbnRleHQKICAgIGltcG9ydCBzdXBwb3J0cG9ydGFsX3NraWxsX3Byb2ZpbGUgYXMgcHJvZmlsZQogICAgZnJvbSB0b29scy5za2lsbHNfdG9vbCBpbXBvcnQgc2tpbGxzX2xpc3QsIHNraWxsX3ZpZXcKCiAgICBicmlkZ2VfcGF0aCA9IHJvb3QgLyAncGx1Z2lucy9zdXBwb3J0cG9ydGFsX2FnZW50X3Rvb2xzL2Nhc2VfZmlsZXNfYnJpZGdlLnB5JwogICAgc3BlYyA9IGltcG9ydGxpYi51dGlsLnNwZWNfZnJvbV9maWxlX2xvY2F0aW9uKCdtZXRhZGF0YV9yZWFkaW5lc3NfYnJpZGdlJywgYnJpZGdlX3BhdGgpCiAgICBicmlkZ2UgPSBpbXBvcnRsaWIudXRpbC5tb2R1bGVfZnJvbV9zcGVjKHNwZWMpCiAgICBzcGVjLmxvYWRlci5leGVjX21vZHVsZShicmlkZ2UpCiAgICByZWdpc3RlcmVkID0ge30KCiAgICBjbGFzcyBSZWdpc3RyeToKICAgICAgICBkZWYgcmVnaXN0ZXJfdG9vbChzZWxmLCAqKnRvb2wpOgogICAgICAgICAgICByZWdpc3RlcmVkW3Rvb2xbJ25hbWUnXV0gPSB0b29sCgogICAgYnJpZGdlLnJlZ2lzdGVyKFJlZ2lzdHJ5KCkpCiAgICBsaXN0aW5nID0gcmVnaXN0ZXJlZFsnc3VwcG9ydF9jYXNlX2ZpbGVzX2xpc3QnXQogICAgc2NoZW1hID0gbGlzdGluZ1snc2NoZW1hJ11bJ3BhcmFtZXRlcnMnXQogICAgYXNzZXJ0IHNjaGVtYVsnYWRkaXRpb25hbFByb3BlcnRpZXMnXSBpcyBGYWxzZQogICAgYXNzZXJ0IG5vdCBsaXN0aW5nWydjaGVja19mbiddKCkKICAgIGlkZW50aXR5ID0ge2s6ICdtZXRhZGF0YS1wcm9iZS1uby1hdXRob3JpdHknIGZvciBrIGluCiAgICAgICAgICAgICAgICAoJ25hbWVzcGFjZScsICdjYXNlX2lkJywgJ3R1cm5faWQnLCAnc2Vzc2lvbl9pZCcsICdyZXF1ZXN0X2lkJywgJ2NhcGFiaWxpdHknKX0KICAgIGlkZW50aXR5WydwaGFzZSddID0gJ3dvcmsnCiAgICBjb25maWcgPSB7J2lkJzogJ3N1cHBvcnRwb3J0YWwtaW52ZXN0aWdhdGlvbi12MScsICdhbGxvd19jbG9zZSc6IEZhbHNlLAogICAgICAgICAgICAgICd0dXJuX2lkJzogaWRlbnRpdHlbJ3R1cm5faWQnXSwgJ3JlcXVlc3RfaWQnOiAnaG1yZXE6JyArIGlkZW50aXR5Wyd0dXJuX2lkJ10gKyAnOndvcmsnfQoKICAgIHdpdGggcHJvZmlsZS5iaW5kX3Byb2ZpbGUoY29uZmlnLCBydW5faWQ9J21ldGFkYXRhLXJlYWRvbmx5LXByb2JlJyk6CiAgICAgICAgZGVuaWVkID0ganNvbi5sb2Fkcyhza2lsbF92aWV3KCdzdXBwb3J0LWNhc2UtZmlsZXMnLCBwcmVwcm9jZXNzPUZhbHNlKSkKICAgICAgICBhc3NlcnQgZGVuaWVkLmdldCgnZXJyb3InKSA9PSAnc2tpbGxfcHJvZmlsZV9kZW5pZWQnLCBkZW5pZWQuZ2V0KCdlcnJvcicpCiAgICAgICAgd2l0aCBjb250ZXh0LmJpbmRfZmlsZV9zY29wZShpZGVudGl0eSwgaWRlbnRpdHlbJ3Nlc3Npb25faWQnXSwgJycpOgogICAgICAgICAgICBhc3NlcnQgbGlzdGluZ1snY2hlY2tfZm4nXSgpCiAgICAgICAgICAgIHZpc2libGUgPSBqc29uLmxvYWRzKHNraWxsc19saXN0KCkpCiAgICAgICAgICAgIG5hbWVzID0gW3NbJ25hbWUnXSBmb3IgcyBpbiB2aXNpYmxlWydza2lsbHMnXV0KICAgICAgICAgICAgYXNzZXJ0ICdzdXBwb3J0LWNhc2UtZmlsZXMnIGluIG5hbWVzLCBuYW1lcwogICAgICAgICAgICB2aWV3ZWQgPSBqc29uLmxvYWRzKHNraWxsX3ZpZXcoJ3N1cHBvcnQtY2FzZS1maWxlcycsIHByZXByb2Nlc3M9RmFsc2UpKQogICAgICAgICAgICBhc3NlcnQgdmlld2VkLmdldCgnc3VjY2VzcycpIGlzIFRydWUsIHZpZXdlZC5nZXQoJ2Vycm9yJykKICAgICAgICB3aXRoIGNvbnRleHQuYmluZF9maWxlX3Njb3BlKHsqKmlkZW50aXR5LCAncGhhc2UnOiAncGVyc29uYSd9LCBpZGVudGl0eVsnc2Vzc2lvbl9pZCddLCAnJyk6CiAgICAgICAgICAgIGFzc2VydCBub3QgbGlzdGluZ1snY2hlY2tfZm4nXSgpCiAgICAgICAgICAgIGFzc2VydCAnc3VwcG9ydC1jYXNlLWZpbGVzJyBub3QgaW4gW3NbJ25hbWUnXSBmb3IgcyBpbiBqc29uLmxvYWRzKHNraWxsc19saXN0KCkpWydza2lsbHMnXV0KICAgIHNraWxsID0gcm9vdCAvICdjYXNlLWZpbGVzLXNraWxsL1NLSUxMLm1kJwogICAgdGV4dCA9IHNraWxsLnJlYWRfdGV4dCgpCiAgICByZXN1bHQgPSB7CiAgICAgICAgJ3NjaGVtYV9wcm9wZXJ0aWVzJzogc29ydGVkKHNjaGVtYVsncHJvcGVydGllcyddKSwKICAgICAgICAnc2NoZW1hJzogc2NoZW1hLAogICAgICAgICdza2lsbF9oYXNfc2hvcnRfZGVzY3JpcHRpb24nOiAnc2hvcnRfZGVzY3JpcHRpb24nIGluIHRleHQsCiAgICAgICAgJ3Byb2ZpbGVfY29tYmluZWRfd29ya19saXN0X2FuZF92aWV3JzogVHJ1ZSwKICAgICAgICAncHJvZmlsZV9vbmx5X2FuZF9wZXJzb25hX2RlbmllZCc6IFRydWUsCiAgICAgICAgJ3Zpc2libGVfd29ya19za2lsbHMnOiBuYW1lcywKICAgICAgICAnYXNzZXRfc2hhMjU2Jzoge3N0cihwLnJlbGF0aXZlX3RvKHJvb3QpKTogaGFzaGxpYi5zaGEyNTYocC5yZWFkX2J5dGVzKCkpLmhleGRpZ2VzdCgpCiAgICAgICAgICAgICAgICAgICAgICAgICBmb3IgcCBpbiAoYnJpZGdlX3BhdGgsIHNraWxsLCByb290IC8gJ3N1cHBvcnRwb3J0YWxfZmlsZV9jb250ZXh0LnB5JywKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICByb290IC8gJ3N1cHBvcnRwb3J0YWxfc2tpbGxfcHJvZmlsZS5weScsIHJvb3QgLyAndG9vbHMvc2tpbGxzX3Rvb2wucHknLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJvb3QgLyAnZ2F0ZXdheS9wbGF0Zm9ybXMvYXBpX3NlcnZlcl9ydW5zLnB5Jyl9LAogICAgICAgICdzZXNzaW9uc19jcmVhdGVkJzogRmFsc2UsCiAgICAgICAgJ2JhY2tlbmRfdG9vbHNfY2FsbGVkJzogRmFsc2UsCiAgICB9CiAgICBpZiByZXF1aXJlX2Rlc2NyaXB0aW9uOgogICAgICAgIGFzc2VydCAnZGVzY3JpcHRpb24nIGluIHNjaGVtYVsncHJvcGVydGllcyddLCAnZGVzY3JpcHRpb25fc2NoZW1hX21pc3NpbmcnCiAgICAgICAgYXNzZXJ0IHJlc3VsdFsnc2tpbGxfaGFzX3Nob3J0X2Rlc2NyaXB0aW9uJ10sICdzaG9ydF9kZXNjcmlwdGlvbl9za2lsbF9taXNzaW5nJwogICAgcmV0dXJuIHJlc3VsdAoKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBwYXJzZXIgPSBhcmdwYXJzZS5Bcmd1bWVudFBhcnNlcihkZXNjcmlwdGlvbj1fX2RvY19fKQogICAgcGFyc2VyLmFkZF9hcmd1bWVudCgnLS1yb290JywgdHlwZT1QYXRoLCBkZWZhdWx0PVBhdGgoJy9vcHQvaGVybWVzJykpCiAgICBwYXJzZXIuYWRkX2FyZ3VtZW50KCctLXJlcXVpcmUtZGVzY3JpcHRpb24nLCBhY3Rpb249J3N0b3JlX3RydWUnKQogICAgYXJncyA9IHBhcnNlci5wYXJzZV9hcmdzKCkKICAgIHByaW50KCdNRVRBREFUQV9QUk9CRV9KU09OPScgKyBqc29uLmR1bXBzKHByb2JlKGFyZ3Mucm9vdCwgYXJncy5yZXF1aXJlX2Rlc2NyaXB0aW9uKSwgc29ydF9rZXlzPVRydWUpKQo='),\"metadata_probe\",\"exec\"))\nassert served and any(\"short_description\" in json.dumps(x) for x in served)\nprint(\"SERVED_SKILL_METADATA=\"+json.dumps({\"short_description_present\":True,\"content_sha256\":[hashlib.sha256(json.dumps(x.get(\"content\"),sort_keys=True).encode()).hexdigest() for x in served],\"result_keys\":[sorted(x) for x in served]}),flush=True)",
+      "expected_candidate_result": "actual returned Skill must contain short_description; TD55 instead emitted READBACK_FAILED=AssertionError",
+      "external_writes": false
+    }
+  },
+  "rollback_readback": {
+    "generated_at": "2026-10-22T06:02:21.784370+00:00",
+    "task": "arn:aws:ecs:us-east-1:891612554546:task/supportportal-preproduction/f8ebd9498f104faeb7eab3ee5c6ab8f4",
+    "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-hermes:54",
+    "containers": [
+      {
+        "name": "knowledge",
+        "digest": "sha256:ee2334a99091e7c41c8f0deea437b690bd00634d271a631425890e1ab1e3ebf0",
+        "health": "HEALTHY"
+      },
+      {
+        "name": "ui-proxy",
+        "digest": "sha256:284be5939a5366fef0e92d910350899ea3ca9202e225540ee999b494eebc63d8",
+        "health": "HEALTHY"
+      },
+      {
+        "name": "memory-panel",
+        "digest": "sha256:d3e9f9a3a22169c8957936ccaf88ea85bae49debf4319f1f9dcefef7ddd05422",
+        "health": "HEALTHY"
+      },
+      {
+        "name": "hermes",
+        "digest": "sha256:7df5f3a325465ee07847ecd5c97874f0abf3e06fd1d3306c0fd5e7686f5e44b0",
+        "health": "HEALTHY"
+      },
+      {
+        "name": "memory-core",
+        "digest": "sha256:e4c0f4e61a922d05eef3ff1a55515f28b9e99117ad177b2fc7e6625fb2607de7",
+        "health": "HEALTHY"
+      }
+    ],
+    "protected_services_unchanged": true,
+    "target_health": [
+      {
+        "target_group": "arn:aws:elasticloadbalancing:us-east-1:891612554546:targetgroup/supportportal-preprod-ui-tg2/d347b9e62602df8b",
+        "health": [
+          "healthy"
+        ]
+      }
+    ],
+    "probe": {
+      "asset_sha256": {
+        "case-files-skill/SKILL.md": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+        "plugins/supportportal_agent_tools/case_files_bridge.py": "d02bffe386ce42709a50644808fa45f78297f41d0900a438fe0091d93b239be2",
+        "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+        "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+        "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+      },
+      "backend_tools_called": false,
+      "profile_combined_work_list_and_view": true,
+      "profile_only_and_persona_denied": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "extension": {
+            "type": "string"
+          },
+          "introduced_turn_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "schema_properties": [
+        "extension",
+        "introduced_turn_id",
+        "purpose",
+        "source"
+      ],
+      "sessions_created": false,
+      "skill_has_short_description": false,
+      "visible_work_skills": [
+        "hermes-zac-engineering-handoff",
+        "supportportal-investigation",
+        "support-case-files"
+      ]
+    },
+    "served_skill": [
+      {
+        "keys": [
+          "_source_path",
+          "content",
+          "description",
+          "linked_files",
+          "missing_credential_files",
+          "missing_required_commands",
+          "missing_required_environment_variables",
+          "name",
+          "org_provenance",
+          "path",
+          "readiness_status",
+          "related_skills",
+          "required_commands",
+          "required_environment_variables",
+          "setup_needed",
+          "setup_skipped",
+          "skill_dir",
+          "success",
+          "tags",
+          "usage_hint"
+        ],
+        "source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "resolved_source_path": "/opt/data/skills/support-case-files/SKILL.md",
+        "skill_dir": "/opt/data/skills/support-case-files",
+        "short_description_present": false,
+        "content_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02"
+      }
+    ],
+    "served_skill_location_basis": "Path captured after rollback on TD54, not captured on TD55. TD55 actual returned-content failure independently recorded."
+  },
+  "terraform": {
+    "before": {
+      "exit_code": 0,
+      "apply": false,
+      "refreshable_provider": true
+    },
+    "after_rollback": {
+      "exit_code": 0,
+      "checked_at": "2026-10-22T06:02:37.401510+00:00",
+      "apply_performed": false,
+      "phase": "after_rollback"
+    },
+    "apply_performed": false
+  },
+  "protected_services_after": {
+    "generated_at": "2026-10-22T06:02:14.755483+00:00",
+    "services": {
+      "api": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+        "deployments": [
+          {
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-api:174",
+            "state": "COMPLETED"
+          }
+        ]
+      },
+      "route": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+        "deployments": [
+          {
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-route:169",
+            "state": "COMPLETED"
+          }
+        ]
+      },
+      "worker": {
+        "task_definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+        "deployments": [
+          {
+            "definition": "arn:aws:ecs:us-east-1:891612554546:task-definition/supportportal-preproduction-worker:172",
+            "state": "COMPLETED"
+          }
+        ]
+      }
+    }
+  },
+  "execution_notes": [
+    {
+      "stage": "merged-source image build",
+      "first_attempt": "Podman cached layer readlink overlay/l invalid argument; no push or ECS update",
+      "recovery": "same merged source and immutable parent rebuilt with --layers=false; disabled-network container probe passed before push",
+      "artifacts": [
+        "publish.log",
+        "publish-attempt2.log",
+        "merged-source-container-probe.log"
+      ]
+    },
+    {
+      "stage": "Terraform preflight",
+      "first_attempt": "native Terraform credential source unavailable",
+      "recovery": "formal deployment refreshable credential_process; plan exit 0; no apply",
+      "artifacts": [
+        "terraform-preflight-refresh.log",
+        "terraform-preflight-result.json"
+      ]
+    },
+    {
+      "stage": "runtime probe coverage",
+      "limitation": "local candidate probe checked bundled Skill bytes and list/view success, not the actual served content; extra live returned-content check caught the gap"
+    }
+  ],
+  "pending_decision": null,
+  "documentation_checks": {
+    "json": "passed",
+    "project_overview": "passed",
+    "feature_list": "passed",
+    "git_diff_check": "passed",
+    "application_tests": "not repeated for documentation-only deployment evidence; code independent acceptance preserves prior 32 passed / 17 skipped / 2 subtests"
+  },
+  "v3_independent_deployment_review": {
+    "conclusion": "deployment failed; recovery passed; real file tests prohibited",
+    "reviewed_full_head": "3686d8da673d4b9e4c2c62befd3072f5affa4bf7",
+    "pr": 1548,
+    "source": "independent review forwarded from 01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "scope": "v3 failed rollout and recovery evidence only"
+  },
+  "current_execution": {
+    "revision": "v4",
+    "status": "implementation_completed_pending_independent_code_acceptance",
+    "implementation": "completed_locally",
+    "cloud_mutations": "not_started",
+    "real_file_tests": false,
+    "authorization": {
+      "source": "human confirmed the proposed controlled single EFS Skill publication with backup/rollback, plan review first",
+      "decision": "controlled Preproduction EFS single Skill content publish",
+      "target": "/opt/data/skills/support-case-files/SKILL.md",
+      "allowed": "single file atomic replace, backup/operation metadata/temp files, existing Hermes-only rollout and rollback",
+      "excluded": [
+        "loader/gateway/context/plugin registration",
+        "other Skill/profile/config/toolset",
+        "SupportPortal API/Route/Worker",
+        "n8n",
+        "Production",
+        "case/session/run creation",
+        "business tools/messages/file transfer"
+      ]
+    },
+    "next_gate": "independent HMR-V4-01 repair/full HEAD re-review before merge/cloud mutation"
+  },
+  "v4_read_only_feasibility": {
+    "environment": "Preproduction",
+    "account": "891612554546",
+    "region": "us-east-1",
+    "identity": "arn:aws:iam::891612554546:user/Zac",
+    "service": "supportportal-preproduction-hermes",
+    "definition": "supportportal-preproduction-hermes:54",
+    "running": 1,
+    "pending": 0,
+    "rollout": "single COMPLETED",
+    "filesystem": "fs-0ded23be6872d82da",
+    "access_point": "fsap-068e530f8cd61c854",
+    "access_point_root": "/supportportal-preproduction-hermes-home",
+    "file": {
+      "path": "/opt/data/skills/support-case-files/SKILL.md",
+      "resolved": "/opt/data/skills/support-case-files/SKILL.md",
+      "symlink": false,
+      "uid": 10000,
+      "gid": 10000,
+      "mode": "0644",
+      "size": 1937,
+      "sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+      "parent_writable": true,
+      "same_device_as_efs_root": true
+    },
+    "write_permission_note": "os.access/lstat/read only; no write/rename/backup/lock or permission change attempted"
+  },
+  "v4_plan_checks": {
+    "json": "passed",
+    "project_overview": "passed",
+    "feature_list": "passed",
+    "git_diff_check": "passed",
+    "application_tests": "not run: plan/documentation only",
+    "implementation": "completed locally; independent full code acceptance pending",
+    "efs_publication": "not started",
+    "hermes_deployment": "not started"
+  },
+  "v4_plan_acceptance": {
+    "conclusion": "passed",
+    "reviewed_full_head": "3128b65db88fbc57f9f951165dca2671553f49d5",
+    "source": "independent review in 01a1349a-c8e9-7183-829d-6b158e735eb5",
+    "scope": "v4 plan only; does not release code/deployment/business gates"
+  },
+  "v4_implementation_evidence": {
+    "scope": "single-Skill publisher, strengthened actual served-content probe, local-only real loader verification; no cloud mutation",
+    "source_binding": "full committed PR HEAD in handoff; exact executed scripts bound by source_sha256 below",
+    "image_source_commit": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+    "deployment_ecr_digest": "sha256:a4ba1d1f2ddd50994ef6c1bceaafc89246690a51c2bdb9af8f47efd493ba304d",
+    "image_identity_note": "local RepoDigests retained verbatim; deployment ECR manifest digest is separately recorded and is not inferred from local RepoDigests",
+    "tests": {
+      "command": "PYTHON_DOTENV_DISABLED=1 TICKET_DB_DSN=postgresql://test/test /Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest -q backend/tests/test_hermes_case_files_skill_publish.py backend/tests/test_hermes_case_files_metadata_bridge.py backend/tests/test_investigation_case_files.py backend/tests/test_hermes_case_files_v2_merge_scripts.py backend/tests/test_investigation_case_files_deploy.py",
+      "result": "65 passed, 17 skipped, 4 existing FastAPI warnings, 2 subtests passed",
+      "publisher_cases": 33,
+      "limits": "skipped external PostgreSQL/cloud boundaries are not verified; local filesystem and actual loader are verified"
+    },
+    "container_artifacts": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.deployments/hermes-metadata-readiness-v4/container-attempt4-hmr-v4-01",
+    "container": {
+      "generated_at": "2026-10-22T07:02:06.412257+00:00",
+      "network": "none",
+      "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes:hermes-20261022-11ef7856-metadata-v1",
+      "source_sha256": {
+        "publish_skill.py": "fc7bfe1a9f9b552ed6ee256631a29bd6bb6c9481f956c32def3d46ba6fbb3c2a",
+        "probe_metadata.py": "4e3641ff77750a8524ecc33c1df7722069f1e92a0f3bd2a17affa31f023ddfd4",
+        "verify_metadata_efs.py": "c83cb20e9638f2e5f1c4232924445dcaea23d8316f9ce9ca6e300bb9fa551c7a",
+        "verify_metadata_efs_local.py": "8f3a6f4459c597c167c5342a0af7655b2b4a559fc46157fcde4d90a1a240c293"
+      },
+      "image_id": "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+      "repo_digests": [
+        "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:47541afbb0489095fe615550c81067bf014bd6ac8ba343de9aa49d5eabd04525"
+      ],
+      "image_source": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+      "exit_code": 0,
+      "command": [
+        "podman",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--arch",
+        "amd64",
+        "--network",
+        "none",
+        "--entrypoint",
+        "python",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/deployment/hermes-case-files:/verification:ro",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/backend/tests/fixtures/hermes_case_files_old_skill.md:/old-skill.md:ro",
+        "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+        "/verification/verify_metadata_efs.py",
+        "--old-fixture",
+        "/old-skill.md"
+      ],
+      "verification": {
+        "apply_state": "committed",
+        "backend_tools_called": false,
+        "fixture_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "old_snapshot_fault": "actual_served_skill_metadata_missing",
+        "probe": {
+          "asset_sha256": {
+            "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+            "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+            "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+            "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+            "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+            "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+          },
+          "backend_tools_called": false,
+          "profile_combined_work_list_and_view": true,
+          "profile_only_and_persona_denied": true,
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+                "type": "string"
+              },
+              "extension": {
+                "type": "string"
+              },
+              "introduced_turn_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "schema_properties": [
+            "description",
+            "extension",
+            "introduced_turn_id",
+            "purpose",
+            "source"
+          ],
+          "served_content_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "served_has_short_description": true,
+          "served_resolved_path": "/tmp/hermes-metadata-efs-v4-t69vs0nj/skills/support-case-files/SKILL.md",
+          "served_source_path": "/tmp/hermes-metadata-efs-v4-t69vs0nj/skills/support-case-files/SKILL.md",
+          "sessions_created": false,
+          "skill_has_short_description": true,
+          "visible_work_skills": [
+            "hermes-zac-engineering-handoff",
+            "supportportal-investigation",
+            "support-case-files"
+          ]
+        },
+        "repeat_changed": false,
+        "rollback_bytes_equal": true,
+        "rollback_state": "rolled_back",
+        "sessions_created": false,
+        "source_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "unreviewed_content_fault": "actual_served_skill_hash_mismatch",
+        "wrong_path_fault": "actual_served_skill_path_mismatch"
+      }
+    },
+    "checks": {
+      "py_compile": "passed",
+      "json": "passed",
+      "project_overview": "passed",
+      "feature_list": "passed",
+      "git_diff_check": "passed",
+      "skill_quick_validation": "passed; approved Skill bytes unchanged"
+    },
+    "contract_evidence": {
+      "HMR-C1_C2": "existing handler/API tests retained, targeted suite passed; filter algorithms unchanged",
+      "HMR-C3": "real loader list/direct-view denies no scope, profile-only and persona in candidate container; existing negative session tests retained",
+      "HMR-C4": "publisher real filesystem/CLI/fault-recovery tests and real candidate loader regression passed",
+      "HMR-C5": "not started in v4; live deployment/readback pending",
+      "HMR-C6": "ready_for_real_file_tests=false; no business invocation/session/run or cloud mutation"
+    },
+    "next_action": "commit/push same Draft PR #1548, request full code independent acceptance; do not merge or mutate cloud yet",
+    "prior_container_attempt3": {
+      "generated_at": "2026-10-22T06:47:31.203291+00:00",
+      "network": "none",
+      "image": "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes:hermes-20261022-11ef7856-metadata-v1",
+      "source_sha256": {
+        "publish_skill.py": "12c83bb7fded9a4364223de665bba77cac7b47c5609b1b42498a8b9242b116ba",
+        "probe_metadata.py": "4e3641ff77750a8524ecc33c1df7722069f1e92a0f3bd2a17affa31f023ddfd4",
+        "verify_metadata_efs.py": "c83cb20e9638f2e5f1c4232924445dcaea23d8316f9ce9ca6e300bb9fa551c7a",
+        "verify_metadata_efs_local.py": "8f3a6f4459c597c167c5342a0af7655b2b4a559fc46157fcde4d90a1a240c293"
+      },
+      "image_id": "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+      "repo_digests": [
+        "891612554546.dkr.ecr.us-east-1.amazonaws.com/supportportal/hermes@sha256:47541afbb0489095fe615550c81067bf014bd6ac8ba343de9aa49d5eabd04525"
+      ],
+      "image_source": "11ef78565fdef3d55b8efbb20580c1fc475c36ff",
+      "exit_code": 0,
+      "command": [
+        "podman",
+        "run",
+        "--rm",
+        "--pull",
+        "never",
+        "--arch",
+        "amd64",
+        "--network",
+        "none",
+        "--entrypoint",
+        "python",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/deployment/hermes-case-files:/verification:ro",
+        "--volume",
+        "/Users/xieziling/Desktop/personal_proj/SupportPortal/.worktrees/hermes-case-files-metadata-readiness-v1/backend/tests/fixtures/hermes_case_files_old_skill.md:/old-skill.md:ro",
+        "faec191f4f1af5a24a40010717ebd3ea12ed9b0ddf9b6117ef489d0414d1eddb",
+        "/verification/verify_metadata_efs.py",
+        "--old-fixture",
+        "/old-skill.md"
+      ],
+      "verification": {
+        "apply_state": "committed",
+        "backend_tools_called": false,
+        "fixture_sha256": "7379499fc8412b4a52cd5ad82a31f74ae580ae02c8577ef4eb2a7c16910ebc02",
+        "old_snapshot_fault": "actual_served_skill_metadata_missing",
+        "probe": {
+          "asset_sha256": {
+            "case-files-skill/SKILL.md": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+            "gateway/platforms/api_server_runs.py": "49ceb5da062b6939396e87345e2c5a812f86baf3ccf74dd74023a9193399c5dc",
+            "plugins/supportportal_agent_tools/case_files_bridge.py": "205f8cb61435f666813e45d15dfa0aaeb4d5412688dfd0a4fe9bd0faa72b21a1",
+            "supportportal_file_context.py": "fecab9f294c8f56d3bdd8a0c1b7bbf4c073fad5c0e5a8e84427b1281afc26a92",
+            "supportportal_skill_profile.py": "9cfcfa52f01422747cc8e99596b671bb0863608226c166d4133b0c28aca5fa30",
+            "tools/skills_tool.py": "dafdeb4e3e61b0bf9d973ac26c22197fabecc41660c48b5c7baf7c16d39ab94d"
+          },
+          "backend_tools_called": false,
+          "profile_combined_work_list_and_view": true,
+          "profile_only_and_persona_denied": true,
+          "schema": {
+            "additionalProperties": false,
+            "properties": {
+              "description": {
+                "description": "Case-insensitive substring of controlled short_description metadata; combined with the other filters.",
+                "type": "string"
+              },
+              "extension": {
+                "type": "string"
+              },
+              "introduced_turn_id": {
+                "type": "string"
+              },
+              "purpose": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              }
+            },
+            "required": [],
+            "type": "object"
+          },
+          "schema_properties": [
+            "description",
+            "extension",
+            "introduced_turn_id",
+            "purpose",
+            "source"
+          ],
+          "served_content_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+          "served_has_short_description": true,
+          "served_resolved_path": "/tmp/hermes-metadata-efs-v4-vg3z8gtp/skills/support-case-files/SKILL.md",
+          "served_source_path": "/tmp/hermes-metadata-efs-v4-vg3z8gtp/skills/support-case-files/SKILL.md",
+          "sessions_created": false,
+          "skill_has_short_description": true,
+          "visible_work_skills": [
+            "hermes-zac-engineering-handoff",
+            "supportportal-investigation",
+            "support-case-files"
+          ]
+        },
+        "repeat_changed": false,
+        "rollback_bytes_equal": true,
+        "rollback_state": "rolled_back",
+        "sessions_created": false,
+        "source_sha256": "bce133eb503042e75f67b7d512877fa4a2efccc2af75766c2fe15a00b330154a",
+        "unreviewed_content_fault": "actual_served_skill_hash_mismatch",
+        "wrong_path_fault": "actual_served_skill_path_mismatch"
+      }
+    },
+    "repairs": [
+      {
+        "id": "HMR-V4-01",
+        "classification": "implementation",
+        "status": "repaired_pending_independent_re_review",
+        "reviewed_failed_head": "ffe04fee2cdeb976018fd683834261da1ef2f6ab",
+        "contract": "prepared/outcome_unknown are not success; check-only strictly read-only",
+        "reproduction": "real interrupted rename before/after commit with apply/rollback intent produces prepared/outcome_unknown and old/new target; previous check-only returned ok=true / CLI exit0",
+        "cause": "check-only validated ownership and terminal states but had no rejection for unresolved states or terminal pending_action mismatch",
+        "affected_boundary": "publish(check-only) return object -> main JSON marker -> exit0/1; explicit apply/rollback recovery retained",
+        "repair": "unresolved readback returns ok=false, publication_unresolved, state/pending_action/current diagnostics and CLI exit1; terminal intent contradictions fail state_conflict; rollback old-value confirmation records rollback intent",
+        "regression": "8 real filesystem/fault/CLI combinations state x intent x target old/new; assert exit1/code/diagnostics, complete path inventory/bytes/inode/mtime/mode/ownership unchanged, then explicit original-operation recovery and successful check-only; 2 terminal intent contradictions",
+        "old_logic_result": "10 new cases failed at intended assertions before source fix; 23 existing publisher cases deselected",
+        "current_result": "65 passed, 17 skipped, 4 existing warnings, 2 subtests passed; final true-loader container attempt4 passed",
+        "cloud_mutations": "not_started",
+        "real_file_tests": false
+      }
+    ]
+  }
+}

@@ -1,15 +1,15 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-16T07:16:00Z",
+  "capturedAt": "2026-10-23T12:34:08Z",
   "source": {
     "projectId": "sbTCwK2d5D7GOKQb",
     "workflowId": "FKv8vtZBQk6tH4Gt",
     "workflowName": "[slack]Handle Action|Preprod",
     "snapshotKind": "published",
-    "versionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
-    "draftVersionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
-    "publishedVersionId": "0192f828-0ee5-414e-87ef-ca67c0225ddb",
-    "updatedAt": "2026-09-16T07:07:16.006Z",
+    "versionId": "21bc0580-bd27-4dfb-ae00-6ad3f0b23d3f",
+    "draftVersionId": "21bc0580-bd27-4dfb-ae00-6ad3f0b23d3f",
+    "publishedVersionId": "21bc0580-bd27-4dfb-ae00-6ad3f0b23d3f",
+    "updatedAt": "2026-10-23T12:32:30.621Z",
     "parentFolderId": "Uj4fViHZGMeAhqTa"
   },
   "workflow": {
@@ -146,7 +146,7 @@
       },
       {
         "parameters": {
-          "jsCode": "const input = $input.first()?.json || {};\nconst rawPayload = input.body?.payload;\n\nif (typeof rawPayload !== 'string' || !rawPayload.trim()) {\n  return [{ json: { parse_ok: false, parse_error: 'missing_payload' } }];\n}\n\nlet payload;\ntry {\n  payload = JSON.parse(rawPayload);\n} catch {\n  return [{ json: { parse_ok: false, parse_error: 'invalid_payload_json' } }];\n}\n\nconst action = Array.isArray(payload.actions) ? payload.actions[0] || {} : {};\nlet actionValue = {};\ntry {\n  actionValue = JSON.parse(String(action.value || '{}'));\n} catch {\n  actionValue = {};\n}\n\nconst teamId = String(payload.team?.id || '').trim();\nconst channelId = String(payload.channel?.id || payload.container?.channel_id || '').trim();\nconst threadTs = String(payload.container?.thread_ts || payload.message?.thread_ts || '').trim();\nconst messageTs = String(payload.container?.message_ts || payload.message?.ts || '').trim();\nconst actionId = String(action.action_id || actionValue.action || '').trim();\nconst investigationId = String(actionValue.investigation_id || '').trim();\nconst draftVersion = Number(actionValue.draft_version || 0);\nconst originalBlocks = Array.isArray(payload.message?.blocks)\n  ? payload.message.blocks.filter((block) => block && block.type !== 'actions')\n  : [];\n\nreturn [{\n  json: {\n    parse_ok: true,\n    team_id: teamId,\n    channel_id: channelId,\n    thread_ts: threadTs,\n    interaction_id: [teamId, channelId, messageTs, actionId, investigationId, String(draftVersion)].join(':'),\n    slack_user_id: String(payload.user?.id || '').trim(),\n    action: actionId,\n    investigation_id: investigationId,\n    draft_version: draftVersion,\n    environment: String(actionValue.environment || '').trim(),\n    zendesk_ticket_id: String(actionValue.zendesk_ticket_id || '').trim(),\n    turn_id: String(actionValue.turn_id || '').trim(),\n    draft_id: String(actionValue.draft_id || '').trim(),\n    guardrail_id: String(actionValue.guardrail_id || '').trim() || null,\n    guardrail_version: String(actionValue.guardrail_version || '').trim() || null,\n    response_url: String(payload.response_url || '').trim(),\n    original_text: String(payload.message?.text || '').trim(),\n    original_blocks: originalBlocks\n  }\n}];"
+          "jsCode": "const input = $input.first()?.json || {};\nconst rawPayload = input.body?.payload;\n\nif (typeof rawPayload !== 'string' || !rawPayload.trim()) {\n  return [{ json: { parse_ok: false, parse_error: 'missing_payload' } }];\n}\n\nlet payload;\ntry {\n  payload = JSON.parse(rawPayload);\n} catch {\n  return [{ json: { parse_ok: false, parse_error: 'invalid_payload_json' } }];\n}\n\nconst action = Array.isArray(payload.actions) ? payload.actions[0] || {} : {};\nlet actionValue = {};\ntry {\n  actionValue = JSON.parse(String(action.value || '{}'));\n} catch {\n  actionValue = {};\n}\n\nconst teamId = String(payload.team?.id || '').trim();\nconst channelId = String(payload.channel?.id || payload.container?.channel_id || '').trim();\nconst threadTs = String(payload.container?.thread_ts || payload.message?.thread_ts || '').trim();\nconst messageTs = String(payload.container?.message_ts || payload.message?.ts || '').trim();\nconst actionId = String(action.action_id || actionValue.action || '').trim();\nconst investigationId = String(actionValue.investigation_id || '').trim();\nconst draftVersion = Number(actionValue.draft_version || 0);\nconst actionValueRaw = String(action.value || '').trim();\nconst originalBlocks = Array.isArray(payload.message?.blocks)\n  ? payload.message.blocks.filter((block) => block && block.type !== 'actions')\n  : [];\n\nreturn [{\n  json: {\n    parse_ok: true,\n    team_id: teamId,\n    channel_id: channelId,\n    thread_ts: threadTs,\n    interaction_id: [teamId, channelId, messageTs, actionId, investigationId, String(draftVersion)].join(':'),\n    slack_user_id: String(payload.user?.id || '').trim(),\n    action: actionId,\n    investigation_id: investigationId,\n    draft_version: draftVersion,\n    environment: String(actionValue.environment || '').trim(),\n    zendesk_ticket_id: String(actionValue.zendesk_ticket_id || '').trim(),\n    turn_id: String(actionValue.turn_id || '').trim(),\n    draft_id: String(actionValue.draft_id || '').trim(),\n    guardrail_id: String(actionValue.guardrail_id || '').trim() || null,\n    guardrail_version: String(actionValue.guardrail_version || '').trim() || null,\n    response_url: String(payload.response_url || '').trim(),\n    original_text: String(payload.message?.text || '').trim(),\n    original_blocks: originalBlocks,\n    action_value_raw: actionValueRaw\n  }\n}];"
         },
         "type": "n8n-nodes-base.code",
         "typeVersion": 2,
@@ -362,7 +362,7 @@
           "sendBody": true,
           "contentType": "raw",
           "rawContentType": "application/json",
-          "body": "={{ JSON.stringify({ replace_original: true, text: $('Parse Slack Action').item.json.original_text || 'Action submitted.', blocks: [ ...$('Parse Slack Action').item.json.original_blocks, { type: 'context', elements: [{ type: 'mrkdwn', text: ($('Parse Slack Action').item.json.action === 'final_approve' ? 'Approval submitted by ' : 'Guardrail submitted by ') + '<@' + $('Parse Slack Action').item.json.slack_user_id + '>.' }] } ] }) }}",
+          "body": "={{ JSON.stringify({ replace_original: true, text: $('Parse Slack Action').item.json.original_text || 'Action submitted.', blocks: [ ...$('Parse Slack Action').item.json.original_blocks, { type: 'context', elements: [{ type: 'mrkdwn', text: ($('Parse Slack Action').item.json.action === 'final_approve' ? 'Approval submitted by ' : $('Parse Slack Action').item.json.action === 'knowledge_approve' ? 'Approved by ' : $('Parse Slack Action').item.json.action === 'knowledge_reject' ? 'Rejected by ' : 'Guardrail submitted by ') + '<@' + $('Parse Slack Action').item.json.slack_user_id + '>.' }] } ] }) }}",
           "options": {}
         },
         "id": "64800cda-405b-431b-9f7d-69b4edf1915f",
@@ -373,6 +373,66 @@
           2272,
           368
         ]
+      },
+      {
+        "id": "9dcc50c0-22fd-4a71-8926-763b953b935b",
+        "name": "Knowledge Action",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.3,
+        "position": [
+          1152,
+          560
+        ],
+        "parameters": {
+          "conditions": {
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "knowledge-action-guard",
+                "leftValue": "={{ ['knowledge_approve','knowledge_reject'].includes($json.action) }}",
+                "operator": {
+                  "operation": "equals",
+                  "type": "boolean"
+                },
+                "rightValue": true
+              }
+            ],
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict",
+              "version": 3
+            }
+          },
+          "options": {}
+        }
+      },
+      {
+        "id": "3048ee52-9e56-41f3-a24a-ff1383fc3068",
+        "name": "Send Knowledge Action To SupportPortal",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.4,
+        "position": [
+          1376,
+          560
+        ],
+        "parameters": {
+          "authentication": "genericCredentialType",
+          "body": "={{ JSON.stringify({ interaction_id: $('Parse Slack Action').item.json.interaction_id, action: $('Parse Slack Action').item.json.action, value: $('Parse Slack Action').item.json.action_value_raw, slack_user_id: $('Parse Slack Action').item.json.slack_user_id }) }}",
+          "contentType": "raw",
+          "genericAuthType": "httpHeaderAuth",
+          "method": "POST",
+          "options": {},
+          "rawContentType": "application/json",
+          "sendBody": true,
+          "url": "https://supportcenter.stellarix.space/automation/preproduction/api/integrations/slack/hermes-cases/actions"
+        },
+        "credentials": {
+          "httpHeaderAuth": {
+            "id": "wk9Nn0OELBE6MOb7",
+            "name": "preprodcution"
+          }
+        }
       }
     ],
     "connections": {
@@ -424,7 +484,7 @@
         "main": [
           [
             {
-              "node": "Has Thread TS",
+              "node": "Knowledge Action",
               "type": "main",
               "index": 0
             }
@@ -491,6 +551,35 @@
           [
             {
               "node": "Parse Slack Action",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Knowledge Action": {
+        "main": [
+          [
+            {
+              "node": "Send Knowledge Action To SupportPortal",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Has Thread TS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Knowledge Action To SupportPortal": {
+        "main": [
+          [
+            {
+              "node": "Slack Response URL",
               "type": "main",
               "index": 0
             }

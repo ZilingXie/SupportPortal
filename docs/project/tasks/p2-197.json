@@ -8,9 +8,9 @@
   "module_id": "rag-knowledge",
   "function_id": "weknora-dualwrite-governance",
   "created_at": "2026-10-12",
-  "updated_at": "2026-10-22",
-  "summary": "stage6-weknora-agent-bridge r1：WeKnora 主检索+AgentMemory 迁移期 fallback；既有代码与 2026-10-19/20 全关闭部署独立验收通过。2026-10-22 复用已批准 immutable release r20261022-a08be07-intake-only-r6（source a08be077，Prompt pr-88298d4e0a3f），正式 Preproduction pipeline 和只读回读通过，待独立部署验收：API174/Route169/Worker172；API/Worker master=1、intake=1，其余六开关=0、allowlist 空、HERMES_CASE_WORKFLOW_MODE=disabled。Terraform 前后 zero-drift，无 apply，无历史 execution 重放或新业务样本。本轮只证明 intake-only 配置/运行来源；不证明 Summary/Review、AI execution、双写/Slack/AgentMemory/WeKnora delivery 或真实 WeKnora 检索/业务闭环。",
-  "next_action": "先独立验收 r20261022-a08be07-intake-only-r6 发布/只读配置回读；后续受控来源 intake、精确 allowlist、Summary/Review、AI execution、Slack notify、dual-write、双 delivery 逐层另行授权/发布/验证。真实 WeKnora publish/index/ready、Agent 检索+负例、观察窗口和全量人工停点仍待证据；不恢复旧 release 覆盖当前基线，不重放历史 execution。",
+  "updated_at": "2026-10-20",
+  "summary": "计划名称：stage6-weknora-agent-bridge r1（WeKnora 主检索+AgentMemory 迁移期 fallback）。**代码与 Preproduction 全关闭部署已完成并通过独立验收**（2026-10-19/20）：PR#1515 合入 main=cd6d8e5f（六轮验收：B1/B2→B3/B4→残留→main 同步→文档锚点→集成增量 #1517 复验 291/0）；changelog #1518+证据 #1519→main=8e8e4952。SSM weknora-api-contract-json 升 **v5**（status 绑定+parse_status_key/enable_status_key，回读验证）。Terraform：ignore_changes 之谜解开+apply -refresh-only 同步指针后零漂移。**全关闭部署 r20261019-21c6eed 全阶段 passed**（api:161/worker:160/route:157 运行 21c6eed1；master=0 七开关全 0+allowlist 空；双 verify 门；hermes 引擎镜像并行线；队列 intakes=304/summaries=42/promotions=64/deliveries=0；关闭态探针 503）。实现：客户端合同 v5（publish fail-closed+status 省略+readiness 回执）；适配器 publish_on_write+lifecycle_at_accept+有界 readiness 轮询；共享检索服务 C4-C8；Agent 桥 DI 全链（含默认构造 configured() 门）；Review 共享 readiness 原语。★边界：**业务闭环证据不足**——无真实知识进入 WeKnora、无 Agent WeKnora 检索成功证据、受控样本/Slack Review/Agent 检索验证未做。★待处理：并行线暂停管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（仅 codebuild、其恢复会部署旧代码需协调）。",
+  "next_action": "①协调/处理暂停的旧管线目录 ecs-pipeline-r20261019-301a39d-hermes-appid-pp-a1（避免恢复后以旧代码覆盖 r20261019-21c6eed；建议向用户确认放弃或让其同步新 main 后重建）；②受控样本阶段（计划步 6 分层开启，每层=新发布：intake→精确 allowlist→Summary/Review→AI execution→Slack notify→dual-write worker→双 delivery；Summary/Review 层须同 hermes real mode+--hermes-agent-enabled+--bootstrap-account-schema——层 2c 教训）；③步 7 WeKnora 生命周期验证（publish/index/ready 双方式回读）；④步 8 Agent 检索验证+两负例；⑤步 9 观察窗口（≥48h 或≥10 候选）；⑥步 10 全量放开前人工停点。样本须新的唯一 Preproduction 真实来源，不复用历史已处理样本。",
   "acceptance_criteria": [
     "C0 发布源/digest/n8n version/SSM 引用可追溯",
     "C1 关闭态 fail-closed 零候选零写入",
@@ -140,6 +140,24 @@
       "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
       "command": "独立核对 ECS/SSM/Terraform/checkpoint",
       "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
+    },
+    {
+      "type": "test",
+      "label": "知识审查 Slack 按钮合同测试（stage6-csd-10 审批 UX）",
+      "command": "pytest backend/tests/test_knowledge_slack_buttons.py backend/tests/test_stage4_slack_review.py backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_engineer_slack.py",
+      "result": "passed 117（按钮 13 项：分派绕过 case 校验/服务端验证 operator/superseded 409 零状态变更/reject 终态/approve new-resolution/重复点击 already/真实 payload 级 C1 根+C2 线程锚断言；PR#1560+#1561=main 9d6fdd3f）"
+    },
+    {
+      "type": "deployment",
+      "label": "知识审查审批 UX 两轮 Preproduction 发布（按钮+格式+C2 修复）",
+      "command": "automation_ecs_release_pipeline run r20261023-edb36b6-slackbuttons / r20261023-9d6fdd3-c2fix",
+      "result": "passed（两轮全阶段绿；knowledge_stage 六开关复刻 r20261023-ec76139 identity；r2 含 C2 线程回复 payload 修复）"
+    },
+    {
+      "type": "document",
+      "label": "n8n Handle Action 交互流 knowledge 分支发布 + 快照刷新",
+      "command": "n8n update_workflow FKv8vtZBQk6tH4Gt + publish（active=21bc0580）；validate_workflow_snapshots.py",
+      "result": "passed（Knowledge Action 分支路由 knowledge_approve/reject→SP actions 端点，汇聚既有 response_url consume 链；探针 execution 198269=无效 promotion 404 零状态变更；快照 15 published 校验通过，PR#1561 入库）"
     },
     {
       "type": "deployment",
