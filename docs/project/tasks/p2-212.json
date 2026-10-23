@@ -1,8 +1,8 @@
 {
   "schema_version": 2,
   "task_id": "p2-212",
-  "phase_id": "phase-1",
-  "module_id": "account-automation",
+  "phase_id": "phase-2",
+  "module_id": "engineer-workspace",
   "function_id": "engineer-investigation-reply",
   "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
   "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",

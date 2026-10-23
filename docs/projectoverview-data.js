@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T05:53:34Z",
-  "source_base_commit": "d10d3a4f8449e51cf66f422f1304c846cae68f28",
-  "registry_digest": "e013eb0a2dd48d990dba503b6ea5b7de5662cae03f2395abdbfaafc5efeb1454",
+  "generated_at": "2026-10-23T08:16:47Z",
+  "source_base_commit": "82fd351a6768b14e7f9381b11f9ea9db8b6dae4e",
+  "registry_digest": "c5b704cc0ebc6b86dbd1e23d86d78f0abbb98752e6d7bff3705f88d2369b3984",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5662,7 +5662,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "legacy_ids": [],
       "status": "active",
-      "task_count": 9,
+      "task_count": 10,
       "done_count": 8,
       "blocked_count": 0
     },
@@ -19675,6 +19675,36 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
         }
       ]
+    },
+    {
+      "schema_version": 2,
+      "task_id": "p2-212",
+      "phase_id": "phase-2",
+      "module_id": "engineer-workspace",
+      "function_id": "engineer-investigation-reply",
+      "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
+      "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",
+      "status": "active",
+      "next_action": "实施中",
+      "owner": "agent",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "acceptance_criteria": [
+        "C1 仅 confirmed Investigation public delivery 触发",
+        "C2 delivery 必须绑定 draft/turn 且 turn 为 Investigation",
+        "C3 空 assignee + 非终态 + 无人工回复 → safe update 分配",
+        "C4 AI 已持有 → already_assigned 不重复 PUT",
+        "C5 人工 ownership/reply → skipped 保留人工",
+        "C6 终态 → skipped_terminal",
+        "C7 不可确认 → outcome_unknown 不盲重试",
+        "C8 并发 409 → 重读后按安全机制处理",
+        "C9 重复 delivery → 幂等",
+        "C10 ownership 失败不影响已确认客户回复",
+        "C11 Enablement/普通 Automation 行为不变",
+        "C12 context/event 可恢复"
+      ],
+      "blockers": [],
+      "evidence": []
     },
     {
       "schema_version": 2,
