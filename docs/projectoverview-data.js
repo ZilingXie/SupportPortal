@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T08:53:38Z",
-  "source_base_commit": "b0b17902c91e336b637b39f166a30992e3b2cf81",
-  "registry_digest": "f9eda476ce19db5daef727791fcf71910ede1c94d712d9935921517fb208e32d",
+  "generated_at": "2026-10-23T09:22:03Z",
+  "source_base_commit": "e3f1c93390dd5a0a730f2be3bd6c00fab9311bc6",
+  "registry_digest": "f4e90504c03e5a6bc14ec59fa6b810d7e9a127f22e832a4fe8c2ff59a4cb0aa0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5654,6 +5654,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "部署 worker 镜像（digest 869fba39）内探针 9 项 ALL_PASS：F1 修复代码源码验证（fresh re-read 在 _ensure_case_thread 后/无 or-binding 回退/四守卫 binding_reread_failed+thread_creation_failed+channel_missing+channel_mismatch/native-only 作用域/legacy 仅无 repo 路径）+ 分条构建功能部署在位"
+        },
+        {
+          "type": "test",
+          "label": "R2 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 42 passed/0 skipped（RUN_POSTGRES_INTEGRATION=1 真实隔离 PostgreSQL，逐测试独立 schema 建删）+ 相关 17 模块批量与干净 HEAD 212c883d 失败集逐条一致（16 全存量零新增）+ compileall/diff --check",
+          "result": "F5=status 三态门前置于一切 ownership 决策：复用生产 gate 同一 classify_zendesk_ticket_status——仅 new/open/pending/hold 可分配，solved/closed=skipped_terminal，空/未知=outcome_unknown（investigation_ownership_status_unconfirmed），非 actionable 一律 PUT=0（含陈旧 assigned context 不得授权）；F6=queue 侧 marker 注入须 turn 自证 Investigation origin（direction==investigation 且 turn_kind 白名单），白名单收敛为单一事实源 INVESTIGATION_REPLY_ORIGIN_TURN_KINDS+is_investigation_origin_turn（account_automation_ownership 定义，queue 注入侧与 worker 消费侧共用），普通 Automation/Enablement/未知 kind/turn 读取失败一律零 marker、零 identity_mismatch 事件。新增 10 项回归（空/未知 status PUT=0、四 actionable 全放行、unconfirmed 压过陈旧 context、automation/enablement/bad-kind/lookup-fail 无 marker、investigation 照带 marker、无 marker delivery 零 ownership 事件）。修复提交 e3f1c933 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第二轮：未通过（2026-10-23）",
+          "command": "验收方复审 Draft PR#1558（HEAD 212c883d）：F1-F4 确认修复，新发现 F5/F6",
+          "result": "未通过（F5 Zendesk status 未确认时空/未知值仍进入 assignment，违反 C7；F6 普通 Automation turn 也被写入 Investigation origin marker，违反 C2/C11）。验收方实测：专项 31 passed/1 skipped（其环境 PG 跳过）。允许下一步：同一 Draft PR#1558 追加 F5/F6 修复与回归，保持独立验收门；提交新完整 HEAD 并提供真实隔离 PostgreSQL 运行证据；修复前不得合并或部署。"
         },
         {
           "type": "test",
@@ -19697,7 +19709,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
       "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",
       "status": "active",
-      "next_action": "R1 修复已推送（Draft PR#1558 HEAD b0b17902），等待独立复验；通过前不合并不部署。",
+      "next_action": "R2 修复已推送（Draft PR#1558 HEAD e3f1c9339），等待独立复验；通过前不合并不部署。",
       "owner": "agent",
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
@@ -19717,6 +19729,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R2 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 42 passed/0 skipped（RUN_POSTGRES_INTEGRATION=1 真实隔离 PostgreSQL，逐测试独立 schema 建删）+ 相关 17 模块批量与干净 HEAD 212c883d 失败集逐条一致（16 全存量零新增）+ compileall/diff --check",
+          "result": "F5=status 三态门前置于一切 ownership 决策：复用生产 gate 同一 classify_zendesk_ticket_status——仅 new/open/pending/hold 可分配，solved/closed=skipped_terminal，空/未知=outcome_unknown（investigation_ownership_status_unconfirmed），非 actionable 一律 PUT=0（含陈旧 assigned context 不得授权）；F6=queue 侧 marker 注入须 turn 自证 Investigation origin（direction==investigation 且 turn_kind 白名单），白名单收敛为单一事实源 INVESTIGATION_REPLY_ORIGIN_TURN_KINDS+is_investigation_origin_turn（account_automation_ownership 定义，queue 注入侧与 worker 消费侧共用），普通 Automation/Enablement/未知 kind/turn 读取失败一律零 marker、零 identity_mismatch 事件。新增 10 项回归（空/未知 status PUT=0、四 actionable 全放行、unconfirmed 压过陈旧 context、automation/enablement/bad-kind/lookup-fail 无 marker、investigation 照带 marker、无 marker delivery 零 ownership 事件）。修复提交 e3f1c933 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第二轮：未通过（2026-10-23）",
+          "command": "验收方复审 Draft PR#1558（HEAD 212c883d）：F1-F4 确认修复，新发现 F5/F6",
+          "result": "未通过（F5 Zendesk status 未确认时空/未知值仍进入 assignment，违反 C7；F6 普通 Automation turn 也被写入 Investigation origin marker，违反 C2/C11）。验收方实测：专项 31 passed/1 skipped（其环境 PG 跳过）。允许下一步：同一 Draft PR#1558 追加 F5/F6 修复与回归，保持独立验收门；提交新完整 HEAD 并提供真实隔离 PostgreSQL 运行证据；修复前不得合并或部署。"
+        },
         {
           "type": "test",
           "label": "R1 修复轮实施（2026-10-23，待独立复验）",
