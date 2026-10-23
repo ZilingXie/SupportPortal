@@ -2444,6 +2444,38 @@ class E1PHermesCarrierTests(unittest.TestCase):
         ))
         self._run_fails_at(engine, "submission confirmation delivered")
 
+    def test_content_with_f1_variant_status_fails(self):
+        # F1 repair: common word orders / synonyms of the stiff negative
+        # status sentence must fail the scenario gate too.
+        variants = (
+            "Media Relay is not enabled yet.",
+            "Media Relay is not currently enabled.",
+            "Media Relay is still awaiting activation.",
+            "Media Relay remains disabled.",
+        )
+        for variant in variants:
+            with self.subTest(variant=variant):
+                engine = self._engine(self._base(
+                    draft_row=self._draft(content=self.CONFIRMATION + " " + variant),
+                    delivery_row=self._delivery(),
+                ))
+                self._run_fails_at(engine, "submission confirmation delivered")
+
+    def test_content_with_thanks_only_no_receipt_fails(self):
+        # F2 repair: thanks + review + business-day + update commitment
+        # without an explicit received/recorded/submitted statement fails.
+        engine = self._engine(self._base(
+            draft_row=self._draft(
+                content=(
+                    "Thanks for your request. We are reviewing it with our "
+                    "internal team and will keep you posted. Reviews are "
+                    "handled on business days, Monday through Friday."
+                )
+            ),
+            delivery_row=self._delivery(),
+        ))
+        self._run_fails_at(engine, "submission confirmation delivered")
+
     def test_content_without_confirmation_semantics_fails(self):
         # Matrix 7: delivered and public, but the text is a bare ask.
         engine = self._engine(self._base(

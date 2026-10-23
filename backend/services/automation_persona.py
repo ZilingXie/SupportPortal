@@ -705,11 +705,36 @@ def _generation_diagnostic(reply: str, facts: dict[str, Any], attempt: int) -> d
     }
 
 
-_STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = re.compile(
-    r"not\s+yet\s+(?:confirmed\s+as\s+)?(?:enabled|activated|provisioned)"
-    r"|(?:hasn'?t|has\s+not)\s+been\s+(?:enabled|activated)"
-    r"|pending\s+activation"
-    r"|awaiting\s+enablement",
+# Canonical stiff-negative enablement status family
+# (e1p-natural-submission-confirmation-v1 F1): every wording that states the
+# feature's enablement STATUS as off/pending instead of expressing the review
+# positively. Shared with the scenario content checks so the persona
+# validator and the acceptance gate never drift apart.
+STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = re.compile(
+    r"\bnot\s+yet\s+(?:confirmed\s+as\s+)?(?:enabled|activated|provisioned)"
+    r"|\bnot\s+(?:enabled|activated|provisioned)\s+yet\b"
+    r"|\bnot\s+currently\s+(?:enabled|activated|provisioned)"
+    r"|\b(?:is|are)\s+not\s+(?:enabled|activated|provisioned)"
+    r"|\bnot\s+been\s+(?:enabled|activated)\s+yet\b"
+    r"|\b(?:hasn'?t|have\s+not|has\s+not)\s+been\s+(?:enabled|activated)"
+    r"|\bstill\s+awaiting\s+(?:enablement|activation)"
+    r"|\bawaiting\s+(?:enablement|activation)"
+    r"|\bremains?\s+(?:disabled|inactive)"
+    r"|\b(?:is|are|currently|still)\s+(?:disabled|inactive)\b"
+    r"|\bpending\s+(?:activation|enablement)",
+    re.IGNORECASE,
+)
+_STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = STIFF_NEGATIVE_ENABLEMENT_STATUS_RE
+
+# Explicit receipt semantics (F2): the reply must state the request was
+# received / recorded / submitted (for review). A bare "Thanks" is style,
+# not receipt.
+_SUBMISSION_RECEIPT_RE = re.compile(
+    r"(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+request"
+    r"|submitted\s+(?:it\s+)?for\s+(?:internal\s+)?review"
+    r"|request\s+(?:has\s+been|is|was)\s+(?:received|submitted|recorded|logged)"
+    r"|(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+"
+    r"(?:media\s+relay\s+)?(?:enablement\s+)?request",
     re.IGNORECASE,
 )
 
@@ -734,6 +759,10 @@ def _assert_enablement_submission_confirmation_contract(
     if _has_positive_clause(reply, r"\b(?:enabled|activated|provisioned)\b"):
         raise AutomationPersonaError(
             "automation_persona_submission_confirmation_premature_enablement"
+        )
+    if not _SUBMISSION_RECEIPT_RE.search(lowered):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_receipt_missing"
         )
     if str(facts.get("activation_sla") or "") != "business-day review":
         return
@@ -760,13 +789,6 @@ def _assert_enablement_submission_confirmation_contract(
     if not re.search(r"review", lowered):
         raise AutomationPersonaError(
             "automation_persona_submission_confirmation_review_missing"
-        )
-    if not re.search(
-        r"thank\s+you|thanks\b|received\b|recorded\b|submitted\b",
-        lowered,
-    ):
-        raise AutomationPersonaError(
-            "automation_persona_submission_confirmation_receipt_missing"
         )
 
 

@@ -37,6 +37,11 @@ from typing import Any, Callable
 import psycopg
 
 from backend.services import automation_test_mail
+# Canonical stiff-negative enablement status family shared with the
+# persona validator (e1p-natural-submission-confirmation-v1 F1).
+from backend.services.automation_persona import (
+    STIFF_NEGATIVE_ENABLEMENT_STATUS_RE as _STIFF_NEGATIVE_STATUS_RE,
+)
 
 # imaplib does not know the non-standard RFC2971 ID command; 163 Coremail
 # refuses SELECT/SEARCH (NO) unless it is sent before login.
@@ -70,11 +75,15 @@ DETAILED_INVOICE_BODY = (
 )
 
 
-_STIFF_NEGATIVE_STATUS_RE = re.compile(
-    r"not\s+yet\s+(?:confirmed\s+as\s+)?(?:enabled|activated|provisioned)"
-    r"|(?:hasn'?t|has\s+not)\s+been\s+(?:enabled|activated)"
-    r"|pending\s+activation"
-    r"|awaiting\s+enablement",
+# Explicit receipt semantics (F2), mirroring the persona validator: the
+# reply must state the request was received / recorded / submitted (for
+# review); a bare "Thanks" is style, not receipt.
+_SUBMISSION_RECEIPT_SCENARIO_RE = re.compile(
+    r"(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+request"
+    r"|submitted\s+(?:it\s+)?for\s+(?:internal\s+)?review"
+    r"|request\s+(?:has\s+been|is|was)\s+(?:received|submitted|recorded|logged)"
+    r"|(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+"
+    r"(?:media\s+relay\s+)?(?:enablement\s+)?request",
     re.IGNORECASE,
 )
 
@@ -89,16 +98,8 @@ def _submission_confirmation_content_check(content: str) -> str | None:
     any affirmative enablement claim, deadline promises, approval wording.
     """
     lowered = str(content or "").casefold()
-    received = any(
-        phrase in lowered
-        for phrase in (
-            "recorded your request", "received your request",
-            "thank you for requesting", "thank you for sending",
-            "request has been received", "submitted",
-        )
-    )
-    if not received:
-        return "confirmation does not thank for / acknowledge the request"
+    if not _SUBMISSION_RECEIPT_SCENARIO_RE.search(lowered):
+        return "confirmation does not state the request was received/recorded/submitted"
     if "review" not in lowered:
         return "confirmation does not mention review"
     if not re.search(
