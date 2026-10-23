@@ -716,7 +716,8 @@ STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = re.compile(
     r"|\bnot\s+currently\s+(?:enabled|activated|provisioned)"
     r"|\b(?:is|are)\s+not\s+(?:enabled|activated|provisioned)"
     r"|\bnot\s+been\s+(?:enabled|activated)\s+yet\b"
-    r"|\b(?:hasn'?t|have\s+not|has\s+not)\s+been\s+(?:enabled|activated)"
+    r"|\b(?:hasn'?t|have\s+not|has\s+not)\s+been\s+(?:enabled|activated|confirmed)"
+    r"|\b(?:hasn'?t|have\s+not|has\s+not)\s+been\s+confirmed\s+yet\b"
     r"|\bstill\s+awaiting\s+(?:enablement|activation)"
     r"|\bawaiting\s+(?:enablement|activation)"
     r"|\bremains?\s+(?:disabled|inactive)"
@@ -729,9 +730,10 @@ _STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = STIFF_NEGATIVE_ENABLEMENT_STATUS_RE
 # Explicit receipt semantics (F2): the reply must state the request was
 # received / recorded / submitted (for review). A bare "Thanks" is style,
 # not receipt.
-_SUBMISSION_RECEIPT_RE = re.compile(
+SUBMISSION_RECEIPT_RE = re.compile(
     r"(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+request"
     r"|submitted\s+(?:it\s+)?for\s+(?:internal\s+)?review"
+    r"|requested\s+(?:a|an|your|the)\s+(?:\w+\s+)?review"
     r"|request\s+(?:has\s+been|is|was)\s+(?:received|submitted|recorded|logged)"
     r"|(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+"
     r"(?:media\s+relay\s+)?(?:enablement\s+)?request",
@@ -760,7 +762,7 @@ def _assert_enablement_submission_confirmation_contract(
         raise AutomationPersonaError(
             "automation_persona_submission_confirmation_premature_enablement"
         )
-    if not _SUBMISSION_RECEIPT_RE.search(lowered):
+    if not SUBMISSION_RECEIPT_RE.search(lowered):
         raise AutomationPersonaError(
             "automation_persona_submission_confirmation_receipt_missing"
         )

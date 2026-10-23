@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T04:43:04Z",
-  "source_base_commit": "da9e9e91214363ab0d53394243cb2b54d8e706ea",
-  "registry_digest": "d8c2433ee3ebc6a8c8e4b54cea25fb44c346efb324a6826ef28c1bb04a4f76b5",
+  "generated_at": "2026-10-23T05:29:45Z",
+  "source_base_commit": "71a3700d49ef47023fc1c62dabcf57c2872b9499",
+  "registry_digest": "14978a36f13daf58d0cbcb87eecff9e41130b045785e61e0b7f9777bfe33b991",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1923,6 +1923,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
           "command": "pytest persona Repair+NaturalContract（10 passed/28 subtests）+ scenarios 71 passed/11 subtests + persona/context/basis 回归 + compileall/diff --check",
           "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
+        },
+        {
+          "type": "test",
+          "label": "persona-draft-contract-gate v1 实施（待独立验收）",
+          "command": "真实入口 tool_save_reply_draft 测试矩阵（test_hermes_native_enablement_regression 16 passed）+ persona/scenarios/basis/context/fraud 回归 258 passed/131 subtests + compileall/diff --check",
+          "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
         },
         {
           "type": "test",
@@ -19641,7 +19647,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
       "summary": "p2-210 真实验证（工单 14225）实证：新验证器在 reply-job publish 链路正确拒收 14202 形态回复，但 Hermes native draft 路径（worker hermes persona phase → hermes_draft_prepared/queued → 直接投递）绕过 validate_account_reply_contract，生硬否定句仍公开投递（评论 54890160373140）。本任务把 submission_confirmation（推广为 hermes persona 内容合同）接入 draft 生成路径：生成后投递前过合同门禁，失败走有限重生成→fail-closed（C4 原意），不投递违约内容。前置：p2-210 已上线 r20261023-9b1f8e1。",
-      "next_action": "新任务已建：调查 hermes draft 生成链的合同挂点（automation_hermes_delivery / persona 渲染入口），设计门禁+重生成/fail-closed，Draft PR 停独立验收。",
+      "next_action": "persona-draft-contract-gate v1 实施完成：Draft PR 待独立验收；通过后 Preprod 发布+新 synthetic E1P 完整验证（14202/14225 形态端到端不再投递）。",
       "acceptance_criteria": [
         "native draft 路径生成的 submission_confirmation 违约内容（stiff negative/缺三要素）不投递",
         "违约触发有限重生成，重生成仍失败则 fail-closed 转人工，不投递、不伪造",
@@ -19649,7 +19655,14 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "合规自然回复照常投递；其它意图的 draft 不受影响"
       ],
       "blockers": [],
-      "evidence": []
+      "evidence": [
+        {
+          "type": "test",
+          "label": "persona-draft-contract-gate v1 实施（待独立验收）",
+          "command": "真实入口 tool_save_reply_draft 测试矩阵（test_hermes_native_enablement_regression 16 passed）+ persona/scenarios/basis/context/fraud 回归 258 passed/131 subtests + compileall/diff --check",
+          "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
+        }
+      ]
     },
     {
       "schema_version": 2,
