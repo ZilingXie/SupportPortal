@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T09:22:03Z",
-  "source_base_commit": "e3f1c93390dd5a0a730f2be3bd6c00fab9311bc6",
-  "registry_digest": "f4e90504c03e5a6bc14ec59fa6b810d7e9a127f22e832a4fe8c2ff59a4cb0aa0",
+  "generated_at": "2026-10-23T10:33:59Z",
+  "source_base_commit": "20f5ecc3645c220323ee25af3cf12480d7db606a",
+  "registry_digest": "9ee22c91429ea658ad1be2b23c891dce9893c45bddd41c4afc61ad346241f34b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5654,6 +5654,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "部署 worker 镜像（digest 869fba39）内探针 9 项 ALL_PASS：F1 修复代码源码验证（fresh re-read 在 _ensure_case_thread 后/无 or-binding 回退/四守卫 binding_reread_failed+thread_creation_failed+channel_missing+channel_mismatch/native-only 作用域/legacy 仅无 repo 路径）+ 分条构建功能部署在位"
+        },
+        {
+          "type": "test",
+          "label": "R3 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 47 passed/0 skipped（RUN_POSTGRES_INTEGRATION=1 真实隔离 PostgreSQL，逐测试独立 schema 建删）+ 相关 17 模块批量与干净 HEAD 72e763dc 失败集逐条一致（16 全存量零新增）+ compileall/diff --check",
+          "result": "F7=assignment 后 readback 成功分支（assignee+group 双匹配）复检同一实时条件：readback status 经共享 classify_zendesk_ticket_status 再分类——solved/closed→skipped_terminal、空/未知→outcome_unknown（investigation_ownership_status_unconfirmed）、human_replied=True→human_replied，仅 actionable 且无人工回复才报 assigned；assignee/group 不匹配分支（unverified outcome_unknown）不变，409 路径本就不返回 assigned。新增 5 项 F7 回归（solved readback/空 status/未知值/人工回复/干净 actionable 正控）。修复提交 20f5ecc3 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第三轮：未通过（2026-10-23）",
+          "command": "验收方复审 Draft PR#1558（HEAD 72e763dc）：F5/F6 确认修复，新发现 F7",
+          "result": "未通过（F7 assignment 后 readback 只校验 assignee/group，未复检 status 三态与 human_replied——竞态期间已 solved/状态未知/出现人工回复的工单被误报 assigned，违反 C5/C6/C7 与并发安全）。允许下一步：同一 Draft PR#1558 追加 F7 修复与回归，保持独立验收门；修复前不得合并或部署。"
         },
         {
           "type": "test",
@@ -19709,7 +19721,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
       "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",
       "status": "active",
-      "next_action": "R2 修复已推送（Draft PR#1558 HEAD e3f1c9339），等待独立复验；通过前不合并不部署。",
+      "next_action": "R3 修复已推送（Draft PR#1558 HEAD 20f5ecc36），等待独立复验；通过前不合并不部署。",
       "owner": "agent",
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
@@ -19729,6 +19741,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "test",
+          "label": "R3 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 47 passed/0 skipped（RUN_POSTGRES_INTEGRATION=1 真实隔离 PostgreSQL，逐测试独立 schema 建删）+ 相关 17 模块批量与干净 HEAD 72e763dc 失败集逐条一致（16 全存量零新增）+ compileall/diff --check",
+          "result": "F7=assignment 后 readback 成功分支（assignee+group 双匹配）复检同一实时条件：readback status 经共享 classify_zendesk_ticket_status 再分类——solved/closed→skipped_terminal、空/未知→outcome_unknown（investigation_ownership_status_unconfirmed）、human_replied=True→human_replied，仅 actionable 且无人工回复才报 assigned；assignee/group 不匹配分支（unverified outcome_unknown）不变，409 路径本就不返回 assigned。新增 5 项 F7 回归（solved readback/空 status/未知值/人工回复/干净 actionable 正控）。修复提交 20f5ecc3 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第三轮：未通过（2026-10-23）",
+          "command": "验收方复审 Draft PR#1558（HEAD 72e763dc）：F5/F6 确认修复，新发现 F7",
+          "result": "未通过（F7 assignment 后 readback 只校验 assignee/group，未复检 status 三态与 human_replied——竞态期间已 solved/状态未知/出现人工回复的工单被误报 assigned，违反 C5/C6/C7 与并发安全）。允许下一步：同一 Draft PR#1558 追加 F7 修复与回归，保持独立验收门；修复前不得合并或部署。"
+        },
         {
           "type": "test",
           "label": "R2 修复轮实施（2026-10-23，待独立复验）",
