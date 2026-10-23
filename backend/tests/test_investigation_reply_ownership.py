@@ -121,7 +121,7 @@ class TestOwnershipStateMachine(unittest.TestCase):
     def test_c3_no_assignee_assigns_and_readback(self):
         case = _account_case()
         snapshot1 = _snapshot(assignee_id="", ticket_status="open")
-        snapshot2 = _snapshot(assignee_id="ai-agent-1", ticket_status="open")
+        snapshot2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status="open")
         assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
         with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[snapshot1, snapshot2]), patch(
             "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
@@ -133,7 +133,7 @@ class TestOwnershipStateMachine(unittest.TestCase):
 
     def test_c4_ai_already_assigned_idempotent(self):
         case = _account_case()
-        snapshot = _snapshot(assignee_id="ai-agent-1")
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
         with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot), patch(
             "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
         ) as assign:
@@ -183,16 +183,39 @@ class TestOwnershipStateMachine(unittest.TestCase):
         self.assertEqual(result["state"], "outcome_unknown")
         self.assertEqual(result["failure_code"], "investigation_ownership_snapshot_failed")
 
-    def test_c9_context_assigned_short_circuits(self):
+    def test_c9_live_snapshot_overrides_stale_context(self):
+        # F1 (review): the context NEVER short-circuits; a stale
+        # assigned context with a live human takeover must NOT report
+        # already_assigned — the live snapshot is authoritative.
         case = _account_case()
         case["automation_context"]["zendesk_ownership"] = {
             "state": "assigned", "assignee_id": "ai-agent-1", "group_id": "ai-group-1"
         }
-        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot") as read:
+        snapshot = _snapshot(assignee_id="human-1")
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot) as read, patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+        ) as assign:
             result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="2026-10-23T00:00:00Z")
-        self.assertEqual(result["state"], "already_assigned")
-        self.assertTrue(result.get("idempotent"))
-        read.assert_not_called()
+        self.assertEqual(result["state"], "skipped_human_owned")
+        read.assert_called_once()
+        assign.assert_not_called()
+
+    def test_c9_stale_context_live_unassigned_proceeds(self):
+        # F1: context says assigned but Zendesk has no assignee — the
+        # helper must proceed to assignment, not skip.
+        case = _account_case()
+        case["automation_context"]["zendesk_ownership"] = {
+            "state": "assigned", "assignee_id": "ai-agent-1", "group_id": "ai-group-1"
+        }
+        snapshot1 = _snapshot(assignee_id="", group_id="")
+        snapshot2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[snapshot1, snapshot2]), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
+        ) as assign:
+            result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="2026-10-23T00:00:00Z")
+        self.assertEqual(result["state"], "assigned")
+        assign.assert_called_once()
 
     def test_c7_assignment_failure_outcome_unknown(self):
         from backend.services.zendesk_comments import ZendeskCommentError
@@ -272,7 +295,7 @@ class TestWorkerIntegration(unittest.TestCase):
         repo = _Repo()
         delivery = _delivery()
         snapshot1 = _snapshot(assignee_id="")
-        snapshot2 = _snapshot(assignee_id="ai-agent-1")
+        snapshot2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
         assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
         with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[snapshot1, snapshot2]), patch(
             "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
@@ -313,13 +336,10 @@ class TestWorkerIntegration(unittest.TestCase):
 
     def test_duplicate_delivery_idempotent(self):
         repo = _Repo()
-        repo._case["automation_context"]["zendesk_ownership"] = {
-            "state": "assigned", "assignee_id": "ai-agent-1", "group_id": "ai-group-1"
-        }
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
         delivery = _delivery()
-        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot") as read:
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot):
             self._run(delivery, repo)
-        read.assert_not_called()
         ownership_events = [e for e in repo.events if e["type"] == "zendesk_investigation_reply_ownership"]
         self.assertEqual(len(ownership_events), 1)
         self.assertEqual(ownership_events[0]["payload"]["state"], "already_assigned")
@@ -432,7 +452,7 @@ class IsolatedPostgresOwnershipTests(unittest.TestCase):
             case = repo.get_account_case("AC-999")
             case["zendesk_ticket_id"] = "999"
             snapshot1 = _snapshot(assignee_id="")
-            snapshot2 = _snapshot(assignee_id="ai-agent-1")
+            snapshot2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
             assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
             with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[snapshot1, snapshot2]), patch(
                 "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
@@ -450,12 +470,126 @@ class IsolatedPostgresOwnershipTests(unittest.TestCase):
             ownership = ctx.get("zendesk_ownership") or {}
             self.assertEqual(ownership.get("state"), "assigned")
             self.assertEqual(ownership.get("assignee_id"), "ai-agent-1")
-            # Re-run with the persisted assigned state: idempotent, no PUT
-            with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot") as read:
+            # Re-run with a LIVE snapshot showing AI: idempotent, no PUT
+            # (F1: the live snapshot is the sole authority, not the context).
+            live = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+            with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=live), patch(
+                "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+            ) as assign:
                 idem = ensure_investigation_reply_ownership(reloaded, delivery=_delivery(), updated_at="2026-10-23T00:01:00Z")
             self.assertEqual(idem["state"], "already_assigned")
-            read.assert_not_called()
+            assign.assert_not_called()
         finally:
             with _connect(dsn, autocommit=True) as _conn:
                 with _conn.cursor() as _cur:
                     _cur.execute(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+
+
+class ReviewRound1Regressions(unittest.TestCase):
+    """p2-212 review round 1: F1-F4 fix verification."""
+
+    def test_f1_stale_context_live_human_takeover_reports_human_owned(self):
+        # Context says assigned, Zendesk says human: must report human.
+        case = _account_case()
+        case["automation_context"]["zendesk_ownership"] = {"state": "assigned", "assignee_id": "ai-agent-1"}
+        snapshot = _snapshot(assignee_id="human-1")
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+        ) as assign:
+            result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="t")
+        self.assertEqual(result["state"], "skipped_human_owned")
+        assign.assert_not_called()
+
+    def test_f1_stale_context_live_unassigned_proceeds_to_assignment(self):
+        # Context says assigned, Zendesk has nobody: must assign.
+        case = _account_case()
+        case["automation_context"]["zendesk_ownership"] = {"state": "assigned", "assignee_id": "ai-agent-1"}
+        s1 = _snapshot(assignee_id="", group_id="")
+        s2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[s1, s2]), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
+        ) as assign:
+            result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="t")
+        self.assertEqual(result["state"], "assigned")
+        assign.assert_called_once()
+
+    def test_f2_ai_assignee_wrong_group_falls_through_to_assignment(self):
+        # AI assignee in the wrong group: NOT already_assigned.
+        case = _account_case()
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="wrong-group")
+        s2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", side_effect=[snapshot, s2]), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai", return_value=assignment
+        ) as assign:
+            result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="t")
+        self.assertEqual(result["state"], "assigned")
+        assign.assert_called_once()
+
+    def test_f3_missing_turn_id_rejected(self):
+        repo = _Repo()
+        delivery = _delivery(turn_id="")
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot") as read:
+            from backend.worker import _complete_hermes_customer_reply_side_effects
+            with patch("backend.worker.ticket_repository", repo):
+                _complete_hermes_customer_reply_side_effects(delivery)
+        read.assert_not_called()
+        events = [e for e in repo.events if e["type"] == "zendesk_investigation_reply_ownership"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["failure_code"], "investigation_ownership_identity_missing")
+
+    def test_f3_invalid_turn_kind_rejected(self):
+        repo = _Repo()
+        delivery = _delivery(turn_kind="unknown_kind")
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot") as read:
+            from backend.worker import _complete_hermes_customer_reply_side_effects
+            with patch("backend.worker.ticket_repository", repo):
+                _complete_hermes_customer_reply_side_effects(delivery)
+        read.assert_not_called()
+        events = [e for e in repo.events if e["type"] == "zendesk_investigation_reply_ownership"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["payload"]["failure_code"], "investigation_ownership_identity_mismatch")
+
+    def test_f4_event_write_failure_does_not_raise(self):
+        repo = _Repo()
+        delivery = _delivery()
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        # Make record_event fail after the first call (identity passes, event fails).
+        original_record = repo.record_event
+        call_count = {"n": 0}
+        def flaky_record(ticket_id, event_type, payload):
+            call_count["n"] += 1
+            if call_count["n"] > 1:
+                raise RuntimeError("event write failed")
+            return original_record(ticket_id, event_type, payload)
+        repo.record_event = flaky_record
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot):
+            from backend.worker import _complete_hermes_customer_reply_side_effects
+            with patch("backend.worker.ticket_repository", repo):
+                # Must NOT raise even though record_event fails.
+                _complete_hermes_customer_reply_side_effects(delivery)
+
+    def test_f4_context_save_failure_does_not_raise(self):
+        repo = _Repo()
+        delivery = _delivery()
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        original_save = repo.save_account_case
+        def failing_save(case):
+            raise RuntimeError("save failed")
+        repo.save_account_case = failing_save
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot):
+            from backend.worker import _complete_hermes_customer_reply_side_effects
+            with patch("backend.worker.ticket_repository", repo):
+                _complete_hermes_customer_reply_side_effects(delivery)
+
+    def test_f1_c4_full_idempotent_via_live_snapshot_only(self):
+        # No context pre-set: the live snapshot IS the sole authority.
+        case = _account_case()
+        snapshot = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1")
+        with patch("backend.services.account_automation_ownership.read_ticket_ownership_snapshot", return_value=snapshot), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+        ) as assign:
+            result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="t")
+        self.assertEqual(result["state"], "already_assigned")
+        assign.assert_not_called()

@@ -677,18 +677,10 @@ def ensure_investigation_reply_ownership(
             failure_detail="account case has no zendesk_ticket_id",
         )
 
-    # Idempotency: if the context already says assigned by the AI, no PUT.
-    context = _ownership_context(account_case)
-    previous = context.get(OWNERSHIP_CONTEXT_KEY)
-    if isinstance(previous, dict) and previous.get("state") == OWNERSHIP_STATE_ASSIGNED:
-        return {
-            "state": "already_assigned",
-            "assignee_id": previous.get("assignee_id"),
-            "group_id": previous.get("group_id"),
-            "failure_code": None,
-            "idempotent": True,
-            "updated_at": updated_at,
-        }
+    # F1 (review): no context short-circuit — every confirmed Investigation
+    # public delivery reads the LIVE Zendesk snapshot. The context is kept
+    # as history but never substitutes for the real-time check; only a
+    # real-time assignee AND group match returns already_assigned.
 
     # Read the live snapshot (includes full comment scan for human replies).
     try:
@@ -731,10 +723,13 @@ def ensure_investigation_reply_ownership(
             ticket_status=ticket_status,
         )
 
-    # Already owned by the configured AI: idempotent no-op.
+    # Already owned by the configured AI (F2: assignee AND group must both
+    # match — a correct assignee in the wrong group is NOT already_assigned
+    # and must fall through to the safe-update path so the primitive can
+    # correct the group; the readback below then confirms both).
     ai_assignee = str(getattr(snapshot, "ai_assignee_id", "") or "")
     ai_group = str(getattr(snapshot, "ai_group_id", "") or "")
-    if ai_assignee and snapshot.assignee_id == ai_assignee:
+    if ai_assignee and snapshot.assignee_id == ai_assignee and ai_group and snapshot.group_id == ai_group:
         result = _investigation_result(
             account_case,
             state=OWNERSHIP_STATE_ASSIGNED,
@@ -812,10 +807,12 @@ def ensure_investigation_reply_ownership(
             failure_detail=str(getattr(exc, "error_code", "") or "")[:200],
         )
 
-    # Readback: confirm the assignment actually landed.
+    # Readback: confirm BOTH assignee and group landed (F2).
     try:
         readback = read_ticket_ownership_snapshot(ticket_id=ticket_id)
-        if readback.assignee_id and readback.assignee_id == ai_assignee:
+        readback_assignee = str(readback.assignee_id or "")
+        readback_group = str(readback.group_id or "")
+        if readback_assignee == ai_assignee and readback_group == ai_group:
             return _investigation_result(
                 account_case,
                 state=OWNERSHIP_STATE_ASSIGNED,
