@@ -187,14 +187,18 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
         (output / "probe.json").write_text(json.dumps(evidence, indent=2) + "\n")
         return evidence
     finally:
-        if registered:
-            arn = registered.get("taskDefinition", {}).get("taskDefinitionArn")
-            if arn:
-                _call(("aws", "ecs", "deregister-task-definition", "--region", region,
-                       "--task-definition", arn), runner=runner)
-        for path in (definition_path, network_path):
-            if path:
-                Path(path).unlink(missing_ok=True)
+        try:
+            if registered:
+                arn = registered.get("taskDefinition", {}).get("taskDefinitionArn")
+                if arn:
+                    # Preserve deregistration failure; the nested finally still
+                    # removes local artifacts so a failed cleanup cannot leak them.
+                    _call(("aws", "ecs", "deregister-task-definition", "--region", region,
+                           "--task-definition", arn), runner=runner)
+        finally:
+            for path in (definition_path, network_path):
+                if path:
+                    Path(path).unlink(missing_ok=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

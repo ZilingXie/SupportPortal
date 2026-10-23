@@ -82,7 +82,7 @@ def test_probe_command_has_no_business_write_and_emits_completion_marker():
 
 
 class FakeRunner:
-    def __init__(self, mod, *, exit_code=0, logs=None):
+    def __init__(self, mod, *, exit_code=0, logs=None, deregister_fails=False):
         self.mod = mod
         self.exit_code = exit_code
         self.logs = logs if logs is not None else [
@@ -95,6 +95,7 @@ class FakeRunner:
         self.calls = []
         self.temp_paths = []
         self.stream_failures = 0
+        self.deregister_fails = deregister_fails
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
@@ -103,6 +104,8 @@ class FakeRunner:
                                                  "--network-configuration" in argv[max(0, index - 1):index]):
                 self.temp_paths.append(Path(value.removeprefix("file://")))
         text = " ".join(argv)
+        if "deregister-task-definition" in text and self.deregister_fails:
+            return subprocess.CompletedProcess(argv, 17, "", "deregister failed")
         if "describe-task-definition" in text:
             return subprocess.CompletedProcess(argv, 0, json.dumps({"taskDefinition": {
                 "family": "hermes", "taskRoleArn": "r", "executionRoleArn": "e",
@@ -207,5 +210,15 @@ def test_run_probe_rejects_cloudwatch_stream_timeout_without_sleeping(tmp_path):
                       runner=runner, sleep=lambda _: None, clock=lambda: next(clock_values),
                       stream_timeout_seconds=1)
     assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
+    assert len(runner.temp_paths) == 2
+    assert all(not path.exists() for path in runner.temp_paths)
+
+
+def test_run_probe_propagates_deregister_failure_after_deleting_temp_files(tmp_path):
+    mod = load()
+    runner = FakeRunner(mod, deregister_fails=True)
+    with pytest.raises(mod.ProbeError, match="command_failed:aws:17"):
+        mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                      runner=runner, sleep=lambda _: None)
     assert len(runner.temp_paths) == 2
     assert all(not path.exists() for path in runner.temp_paths)
