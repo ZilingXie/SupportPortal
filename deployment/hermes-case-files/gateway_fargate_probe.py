@@ -67,7 +67,7 @@ def derive_probe_definition(task_definition: Mapping[str, Any]) -> dict[str, Any
     return result
 
 
-def probe_command() -> list[str]:
+def probe_command() -> str:
     # Keep the command in the image's existing shell; no business API is called.
     script = (
         "set -eu; gateway run >/tmp/gateway-probe.log 2>&1 & pid=$!; "
@@ -88,12 +88,13 @@ def probe_command() -> list[str]:
         "PY\n"
         "exit 0"
     )
-    return ["sh", "-c", script]
+    return script
 
 
 def validate_logs(lines: Sequence[str]) -> Mapping[str, Any]:
-    if COMPLETE_MARKER not in lines:
-        raise ProbeError("completion_marker_missing")
+    completed = [line for line in lines if line == COMPLETE_MARKER]
+    if len(completed) != 1:
+        raise ProbeError("completion_marker_missing" if not completed else "completion_marker_duplicate")
     values: dict[str, Any] = {}
     for marker in (HEALTH_MARKER, TOOLSETS_MARKER):
         found = [x.split("=", 1)[1] for x in lines if x.startswith(marker + "=")]
@@ -108,18 +109,21 @@ def validate_logs(lines: Sequence[str]) -> Mapping[str, Any]:
 
 def run_probe(*, cluster: str, task_definition_arn: str, region: str,
               output: Path, runner: Callable[..., Any] = subprocess.run,
-              sleep: Callable[[float], None] = time.sleep) -> Mapping[str, Any]:
+              sleep: Callable[[float], None] = time.sleep,
+              network_service: str = "supportportal-preproduction-hermes") -> Mapping[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     td_result = _json_call(("aws", "ecs", "describe-task-definition", "--region", region,
                             "--task-definition", task_definition_arn), runner=runner)
     definition = derive_probe_definition(td_result["taskDefinition"])
-    definition["containerDefinitions"][0]["command"] = probe_command()
-    definition["containerDefinitions"][0].pop("entryPoint", None)
+    definition["containerDefinitions"][0]["entryPoint"] = ["sh", "-c"]
+    definition["containerDefinitions"][0]["command"] = [probe_command()]
     log_options = definition["containerDefinitions"][0].get("logConfiguration", {}).get("options", {})
     log_group = log_options.get("awslogs-group")
     log_prefix = log_options.get("awslogs-stream-prefix")
     if not log_group or not log_prefix:
         raise ProbeError("hermes_cloudwatch_identity_missing")
+    definition_path = None
+    network_path = None
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
         json.dump(definition, handle)
         definition_path = handle.name
@@ -130,10 +134,10 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
                                  "--cli-input-json", f"file://{definition_path}"), runner=runner)
         registered_arn = registered["taskDefinition"]["taskDefinitionArn"]
         net = _json_call(("aws", "ecs", "describe-services", "--region", region,
-                          "--cluster", cluster, "--services", "supportportal-preproduction-api",
+                          "--cluster", cluster, "--services", network_service,
                           "--query", "services[0].networkConfiguration"), runner=runner)
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as handle:
-            json.dump(net["services"][0]["networkConfiguration"], handle)
+            json.dump(net, handle)
             network_path = handle.name
         started = _json_call(("aws", "ecs", "run-task", "--region", region, "--cluster", cluster,
                               "--launch-type", "FARGATE", "--task-definition", registered_arn,
@@ -161,6 +165,17 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
                     raise ProbeError("cloudwatch_stream_unavailable")
                 sleep(2)
         lines = [e.get("message", "").rstrip("\n") for e in logs.get("events", [])]
+        token = logs.get("nextForwardToken")
+        while token:
+            page = _json_call(("aws", "logs", "get-log-events", "--region", region,
+                               "--log-group-name", log_group,
+                               "--log-stream-name", log_stream,
+                               "--start-from-head", "--next-token", token), runner=runner)
+            lines.extend(e.get("message", "").rstrip("\n") for e in page.get("events", []))
+            next_token = page.get("nextForwardToken")
+            if not next_token or next_token == token:
+                break
+            token = next_token
         payload = validate_logs(lines)
         evidence = {"task_definition": registered_arn, "task_arn": task_arn,
                     "exit_code": container.get("exitCode"), "markers": payload,
@@ -173,6 +188,9 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
             if arn:
                 _call(("aws", "ecs", "deregister-task-definition", "--region", region,
                        "--task-definition", arn), runner=runner)
+        for path in (definition_path, network_path):
+            if path:
+                Path(path).unlink(missing_ok=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

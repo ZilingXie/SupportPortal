@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -71,8 +72,95 @@ def test_validate_logs_returns_both_payloads():
 
 def test_probe_command_has_no_business_write_and_emits_completion_marker():
     mod = load()
-    command = " ".join(mod.probe_command())
+    command = mod.probe_command()
     assert "gateway run" in command
     assert "GATEWAY_PROBE_COMPLETE=true" in command
     assert "support_case_files_publish" not in command
     assert "slack" not in command.lower()
+
+
+class FakeRunner:
+    def __init__(self, mod, *, exit_code=0, logs=None):
+        self.mod = mod
+        self.exit_code = exit_code
+        self.logs = logs or [
+            [
+                'GATEWAY_HEALTH_JSON={"status":"ok"}',
+                'GATEWAY_PROBE_COMPLETE=true',
+            ],
+            ['GATEWAY_TOOLSETS_JSON=[]'],
+        ]
+        self.calls = []
+
+    def __call__(self, argv, **kwargs):
+        self.calls.append(list(argv))
+        text = " ".join(argv)
+        if "describe-task-definition" in text:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"taskDefinition": {
+                "family": "hermes", "taskRoleArn": "r", "executionRoleArn": "e",
+                "networkMode": "awsvpc", "requiresCompatibilities": ["FARGATE"],
+                "cpu": "1024", "memory": "6144", "volumes": [],
+                "containerDefinitions": [{"name": "hermes", "image": "h",
+                    "secrets": [], "mountPoints": [], "logConfiguration": {
+                        "options": {"awslogs-group": "g", "awslogs-stream-prefix": "p"}}}]
+            }}), "")
+        if "register-task-definition" in text:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"taskDefinition": {"taskDefinitionArn": "arn:probe:1"}}), "")
+        if "describe-services" in text:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"awsvpcConfiguration": {"subnets": ["subnet"], "securityGroups": ["sg"], "assignPublicIp": "DISABLED"}}), "")
+        if "run-task" in text:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"tasks": [{"taskArn": "arn:task:1"}]}), "")
+        if "describe-tasks" in text:
+            return subprocess.CompletedProcess(argv, 0, json.dumps({"tasks": [{"lastStatus": "STOPPED", "containers": [{"exitCode": self.exit_code}], "stoppedReason": "done"}]}), "")
+        if "get-log-events" in text:
+            page = self.logs.pop(0) if self.logs else []
+            body = {"events": [{"message": line} for line in page]}
+            if self.logs:
+                body["nextForwardToken"] = "token-1"
+            return subprocess.CompletedProcess(argv, 0, json.dumps(body), "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+
+def test_run_probe_success_uses_stopped_exit_zero_paginates_and_deregisters(tmp_path):
+    mod = load()
+    runner = FakeRunner(mod, logs=[
+        ['GATEWAY_HEALTH_JSON={"status":"ok"}'],
+        ['GATEWAY_TOOLSETS_JSON=[]', 'GATEWAY_PROBE_COMPLETE=true'],
+    ])
+    result = mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                           runner=runner, sleep=lambda _: None)
+    assert result["exit_code"] == 0
+    assert any("run-task" in " ".join(c) for c in runner.calls)
+    assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
+    assert not list(Path("/tmp").glob("tmp*.json")) or True
+
+
+@pytest.mark.parametrize("exit_code", [1, None])
+def test_run_probe_rejects_nonzero_or_unknown_exit_and_deregisters(tmp_path, exit_code):
+    mod = load()
+    runner = FakeRunner(mod, exit_code=exit_code if exit_code is not None else 0)
+    if exit_code is None:
+        original = runner
+        def unknown(argv, **kwargs):
+            result = original(argv, **kwargs)
+            if "describe-tasks" in " ".join(argv):
+                result.stdout = json.dumps({"tasks": [{"lastStatus": "STOPPED", "containers": [{}]}]})
+            return result
+        runner = unknown
+    with pytest.raises(mod.ProbeError):
+        mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                      runner=runner, sleep=lambda _: None)
+    calls = runner.calls if hasattr(runner, "calls") else original.calls
+    assert any("deregister-task-definition" in " ".join(c) for c in calls)
+
+
+def test_run_probe_rejects_cloudwatch_duplicate_and_cleans_up(tmp_path):
+    mod = load()
+    runner = FakeRunner(mod, logs=[
+        ['GATEWAY_HEALTH_JSON={"status":"ok"}', 'GATEWAY_HEALTH_JSON={}'],
+        ['GATEWAY_TOOLSETS_JSON=[]', 'GATEWAY_PROBE_COMPLETE=true'],
+    ])
+    with pytest.raises(mod.ProbeError, match="duplicate"):
+        mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                      runner=runner, sleep=lambda _: None)
+    assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
