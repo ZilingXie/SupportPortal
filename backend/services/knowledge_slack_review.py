@@ -168,10 +168,13 @@ def deliver_knowledge_review_notification(
     event_id = knowledge_review_event_id(promotion_id)
     if str(promotion.get("slack_review_message_ts") or "").strip():
         # Re-delivery after an earlier successful post (e.g. a format
-        # refresh): a distinct deterministic id keeps Slack's client_msg_id
-        # duplicate suppression from swallowing the resend while staying
-        # idempotent across repeated resends.
-        event_id = f"{event_id}:resend"
+        # refresh). Slack's client_msg_id suppression is LONG-LIVED: reusing
+        # yesterday's id makes the post a silent no-op that still reports
+        # delivered. Keying the suffix by the delivery claim makes the id
+        # unique per re-delivery round while retries within one round (same
+        # claim) stay idempotent.
+        claimed_at = str(promotion.get("slack_review_claimed_at") or "").strip()
+        event_id = f"{event_id}:resend:{claimed_at or uuid4().hex}"
     owner_token = f"knowledge-review-delivery:{uuid4().hex}"
     from datetime import datetime, timedelta
 
