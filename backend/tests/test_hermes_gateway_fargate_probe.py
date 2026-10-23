@@ -51,6 +51,7 @@ def test_derive_probe_definition_keeps_only_hermes_and_its_mounts():
     (["GATEWAY_PROBE_COMPLETE=true"], "marker_missing:GATEWAY_HEALTH_JSON"),
     (["GATEWAY_HEALTH_JSON={}", "GATEWAY_HEALTH_JSON={}", "GATEWAY_TOOLSETS_JSON=[]", "GATEWAY_PROBE_COMPLETE=true"], "marker_duplicate:GATEWAY_HEALTH_JSON"),
     (["GATEWAY_HEALTH_JSON={}", "GATEWAY_TOOLSETS_JSON=[]"], "completion_marker_missing"),
+    (["GATEWAY_HEALTH_JSON={}", "GATEWAY_TOOLSETS_JSON=[]", "GATEWAY_PROBE_COMPLETE=true", "GATEWAY_PROBE_COMPLETE=true"], "completion_marker_duplicate"),
 ])
 def test_validate_logs_requires_unique_markers_and_completion(lines, error):
     mod = load()
@@ -83,7 +84,7 @@ class FakeRunner:
     def __init__(self, mod, *, exit_code=0, logs=None):
         self.mod = mod
         self.exit_code = exit_code
-        self.logs = logs or [
+        self.logs = logs if logs is not None else [
             [
                 'GATEWAY_HEALTH_JSON={"status":"ok"}',
                 'GATEWAY_PROBE_COMPLETE=true',
@@ -91,9 +92,15 @@ class FakeRunner:
             ['GATEWAY_TOOLSETS_JSON=[]'],
         ]
         self.calls = []
+        self.temp_paths = []
+        self.stream_failures = 0
 
     def __call__(self, argv, **kwargs):
         self.calls.append(list(argv))
+        for index, value in enumerate(argv):
+            if value.startswith("file://") and ("--cli-input-json" in argv[max(0, index - 1):index] or
+                                                 "--network-configuration" in argv[max(0, index - 1):index]):
+                self.temp_paths.append(Path(value.removeprefix("file://")))
         text = " ".join(argv)
         if "describe-task-definition" in text:
             return subprocess.CompletedProcess(argv, 0, json.dumps({"taskDefinition": {
@@ -113,6 +120,9 @@ class FakeRunner:
         if "describe-tasks" in text:
             return subprocess.CompletedProcess(argv, 0, json.dumps({"tasks": [{"lastStatus": "STOPPED", "containers": [{"exitCode": self.exit_code}], "stoppedReason": "done"}]}), "")
         if "get-log-events" in text:
+            if self.stream_failures:
+                self.stream_failures -= 1
+                return subprocess.CompletedProcess(argv, 1, "", "ResourceNotFoundException")
             page = self.logs.pop(0) if self.logs else []
             body = {"events": [{"message": line} for line in page]}
             if self.logs:
@@ -132,7 +142,8 @@ def test_run_probe_success_uses_stopped_exit_zero_paginates_and_deregisters(tmp_
     assert result["exit_code"] == 0
     assert any("run-task" in " ".join(c) for c in runner.calls)
     assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
-    assert not list(Path("/tmp").glob("tmp*.json")) or True
+    assert len(runner.temp_paths) == 2
+    assert all(not path.exists() for path in runner.temp_paths)
 
 
 @pytest.mark.parametrize("exit_code", [1, None])
@@ -152,6 +163,8 @@ def test_run_probe_rejects_nonzero_or_unknown_exit_and_deregisters(tmp_path, exi
                       runner=runner, sleep=lambda _: None)
     calls = runner.calls if hasattr(runner, "calls") else original.calls
     assert any("deregister-task-definition" in " ".join(c) for c in calls)
+    assert len(original.temp_paths) == 2
+    assert all(not path.exists() for path in original.temp_paths)
 
 
 def test_run_probe_rejects_cloudwatch_duplicate_and_cleans_up(tmp_path):
@@ -164,3 +177,34 @@ def test_run_probe_rejects_cloudwatch_duplicate_and_cleans_up(tmp_path):
         mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
                       runner=runner, sleep=lambda _: None)
     assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
+    assert len(runner.temp_paths) == 2
+    assert all(not path.exists() for path in runner.temp_paths)
+
+
+@pytest.mark.parametrize("logs,error", [
+    ([['GATEWAY_HEALTH_JSON={"status":"ok"}'], ['GATEWAY_PROBE_COMPLETE=true']], "marker_missing:GATEWAY_TOOLSETS_JSON"),
+    ([['GATEWAY_HEALTH_JSON={'], ['GATEWAY_TOOLSETS_JSON=[]', 'GATEWAY_PROBE_COMPLETE=true']], "marker_invalid_json:GATEWAY_HEALTH_JSON"),
+])
+def test_run_probe_rejects_missing_or_invalid_cloudwatch_marker_and_cleans_up(tmp_path, logs, error):
+    mod = load()
+    runner = FakeRunner(mod, logs=logs)
+    with pytest.raises(mod.ProbeError, match=error):
+        mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                      runner=runner, sleep=lambda _: None)
+    assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
+    assert len(runner.temp_paths) == 2
+    assert all(not path.exists() for path in runner.temp_paths)
+
+
+def test_run_probe_rejects_cloudwatch_stream_timeout_without_sleeping(tmp_path):
+    mod = load()
+    runner = FakeRunner(mod, logs=[])
+    runner.stream_failures = 99
+    clock_values = iter([0.0, 2.0])
+    with pytest.raises(mod.ProbeError, match="cloudwatch_stream_unavailable"):
+        mod.run_probe(cluster="c", task_definition_arn="td", region="r", output=tmp_path,
+                      runner=runner, sleep=lambda _: None, clock=lambda: next(clock_values),
+                      stream_timeout_seconds=1)
+    assert any("deregister-task-definition" in " ".join(c) for c in runner.calls)
+    assert len(runner.temp_paths) == 2
+    assert all(not path.exists() for path in runner.temp_paths)

@@ -110,7 +110,9 @@ def validate_logs(lines: Sequence[str]) -> Mapping[str, Any]:
 def run_probe(*, cluster: str, task_definition_arn: str, region: str,
               output: Path, runner: Callable[..., Any] = subprocess.run,
               sleep: Callable[[float], None] = time.sleep,
-              network_service: str = "supportportal-preproduction-hermes") -> Mapping[str, Any]:
+              network_service: str = "supportportal-preproduction-hermes",
+              clock: Callable[[], float] = time.monotonic,
+              stream_timeout_seconds: float = 60) -> Mapping[str, Any]:
     output.mkdir(parents=True, exist_ok=True)
     td_result = _json_call(("aws", "ecs", "describe-task-definition", "--region", region,
                             "--task-definition", task_definition_arn), runner=runner)
@@ -153,7 +155,7 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
             raise ProbeError(f"probe_exit:{container.get('exitCode')}:{task.get('stoppedReason','unknown')}")
         log_stream = f"{log_prefix}/hermes/{task_arn.rsplit('/', 1)[-1]}"
         logs = None
-        deadline = time.monotonic() + 60
+        deadline = clock() + stream_timeout_seconds
         while logs is None:
             try:
                 logs = _json_call(("aws", "logs", "get-log-events", "--region", region,
@@ -161,7 +163,7 @@ def run_probe(*, cluster: str, task_definition_arn: str, region: str,
                                    "--log-stream-name", log_stream,
                                    "--start-from-head"), runner=runner)
             except ProbeError:
-                if time.monotonic() >= deadline:
+                if clock() >= deadline:
                     raise ProbeError("cloudwatch_stream_unavailable")
                 sleep(2)
         lines = [e.get("message", "").rstrip("\n") for e in logs.get("events", [])]
