@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T08:48:34Z",
-  "source_base_commit": "ca879a3371759cadc76a34cea863d1b57b516f79",
-  "registry_digest": "c5b704cc0ebc6b86dbd1e23d86d78f0abbb98752e6d7bff3705f88d2369b3984",
+  "generated_at": "2026-10-23T08:53:38Z",
+  "source_base_commit": "b0b17902c91e336b637b39f166a30992e3b2cf81",
+  "registry_digest": "f9eda476ce19db5daef727791fcf71910ede1c94d712d9935921517fb208e32d",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -5654,6 +5654,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         {
           "type": "test",
           "label": "部署 worker 镜像（digest 869fba39）内探针 9 项 ALL_PASS：F1 修复代码源码验证（fresh re-read 在 _ensure_case_thread 后/无 or-binding 回退/四守卫 binding_reread_failed+thread_creation_failed+channel_missing+channel_mismatch/native-only 作用域/legacy 仅无 repo 路径）+ 分条构建功能部署在位"
+        },
+        {
+          "type": "test",
+          "label": "R1 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 32 passed（含隔离 PostgreSQL）+ 相关回归 205 passed/17 skipped + compileall/diff --check",
+          "result": "四项阻断全修：F1 移除 context 短路（already_assigned 一律以实时 Zendesk 快照为准，assignee+group 双字段匹配；陈旧 assigned context 遇实时人工接管正确 skipped_human_owned、遇实时空受理人照常分配）；F2 already_assigned 与 readback 均要求 assignee_id==ai_assignee 且 group_id==ai_group（AI 受理人错组 fallthrough 走 safe update 纠正组）；F3 worker 身份校验要求 source_turn_id 非空且 source_turn_kind 在显式白名单（fixed_task/investigation_reply/normal/investigation_feedback），缺失=missing/mismatch 拒绝并记事件；F4 ownership 路径全部 record_event/save_account_case 独立 try/except（event_persist_failed 标志+结构化日志，写失败不影响已投递客户回复）。32 方法=23 原有+9 新增 F1-F4 回归（陈旧 context 场景/错组 fallthrough/身份拒绝/事件写失败）。修复提交 b0b17902 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第一轮：未通过（2026-10-23）",
+          "command": "验收方审查 Draft PR#1558（HEAD ca879a33）四项阻断",
+          "result": "未通过（F1 context 短路在未读 Zendesk 时凭缓存返回 already_assigned；F2 already_assigned 仅校验受理人未校验组；F3 worker 身份校验仅查 direction 未查 turn 绑定完整性；F4 record_event 写失败未防护可中断投递流程）。允许下一步：同一 Draft PR#1558 追加修复提交，保持独立验收门；修复后重交完整 HEAD 与实际 PG 证据；修复前不得合并或部署。"
         }
       ],
       "source_refs": [
@@ -19685,7 +19697,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "title": "Investigation 客户回复后自动接管 Zendesk Ownership v1",
       "summary": "当 Investigation Agent 的草稿经过人工批准、Zendesk public comment 已成功写入并回读确认后：无 assignee 时自动分配配置的 AI；已由 AI 持有保持幂等；人工接管/人工回复/终态/状态不可确认时停止并记录原因。不改变 Investigation 的 Slack 调查、草稿审批、route、附件或普通 Automation 行为。Preproduction only。",
       "status": "active",
-      "next_action": "实施中",
+      "next_action": "R1 修复已推送（Draft PR#1558 HEAD b0b17902），等待独立复验；通过前不合并不部署。",
       "owner": "agent",
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
@@ -19704,7 +19716,20 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "C12 context/event 可恢复"
       ],
       "blockers": [],
-      "evidence": []
+      "evidence": [
+        {
+          "type": "test",
+          "label": "R1 修复轮实施（2026-10-23，待独立复验）",
+          "command": "专项 test_investigation_reply_ownership 32 passed（含隔离 PostgreSQL）+ 相关回归 205 passed/17 skipped + compileall/diff --check",
+          "result": "四项阻断全修：F1 移除 context 短路（already_assigned 一律以实时 Zendesk 快照为准，assignee+group 双字段匹配；陈旧 assigned context 遇实时人工接管正确 skipped_human_owned、遇实时空受理人照常分配）；F2 already_assigned 与 readback 均要求 assignee_id==ai_assignee 且 group_id==ai_group（AI 受理人错组 fallthrough 走 safe update 纠正组）；F3 worker 身份校验要求 source_turn_id 非空且 source_turn_kind 在显式白名单（fixed_task/investigation_reply/normal/investigation_feedback），缺失=missing/mismatch 拒绝并记事件；F4 ownership 路径全部 record_event/save_account_case 独立 try/except（event_persist_failed 标志+结构化日志，写失败不影响已投递客户回复）。32 方法=23 原有+9 新增 F1-F4 回归（陈旧 context 场景/错组 fallthrough/身份拒绝/事件写失败）。修复提交 b0b17902 追加于 Draft PR#1558。"
+        },
+        {
+          "type": "decision",
+          "label": "独立验收第一轮：未通过（2026-10-23）",
+          "command": "验收方审查 Draft PR#1558（HEAD ca879a33）四项阻断",
+          "result": "未通过（F1 context 短路在未读 Zendesk 时凭缓存返回 already_assigned；F2 already_assigned 仅校验受理人未校验组；F3 worker 身份校验仅查 direction 未查 turn 绑定完整性；F4 record_event 写失败未防护可中断投递流程）。允许下一步：同一 Draft PR#1558 追加修复提交，保持独立验收门；修复后重交完整 HEAD 与实际 PG 证据；修复前不得合并或部署。"
+        }
+      ]
     },
     {
       "schema_version": 2,
