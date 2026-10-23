@@ -7,7 +7,7 @@
 ## 当前 F1 修复与停止点
 
 - 工作区：`.worktrees/investigation-case-files-slack-ingress-metadata-v1`，分支 `codex/investigation-case-files-slack-bot-config-v1`，继续 Draft PR #1545。
-- 起点：`a37757f062458ba9c3f6bd7928d99fd7314ba2f1`；同步主干的合并提交 `ce75bbf4` 保留双方 Task/evidence，Overview 通过生成器重建。
+- 起点：`a37757f062458ba9c3f6bd7928d99fd7314ba2f1`；同步主干的合并提交 `ce75bbf4` 保留双方 Task/evidence，Overview 通过生成器重建；之后同步 `8201dd79295ec97c8def09f82022a7814568e9a5` 的两项无关知识通知实现/测试改动，完整定向检查再次通过。
 - live parent：`8f5f02d4-5448-45cb-b9f3-3499e7c254e8`；live child：`7400713d-c7e3-436d-9e05-fa53d6674fd7`，均未改变。
 - 新 child draft：`ff147b6e-888a-4564-9824-fcc1676469c9`，18 节点；原 bot/普通文字节点及分支保留，只改变 human 入口和发送器的可信输入选择。
 - 已验证根因：n8n 2.38.7 Slack Trigger 仅输出 `req.body.event`，丢弃 envelope team；自然 human file_share 无 team，原 child 两个校验器均不命中。

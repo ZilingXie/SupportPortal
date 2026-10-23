@@ -1063,7 +1063,7 @@
     ],
     "verification": {
       "command": "/Users/xieziling/Desktop/personal_proj/SupportPortal/.venv/bin/python -m pytest backend/tests/test_n8n_human_file_share.py backend/tests/test_investigation_attachments_n8n_contract.py backend/tests/test_n8n_snapshot_identity.py backend/tests/test_n8n_source_only_contracts.py -q",
-      "result": "146 passed in 11.77s",
+      "result": "146 passed on verification_head after latest main integration",
       "carrier": "Native Node VM executes actual snapshot expressions, Code and graph edges; all HTTP boundaries inert. Cloud manual tests execute n8n logic with I/O pinned; sender payload evaluated by local runner, not claimed as a live HTTP send.",
       "canaries": "Bypassing verification cannot access normalized sender input; misrouting files into adhoc throws. Existing validator negative identity tests retained.",
       "snapshot_test_repair": "Historical knowledge snapshots remain byte-exact. Slack has authorized fresh readback; fixed obsolete counts 15/4/56 -> 15/3/52 and pins published7400713d/draftff147b6e; identity conflict negative tests unchanged.",
@@ -1073,7 +1073,8 @@
         "project_overview": "passed",
         "feature_list": "passed",
         "diff_check": "passed after trimming changelog EOF blank line"
-      }
+      },
+      "integration_impact": "origin/main advanced only knowledge review notification event-id implementation/tests (2 files); F1 workflow, runner and assertions unchanged. Full 146 targeted checks rerun after integration. Subsequent evidence-only commit does not alter behavior."
     },
     "cloud_isolation": [
       {
@@ -1234,6 +1235,9 @@
       "hermes": "not called",
       "zac": "not called"
     },
-    "next_action": "Independent review of full PR HEAD / draft bytes and evidence only. Preserve Draft PR/worktree. No merge, live publish, SupportPortal deployment, old event replay or C3 in this round."
+    "next_action": "Independent review of full PR HEAD / draft bytes and evidence only. Preserve Draft PR/worktree. No merge, live publish, SupportPortal deployment, old event replay or C3 in this round.",
+    "implementation_commit": "8b3f7981949eac83fd453fa31b8e31b934dbdc1c",
+    "integrated_main": "8201dd79295ec97c8def09f82022a7814568e9a5",
+    "verification_head": "446a49d3e3ca6e01a1ec7ca350a53d3d68676e1d"
   }
 }
