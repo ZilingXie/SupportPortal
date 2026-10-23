@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T04:42:46Z",
-  "source_base_commit": "0338d5645d1194aa8e04c17a51e7f3fc51755e2a",
-  "registry_digest": "503ea20bc1ee27ff9fe668ba70d2d37e47d7bee0ea46da1dc26cf9424002eb73",
+  "generated_at": "2026-10-23T04:43:04Z",
+  "source_base_commit": "da9e9e91214363ab0d53394243cb2b54d8e706ea",
+  "registry_digest": "d8c2433ee3ebc6a8c8e4b54cea25fb44c346efb324a6826ef28c1bb04a4f76b5",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1907,6 +1907,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
         },
         {
+          "type": "deployment",
+          "label": "Preproduction 发布与真实验证（2026-10-23，e1p-natural-submission-confirmation-v1）",
+          "command": "release pipeline --release-commit 9b1f8e1b --through preproduction（首轮回滚=ECR 拉取竞态，--resume 后通过）→ 新 synthetic E1P 工单 14225",
+          "result": "r20261023-9b1f8e1 上线（api:175/route:170/worker:173，digest 三侧一致，evidence complete）。真实验证：E1P 三步 PASS 后 draft 内容检查正确拒收 14202 同款回复（'Enablement hasn't been confirmed yet'——F1 stiff negative + F2 receipt/三要素缺失双命中）=新验证器在场景门禁生效；但该回复仍经 Hermes native draft 路径公开投递（评论 54890160373140）+relay 申请照常派发=该路径绕过 validate_account_reply_contract，C4 的重生成/fail-closed 在 draft 链无实现。处置（用户选 A）：工单 14225 solved（内部注记缺口），relay 结果不发（申请到期清扫收尾）；缺口立 p2-211（persona-draft-contract-gate）承接：draft 生成后投递前过合同门禁+有限重生成+fail-closed。p2-210 以'验证器已上线并在 reply-job 链路+场景门禁生效；draft 路径缺口由 p2-211 承接'收口。"
+        },
+        {
           "type": "decision",
           "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
           "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
@@ -2026,7 +2032,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "status": "active",
       "task_count": 54,
-      "done_count": 26,
+      "done_count": 27,
       "blocked_count": 2
     },
     {
@@ -19586,7 +19592,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "schema_version": 1,
       "task_id": "p2-210",
       "title": "E1P 自然提交确认合同：自动路径 business-day 语义+拒绝生硬否定状态句（e1p-natural-submission-confirmation-v1）",
-      "status": "active",
+      "status": "done",
       "owner": "zac",
       "phase_id": "phase-1",
       "module_id": "account-automation",
@@ -19594,7 +19600,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-22",
       "updated_at": "2026-10-23",
       "summary": "14202 根因：persona submission_confirmation 无内容合同验证分支，模型在正确的 review 语义后补了生硬否定句（Media Relay is not yet confirmed as enabled）且漏掉 prompt 要求的 business-day 说明。修复：persona v33（策略加入三要素+反例禁句+风格参考）；新增 _assert_enablement_submission_confirmation_contract（auto 路径必含感谢/收到+review+business-day+更新承诺，拒 stiff negative/提前启用/24h；manual 仅继承禁句，24h 文案保留）；场景检查统一为单一共享合同（E1P/E3 turn-4/PP-A1 同语义）。不触 Production；不重放 14202；hermes 手册（catalog prompt）本轮不改并披露。",
-      "next_action": "验收通过→finalize PR#1554→仅 Preprod 部署（persona v33 随应用发布）→新 synthetic E1P 工单三侧独立回读（不重放 14202/不触 Production）。",
+      "next_action": "已收口：验证器上线 r20261023-9b1f8e1 并在真实验证中正确拒收 14202 形态；native draft 路径绕过缺口移交 p2-211（persona-draft-contract-gate）实施接入；工单 14225 已 solved、relay 结果未发。",
       "acceptance_criteria": [
         "14202 原文与 stiff-negative 变体在 persona 验证器被拒（真实入口 validate_account_reply_contract）",
         "自然正控（感谢+review+business-day+keep posted）通过；manual 24h 文案继续通过",
@@ -19603,6 +19609,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "deployment",
+          "label": "Preproduction 发布与真实验证（2026-10-23，e1p-natural-submission-confirmation-v1）",
+          "command": "release pipeline --release-commit 9b1f8e1b --through preproduction（首轮回滚=ECR 拉取竞态，--resume 后通过）→ 新 synthetic E1P 工单 14225",
+          "result": "r20261023-9b1f8e1 上线（api:175/route:170/worker:173，digest 三侧一致，evidence complete）。真实验证：E1P 三步 PASS 后 draft 内容检查正确拒收 14202 同款回复（'Enablement hasn't been confirmed yet'——F1 stiff negative + F2 receipt/三要素缺失双命中）=新验证器在场景门禁生效；但该回复仍经 Hermes native draft 路径公开投递（评论 54890160373140）+relay 申请照常派发=该路径绕过 validate_account_reply_contract，C4 的重生成/fail-closed 在 draft 链无实现。处置（用户选 A）：工单 14225 solved（内部注记缺口），relay 结果不发（申请到期清扫收尾）；缺口立 p2-211（persona-draft-contract-gate）承接：draft 生成后投递前过合同门禁+有限重生成+fail-closed。p2-210 以'验证器已上线并在 reply-job 链路+场景门禁生效；draft 路径缺口由 p2-211 承接'收口。"
+        },
         {
           "type": "decision",
           "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
