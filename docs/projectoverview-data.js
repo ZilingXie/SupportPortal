@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T11:25:36Z",
-  "source_base_commit": "0ad5a0602a8429fc73cea927b803b3005f8b591d",
-  "registry_digest": "fb794aa75d5b85fb91b8cf885f907e1a5314b8af2649368b1d8740c120ceddaf",
+  "generated_at": "2026-10-23T13:46:12Z",
+  "source_base_commit": "2ea994b524df5b723319236f4826f4a02ce0dfeb",
+  "registry_digest": "a8070b466e690a34c2b5d401a2f69860bc0e63a88960707e5dc5946c119e96e8",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -6409,6 +6409,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
           "command": "独立核对 ECS/SSM/Terraform/checkpoint",
           "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
+        },
+        {
+          "type": "test",
+          "label": "知识审查 Slack 按钮合同测试（stage6-csd-10 审批 UX）",
+          "command": "pytest backend/tests/test_knowledge_slack_buttons.py backend/tests/test_stage4_slack_review.py backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_engineer_slack.py",
+          "result": "passed 117（按钮 13 项：分派绕过 case 校验/服务端验证 operator/superseded 409 零状态变更/reject 终态/approve new-resolution/重复点击 already/真实 payload 级 C1 根+C2 线程锚断言；PR#1560+#1561=main 9d6fdd3f）"
+        },
+        {
+          "type": "deployment",
+          "label": "知识审查审批 UX 两轮 Preproduction 发布（按钮+格式+C2 修复）",
+          "command": "automation_ecs_release_pipeline run r20261023-edb36b6-slackbuttons / r20261023-9d6fdd3-c2fix",
+          "result": "passed（两轮全阶段绿；knowledge_stage 六开关复刻 r20261023-ec76139 identity；r2 含 C2 线程回复 payload 修复）"
+        },
+        {
+          "type": "document",
+          "label": "n8n Handle Action 交互流 knowledge 分支发布 + 快照刷新",
+          "command": "n8n update_workflow FKv8vtZBQk6tH4Gt + publish（active=21bc0580）；validate_workflow_snapshots.py",
+          "result": "passed（Knowledge Action 分支路由 knowledge_approve/reject→SP actions 端点，汇聚既有 response_url consume 链；探针 execution 198269=无效 promotion 404 零状态变更；快照 15 published 校验通过，PR#1561 入库）"
         }
       ],
       "source_refs": [
@@ -18889,6 +18907,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "部署阶段完成并通过独立验收（r20261019-21c6eed，2026-10-20 复核）",
           "command": "独立核对 ECS/SSM/Terraform/checkpoint",
           "result": "代码合入+全关闭部署通过；业务闭环（真实知识入 WeKnora+Agent 检索证据）待受控样本阶段。"
+        },
+        {
+          "type": "test",
+          "label": "知识审查 Slack 按钮合同测试（stage6-csd-10 审批 UX）",
+          "command": "pytest backend/tests/test_knowledge_slack_buttons.py backend/tests/test_stage4_slack_review.py backend/tests/test_hermes_slack_knowledge_review.py backend/tests/test_engineer_slack.py",
+          "result": "passed 117（按钮 13 项：分派绕过 case 校验/服务端验证 operator/superseded 409 零状态变更/reject 终态/approve new-resolution/重复点击 already/真实 payload 级 C1 根+C2 线程锚断言；PR#1560+#1561=main 9d6fdd3f）"
+        },
+        {
+          "type": "deployment",
+          "label": "知识审查审批 UX 两轮 Preproduction 发布（按钮+格式+C2 修复）",
+          "command": "automation_ecs_release_pipeline run r20261023-edb36b6-slackbuttons / r20261023-9d6fdd3-c2fix",
+          "result": "passed（两轮全阶段绿；knowledge_stage 六开关复刻 r20261023-ec76139 identity；r2 含 C2 线程回复 payload 修复）"
+        },
+        {
+          "type": "document",
+          "label": "n8n Handle Action 交互流 knowledge 分支发布 + 快照刷新",
+          "command": "n8n update_workflow FKv8vtZBQk6tH4Gt + publish（active=21bc0580）；validate_workflow_snapshots.py",
+          "result": "passed（Knowledge Action 分支路由 knowledge_approve/reject→SP actions 端点，汇聚既有 response_url consume 链；探针 execution 198269=无效 promotion 404 零状态变更；快照 15 published 校验通过，PR#1561 入库）"
         }
       ]
     },
