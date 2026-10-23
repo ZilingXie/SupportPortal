@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T05:29:45Z",
-  "source_base_commit": "71a3700d49ef47023fc1c62dabcf57c2872b9499",
-  "registry_digest": "14978a36f13daf58d0cbcb87eecff9e41130b045785e61e0b7f9777bfe33b991",
+  "generated_at": "2026-10-23T05:53:34Z",
+  "source_base_commit": "d10d3a4f8449e51cf66f422f1304c846cae68f28",
+  "registry_digest": "e013eb0a2dd48d990dba503b6ea5b7de5662cae03f2395abdbfaafc5efeb1454",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1923,6 +1923,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
           "command": "pytest persona Repair+NaturalContract（10 passed/28 subtests）+ scenarios 71 passed/11 subtests + persona/context/basis 回归 + compileall/diff --check",
           "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
+        },
+        {
+          "type": "decision",
+          "label": "独立代码验收通过（2026-10-23，persona-draft-contract-gate v1）",
+          "command": "验收方复跑：native enablement regression 16 passed；persona/场景/basis/context/fraud 235 passed/32 skipped；边界（14225/requested a review/hasn't been confirmed yet）通过；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1556 HEAD d10d3a4f）。允许下一步：合并→仅 Preproduction 发布→新 synthetic E1P 三侧独立回读。"
         },
         {
           "type": "test",
@@ -19647,7 +19653,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       "created_at": "2026-10-23",
       "updated_at": "2026-10-23",
       "summary": "p2-210 真实验证（工单 14225）实证：新验证器在 reply-job publish 链路正确拒收 14202 形态回复，但 Hermes native draft 路径（worker hermes persona phase → hermes_draft_prepared/queued → 直接投递）绕过 validate_account_reply_contract，生硬否定句仍公开投递（评论 54890160373140）。本任务把 submission_confirmation（推广为 hermes persona 内容合同）接入 draft 生成路径：生成后投递前过合同门禁，失败走有限重生成→fail-closed（C4 原意），不投递违约内容。前置：p2-210 已上线 r20261023-9b1f8e1。",
-      "next_action": "persona-draft-contract-gate v1 实施完成：Draft PR 待独立验收；通过后 Preprod 发布+新 synthetic E1P 完整验证（14202/14225 形态端到端不再投递）。",
+      "next_action": "验收通过→finalize PR#1556→仅 Preprod 发布→新 synthetic E1P 三侧回读（14202/14225 形态端到端拦截验证）。",
       "acceptance_criteria": [
         "native draft 路径生成的 submission_confirmation 违约内容（stiff negative/缺三要素）不投递",
         "违约触发有限重生成，重生成仍失败则 fail-closed 转人工，不投递、不伪造",
@@ -19656,6 +19662,12 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
       ],
       "blockers": [],
       "evidence": [
+        {
+          "type": "decision",
+          "label": "独立代码验收通过（2026-10-23，persona-draft-contract-gate v1）",
+          "command": "验收方复跑：native enablement regression 16 passed；persona/场景/basis/context/fraud 235 passed/32 skipped；边界（14225/requested a review/hasn't been confirmed yet）通过；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1556 HEAD d10d3a4f）。允许下一步：合并→仅 Preproduction 发布→新 synthetic E1P 三侧独立回读。"
+        },
         {
           "type": "test",
           "label": "persona-draft-contract-gate v1 实施（待独立验收）",
