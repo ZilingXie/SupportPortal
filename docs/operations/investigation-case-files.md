@@ -50,3 +50,6 @@ HMR-V4-01修复（2026-10-22）：check-only对prepared/outcome_unknown返回pub
 
 
 2026-10-22 Hermes Exec readback carrier v1：上次v4部署失败原因为合并health/toolsets ECS Exec wrapper在health marker后EOF。本阶段新增 `deployment/hermes-case-files/gateway_readback.py`，两个独立会话分别保存stdout/stderr/退出码/超时/EOF/唯一marker/JSON；缺失、重复、半截、EOF、非零、超时均非零失败。8项真实入口回归通过；尚未重试云端、未修改EFS/任务定义、未开始真实文件测试。详见[计划](../plans/investigation-case-files-hermes-exec-readback-carrier-v1.md)。
+
+
+2026-10-22 carrier实测：#1552载具独立通过并合并后，在稳定TD54实际拆分health/toolsets ECS Exec。两个会话均有完整唯一marker和returncode0，但随后各自输出Session Manager EOF；载具返回非零并保存health.json/toolsets.json。没有云端写入或业务调用。当前必须先解决EOF终止语义，不能把marker+EOF当readiness通过。
