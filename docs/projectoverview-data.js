@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T15:44:38Z",
-  "source_base_commit": "3d60e9a5f4d9d976cd0fcd0d7dda852be44d5045",
-  "registry_digest": "abdfd4d16e957c9261f421b6ca55c46bae9d2e3c4db33528e860d2b261bc7337",
+  "generated_at": "2026-10-23T23:12:07Z",
+  "source_base_commit": "3790c435ed906f41e9a54c6aa3611e6bf5a7e0d8",
+  "registry_digest": "9006501253c7ddfa51e2dd61a4339e49dbef8be57fe35ecbd26aa50e91512c50",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1943,6 +1943,24 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
         },
         {
+          "type": "decision",
+          "label": "独立代码验收通过（2026-10-24，persona-library-content-loading v1）",
+          "command": "验收方复跑 266 passed/220 subtests（F1/F2 源码语法树核对）；F3 任务号冲突已解决（p2-212 ownership 保留，persona=p2-213）；PG 22 项沿用执行方隔离库证据",
+          "result": "通过（PR#1559 HEAD 2fe10c1b + main 同步 8201dd79 后的最终 HEAD）。允许：finalize→Preprod 发布→三 persona published 回读→新 E3（relay 腿用户手动执行）。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 2 修复（F2 catalog 测试存储断言恢复）",
+          "command": "pytest account_admin(39)/worker-compat/rerun/persona/zendesk_agent=266 passed/220 subtests + PG persona 22 passed + compileall/diff --check",
+          "result": "F2：catalog 测试恢复完整仓储回读断言——恰好三 persona、enabled、published_version=1、单版本 published、created_by=system、change_note==seed marker、存储 content 与目录 content 全等；内容期望改为从当前 preset 派生（不再维护易漂移的字面文案），并保留三要素语义 floor（Enablement submission confirmations + business days）；preset 版本 pin v2。F1 未动。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 default-support 覆盖缺口 + marker/内容 pin 更新）",
+          "command": "PG persona 套件（RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true，22 passed 含 3 新增）+ persona/zendesk/native/catalog/worker-compat/rerun/scenarios/basis 回归 380 passed/231 subtests + compileall/diff --check",
+          "result": "F1：非 system 保护规则=有 operator 内容时——sid-* 一律保护；default-support 仅在已有 system 版本（已被 preset 体系接管）后保护，纯 legacy（无 system 版本）仍按既有合同一次性 bootstrap 迁移（legacy 历史四测原样通过）。新增 3 项 PG 测试：default-support 教学版本在 marker 变更 seed 后保持 published；同 marker 重复 seed 幂等；sticky assignment 钉定版本在 seed skip 后不漂移。连带更新：rerun 工具 APPROVED_PERSONA_V2 pin（新 marker+content sha256，审批版本 v2→v3）；catalog 测试改 preset 派生（清存量漂移）；worker compat marker v3；preset 版本 pin v2。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -2049,7 +2067,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 54,
+      "task_count": 55,
       "done_count": 28,
       "blocked_count": 2
     },
@@ -19848,6 +19866,47 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "独立验收第一轮：未通过（2026-10-23）",
           "command": "验收方审查 Draft PR#1558（HEAD ca879a33）四项阻断",
           "result": "未通过（F1 context 短路在未读 Zendesk 时凭缓存返回 already_assigned；F2 already_assigned 仅校验受理人未校验组；F3 worker 身份校验仅查 direction 未查 turn 绑定完整性；F4 record_event 写失败未防护可中断投递流程）。允许下一步：同一 Draft PR#1558 追加修复提交，保持独立验收门；修复后重交完整 HEAD 与实际 PG 证据；修复前不得合并或部署。"
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "task_id": "p2-213",
+      "title": "Persona 库内容加载修复：hermes 回复实际使用库 persona（persona-library-content-loading v1）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-24",
+      "summary": "14239 根因：resolve_persona_style 先调 get_account_persona_assignment（两套存储实现均只返回身份字段不带 content）→ 所有已有 sticky 分配的工单一律回退代码内置默认预设（v1 老文案）→ persona 库（含 p2-211 方案 A 发布的三 persona 教学 v2/v3）对 hermes 回复路径从未生效；14228 当时过门禁是模型重试碰巧收敛、14239 未收敛 fail-closed。修复：(1) resolve_persona_style 改用 resolve_account_persona（InMemory/PG 均对 sticky 行 JOIN 返回钉定版本 content）；(2) 代码内置三预设同步 enablement 确认三要素+禁句指令（fallback 路径亦合规），seed marker 升 v3/v2/v2、presets 版本 v1→v2。前置：p2-210/p2-211 已上线；archer 已恢复（api:179/worker:178/route:172，knowledge 保留）。",
+      "next_action": "实施完成待独立验收（Draft PR）；通过后 Preprod 发布+新 E3 工单（relay 腿用户手动执行）。",
+      "acceptance_criteria": [
+        "sticky 分配的工单在 hermes persona 阶段实际加载库内钉定版本 content（真实 PG 证明）",
+        "版本粘滞语义保留：老工单钉老版本（14225→sid-bright v1）不漂移",
+        "fallback 默认预设自带确认三要素指令（库故障也不能复活 14202 措辞）",
+        "预设同步不覆盖非 system 内容（库内 v2/v3 教学保留）"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "独立代码验收通过（2026-10-24，persona-library-content-loading v1）",
+          "command": "验收方复跑 266 passed/220 subtests（F1/F2 源码语法树核对）；F3 任务号冲突已解决（p2-212 ownership 保留，persona=p2-213）；PG 22 项沿用执行方隔离库证据",
+          "result": "通过（PR#1559 HEAD 2fe10c1b + main 同步 8201dd79 后的最终 HEAD）。允许：finalize→Preprod 发布→三 persona published 回读→新 E3（relay 腿用户手动执行）。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 2 修复（F2 catalog 测试存储断言恢复）",
+          "command": "pytest account_admin(39)/worker-compat/rerun/persona/zendesk_agent=266 passed/220 subtests + PG persona 22 passed + compileall/diff --check",
+          "result": "F2：catalog 测试恢复完整仓储回读断言——恰好三 persona、enabled、published_version=1、单版本 published、created_by=system、change_note==seed marker、存储 content 与目录 content 全等；内容期望改为从当前 preset 派生（不再维护易漂移的字面文案），并保留三要素语义 floor（Enablement submission confirmations + business days）；preset 版本 pin v2。F1 未动。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 default-support 覆盖缺口 + marker/内容 pin 更新）",
+          "command": "PG persona 套件（RUN_ACCOUNT_PERSONA_POSTGRES_TEST=true，22 passed 含 3 新增）+ persona/zendesk/native/catalog/worker-compat/rerun/scenarios/basis 回归 380 passed/231 subtests + compileall/diff --check",
+          "result": "F1：非 system 保护规则=有 operator 内容时——sid-* 一律保护；default-support 仅在已有 system 版本（已被 preset 体系接管）后保护，纯 legacy（无 system 版本）仍按既有合同一次性 bootstrap 迁移（legacy 历史四测原样通过）。新增 3 项 PG 测试：default-support 教学版本在 marker 变更 seed 后保持 published；同 marker 重复 seed 幂等；sticky assignment 钉定版本在 seed skip 后不漂移。连带更新：rerun 工具 APPROVED_PERSONA_V2 pin（新 marker+content sha256，审批版本 v2→v3）；catalog 测试改 preset 派生（清存量漂移）；worker compat marker v3；preset 版本 pin v2。"
         }
       ]
     },

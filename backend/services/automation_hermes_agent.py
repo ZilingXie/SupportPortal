@@ -282,9 +282,12 @@ def resolve_persona_style(repository: Any, ticket_id: str) -> dict[str, Any]:
     if repository is None:
         return fallback
     try:
-        assignment = repository.get_account_persona_assignment(ticket_id)
-        if assignment is None:
-            assignment = repository.resolve_account_persona(ticket_id)
+        # resolve_account_persona is the content-carrying entry: it returns
+        # the sticky assignment JOINED with its pinned version content (both
+        # stores), creating a fresh assignment only when none exists. The
+        # identity-only get_account_persona_assignment used here before made
+        # every sticky ticket fall back to the code preset (14239).
+        assignment = repository.resolve_account_persona(ticket_id)
         content = assignment.get("content") if isinstance(assignment, dict) else None
         instruction = str((content or {}).get("instruction") or "").strip()
         persona_key = str(assignment.get("persona_key") or "").strip()

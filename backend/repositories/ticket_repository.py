@@ -11230,21 +11230,42 @@ class PostgresTicketRepository(
                 )
                 if cur.fetchone() is not None:
                     continue
-                if persona_key != DEFAULT_PERSONA_KEY:
+                # p2-213 F1: a deployed preset must never supersede an
+                # operator-published version on ANY persona, default-support
+                # included. The one exception is the legacy bootstrap: a
+                # persona with operator content and NO system-seeded version
+                # predates the preset system and is migrated once (the
+                # legacy default-persona history contract).
+                cur.execute(
+                    sql.SQL(
+                        "SELECT EXISTS(SELECT 1 FROM {} WHERE persona_key=%s "
+                        "AND created_by <> 'system')"
+                    ).format(versions_table),
+                    (persona_key,),
+                )
+                has_operator_content = bool(cur.fetchone()[0])
+                already_seeded = False
+                if persona_key == DEFAULT_PERSONA_KEY and has_operator_content:
+                    # The default persona is the legacy bootstrap target: with
+                    # operator content and NO system-seeded version it predates
+                    # the preset system and is migrated exactly once. Once any
+                    # system version exists, operator content is protected the
+                    # same as every other persona (p2-212 F1).
                     cur.execute(
                         sql.SQL(
                             "SELECT EXISTS(SELECT 1 FROM {} WHERE persona_key=%s "
-                            "AND created_by <> 'system')"
+                            "AND created_by='system')"
                         ).format(versions_table),
                         (persona_key,),
                     )
-                    if bool(cur.fetchone()[0]):
-                        LOGGER.warning(
-                            "Account Persona preset %s was not seeded because non-system content already exists; "
-                            "review and migrate it manually.",
-                            persona_key,
-                        )
-                        continue
+                    already_seeded = bool(cur.fetchone()[0])
+                if has_operator_content and (persona_key != DEFAULT_PERSONA_KEY or already_seeded):
+                    LOGGER.warning(
+                        "Account Persona preset %s was not seeded because non-system content already exists; "
+                        "review and migrate it manually.",
+                        persona_key,
+                    )
+                    continue
             else:
                 cur.execute(
                     sql.SQL(

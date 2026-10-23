@@ -39,19 +39,19 @@ from backend.services.account_admin import (  # noqa: E402
 
 APPROVED_PERSONA_V2 = {
     "default-support": {
-        "seed_marker": "Seeded Sid Warm preset v1",
-        "content_sha256": "d25a0f784a57ad256095a3036d519cd4df415b4707643802594799b0fa3572a9",
+        "seed_marker": "Seeded Sid Warm preset v2",
+        "content_sha256": "440fd0edb1ceabe1dff537a8aec6f46e26ed14fd015bbfbd486a44d3c3ef3b50",
     },
     "sid-bright": {
-        "seed_marker": "Seeded Sid Bright preset v1",
-        "content_sha256": "5ef7d4c78044057af3d7afd482db06f154c64b55bcf2a5339493720f0fc189d8",
+        "seed_marker": "Seeded Sid Bright preset v2",
+        "content_sha256": "4bbd8ab495a95fa90fd194b957182ca5f4c117482fb657096f4b52215d9d06ec",
     },
     "sid-precise": {
-        "seed_marker": "Seeded Sid Precise preset v2",
-        "content_sha256": "95484cc143251546c13bc5c323d9ba07203a2e97d29ccb8b5f8a4c291fa29de1",
+        "seed_marker": "Seeded Sid Precise preset v3",
+        "content_sha256": "e9771983a1417a4cf68cd0fddd497cbcf14152c2432177fda1a6ac8c9d9c2ac1",
     },
 }
-PERSONA_APPROVAL_VERSION = "persona-instruction-opener-v2"
+PERSONA_APPROVAL_VERSION = "persona-instruction-opener-v3"
 EXPECTED_PERSONA_KEYS = frozenset(APPROVED_PERSONA_V2)
 TERMINAL_ITEM_STATUSES = frozenset({"completed", "failed", "skipped"})
 ACTIVE_JOB_STATUSES = frozenset({"queued", "running"})

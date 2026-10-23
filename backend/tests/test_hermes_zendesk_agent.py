@@ -2130,6 +2130,17 @@ class TestPersonaAssembly:
             assert instructions.index("PERSONA STYLE") < instructions.index("PHASE MANUAL")
             assert instructions.index("PHASE MANUAL") < instructions.index("REPLY CONTRACT")
 
+    def test_fallback_default_preset_carries_enablement_confirmation_style(self) -> None:
+        # p2-212: the fail-open preset must itself teach the natural
+        # confirmation style so a library outage cannot resurrect the 14202
+        # wording.
+        from backend.services.account_admin import DEFAULT_PERSONA_CONTENT
+
+        instruction = str(DEFAULT_PERSONA_CONTENT.get("instruction") or "")
+        assert "Enablement submission confirmations" in instruction
+        assert "not yet enabled" in instruction  # forbidden-wording guidance
+        assert "business days" in instruction
+
     def test_non_persona_phases_have_no_persona_or_contract_layers(self) -> None:
         from backend.services.prompt_runtime import use_prompt_runtime_snapshot
 
@@ -2146,6 +2157,9 @@ class TestPersonaAssembly:
             assert "should not appear" not in instructions
 
     def test_resolve_persona_reuses_assignment_and_falls_back(self) -> None:
+        # p2-212: the sticky path must go through resolve_account_persona, the
+        # content-carrying resolver; the identity-only sticky getter made every
+        # assigned ticket fall back to the code preset (14239).
         assignment = {
             "persona_key": "sid-bright",
             "version": 1,
@@ -2155,6 +2169,9 @@ class TestPersonaAssembly:
         resolved = resolve_persona_style(repo, "123")
         assert resolved["persona_key"] == "sid-bright" and resolved["fell_back"] is False
         assert resolved["instruction"] == "Use an upbeat support voice."
+        # The content-carrying resolver is the one consulted; the identity-only
+        # sticky getter must never be the source for persona content again.
+        assert repo.resolve_calls == 1
 
         # resolve path when no assignment exists yet
         repo = self._PersonaRepository(assignment=None)
