@@ -2450,6 +2450,7 @@ def _ensure_investigation_reply_ownership(
     direction/turn_kind enters the ownership helper. Any failure inside
     the helper is logged and recorded without affecting the delivery."""
     from backend.services.account_automation_ownership import (
+        INVESTIGATION_REPLY_ORIGIN_TURN_KINDS,
         ensure_investigation_reply_ownership,
         extract_investigation_delivery_identity,
     )
@@ -2463,13 +2464,12 @@ def _ensure_investigation_reply_ownership(
     direction = str(identity.get("source_direction") or "").strip()
     source_turn_id = str(identity.get("source_turn_id") or "").strip()
     source_turn_kind = str(identity.get("source_turn_kind") or "").strip()
-    _INVESTIGATION_TURN_KINDS = frozenset({"fixed_task", "investigation_reply", "normal", "investigation_feedback"})
     identity_code = None
     if direction != "investigation":
         identity_code = "investigation_ownership_identity_mismatch"
     elif not source_turn_id:
         identity_code = "investigation_ownership_identity_missing"
-    elif source_turn_kind not in _INVESTIGATION_TURN_KINDS:
+    elif source_turn_kind not in INVESTIGATION_REPLY_ORIGIN_TURN_KINDS:
         identity_code = "investigation_ownership_identity_mismatch"
     if identity_code is not None:
         LOGGER.warning(

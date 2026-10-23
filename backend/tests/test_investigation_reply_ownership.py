@@ -593,3 +593,141 @@ class ReviewRound1Regressions(unittest.TestCase):
             result = ensure_investigation_reply_ownership(case, delivery=_delivery(), updated_at="t")
         self.assertEqual(result["state"], "already_assigned")
         assign.assert_not_called()
+
+
+class ReviewRound2Regressions(unittest.TestCase):
+    """Round-2 review regressions: F5 status confirmation, F6 marker gating."""
+
+    def _run_state_machine(self, snapshot, case=None):
+        case = case or _account_case()
+        with patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+            return_value=snapshot,
+        ), patch(
+            "backend.services.account_automation_ownership.assign_ticket_to_configured_ai"
+        ) as assign:
+            result = ensure_investigation_reply_ownership(
+                case, delivery=_delivery(), updated_at="2026-10-23T00:00:00Z"
+            )
+        return result, assign
+
+    def test_f5_empty_status_outcome_unknown_no_put(self):
+        result, assign = self._run_state_machine(_snapshot(assignee_id="", ticket_status=""))
+        self.assertEqual(result["state"], OWNERSHIP_STATE_OUTCOME_UNKNOWN)
+        self.assertEqual(result["failure_code"], "investigation_ownership_status_unconfirmed")
+        assign.assert_not_called()
+
+    def test_f5_unknown_status_outcome_unknown_no_put(self):
+        result, assign = self._run_state_machine(_snapshot(assignee_id="", ticket_status="unknown"))
+        self.assertEqual(result["state"], OWNERSHIP_STATE_OUTCOME_UNKNOWN)
+        self.assertEqual(result["failure_code"], "investigation_ownership_status_unconfirmed")
+        assign.assert_not_called()
+
+    def test_f5_all_actionable_statuses_proceed_to_assignment(self):
+        assignment = NS(assignee_id="ai-agent-1", group_id="ai-group-1", status_code=200)
+        for status in ("new", "open", "pending", "hold"):
+            with self.subTest(status=status):
+                snapshot1 = _snapshot(assignee_id="", ticket_status=status)
+                snapshot2 = _snapshot(assignee_id="ai-agent-1", group_id="ai-group-1", ticket_status=status)
+                with patch(
+                    "backend.services.account_automation_ownership.read_ticket_ownership_snapshot",
+                    side_effect=[snapshot1, snapshot2],
+                ), patch(
+                    "backend.services.account_automation_ownership.assign_ticket_to_configured_ai",
+                    return_value=assignment,
+                ) as assign:
+                    result = ensure_investigation_reply_ownership(
+                        _account_case(), delivery=_delivery(), updated_at="2026-10-23T00:00:00Z"
+                    )
+                self.assertEqual(result["state"], "assigned")
+                assign.assert_called_once()
+
+    def test_f5_unconfirmed_status_beats_stale_assigned_context(self):
+        # Even a previously assigned local context must not authorize any
+        # decision when the live ticket status cannot be confirmed.
+        case = _account_case()
+        case["automation_context"]["zendesk_ownership"] = {
+            "state": "assigned",
+            "assignee_id": "ai-agent-1",
+            "group_id": "ai-group-1",
+        }
+        result, assign = self._run_state_machine(_snapshot(assignee_id="", ticket_status=""), case=case)
+        self.assertEqual(result["state"], OWNERSHIP_STATE_OUTCOME_UNKNOWN)
+        self.assertEqual(result["failure_code"], "investigation_ownership_status_unconfirmed")
+        assign.assert_not_called()
+
+    def _queue(self, turn):
+        from backend.services.automation_hermes_delivery import queue_hermes_draft_delivery
+
+        store = MagicMock()
+        draft = {
+            "draft_id": "d-r2",
+            "turn_id": "turn-r2",
+            "zendesk_ticket_id": "123",
+            "status": "approved",
+            "case_revision": 1,
+            "conversation_version": 1,
+            "content": "Hello",
+            "delivery_content": "Hello",
+            "basis": {},
+        }
+        store.get_hermes_draft.return_value = draft
+        store.get_case_mirror.return_value = {"case_revision": 1}
+        store.get_hermes_turn.return_value = turn
+        repo = MagicMock()
+        repo.get_account_case_by_ticket_id.return_value = {
+            "account_case_id": "AC-123",
+            "zendesk_ticket_id": "123",
+            "client_ticket_id": "123",
+        }
+        with patch(
+            "backend.services.automation_hermes_delivery._current_comments_revision",
+            return_value="rev-1",
+        ):
+            queue_hermes_draft_delivery(store, repo, draft_id="d-r2", environment="preproduction")
+        attachments = repo.create_account_zendesk_comment_delivery.call_args.kwargs.get("attachments") or []
+        return [
+            a
+            for a in attachments
+            if isinstance(a, dict) and a.get("_hermes_origin_kind") == "investigation_customer_reply"
+        ]
+
+    def test_f6_automation_turn_queues_without_marker(self):
+        self.assertEqual(self._queue({"turn_id": "turn-r2", "direction": "automation", "turn_kind": "normal"}), [])
+
+    def test_f6_enablement_turn_queues_without_marker(self):
+        self.assertEqual(self._queue({"turn_id": "turn-r2", "direction": "enablement", "turn_kind": "normal"}), [])
+
+    def test_f6_investigation_direction_bad_kind_no_marker(self):
+        self.assertEqual(
+            self._queue({"turn_id": "turn-r2", "direction": "investigation", "turn_kind": "chitchat"}), []
+        )
+
+    def test_f6_turn_lookup_failure_no_marker(self):
+        self.assertEqual(self._queue(None), [])
+
+    def test_f6_investigation_turn_still_gets_marker(self):
+        markers = self._queue({"turn_id": "turn-r2", "direction": "investigation", "turn_kind": "investigation_reply"})
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]["_hermes_source_direction"], "investigation")
+        self.assertEqual(markers[0]["_hermes_source_turn_kind"], "investigation_reply")
+
+    def test_f6_markerless_automation_delivery_records_no_ownership_event(self):
+        # A delivery queued for an ordinary Automation turn carries no origin
+        # marker (other markers may still ride along), so the worker side
+        # effect must record NO investigation ownership event at all.
+        from backend.worker import _complete_hermes_customer_reply_side_effects
+
+        repo = _Repo()
+        delivery = _delivery(origin_kind=None)
+        delivery["attachments"] = [{"_hermes_compatibility_job_id": "job-1"}]
+        with patch(
+            "backend.services.account_automation_ownership.read_ticket_ownership_snapshot"
+        ) as read:
+            with patch("backend.worker.ticket_repository", repo):
+                _complete_hermes_customer_reply_side_effects(delivery)
+        read.assert_not_called()
+        self.assertEqual(
+            [e for e in repo.events if e["type"] == "zendesk_investigation_reply_ownership"],
+            [],
+        )

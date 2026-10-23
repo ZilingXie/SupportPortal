@@ -18,6 +18,7 @@ from backend.services.automation_routing import is_registered_automation
 from backend.services.zendesk_comments import ZendeskCommentError
 from backend.services.zendesk_ticket_assignment import (
     assign_ticket_to_configured_ai,
+    classify_zendesk_ticket_status,
     read_ticket_ownership_snapshot,
 )
 
@@ -578,8 +579,23 @@ def ensure_production_automation_ownership(
 INVESTIGATION_OWNERSHIP_ORIGIN_KIND = "investigation_customer_reply"
 INVESTIGATION_OWNERSHIP_EVENT_TYPE = "zendesk_investigation_reply_ownership"
 
-# Terminal Zendesk statuses where assignment must never run.
-_ZENDESK_TERMINAL_STATUSES = frozenset({"solved", "closed"})
+# Hermes turn kinds whose ECS customer-reply drafts may claim Investigation
+# origin for the ownership side effect. The delivery-time marker injection
+# (automation_hermes_delivery) and the worker-side consumer both validate
+# against this single set — a turn that cannot prove Investigation origin
+# carries no marker at all.
+INVESTIGATION_REPLY_ORIGIN_TURN_KINDS = frozenset(
+    {"fixed_task", "investigation_reply", "normal", "investigation_feedback"}
+)
+
+
+def is_investigation_origin_turn(turn: Any) -> bool:
+    """True when a Hermes turn row proves Investigation origin (p2-212)."""
+    if not isinstance(turn, dict):
+        return False
+    if str(turn.get("direction") or "").strip() != "investigation":
+        return False
+    return str(turn.get("turn_kind") or "").strip() in INVESTIGATION_REPLY_ORIGIN_TURN_KINDS
 
 
 def extract_investigation_delivery_identity(
@@ -697,8 +713,13 @@ def ensure_investigation_reply_ownership(
 
     ticket_status = str(getattr(snapshot, "ticket_status", "") or "")
 
-    # Terminal states: never assign.
-    if ticket_status.lower() in _ZENDESK_TERMINAL_STATUSES:
+    # F5 (review): the ticket status must be confirmed before any ownership
+    # decision — only actionable statuses may assign, solved/closed
+    # terminate, and an empty/unexpected status is unconfirmed and defers
+    # (same classifier as the production ownership gate; the assignment
+    # PUT count stays zero for everything except actionable statuses).
+    status_class = classify_zendesk_ticket_status(ticket_status)
+    if status_class == "terminal":
         return _investigation_result(
             account_case,
             state="skipped_terminal",
@@ -707,6 +728,17 @@ def ensure_investigation_reply_ownership(
             group_id=snapshot.group_id,
             failure_code="investigation_ownership_ticket_closed",
             failure_category="policy",
+            ticket_status=ticket_status,
+        )
+    if status_class != "actionable":
+        return _investigation_result(
+            account_case,
+            state=OWNERSHIP_STATE_OUTCOME_UNKNOWN,
+            updated_at=updated_at,
+            assignee_id=snapshot.assignee_id,
+            group_id=snapshot.group_id,
+            failure_code="investigation_ownership_status_unconfirmed",
+            failure_category="outcome_unknown",
             ticket_status=ticket_status,
         )
 

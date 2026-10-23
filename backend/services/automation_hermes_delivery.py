@@ -18,6 +18,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from backend.services.account_automation_ownership import is_investigation_origin_turn
 from backend.services.automation_ecs_store import AutomationEcsStore, HermesDraftStateError
 
 LOGGER = logging.getLogger("supportportal.automation_hermes_delivery")
@@ -594,16 +595,20 @@ def queue_hermes_draft_delivery(
     # marker (same channel as the compatibility markers). The turn/direction/
     # turn_kind are read from the ECS store's draft row so the delivery can
     # later prove its origin without schema changes — restart-safe because
-    # attachments persist in the delivery ledger.
+    # attachments persist in the delivery ledger. F6 (review): only a turn
+    # that PROVES Investigation origin (direction + turn_kind whitelist
+    # shared with the worker consumer) may carry the marker; ordinary
+    # Automation/Enablement turns queue with no marker at all.
     source_turn_id = str(draft.get("turn_id") or "").strip()
     if source_turn_id:
         source_turn = store.get_hermes_turn(source_turn_id) or {}
-        delivery_attachments.append({
-            "_hermes_origin_kind": "investigation_customer_reply",
-            "_hermes_source_turn_id": source_turn_id,
-            "_hermes_source_direction": str(source_turn.get("direction") or ""),
-            "_hermes_source_turn_kind": str(source_turn.get("turn_kind") or ""),
-        })
+        if is_investigation_origin_turn(source_turn):
+            delivery_attachments.append({
+                "_hermes_origin_kind": "investigation_customer_reply",
+                "_hermes_source_turn_id": source_turn_id,
+                "_hermes_source_direction": str(source_turn.get("direction") or ""),
+                "_hermes_source_turn_kind": str(source_turn.get("turn_kind") or ""),
+            })
     repository.create_account_zendesk_comment_delivery(
         account_case_id=account_case_id,
         message_id=draft_id,
