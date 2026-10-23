@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-22T08:09:55Z",
-  "source_base_commit": "1e75eba407198ff0a2e5aeb485ae9491f1481bed",
-  "registry_digest": "1803f2c4993f8744b6684244edd5025c15050a4a7bc511946b8312b2f7981513",
+  "generated_at": "2026-10-23T03:10:49Z",
+  "source_base_commit": "032119d7ee24c19f4e8e5832d73531cda3c19c86",
+  "registry_digest": "0d1da2e31714026b3ff37a8235e5da56c0b322f453ba20ca1dd8ca517a2a1ba0",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -1907,6 +1907,18 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
         },
         {
+          "type": "decision",
+          "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
+          "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1554 HEAD 032119d7）：F1 单一正则双入口一致、9 类否定表达全拒；F2 receipt 双路径通用、裸 Thanks 拒收；14202 负控/manual 24h 正控/business-day 正控确认。允许下一步：合并→仅 Preproduction 部署→新 synthetic E1P→draft/公开评论/Zendesk 三侧独立回读。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
+          "command": "pytest persona Repair+NaturalContract（10 passed/28 subtests）+ scenarios 71 passed/11 subtests + persona/context/basis 回归 + compileall/diff --check",
+          "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
+        },
+        {
           "type": "test",
           "label": "Classifier unit + worker integration + contract",
           "command": "TICKET_DB_DSN='postgresql://example.invalid/test' SENTIMENT_PROVIDER=legacy OPENAI_API_KEY= .venv/bin/python -m unittest backend.tests.test_enablement_completion_classifier backend.tests.test_worker backend.tests.test_single_host_compose",
@@ -2013,7 +2025,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 52,
+      "task_count": 53,
       "done_count": 26,
       "blocked_count": 2
     },
@@ -19567,6 +19579,41 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "label": "DSN 脱敏（C7）",
           "command": "pytest backend/tests/test_dsn_redaction.py -q；compileall；git diff --check",
           "result": "8 passed：URL/key=value（含引号）/异常文本三种格式密码→***，幂等，结构保留；应用于 PP CLI 中止日志+报告 aborted 字段与 wrapper CLI 两处异常输出（真实入口路径）。本轮不轮换已泄露密码（用户决定）；旧会话已出现的密码风险不由测试消除。worker 全套 main vs 分支逐测试排序 diff IDENTICAL（163 条/7 存量失败两侧相同，零新增回归）；compileall/diff --check 通过"
+        }
+      ]
+    },
+    {
+      "schema_version": 1,
+      "task_id": "p2-210",
+      "title": "E1P 自然提交确认合同：自动路径 business-day 语义+拒绝生硬否定状态句（e1p-natural-submission-confirmation-v1）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-22",
+      "updated_at": "2026-10-23",
+      "summary": "14202 根因：persona submission_confirmation 无内容合同验证分支，模型在正确的 review 语义后补了生硬否定句（Media Relay is not yet confirmed as enabled）且漏掉 prompt 要求的 business-day 说明。修复：persona v33（策略加入三要素+反例禁句+风格参考）；新增 _assert_enablement_submission_confirmation_contract（auto 路径必含感谢/收到+review+business-day+更新承诺，拒 stiff negative/提前启用/24h；manual 仅继承禁句，24h 文案保留）；场景检查统一为单一共享合同（E1P/E3 turn-4/PP-A1 同语义）。不触 Production；不重放 14202；hermes 手册（catalog prompt）本轮不改并披露。",
+      "next_action": "验收通过→finalize PR#1554→仅 Preprod 部署（persona v33 随应用发布）→新 synthetic E1P 工单三侧独立回读（不重放 14202/不触 Production）。",
+      "acceptance_criteria": [
+        "14202 原文与 stiff-negative 变体在 persona 验证器被拒（真实入口 validate_account_reply_contract）",
+        "自然正控（感谢+review+business-day+keep posted）通过；manual 24h 文案继续通过",
+        "E1P/E3 场景确认检查与 persona 合同一致（同一语义合同）",
+        "新 synthetic E1P 工单三侧回读含自然语义、不含否定句"
+      ],
+      "blockers": [],
+      "evidence": [
+        {
+          "type": "decision",
+          "label": "验收轮 1 修复后独立验收通过（2026-10-23）",
+          "command": "验收方复跑：Persona/场景/context/basis 192 passed/32 skipped/131 subtests；compileall/diff --check/Overview 通过",
+          "result": "通过（PR#1554 HEAD 032119d7）：F1 单一正则双入口一致、9 类否定表达全拒；F2 receipt 双路径通用、裸 Thanks 拒收；14202 负控/manual 24h 正控/business-day 正控确认。允许下一步：合并→仅 Preproduction 部署→新 synthetic E1P→draft/公开评论/Zendesk 三侧独立回读。"
+        },
+        {
+          "type": "test",
+          "label": "验收轮 1 修复（F1 否定句族覆盖 / F2 receipt 拆分）",
+          "command": "pytest persona Repair+NaturalContract（10 passed/28 subtests）+ scenarios 71 passed/11 subtests + persona/context/basis 回归 + compileall/diff --check",
+          "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
         }
       ]
     },

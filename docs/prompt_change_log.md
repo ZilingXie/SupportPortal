@@ -5304,3 +5304,10 @@ Hermes snapshot/model input 增加经过来源验证的工程师附件元数据�
 - v4方案独立验收已通过；65 passed、17 skipped、真实loader本地回归通过仅为代码证据。完整代码验收、EFS发布及live readiness仍待完成，真实文件测试禁止开始；v3失败/TD54恢复证据保留。
 
 - HMR-V4-01修复：发布check-only对prepared/outcome_unknown显式非零，不改变Skill/Prompt/模型或工具调用权限；只读诊断包含当前hash与操作意图，显式恢复后才允许通过。
+
+## 2026-10-22 — E1P 自然提交确认合同（p2-210 e1p-natural-submission-confirmation-v1，待独立验收）
+
+- `AUTOMATION_PERSONA_PROMPT_VERSION` v32 → **v33**：submission_confirmation 基础策略加入"积极表述 review 状态、禁止 'not yet enabled'/'pending activation' 等状态免责句"；自动路径（activation_sla=business-day review）附加块从两要素扩为三要素（已提交内部 review + business days 处理 + 有更新即通知）并给出自然风格参考。
+- 新增 persona 内容合同 `_assert_enablement_submission_confirmation_contract`（validate_account_reply_contract 真实入口，behavior=enablement 且 intent=submission_confirmation）：auto 路径必含 感谢/收到+review+business-day+更新承诺，拒绝 stiff 否定句（14202 原文形态）、提前启用声明、24h 承诺；manual 路径仅继承禁句，24 小时文案与工作日合同保留（C5 隔离）。
+- 场景验收同步：E1P/E3 turn-4/PP-A1 共用的确认内容检查统一为同一语义合同（新增 business-day 与更新承诺必需、stiff 否定句拒绝、24h 拒绝）。
+- 不改 catalog Prompt（hermes-automation-enablement-manual 保持 v2，其 Submission confirmations 措辞与 24h 合并表述披露为后续项）；无 Prompt Release 操作。

@@ -39,7 +39,7 @@ from backend.services.customer_reply_composer import (
 )
 
 
-AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v32"
+AUTOMATION_PERSONA_PROMPT_VERSION = "automation-persona-v33"
 ENGINEER_GUIDED_REPLY_INTENT = "engineer_guided_reply"
 ENGINEER_GUIDED_PERSONA_PROMPT_VERSION = "engineer-guided-persona-v3"
 ENGINEER_INVESTIGATION_REPLY_INTENT = "engineer_investigation_reply"
@@ -705,6 +705,93 @@ def _generation_diagnostic(reply: str, facts: dict[str, Any], attempt: int) -> d
     }
 
 
+# Canonical stiff-negative enablement status family
+# (e1p-natural-submission-confirmation-v1 F1): every wording that states the
+# feature's enablement STATUS as off/pending instead of expressing the review
+# positively. Shared with the scenario content checks so the persona
+# validator and the acceptance gate never drift apart.
+STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = re.compile(
+    r"\bnot\s+yet\s+(?:confirmed\s+as\s+)?(?:enabled|activated|provisioned)"
+    r"|\bnot\s+(?:enabled|activated|provisioned)\s+yet\b"
+    r"|\bnot\s+currently\s+(?:enabled|activated|provisioned)"
+    r"|\b(?:is|are)\s+not\s+(?:enabled|activated|provisioned)"
+    r"|\bnot\s+been\s+(?:enabled|activated)\s+yet\b"
+    r"|\b(?:hasn'?t|have\s+not|has\s+not)\s+been\s+(?:enabled|activated)"
+    r"|\bstill\s+awaiting\s+(?:enablement|activation)"
+    r"|\bawaiting\s+(?:enablement|activation)"
+    r"|\bremains?\s+(?:disabled|inactive)"
+    r"|\b(?:is|are|currently|still)\s+(?:disabled|inactive)\b"
+    r"|\bpending\s+(?:activation|enablement)",
+    re.IGNORECASE,
+)
+_STIFF_NEGATIVE_ENABLEMENT_STATUS_RE = STIFF_NEGATIVE_ENABLEMENT_STATUS_RE
+
+# Explicit receipt semantics (F2): the reply must state the request was
+# received / recorded / submitted (for review). A bare "Thanks" is style,
+# not receipt.
+_SUBMISSION_RECEIPT_RE = re.compile(
+    r"(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+request"
+    r"|submitted\s+(?:it\s+)?for\s+(?:internal\s+)?review"
+    r"|request\s+(?:has\s+been|is|was)\s+(?:received|submitted|recorded|logged)"
+    r"|(?:received|recorded|submitted|logged)\s+(?:your|the|this)\s+"
+    r"(?:media\s+relay\s+)?(?:enablement\s+)?request",
+    re.IGNORECASE,
+)
+
+
+def _assert_enablement_submission_confirmation_contract(
+    reply: str, facts: dict[str, Any]
+) -> None:
+    """Natural auto-path submission confirmation (e1p-natural-submission-confirmation-v1).
+
+    C1/C2: the auto path (activation_sla='business-day review') must thank,
+    submit for review, state business-day handling, and commit to an update —
+    with NO stiff negative enablement status and no premature enablement
+    claim. The manual path (24-hour SLA) keeps its own copy; only the status
+    prohibitions apply there (C5).
+    """
+    lowered = str(reply or "").casefold()
+    stiff = _STIFF_NEGATIVE_ENABLEMENT_STATUS_RE.search(lowered)
+    if stiff:
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_stiff_negative_status"
+        )
+    if _has_positive_clause(reply, r"\b(?:enabled|activated|provisioned)\b"):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_premature_enablement"
+        )
+    if not _SUBMISSION_RECEIPT_RE.search(lowered):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_receipt_missing"
+        )
+    if str(facts.get("activation_sla") or "") != "business-day review":
+        return
+    if re.search(r"24\s*[-\s]?hours?", lowered):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_24h_promise"
+        )
+    if not re.search(
+        r"business\s+days?|weekdays?|monday\s*(?:through|to|-)\s*friday",
+        lowered,
+    ):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_business_day_missing"
+        )
+    if not re.search(
+        r"keep\s+you\s+posted|keep\s+you\s+updated|update\s+you|updates?\b|"
+        r"let\s+you\s+know|notify\s+you|follow\s+up|reach\s+out|"
+        r"hear\s+(?:from\s+us|anything)",
+        lowered,
+    ):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_update_commitment_missing"
+        )
+    if not re.search(r"review", lowered):
+        raise AutomationPersonaError(
+            "automation_persona_submission_confirmation_review_missing"
+        )
+
+
 def validate_account_reply_contract(
     reply: str,
     reply_facts: dict[str, Any],
@@ -743,6 +830,10 @@ def validate_account_reply_contract(
         _assert_enablement_appid_not_found_contract(normalized_reply)
     elif intent == ACCOUNT_REPLY_INTENT_ENABLEMENT_APPID_OWNERSHIP_MISMATCH:
         _assert_enablement_appid_ownership_mismatch_contract(normalized_reply)
+    elif intent == ACCOUNT_REPLY_INTENT_SUBMISSION_CONFIRMATION and str(
+        facts.get("behavior") or ""
+    ).strip().lower() == "enablement":
+        _assert_enablement_submission_confirmation_contract(normalized_reply, facts)
     return facts, derived_close
 
 
@@ -858,10 +949,12 @@ def render_automation_reply(
     submission_confirmation_policy = (
         "For submission_confirmation, write a concise, natural customer message in first person. Thank the customer, "
         "say that we are reviewing the request with our internal team, and promise to keep the customer posted when "
-        "there is an update. A short patience sentence is appropriate. The internal team is a collaborator, never "
-        "the party responsible for contacting the customer. Do not use job-title narration such as 'The assigned "
-        "Support Engineer', 'the case is in progress with them', or any wording that makes the customer wait for an "
-        "internal team to follow up. "
+        "there is an update. A short patience sentence is appropriate. Express the review status positively; never "
+        "append a status disclaimer such as 'not yet enabled', 'not yet confirmed as enabled', 'pending activation', "
+        "or 'awaiting enablement' — the customer already knows they submitted a request, and such sentences read as "
+        "bureaucratic filler. The internal team is a collaborator, never the party responsible for contacting the "
+        "customer. Do not use job-title narration such as 'The assigned Support Engineer', 'the case is in progress "
+        "with them', or any wording that makes the customer wait for an internal team to follow up. "
     )
     current_intent_policy = ""
     prompt_version = (
@@ -881,10 +974,16 @@ def render_automation_reply(
         if behavior == "enablement":
             if str(facts.get("activation_sla") or "") == "business-day review":
                 current_intent_policy += (
-                    "For an Enablement submission under automatic review, make two facts clear in your own words: "
-                    "the request is reviewed and processed on business days (Monday-Friday), and the customer will "
-                    "be notified once it is complete. Do not promise a 24-hour turnaround. Weave them into your "
-                    "sentences rather than quoting them like a policy line. "
+                    "For an Enablement submission under automatic review, make three facts clear in your own words: "
+                    "the request has been submitted for internal review, the review is handled on business days "
+                    "(Monday-Friday), and you will keep the customer posted as soon as there is an update. Do not "
+                    "promise a 24-hour turnaround. Weave them into your sentences rather than quoting them like a "
+                    "policy line. Never state or imply the feature's current enablement status — no 'not yet "
+                    "enabled', 'not yet confirmed as enabled', 'pending activation', or 'awaiting enablement' "
+                    "wording; the review status itself is the message. Style reference (match the tone and rhythm, "
+                    "do not copy the wording): 'Thanks for sending your Media Relay request. I've submitted it for "
+                    "internal review, and I'll keep you posted as soon as I have an update. Reviews are handled on "
+                    "business days, Monday through Friday.' "
                 )
             else:
                 current_intent_policy += (
