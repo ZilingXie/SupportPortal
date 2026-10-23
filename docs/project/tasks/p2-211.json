@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "p2-211",
+  "title": "Persona 提交确认合同接入 Hermes native draft 生成路径（persona-draft-contract-gate v1）",
+  "status": "active",
+  "owner": "zac",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "created_at": "2026-10-23",
+  "updated_at": "2026-10-23",
+  "summary": "p2-210 真实验证（工单 14225）实证：新验证器在 reply-job publish 链路正确拒收 14202 形态回复，但 Hermes native draft 路径（worker hermes persona phase → hermes_draft_prepared/queued → 直接投递）绕过 validate_account_reply_contract，生硬否定句仍公开投递（评论 54890160373140）。本任务把 submission_confirmation（推广为 hermes persona 内容合同）接入 draft 生成路径：生成后投递前过合同门禁，失败走有限重生成→fail-closed（C4 原意），不投递违约内容。前置：p2-210 已上线 r20261023-9b1f8e1。",
+  "next_action": "新任务已建：调查 hermes draft 生成链的合同挂点（automation_hermes_delivery / persona 渲染入口），设计门禁+重生成/fail-closed，Draft PR 停独立验收。",
+  "acceptance_criteria": [
+    "native draft 路径生成的 submission_confirmation 违约内容（stiff negative/缺三要素）不投递",
+    "违约触发有限重生成，重生成仍失败则 fail-closed 转人工，不投递、不伪造",
+    "14225/14202 形态在 draft 路径被端到端拦截（真实入口测试）",
+    "合规自然回复照常投递；其它意图的 draft 不受影响"
+  ],
+  "blockers": [],
+  "evidence": []
+}

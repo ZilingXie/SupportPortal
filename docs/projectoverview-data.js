@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T03:10:49Z",
-  "source_base_commit": "032119d7ee24c19f4e8e5832d73531cda3c19c86",
-  "registry_digest": "0d1da2e31714026b3ff37a8235e5da56c0b322f453ba20ca1dd8ca517a2a1ba0",
+  "generated_at": "2026-10-23T04:42:46Z",
+  "source_base_commit": "0338d5645d1194aa8e04c17a51e7f3fc51755e2a",
+  "registry_digest": "503ea20bc1ee27ff9fe668ba70d2d37e47d7bee0ea46da1dc26cf9424002eb73",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2025,7 +2025,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 53,
+      "task_count": 54,
       "done_count": 26,
       "blocked_count": 2
     },
@@ -19616,6 +19616,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "F1：否定状态词族统一为公开 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE（persona 定义、场景导入同一正则），新增 not enabled yet/not currently enabled/still awaiting activation/remains disabled/is disabled/has not been enabled yet/awaiting activation/pending enablement/is inactive 九类变体，全部在 persona 验证器（auto+manual 双路径）与场景检查被拒（追加式正控变体）；F2：receipt 拆为显式 received/recorded/submitted/logged+request 或 submitted for (internal) review 语义族，裸 Thanks 不再满足，且 receipt 检查提升为双路径通用（manual 24h 正控仍过）；14202 原文负控、auto 自然正控、manual 24h 正控、business-day 正控与 E1P/E3/PP-A1 共享检查回归全绿。"
         }
       ]
+    },
+    {
+      "schema_version": 1,
+      "task_id": "p2-211",
+      "title": "Persona 提交确认合同接入 Hermes native draft 生成路径（persona-draft-contract-gate v1）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "summary": "p2-210 真实验证（工单 14225）实证：新验证器在 reply-job publish 链路正确拒收 14202 形态回复，但 Hermes native draft 路径（worker hermes persona phase → hermes_draft_prepared/queued → 直接投递）绕过 validate_account_reply_contract，生硬否定句仍公开投递（评论 54890160373140）。本任务把 submission_confirmation（推广为 hermes persona 内容合同）接入 draft 生成路径：生成后投递前过合同门禁，失败走有限重生成→fail-closed（C4 原意），不投递违约内容。前置：p2-210 已上线 r20261023-9b1f8e1。",
+      "next_action": "新任务已建：调查 hermes draft 生成链的合同挂点（automation_hermes_delivery / persona 渲染入口），设计门禁+重生成/fail-closed，Draft PR 停独立验收。",
+      "acceptance_criteria": [
+        "native draft 路径生成的 submission_confirmation 违约内容（stiff negative/缺三要素）不投递",
+        "违约触发有限重生成，重生成仍失败则 fail-closed 转人工，不投递、不伪造",
+        "14225/14202 形态在 draft 路径被端到端拦截（真实入口测试）",
+        "合规自然回复照常投递；其它意图的 draft 不受影响"
+      ],
+      "blockers": [],
+      "evidence": []
     },
     {
       "schema_version": 2,
