@@ -111,15 +111,16 @@ def _handle_knowledge_action(
     if superseded:
         return _invalid(superseded, status_code=409)
     operator = _resolve_verified_operator(
-        str(payload.get("slack_user_id") or "").strip()
+        str(payload.get("slack_user_id") or "").strip(), allow_missing_email=True
     )
     if operator.get("operator_error"):
         return operator
+    decided_by = operator["email"] or f"slack:{operator['slack_user_id']}"
 
     if action == "knowledge_reject":
         result = repository.decide_weknora_promotion(
             promotion_id, decision="reject",
-            decided_by=operator["email"], decided_at=_now_iso_str(),
+            decided_by=decided_by, decided_at=_now_iso_str(),
             operator_email=operator["email"],
             operator_slack_user_id=operator["slack_user_id"],
         )
@@ -127,13 +128,14 @@ def _handle_knowledge_action(
             return _invalid("the candidate is no longer awaiting a decision")
         LOGGER.info(
             "knowledge_review_slack_reject promotion=%s operator=%s",
-            promotion_id, operator["email"],
+            promotion_id, decided_by,
         )
         return {
             "ok": True,
             "status": "knowledge_review_rejected",
             "promotion_id": promotion_id,
             "operator_email": operator["email"],
+            "operator": decided_by,
             "response_text": "❌ Rejected — no WeKnora write.",
         }
 
@@ -153,7 +155,7 @@ def _handle_knowledge_action(
     try:
         result = repository.decide_weknora_promotion(
             promotion_id, decision="approve",
-            decided_by=operator["email"], decided_at=_now_iso_str(),
+            decided_by=decided_by, decided_at=_now_iso_str(),
             resolution=resolution,
             operator_email=operator["email"],
             operator_slack_user_id=operator["slack_user_id"],
@@ -164,13 +166,14 @@ def _handle_knowledge_action(
         return _invalid("the candidate is no longer awaiting a decision")
     LOGGER.info(
         "knowledge_review_slack_approve promotion=%s operator=%s",
-        promotion_id, operator["email"],
+        promotion_id, decided_by,
     )
     return {
         "ok": True,
         "status": "knowledge_review_approved",
         "promotion_id": promotion_id,
         "operator_email": operator["email"],
+        "operator": decided_by,
         "response_text": "✅ Approved — queued for the WeKnora write.",
     }
 
@@ -714,14 +717,16 @@ def _execute_knowledge_review_reject(
     superseded = _knowledge_review_generation_current(store, repository, promotion)
     if superseded:
         return _invalid(superseded, status_code=409)
-    # Stage 4 (p2-195, C4): verified operator identity, fail-closed.
-    operator = _resolve_verified_operator(slack_user_id)
+    # Stage 4 (p2-195, C4): verified operator identity, fail-closed. A
+    # users.info-verified user without a visible email is accepted (the app
+    # may lack users:read.email); the Slack user id is the operator fact.
+    operator = _resolve_verified_operator(slack_user_id, allow_missing_email=True)
     if operator.get("operator_error"):
         return operator
     result = repository.decide_weknora_promotion(
         str(promotion["promotion_id"]),
         decision="reject",
-        decided_by=operator["email"],
+        decided_by=operator["email"] or f"slack:{operator['slack_user_id']}",
         decided_at=_now_iso_str(),
         operator_email=operator["email"],
         operator_slack_user_id=operator["slack_user_id"],
@@ -825,15 +830,17 @@ def _execute_knowledge_review_approve(
     if superseded:
         return _invalid(superseded, status_code=409)
     # Stage 4 (p2-195, C4): the operator is the server-verified Slack identity;
-    # resolution failure refuses the decision with zero state change.
-    operator = _resolve_verified_operator(slack_user_id)
+    # resolution failure refuses the decision with zero state change. A
+    # verified user without a visible email is accepted (scope gap); the
+    # Slack user id is the operator fact.
+    operator = _resolve_verified_operator(slack_user_id, allow_missing_email=True)
     if operator.get("operator_error"):
         return operator
     try:
         result = repository.decide_weknora_promotion(
             str(promotion["promotion_id"]),
             decision="approve",
-            decided_by=operator["email"],
+            decided_by=operator["email"] or f"slack:{operator['slack_user_id']}",
             decided_at=_now_iso_str(),
             resolution=resolution,
             operator_email=operator["email"],
@@ -865,20 +872,28 @@ def _now_iso_str() -> str:
 # --------------------------------- stage 4 (p2-195): Slack review decisions
 
 
-def _resolve_verified_operator(slack_user_id: str) -> dict[str, Any]:
+def _resolve_verified_operator(
+    slack_user_id: str, *, allow_missing_email: bool = False
+) -> dict[str, Any]:
     """Resolve the operator identity server-side, or an error response.
 
     Returns the resolved identity dict on success; on failure returns the
     caller-facing error dict (callers check ``isinstance(operator, dict)`` —
     the success shape is a dict too, so the error shape carries
-    ``operator_error: True`` to disambiguate)."""
+    ``operator_error: True`` to disambiguate).
+
+    ``allow_missing_email`` accepts a users.info-VERIFIED user whose email is
+    not visible to the app (missing ``users:read.email`` scope); every other
+    failure class still refuses the decision."""
     from backend.services.engineer_slack import (
         SlackOperatorResolutionError,
         resolve_slack_operator,
     )
 
     try:
-        return resolve_slack_operator(slack_user_id)
+        return resolve_slack_operator(
+            slack_user_id, require_email=not allow_missing_email
+        )
     except SlackOperatorResolutionError as exc:
         return _invalid(
             f"operator identity could not be verified ({exc.reason}): {exc}",
@@ -1071,14 +1086,14 @@ def _decide_source_only(
     superseded = _knowledge_review_generation_current(store, repository, promotion)
     if superseded:
         return _invalid(superseded, status_code=409)
-    operator = _resolve_verified_operator(slack_user_id)
+    operator = _resolve_verified_operator(slack_user_id, allow_missing_email=True)
     if operator.get("operator_error"):
         return operator
     try:
         result = repository.decide_weknora_promotion(
             str(promotion["promotion_id"]),
             decision="reject" if action == "reject" else "approve",
-            decided_by=operator["email"],
+            decided_by=operator["email"] or f"slack:{operator['slack_user_id']}",
             decided_at=_now_iso_str(),
             resolution=None if action == "reject" else resolution,
             operator_email=operator["email"],

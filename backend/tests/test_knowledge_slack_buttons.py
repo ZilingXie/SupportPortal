@@ -107,19 +107,20 @@ def _click(
     promotion_id: str = "",
     slack_user_id: str = "U-9",
     operator_error: str = "",
+    no_email: bool = False,
 ):
     import unittest.mock as mock
 
     import backend.services.engineer_slack as slack_module
 
-    def _resolve(uid, bot_user_id=None):
+    def _resolve(uid, bot_user_id=None, require_email=True):
         if operator_error:
             from backend.services.engineer_slack import SlackOperatorResolutionError
 
             raise SlackOperatorResolutionError(operator_error, "operator lookup failed")
         return {
             "slack_user_id": uid,
-            "email": "engineer@example.com",
+            "email": None if no_email else "engineer@example.com",
             "display_name": "E",
         }
 
@@ -242,6 +243,46 @@ def test_button_approve_without_candidate_content_refused(monkeypatch) -> None:
 
 
 # ------------------------------------------------------------ fail-closed
+
+
+def test_button_operator_without_visible_email_still_decides(monkeypatch) -> None:
+    """Scope gap fallback: a users.info-verified user without a visible
+    email decides; the audit records the Slack identity, email stays NULL."""
+    host = _Host()
+    promotion_id = _parked(host)
+
+    result = _click(
+        monkeypatch, host, "knowledge_reject",
+        promotion_id=promotion_id, no_email=True,
+    )
+
+    assert result["ok"] is True, result
+    assert result["operator"] == "slack:U-9"
+    row = _row(host, promotion_id)
+    assert row["status"] == "rejected"
+    assert row["human_decided_by_email"] is None, "no string-'None' leakage"
+    assert row["human_decided_slack_user_id"] == "U-9"
+
+
+def test_button_operator_without_visible_email_approves(monkeypatch) -> None:
+    host = _Host()
+    promotion_id = _parked(host)
+    captured: dict = {}
+    real_decide = host.decide_weknora_promotion
+
+    def _capture(pid, **kwargs):
+        captured.update(kwargs)
+        return real_decide(pid, **kwargs)
+
+    monkeypatch.setattr(host, "decide_weknora_promotion", _capture)
+    result = _click(
+        monkeypatch, host, "knowledge_approve",
+        promotion_id=promotion_id, no_email=True,
+    )
+    assert result["ok"] is True, result
+    assert captured["decided_by"] == "slack:U-9"
+    assert captured["operator_email"] is None
+    assert _row(host, promotion_id)["status"] == "queued"
 
 
 def test_button_unverified_operator_refused_with_zero_state_change(monkeypatch) -> None:

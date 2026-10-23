@@ -448,7 +448,7 @@ class InMemoryWeKnoraPromotionRepositoryMixin:
                 human_decision="approved" if decision == "approve" else "rejected",
                 human_decision_detail=detail or None,
                 human_decided_at=decided_at,
-                human_decided_by_email=str(operator_email).strip() or None,
+                human_decided_by_email=(str(operator_email).strip() or None) if operator_email else None,
                 human_decided_slack_user_id=str(operator_slack_user_id).strip() or None,
                 updated_at=decided_at,
             )
@@ -1057,7 +1057,7 @@ class PostgresWeKnoraPromotionRepositoryMixin:
                             "approved" if decision == "approve" else "rejected",
                             detail or None,
                             decided_at,
-                            str(operator_email).strip() or None,
+                            (str(operator_email).strip() or None) if operator_email else None,
                             str(operator_slack_user_id).strip() or None,
                             decided_at,
                             next_decision,
