@@ -436,8 +436,10 @@ def test_thread_redelivery_also_carries_buttons() -> None:
     assert result["status"] == "delivered"
     posted = redeliver_poster.posts[0]
     assert posted["thread_ts"] == "1700.001", "re-delivery replies in the bound thread"
-    assert posted["event"]["event_id"].endswith(":resend"), (
-        "a re-delivery after a successful post uses a distinct deterministic id"
+    assert posted["event"]["event_id"].endswith(":resend:2026-10-11T07:00:00+00:00"), (
+        "a re-delivery after a successful post uses a per-round id keyed by "
+        "the delivery claim (Slack's client_msg_id suppression is long-lived "
+        "and swallows a reused id as a silent no-op)"
     )
     event = posted["event"]
     assert event["action"] == "knowledge_review"
