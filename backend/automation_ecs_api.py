@@ -1752,8 +1752,9 @@ def create_app(    *,
 
             Reached through the n8n interaction workflow (which verifies the
             Slack request signature) after a Prepare draft or Approve & send
-            click. Fast-returning by design: prepare only queues the reply
-            turn; approve reuses the dashboard approval path.
+            click, and for knowledge review Approve/Reject clicks on root
+            review messages. Fast-returning by design: prepare only queues
+            the reply turn; approve reuses the dashboard approval path.
             """
             from backend.services.automation_hermes_slack_actions import (
                 handle_slack_hermes_action,
@@ -1761,9 +1762,13 @@ def create_app(    *,
 
             payload = await http_request.json()
             action = str((payload or {}).get("action") or "")
-            # only the approve path touches the ticket repository; prepare
-            # works purely on the coordination store
-            repository = _engineer_ticket_repository() if action == "approve_draft" else None
+            # the approve and knowledge paths touch the ticket repository;
+            # prepare works purely on the coordination store
+            repository = (
+                _engineer_ticket_repository()
+                if action in {"approve_draft", "knowledge_approve", "knowledge_reject"}
+                else None
+            )
             result = await asyncio.to_thread(
                 handle_slack_hermes_action,
                 coordination_store,

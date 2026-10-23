@@ -387,6 +387,34 @@ def _action_blocks(event: dict[str, Any]) -> list[dict[str, Any]] | None:
             guardrail_id=str(event.get("guardrail_id") or "").strip() or None,
             guardrail_version=str(event.get("guardrail_version") or "").strip() or None,
         )
+    elif action == "knowledge_review":
+        promotion_id = str(event.get("knowledge_promotion_id") or "").strip()
+        if not promotion_id:
+            raise EngineerSlackDeliveryError("engineer_slack_action_payload_invalid")
+        # Two buttons: reject (danger) and approve (primary). The value
+        # carries only the promotion_id; the interaction handler resolves
+        # the decision from the action_id.
+        return [
+            {
+                "type": "actions",
+                "elements": [
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "✅ Approve"},
+                        "action_id": "knowledge_approve",
+                        "value": promotion_id,
+                        "style": "primary",
+                    },
+                    {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "❌ Reject"},
+                        "action_id": "knowledge_reject",
+                        "value": promotion_id,
+                        "style": "danger",
+                    },
+                ],
+            }
+        ]
     elif action == "summarize":
         required = ("output_id", "output_digest", "episode", "conversation_version")
         if not investigation_id or any(event.get(field) in (None, "") for field in required):
@@ -483,8 +511,12 @@ def _message_payload(event: dict[str, Any], *, thread_ts: str | None) -> dict[st
     message_text = str(event.get("message_text") or "").strip()
     if not all((event_id, event_type, message_text)):
         raise EngineerSlackDeliveryError("engineer_slack_event_invalid")
-    is_root = event_type in _ROOT_EVENT_TYPES
     normalized_thread_ts = str(thread_ts or "").strip()
+    # A root event type stays a root only when NO thread anchor is supplied;
+    # the knowledge review flow reuses the same event type for its C2
+    # thread-reply re-delivery (and case-bound candidates), and dropping the
+    # explicit anchor here would spill those into the channel root.
+    is_root = event_type in _ROOT_EVENT_TYPES and not normalized_thread_ts
     if not is_root and not normalized_thread_ts:
         raise EngineerSlackDeliveryError("engineer_slack_thread_binding_missing")
     if event_type in _HERMES_THREAD_EVENT_TYPES and not normalized_thread_ts:
@@ -1168,11 +1200,14 @@ def build_knowledge_review_root_event(
         raise ValueError(
             "knowledge review root event requires event id, promotion id, and message"
         )
-    return {
+    event = {
         "schema_version": ENGINEER_SLACK_SCHEMA_VERSION,
         "event_id": normalized_event_id,
         "event_type": "knowledge_review_required",
         "engineer_case_id": "knowledge-review",
         "promotion_id": normalized_promotion,
         "message_text": normalized_message,
+        "action": "knowledge_review",
+        "knowledge_promotion_id": normalized_promotion,
     }
+    return event
