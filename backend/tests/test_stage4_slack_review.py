@@ -304,6 +304,28 @@ def test_resolve_operator_empty_email(monkeypatch) -> None:
     assert exc.value.reason == "empty_email"
 
 
+def test_resolve_operator_empty_email_allowed_without_requirement(monkeypatch) -> None:
+    identity = _resolve_with(
+        monkeypatch,
+        _FakeUsersInfo(user={"id": "U-9", "profile": {"real_name": "Engineer"}}),
+        require_email=False,
+    )
+    assert identity["slack_user_id"] == "U-9"
+    assert identity["email"] is None
+    assert identity["display_name"] == "Engineer"
+
+
+def test_resolve_operator_user_not_found_still_refused_without_email_requirement(
+    monkeypatch,
+) -> None:
+    with pytest.raises(SlackOperatorResolutionError) as exc:
+        _resolve_with(
+            monkeypatch, _FakeUsersInfo(ok=False, error="user_not_found"),
+            require_email=False,
+        )
+    assert exc.value.reason == "user_not_found"
+
+
 def test_resolve_operator_id_mismatch(monkeypatch) -> None:
     with pytest.raises(SlackOperatorResolutionError) as exc:
         _resolve_with(monkeypatch, _FakeUsersInfo(user=_identity(user_id="U-OTHER")))
@@ -370,7 +392,7 @@ def _handle(monkeypatch, host, payload):
 
     with mock.patch.object(
         slack_module, "resolve_slack_operator",
-        lambda uid, bot_user_id=None: {
+        lambda uid, bot_user_id=None, require_email=True: {
             "slack_user_id": uid, "email": "engineer@example.com", "display_name": "E",
         },
     ):
@@ -590,7 +612,7 @@ def test_ticket_bound_command_without_raw_text_is_refused(monkeypatch) -> None:
 
     with mock.patch.object(
         slack_module, "resolve_slack_operator",
-        lambda uid, bot_user_id=None: {
+        lambda uid, bot_user_id=None, require_email=True: {
             "slack_user_id": uid, "email": "engineer@example.com", "display_name": "E",
         },
     ):
@@ -625,7 +647,7 @@ def test_ticket_bound_command_with_mention_prefix_decides(monkeypatch) -> None:
 
     with mock.patch.object(
         slack_module, "resolve_slack_operator",
-        lambda uid, bot_user_id=None: {
+        lambda uid, bot_user_id=None, require_email=True: {
             "slack_user_id": uid, "email": "engineer@example.com", "display_name": "E",
         },
     ):

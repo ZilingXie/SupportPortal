@@ -1110,15 +1110,20 @@ class SlackOperatorResolutionError(RuntimeError):
 
 
 def resolve_slack_operator(
-    user_id: str, *, bot_user_id: str | None = None
+    user_id: str, *, bot_user_id: str | None = None, require_email: bool = True
 ) -> dict[str, Any]:
     """Resolve a Slack user id to a verified operator identity (stage 4 C4).
 
     Uses the engineer Slack bot token to call ``users.info`` and proves:
-    ``ok=true``, the returned user id equals the requested one, and a non-empty
-    email. Bot self-messages are refused up front. The result carries the
-    slack user id, the email, and a display name; nothing from the inbound
-    payload can override it.
+    ``ok=true``, the returned user id equals the requested one, and (by
+    default) a non-empty email. Bot self-messages are refused up front. The
+    result carries the slack user id, the email, and a display name; nothing
+    from the inbound payload can override it.
+
+    ``require_email=False`` accepts a VERIFIED user whose email is not
+    visible to the app (the workspace app may lack the ``users:read.email``
+    scope): the users.info lookup still proves the user exists, and the
+    caller records the Slack user id as the operator fact with ``email=None``.
     """
     normalized_user_id = str(user_id or "").strip()
     if not normalized_user_id:
@@ -1166,15 +1171,15 @@ def resolve_slack_operator(
         )
     profile = user.get("profile") if isinstance(user.get("profile"), dict) else {}
     email = str(profile.get("email") or "").strip()
-    if not email:
+    display = str(profile.get("real_name") or profile.get("display_name") or "").strip()
+    if not email and require_email:
         raise SlackOperatorResolutionError(
             "empty_email", f"Slack user {normalized_user_id!r} has no email on record"
         )
-    display = str(profile.get("real_name") or profile.get("display_name") or "").strip()
     return {
         "slack_user_id": normalized_user_id,
-        "email": email,
-        "display_name": display or email,
+        "email": email or None,
+        "display_name": display or email or normalized_user_id,
     }
 
 

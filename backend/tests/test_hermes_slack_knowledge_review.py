@@ -129,7 +129,7 @@ def _verified_operator(monkeypatch, user_id: str = "U-1") -> None:
     monkeypatch.setattr(
         slack_module,
         "resolve_slack_operator",
-        lambda uid, bot_user_id=None: {
+        lambda uid, bot_user_id=None, require_email=True: {
             "slack_user_id": uid,
             "email": "engineer@example.com",
             "display_name": "Engineer",
