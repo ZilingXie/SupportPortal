@@ -1,8 +1,8 @@
 window.SUPPORTPORTAL_PROJECT_DATA = {
   "schema_version": 2,
-  "generated_at": "2026-10-23T08:05:24Z",
-  "source_base_commit": "90c8c1cdce0dd95b3ba7eae5f4571fa3ef60e748",
-  "registry_digest": "c4f5060dfbf8152c1c56d314b20d020205b34c03db3f84f68d378dba429f2668",
+  "generated_at": "2026-10-23T10:41:57Z",
+  "source_base_commit": "ec76139b754ee3450e8410c0ba985262cb9b0384",
+  "registry_digest": "dacfeb10ad4de902b1918494fcb5fee44d3a0014472efa45e662188972444f4b",
   "project": {
     "schema_version": 2,
     "project_id": "supportportal",
@@ -2049,7 +2049,7 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
         "automation-execution"
       ],
       "status": "active",
-      "task_count": 54,
+      "task_count": 55,
       "done_count": 28,
       "blocked_count": 2
     },
@@ -19687,6 +19687,28 @@ window.SUPPORTPORTAL_PROJECT_DATA = {
           "result": "挂点=hermes_customer_reply_basis.validate_customer_reply_draft（server-owned basis 自带 route/outcome/internal_email_send_reason）：automation+enablement+outcome=review_requested 触发门禁——共享 STIFF_NEGATIVE_ENABLEMENT_STATUS_RE/SUBMISSION_RECEIPT_RE（自 automation_persona 导入，单一事实源；本轮按 14225 实文扩族：been confirmed(yet) 进 stiff 族、requested a review 进 receipt 族，F2 负例 Thanks-only 仍拒）；auto(enablement_auto_review)=receipt+review+business-day+更新承诺+拒 24h/提前启用；manual=禁句+receipt。违规抛 HermesReplyBasisError→tool_save_reply_draft 转 HermesToolError=模型 run 内可见可重写（天然有限重生成，测试证明拒后重写成功且仅存 1 draft）；仍失败则无 draft 落库=既有失败链接管（fail-closed）。真实入口矩阵：14225 原文双路径拒（零 draft 落库）；auto 缺 business-day/更新承诺/receipt、24h、提前启用各自拒；合规 auto/manual 照存；appid_invalid 意图不受影响。存量披露：test_hermes_followup_reply_contract 5 失败在干净 main 同批复现（非本轮引入）。"
         }
       ]
+    },
+    {
+      "schema_version": 1,
+      "task_id": "p2-212",
+      "title": "Persona 库内容加载修复：hermes 回复实际使用库 persona（persona-library-content-loading v1）",
+      "status": "active",
+      "owner": "zac",
+      "phase_id": "phase-1",
+      "module_id": "account-automation",
+      "function_id": "automation-execution-loop",
+      "created_at": "2026-10-23",
+      "updated_at": "2026-10-23",
+      "summary": "14239 根因：resolve_persona_style 先调 get_account_persona_assignment（两套存储实现均只返回身份字段不带 content）→ 所有已有 sticky 分配的工单一律回退代码内置默认预设（v1 老文案）→ persona 库（含 p2-211 方案 A 发布的三 persona 教学 v2/v3）对 hermes 回复路径从未生效；14228 当时过门禁是模型重试碰巧收敛、14239 未收敛 fail-closed。修复：(1) resolve_persona_style 改用 resolve_account_persona（InMemory/PG 均对 sticky 行 JOIN 返回钉定版本 content）；(2) 代码内置三预设同步 enablement 确认三要素+禁句指令（fallback 路径亦合规），seed marker 升 v3/v2/v2、presets 版本 v1→v2。前置：p2-210/p2-211 已上线；archer 已恢复（api:179/worker:178/route:172，knowledge 保留）。",
+      "next_action": "实施完成待独立验收（Draft PR）；通过后 Preprod 发布+新 E3 工单（relay 腿用户手动执行）。",
+      "acceptance_criteria": [
+        "sticky 分配的工单在 hermes persona 阶段实际加载库内钉定版本 content（真实 PG 证明）",
+        "版本粘滞语义保留：老工单钉老版本（14225→sid-bright v1）不漂移",
+        "fallback 默认预设自带确认三要素指令（库故障也不能复活 14202 措辞）",
+        "预设同步不覆盖非 system 内容（库内 v2/v3 教学保留）"
+      ],
+      "blockers": [],
+      "evidence": []
     },
     {
       "schema_version": 2,

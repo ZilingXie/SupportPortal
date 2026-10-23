@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "task_id": "p2-212",
+  "title": "Persona 库内容加载修复：hermes 回复实际使用库 persona（persona-library-content-loading v1）",
+  "status": "active",
+  "owner": "zac",
+  "phase_id": "phase-1",
+  "module_id": "account-automation",
+  "function_id": "automation-execution-loop",
+  "created_at": "2026-10-23",
+  "updated_at": "2026-10-23",
+  "summary": "14239 根因：resolve_persona_style 先调 get_account_persona_assignment（两套存储实现均只返回身份字段不带 content）→ 所有已有 sticky 分配的工单一律回退代码内置默认预设（v1 老文案）→ persona 库（含 p2-211 方案 A 发布的三 persona 教学 v2/v3）对 hermes 回复路径从未生效；14228 当时过门禁是模型重试碰巧收敛、14239 未收敛 fail-closed。修复：(1) resolve_persona_style 改用 resolve_account_persona（InMemory/PG 均对 sticky 行 JOIN 返回钉定版本 content）；(2) 代码内置三预设同步 enablement 确认三要素+禁句指令（fallback 路径亦合规），seed marker 升 v3/v2/v2、presets 版本 v1→v2。前置：p2-210/p2-211 已上线；archer 已恢复（api:179/worker:178/route:172，knowledge 保留）。",
+  "next_action": "实施完成待独立验收（Draft PR）；通过后 Preprod 发布+新 E3 工单（relay 腿用户手动执行）。",
+  "acceptance_criteria": [
+    "sticky 分配的工单在 hermes persona 阶段实际加载库内钉定版本 content（真实 PG 证明）",
+    "版本粘滞语义保留：老工单钉老版本（14225→sid-bright v1）不漂移",
+    "fallback 默认预设自带确认三要素指令（库故障也不能复活 14202 措辞）",
+    "预设同步不覆盖非 system 内容（库内 v2/v3 教学保留）"
+  ],
+  "blockers": [],
+  "evidence": []
+}

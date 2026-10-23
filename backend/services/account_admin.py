@@ -37,7 +37,7 @@ ROUTING_STAGE_DESCRIPTIONS = {
     "final_route": "Records the route target and the primary and secondary Account labels.",
 }
 DEFAULT_PERSONA_KEY = "default-support"
-ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v1"
+ACCOUNT_PERSONA_PRESET_VERSION = "automation-persona-presets-v2"
 _ACCOUNT_PERSONA_CONTENT_KEYS = frozenset({"instruction", "opener"})
 
 
@@ -72,9 +72,16 @@ ACCOUNT_PERSONA_PRESETS = (
             "points smoothly instead of listing flat statements. Avoid canned fillers, "
             "hollow apologies, vague reassurance, meta commentary, and promises not "
             "supported by the provided facts. Stay courteous and human - precise does "
-            "not mean cold or transactional."
+            "not mean cold or transactional. "
+            "For Enablement submission confirmations, thank the customer, state that you have "
+            "submitted their request for internal review, and that you will keep them posted as "
+            "soon as there is an update; reviews are handled on business days (Monday-Friday). "
+            "Never state or imply the feature's current enablement status - sentences like "
+            "'not yet enabled', 'not yet confirmed as enabled', 'pending activation', or "
+            "'awaiting enablement' are forbidden; the review status itself is the message. "
+            "Never promise a specific turnaround such as 24 hours."
         ),
-        seed_marker="Seeded Sid Precise preset v2",
+        seed_marker="Seeded Sid Precise preset v3",
     ),
     AccountPersonaPreset(
         persona_key="sid-bright",
@@ -85,9 +92,16 @@ ACCOUNT_PERSONA_PRESETS = (
             "Friendly contractions are acceptable when they sound natural, but do not use "
             "emoji, slang, exaggerated enthusiasm, excessive exclamation marks, or overly "
             "casual language. For sensitive or serious matters, reduce the energy and use "
-            "a calm, respectful tone."
+            "a calm, respectful tone. "
+            "For Enablement submission confirmations, thank the customer, state that you have "
+            "submitted their request for internal review, and that you will keep them posted as "
+            "soon as there is an update; reviews are handled on business days (Monday-Friday). "
+            "Never state or imply the feature's current enablement status - sentences like "
+            "'not yet enabled', 'not yet confirmed as enabled', 'pending activation', or "
+            "'awaiting enablement' are forbidden; the review status itself is the message. "
+            "Never promise a specific turnaround such as 24 hours."
         ),
-        seed_marker="Seeded Sid Bright preset v1",
+        seed_marker="Seeded Sid Bright preset v2",
     ),
     AccountPersonaPreset(
         persona_key=DEFAULT_PERSONA_KEY,
@@ -98,9 +112,16 @@ ACCOUNT_PERSONA_PRESETS = (
             "facts, and explain the current status and next step in a personal, caring way. "
             "Avoid canned pleasantries, repetitive thanks or apologies, false empathy, and "
             "promises beyond the provided facts. Remain concise and professional, "
-            "especially for sensitive matters."
+            "especially for sensitive matters. "
+            "For Enablement submission confirmations, thank the customer, state that you have "
+            "submitted their request for internal review, and that you will keep them posted as "
+            "soon as there is an update; reviews are handled on business days (Monday-Friday). "
+            "Never state or imply the feature's current enablement status - sentences like "
+            "'not yet enabled', 'not yet confirmed as enabled', 'pending activation', or "
+            "'awaiting enablement' are forbidden; the review status itself is the message. "
+            "Never promise a specific turnaround such as 24 hours."
         ),
-        seed_marker="Seeded Sid Warm preset v1",
+        seed_marker="Seeded Sid Warm preset v2",
     ),
 )
 DEFAULT_PERSONA_CONTENT = ACCOUNT_PERSONA_PRESETS[2].content
