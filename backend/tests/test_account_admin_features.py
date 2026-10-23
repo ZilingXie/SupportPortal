@@ -1202,15 +1202,40 @@ class AccountAdminFeatureTests(unittest.TestCase):
         self.assertIn("Backend Operations Router", payload["system_prompt"])
 
     def test_persona_seed_catalog_contains_the_three_published_presets(self) -> None:
-        from backend.services.account_admin import ACCOUNT_PERSONA_PRESETS
+        # p2-212 F2: the full storage read-back contract is preserved — exactly
+        # three personas, enabled, one published system version each, marker
+        # and stored content matching the catalog — while the content
+        # expectation now derives from the live presets (each carrying the
+        # enablement confirmation style) instead of a stale literal copy.
+        expected_keys = {"sid-precise", "sid-bright", "default-support"}
+        catalog = {preset.persona_key: preset for preset in ACCOUNT_PERSONA_PRESETS}
 
-        # The catalog test follows the live presets (p2-212): every preset
-        # carries the enablement confirmation style, and identity fields match.
-        for preset in ACCOUNT_PERSONA_PRESETS:
-            with self.subTest(persona_key=preset.persona_key):
+        personas = {
+            persona["persona_key"]: persona
+            for persona in self.repository.list_account_personas()
+        }
+
+        self.assertEqual(ACCOUNT_PERSONA_PRESET_VERSION, "automation-persona-presets-v2")
+        self.assertEqual(set(catalog), expected_keys)
+        self.assertEqual(set(personas), expected_keys)
+        for key in expected_keys:
+            preset = catalog[key]
+            with self.subTest(persona_key=key):
+                # Catalog semantic floor (p2-212): every preset teaches the
+                # natural enablement confirmation style.
                 self.assertIn("Enablement submission confirmations", preset.instruction)
                 self.assertIn("business days", preset.instruction)
-                self.assertTrue(preset.display_name)
+                self.assertEqual(set(preset.content), {"instruction", "opener"})
+                self.assertEqual(preset.content["opener"], "")
+                # Storage read-back: seeded exactly once, published, system
+                # owned, marker and content byte-identical to the catalog.
+                self.assertTrue(personas[key]["enabled"])
+                self.assertEqual(personas[key]["published_version"], 1)
+                self.assertEqual(len(personas[key]["versions"]), 1)
+                self.assertEqual(personas[key]["versions"][0]["status"], "published")
+                self.assertEqual(personas[key]["versions"][0]["created_by"], "system")
+                self.assertEqual(personas[key]["versions"][0]["change_note"], preset.seed_marker)
+                self.assertEqual(personas[key]["versions"][0]["content"], preset.content)
 
     def test_persona_preset_catalog_is_immutable_and_content_isolated(self) -> None:
         preset = ACCOUNT_PERSONA_PRESETS[0]
